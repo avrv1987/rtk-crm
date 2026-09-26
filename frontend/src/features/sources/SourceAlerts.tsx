@@ -6,6 +6,7 @@ import './sources.css'
 type SourceAlertsProps = {
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
+  refreshSignal?: number
 }
 
 const refreshIntervalMs = 60_000
@@ -14,7 +15,7 @@ const failed = (source: DataSource) => source.configured && source.lastRun?.stat
 
 const stale = (source: DataSource) => source.configured && source.stale === true && !failed(source)
 
-export const SourceAlerts = ({ onSessionExpired, onProfileUnavailable }: SourceAlertsProps) => {
+export const SourceAlerts = ({ onSessionExpired, onProfileUnavailable, refreshSignal }: SourceAlertsProps) => {
   const [sources, setSources] = useState<DataSource[]>([])
   const [unavailable, setUnavailable] = useState(false)
 
@@ -33,7 +34,7 @@ export const SourceAlerts = ({ onSessionExpired, onProfileUnavailable }: SourceA
     void load()
     const timer = window.setInterval(() => void load(), refreshIntervalMs)
     return () => window.clearInterval(timer)
-  }, [load])
+  }, [load, refreshSignal])
 
   const failures = sources.filter(failed)
   const staleSources = sources.filter(stale)

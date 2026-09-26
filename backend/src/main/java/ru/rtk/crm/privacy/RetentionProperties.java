@@ -1,6 +1,7 @@
 package ru.rtk.crm.privacy;
 
 import java.time.Duration;
+import java.time.Period;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -10,6 +11,7 @@ public record RetentionProperties(
         Duration reportFiles,
         Duration inactiveContacts,
         Duration dismissedProfiles,
-        Duration auditEvents
+        Duration auditEvents,
+        Period learnerProfiles
 ) {
 }

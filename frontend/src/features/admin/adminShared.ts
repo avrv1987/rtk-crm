@@ -14,7 +14,8 @@ export const roleLabels: Record<CrmProfile['role'], string> = {
 
 const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', {
   dateStyle: 'medium',
-  timeStyle: 'short'
+  timeStyle: 'short',
+  timeZone: 'Europe/Moscow'
 })
 
 export const formatDateTime = (value: string) => {

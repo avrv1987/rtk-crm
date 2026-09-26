@@ -13,6 +13,7 @@ import {
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { Pagination } from '../../shared/ui/Pagination'
 import { commandErrorMessage, formatDateTime, handledSessionError, requestIdOf, type SessionHandlers } from './adminShared'
+import { VendorContactsPanel } from './VendorContactsPanel'
 
 type Tab = CatalogKind | 'journal'
 
@@ -47,7 +48,8 @@ const entityLabels: Record<CatalogEntityType, string> = {
   PROGRAM: 'ИТ-программа',
   VENDOR: 'Вендор',
   PRODUCT: 'ИТ-продукт',
-  AGREEMENT: 'Договор'
+  AGREEMENT: 'Договор',
+  VENDOR_CONTACT: 'Контакт вендора'
 }
 
 const actionLabels: Record<CatalogChangeEvent['action'], string> = {
@@ -85,6 +87,7 @@ export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: S
   const [creating, setCreating] = useState<{ saving: boolean; error?: unknown; key: string | null }>({ saving: false, key: null })
   const [command, setCommand] = useState<EntryCommand | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [contactsVendorId, setContactsVendorId] = useState<string | null>(null)
   const requestVersion = useRef(0)
   const kind = kinds.find((item) => item.kind === tab)
 
@@ -173,6 +176,7 @@ export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: S
     setCreating({ saving: false, key: null })
     setCommand(null)
     setMessage(null)
+    setContactsVendorId(null)
   }
 
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
@@ -380,9 +384,22 @@ export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: S
                       </dl>
                     )}
                     {command?.entry.id === entry.id && command.error !== undefined && errorBlock(command.error)}
+                    {contactsVendorId === entry.id && (
+                      <VendorContactsPanel
+                        vendor={entry}
+                        onClose={() => setContactsVendorId(null)}
+                        onSessionExpired={onSessionExpired}
+                        onProfileUnavailable={onProfileUnavailable}
+                      />
+                    )}
                   </div>
                   {!(command?.entry.id === entry.id && command.mode === 'rename') && (
                     <div className="admin-profiles__actions admin-catalogs__actions">
+                      {kind.kind === 'vendors' && contactsVendorId !== entry.id && (
+                        <button type="button" className="button--secondary" onClick={() => setContactsVendorId(entry.id)}>
+                          Контакты
+                        </button>
+                      )}
                       {!entry.archived && (
                         <button
                           type="button"

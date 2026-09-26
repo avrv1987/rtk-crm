@@ -24,7 +24,15 @@ public record DemoBootstrapProperties(
     public record Team(String key, String name) {
     }
 
-    public record Identity(String key, String issuer, String subject, String displayName, UserRole role, String teamKey) {
+    public record Identity(
+            String key,
+            String issuer,
+            String subject,
+            String displayName,
+            UserRole role,
+            String teamKey,
+            Boolean enrolmentOperator
+    ) {
     }
 
     public record Organization(String name, String type, String teamKey, String ownerKey) {

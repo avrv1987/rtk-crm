@@ -35,6 +35,7 @@ SELECT 'attachment-file ' || storage_key
 FROM attachments
 WHERE interaction_id IN (SELECT id FROM load_interactions);
 
+DELETE FROM audit_events WHERE actor_profile_id IN (SELECT id FROM load_profiles);
 DELETE FROM report_jobs WHERE owner_profile_id IN (SELECT id FROM load_profiles);
 DELETE FROM source_records WHERE organization_id IN (SELECT id FROM load_organizations);
 DELETE FROM attachments WHERE interaction_id IN (SELECT id FROM load_interactions);

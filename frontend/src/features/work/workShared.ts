@@ -34,7 +34,7 @@ export const commandErrorText = (error: unknown, action: string) => {
   return 'Не удалось связаться с сервисом. Повторите попытку позже.'
 }
 
-const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' })
+const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Moscow' })
 const dateFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium' })
 const dayMilliseconds = 24 * 60 * 60 * 1000
 

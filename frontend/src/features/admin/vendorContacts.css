@@ -1,0 +1,34 @@
+.vendor-contacts {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.vendor-contacts__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.vendor-contacts__header h4 {
+  margin: 0;
+}
+
+.vendor-contacts fieldset {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.vendor-contacts fieldset label {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}

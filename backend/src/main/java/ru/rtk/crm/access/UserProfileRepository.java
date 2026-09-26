@@ -27,6 +27,17 @@ public class UserProfileRepository {
                 .optional();
     }
 
+    public boolean isEnrolmentOperator(UUID profileId) {
+        return jdbcClient.sql("""
+                SELECT COUNT(*)
+                FROM crm_user_profiles
+                WHERE id = :profileId AND active = TRUE AND enrolment_operator = TRUE AND role IN ('USER', 'LEADER')
+                """)
+                .param("profileId", profileId)
+                .query(Long.class)
+                .single() > 0;
+    }
+
     public boolean isPendingActivation(String issuer, String subject) {
         return jdbcClient.sql("""
                 SELECT COUNT(*)

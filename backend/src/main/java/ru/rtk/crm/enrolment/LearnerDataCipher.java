@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 import javax.crypto.Cipher;
@@ -94,6 +95,23 @@ public class LearnerDataCipher {
         }
     }
 
+    public boolean enabled() {
+        return activeVersion != null;
+    }
+
+    public String activeKeyVersion() {
+        requireEnabled();
+        return activeVersion;
+    }
+
+    String encryptField(UUID learnerId, LearnerField field, String value) {
+        return encrypt(value, fieldContext(learnerId, field));
+    }
+
+    String decryptField(UUID learnerId, LearnerField field, String stored) {
+        return decrypt(stored, fieldContext(learnerId, field));
+    }
+
     public boolean encryptedWithActiveKey(String stored) {
         requireEnabled();
         return stored != null && stored.startsWith(activeVersion + ":");
@@ -125,6 +143,18 @@ public class LearnerDataCipher {
         return fingerprint("snils", normalized);
     }
 
+    public String nameFingerprint(String lastName, String firstName) {
+        return lastName == null || firstName == null ? null : fingerprint("name", LearnerRules.nameKey(lastName + " " + firstName));
+    }
+
+    public String lastNameFingerprint(String lastName) {
+        return lastName == null ? null : fingerprint("last_name", LearnerRules.nameKey(lastName));
+    }
+
+    String requestFingerprint(String canonicalRequest) {
+        return fingerprint("request", canonicalRequest);
+    }
+
     private String fingerprint(String kind, String value) {
         requireEnabled();
         try {
@@ -134,6 +164,10 @@ public class LearnerDataCipher {
         } catch (GeneralSecurityException exception) {
             throw new IllegalStateException("Не удалось вычислить отпечаток значения", exception);
         }
+    }
+
+    private static String fieldContext(UUID learnerId, LearnerField field) {
+        return "learner:" + learnerId + ":" + field.name();
     }
 
     private static byte[] aad(String version, String context) {

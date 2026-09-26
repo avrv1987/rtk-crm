@@ -4,7 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static ru.rtk.crm.enrolment.LearnerTestData.TODAY;
 
 import java.time.LocalDate;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -78,13 +82,18 @@ class LearnerRulesTest {
         ).normalized();
 
         assertThat(messages(LearnerRules.check(profile, TODAY))).containsExactly(
-                "LAST_NAME: Не заполнено обязательное поле «Фамилия»",
                 "PHONE: Телефон должен содержать 10 цифр после +7 или 8, например +7 900 000-00-00",
                 "EMAIL: Email указан неверно",
                 "SNILS: Контрольное число СНИЛС не совпадает с номером",
                 "PASSPORT_SERIES: Серия паспорта — 4 цифры",
-                "PASSPORT_DIVISION_CODE: Код подразделения — 6 цифр в формате 000-000"
+                "PASSPORT_DIVISION_CODE: Код подразделения — 6 цифр в формате 000-000",
+                "PASSPORT_NUMBER: Паспорт заполняется целиком: заполните поле «Номер паспорта»",
+                "PASSPORT_ISSUED_BY: Паспорт заполняется целиком: заполните поле «Кем выдан паспорт»",
+                "PASSPORT_ISSUE_DATE: Паспорт заполняется целиком: заполните поле «Дата выдачи паспорта»"
         );
+        assertThat(messages(LearnerRules.clearedRequired(profile, Set.of(LearnerField.LAST_NAME, LearnerField.SNILS))))
+                .containsExactly("LAST_NAME: Не заполнено обязательное поле «Фамилия»");
+        assertThat(LearnerRules.clearedRequired(profile, Set.of(LearnerField.SNILS))).isEmpty();
         LearnerProfile shortSnils = withDocuments(LearnerTestData.fullProfile(), "1234567890", "0123", "770-001").normalized();
         assertThat(messages(LearnerRules.check(shortSnils, TODAY))).containsExactly("SNILS: СНИЛС должен состоять из 11 цифр");
     }
@@ -99,13 +108,77 @@ class LearnerRulesTest {
 
         LocalDate birth = LocalDate.of(2000, 2, 29);
         assertThat(messages(LearnerRules.check(withDates(birth, birth, birth.minusDays(1)), TODAY))).containsExactly(
-                "PASSPORT_ISSUE_DATE: Дата выдачи паспорта должна быть позже даты рождения",
+                "PASSPORT_ISSUE_DATE: Дата выдачи паспорта раньше 14-летия",
                 "DIPLOMA_ISSUE_DATE: Дата выдачи диплома должна быть позже даты рождения"
         );
         assertThat(messages(LearnerRules.check(withDates(birth, TODAY.plusDays(1), TODAY.plusDays(1)), TODAY))).containsExactly(
                 "PASSPORT_ISSUE_DATE: Дата выдачи паспорта не может быть в будущем",
                 "DIPLOMA_ISSUE_DATE: Дата выдачи диплома не может быть в будущем"
         );
+    }
+
+    @Test
+    void refusesMinorsAndPassportsIssuedBeforeFourteenthBirthday() {
+        assertThat(messages(LearnerRules.check(withDates(TODAY.minusYears(18).plusDays(1), null, null), TODAY)))
+                .containsExactly("BIRTH_DATE: Слушатель младше 18 лет: обработка данных несовершеннолетних не предусмотрена");
+        assertThat(LearnerRules.check(withDates(TODAY.minusYears(18), null, null), TODAY)).isEmpty();
+
+        LocalDate birth = LocalDate.of(1995, 2, 10);
+        assertThat(messages(LearnerRules.check(withDates(birth, LocalDate.of(2005, 3, 15), null), TODAY)))
+                .containsExactly("PASSPORT_ISSUE_DATE: Дата выдачи паспорта раньше 14-летия");
+        assertThat(messages(LearnerRules.check(withDates(birth, LocalDate.of(2009, 2, 9), null), TODAY)))
+                .containsExactly("PASSPORT_ISSUE_DATE: Дата выдачи паспорта раньше 14-летия");
+        assertThat(LearnerRules.check(withDates(birth, LocalDate.of(2009, 2, 10), null), TODAY)).isEmpty();
+    }
+
+    @Test
+    void passportIsFilledCompletelyOrNotAtAllAndCompletenessSkipsOptionalFields() {
+        LearnerProfile full = LearnerTestData.fullProfile();
+        LearnerProfile withoutNumber = full.with(Collections.singletonMap(LearnerField.PASSPORT_NUMBER, null));
+
+        assertThat(messages(LearnerRules.check(withoutNumber, TODAY)))
+                .containsExactly("PASSPORT_NUMBER: Паспорт заполняется целиком: заполните поле «Номер паспорта»");
+        assertThat(LearnerRules.check(LearnerTestData.requiredOnly("Тестова", "Анна", "+79000000001", "a@example.test"), TODAY))
+                .isEmpty();
+        assertThat(LearnerRules.completeness(EnumSet.noneOf(LearnerField.class))).isEqualTo(new LearnerCompleteness(28, 28));
+        assertThat(LearnerRules.completeness(EnumSet.of(LearnerField.MIDDLE_NAME, LearnerField.MIDDLE_NAME_DATIVE,
+                LearnerField.APARTMENT))).isEqualTo(new LearnerCompleteness(27, 27));
+        assertThat(LearnerRules.completeness(EnumSet.of(LearnerField.MIDDLE_NAME_DATIVE, LearnerField.SNILS)))
+                .isEqualTo(new LearnerCompleteness(26, 28));
+        assertThat(LearnerRules.missingForLms(EnumSet.of(LearnerField.PHONE, LearnerField.SNILS))).containsExactly(LearnerField.PHONE);
+    }
+
+    @Test
+    void limitsNamesAddressAndDiplomaCodesByTheirRules() {
+        LearnerProfile full = LearnerTestData.fullProfile();
+        LearnerProfile profile = full.with(Map.of(
+                LearnerField.LAST_NAME, "Тестова2",
+                LearnerField.MIDDLE_NAME, "д'Арк-Мария Сергеевна",
+                LearnerField.FIRST_NAME_DATIVE, "А".repeat(LearnerRules.MAX_NAME_LENGTH + 1),
+                LearnerField.HOUSE, "1".repeat(21),
+                LearnerField.STREET, "ул. " + "С".repeat(197),
+                LearnerField.DIPLOMA_NUMBER, "№ 000123",
+                LearnerField.DIPLOMA_SERIES, "AB 12-34"
+        ));
+
+        assertThat(messages(LearnerRules.check(profile, TODAY))).containsExactly(
+                "LAST_NAME: «Фамилия»: до 100 символов — буквы, пробел, дефис, апостроф, точка",
+                "STREET: «Улица регистрации»: не длиннее 200 символов",
+                "HOUSE: «Дом регистрации»: не длиннее 20 символов",
+                "FIRST_NAME_DATIVE: «Имя в дательном падеже»: до 100 символов — буквы, пробел, дефис, апостроф, точка",
+                "DIPLOMA_NUMBER: «Номер диплома»: до 50 символов — буквы, цифры, пробел, дефис"
+        );
+    }
+
+    @Test
+    void samePersonComparesMiddleNameOnlyWhenBothHaveIt() {
+        LearnerProfile profile = LearnerTestData.fullProfile();
+
+        assertThat(LearnerRules.samePerson(profile, " тестова ", "АННА", null)).isTrue();
+        assertThat(LearnerRules.samePerson(profile, "Тестова", "Анна", "Сергеевна")).isTrue();
+        assertThat(LearnerRules.samePerson(profile, "Тестова", "Анна", "Петровна")).isFalse();
+        assertThat(LearnerRules.samePerson(profile, "Тестова", "Анастасия", null)).isFalse();
+        assertThat(LearnerRules.samePerson(profile, null, "Анна", null)).isFalse();
     }
 
     @Test
@@ -144,10 +217,12 @@ class LearnerRulesTest {
 
     private static LearnerProfile withDates(LocalDate birth, LocalDate passportIssued, LocalDate diplomaIssued) {
         LearnerProfile base = LearnerTestData.fullProfile();
+        boolean passport = passportIssued != null;
         return new LearnerProfile(
                 base.lastName(), base.firstName(), base.middleName(), base.phone(), base.email(), base.snils(),
-                base.passportSeries(), base.passportNumber(), base.passportIssuedBy(), passportIssued,
-                base.passportDivisionCode(), base.gender(), birth, base.region(), base.locality(), base.street(),
+                passport ? base.passportSeries() : null, passport ? base.passportNumber() : null,
+                passport ? base.passportIssuedBy() : null, passportIssued,
+                passport ? base.passportDivisionCode() : null, base.gender(), birth, base.region(), base.locality(), base.street(),
                 base.house(), base.apartment(), base.postalCode(), base.firstNameDative(), base.lastNameDative(),
                 base.middleNameDative(), base.education(), base.diplomaProfession(), base.diplomaInstitution(),
                 base.diplomaLastName(), base.diplomaNumber(), base.diplomaSeries(), base.diplomaRegistrationNumber(),

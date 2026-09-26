@@ -157,7 +157,7 @@ export type TeacherTrainingCreate = components['schemas']['TeacherTrainingCreate
 export type TeacherTrainingCreated = components['schemas']['TeacherTrainingCreated']
 export type InteractionCycle = components['schemas']['InteractionCycle']
 export type CycleStart = components['schemas']['CycleStart']
-export type CatalogImportProfile = 'AGREEMENT' | 'DIRECTION_PROGRAM'
+export type CatalogImportProfile = 'AGREEMENT' | 'DIRECTION_PROGRAM' | 'VENDOR_CONTACTS'
 export type CatalogImportRowTarget = {
   organizationId?: string | null
   managerProfileId?: string | null
@@ -234,12 +234,51 @@ export type SubjectContact = components['schemas']['SubjectContact']
 export type SubjectProfile = components['schemas']['SubjectProfile']
 export type SubjectMention = components['schemas']['SubjectMention']
 export type SubjectAttachment = components['schemas']['SubjectAttachment']
+export type SubjectLearner = components['schemas']['SubjectLearner']
 export type ContactRectification = components['schemas']['ContactRectification']
 export type ContactRestriction = components['schemas']['ContactRestriction']
 export type AnonymizationRequest = components['schemas']['AnonymizationRequest']
 export type AnonymizationResult = components['schemas']['AnonymizationResult']
 export type RetentionPolicy = components['schemas']['RetentionPolicy']
 export type RetentionRun = components['schemas']['RetentionRun']
+export type VendorContact = components['schemas']['VendorContact']
+export type VendorContactList = components['schemas']['VendorContactList']
+export type VendorContactChange = components['schemas']['VendorContactChange']
+export type VendorContactCard = components['schemas']['VendorContactCard']
+export type PaidOrderUpload = components['schemas']['PaidOrderUpload']
+export type LearnerIntake = components['schemas']['LearnerIntake']
+export type LearnerFieldCode = components['schemas']['LearnerFieldCode']
+export type LearnerFieldGroup = components['schemas']['LearnerFieldGroup']
+export type LmsStatus = components['schemas']['LmsStatus']
+export type EnrolmentStreams = components['schemas']['EnrolmentStreams']
+export type EnrolmentStream = components['schemas']['EnrolmentStream']
+export type EnrolmentCounters = components['schemas']['EnrolmentCounters']
+export type EnrolmentStreamUpdate = components['schemas']['EnrolmentStreamUpdate']
+export type EnrolmentStreamLearners = components['schemas']['EnrolmentStreamLearners']
+export type StreamLearner = components['schemas']['StreamLearner']
+export type RosterExport = components['schemas']['RosterExport']
+export type RosterSummary = components['schemas']['RosterSummary']
+export type RosterScope = components['schemas']['RosterScope']
+export type LmsRosterRequest = components['schemas']['LmsRosterRequest']
+export type RosterExportMarked = components['schemas']['RosterExportMarked']
+export type LearnerSearch = components['schemas']['LearnerSearch']
+export type LearnerSummary = components['schemas']['LearnerSummary']
+export type LearnerEnrolment = components['schemas']['LearnerEnrolment']
+export type LearnerCard = components['schemas']['LearnerCard']
+export type LearnerReveal = components['schemas']['LearnerReveal']
+export type LearnerRevealed = components['schemas']['LearnerRevealed']
+export type LearnerUpdate = components['schemas']['LearnerUpdate']
+export type LearnerMove = components['schemas']['LearnerMove']
+export type LearnerMoveResult = components['schemas']['LearnerMoveResult']
+export type LearnerHistoryEntry = components['schemas']['LearnerHistoryEntry']
+export type QuestionnaireImport = components['schemas']['QuestionnaireImport']
+export type QuestionnaireRow = components['schemas']['QuestionnaireRow']
+export type QuestionnaireIssue = components['schemas']['QuestionnaireIssue']
+export type RosterFileDownload = {
+  blob: Blob
+  fileName: string
+  exportId: string
+}
 
 const querySuffix = (query: Record<string, string | number | boolean | null | undefined>) => {
   const searchParams = new URLSearchParams()
@@ -278,6 +317,11 @@ const parseJson = (text: string): unknown => {
 
 const isApiErrorPayload = (value: unknown): value is ApiErrorPayload =>
   typeof value === 'object' && value !== null && 'code' in value && 'message' in value && 'requestId' in value
+
+const fileNameFromContentDisposition = (value: string | null): string => {
+  const match = value?.match(/filename\*=UTF-8''([^;]+)/)
+  return match ? decodeURIComponent(match[1]) : 'roster.xlsx'
+}
 
 export class ApiClient {
   private csrf: CsrfToken | null = null
@@ -481,6 +525,131 @@ export class ApiClient {
       },
       body: formData
     })
+  }
+
+  async uploadPaidOrders(file: File, idempotencyKey: string): Promise<PaidOrderUpload> {
+    if (this.csrf === null) {
+      await this.refreshCsrf()
+    }
+    const formData = new FormData()
+    formData.set('file', file)
+    return this.request<PaidOrderUpload>('/api/enrolment/paid-orders', {
+      method: 'POST',
+      headers: {
+        [this.csrf!.headerName]: this.csrf!.token,
+        'Idempotency-Key': idempotencyKey
+      },
+      body: formData
+    })
+  }
+
+  async listEnrolmentStreams(): Promise<EnrolmentStreams> {
+    return this.request<EnrolmentStreams>('/api/enrolment/streams')
+  }
+
+  async updateEnrolmentStream(
+    id: EnrolmentStream['id'],
+    payload: EnrolmentStreamUpdate,
+    idempotencyKey: string
+  ): Promise<EnrolmentStream> {
+    return this.command<EnrolmentStream>(`/api/enrolment/streams/${encodeURIComponent(id)}`, payload, idempotencyKey, 'PATCH')
+  }
+
+  async listEnrolmentStreamLearners(id: EnrolmentStream['id']): Promise<EnrolmentStreamLearners> {
+    return this.request<EnrolmentStreamLearners>(`/api/enrolment/streams/${encodeURIComponent(id)}/learners`)
+  }
+
+  async previewQuestionnaireImport(id: EnrolmentStream['id'], file: File): Promise<QuestionnaireImport> {
+    if (this.csrf === null) {
+      await this.refreshCsrf()
+    }
+    const formData = new FormData()
+    formData.set('file', file)
+    return this.request<QuestionnaireImport>(`/api/enrolment/streams/${encodeURIComponent(id)}/questionnaire-imports/preview`, {
+      method: 'POST',
+      headers: {
+        [this.csrf!.headerName]: this.csrf!.token
+      },
+      body: formData
+    })
+  }
+
+  async applyQuestionnaireImport(
+    id: EnrolmentStream['id'],
+    file: File,
+    fingerprint: string,
+    idempotencyKey: string
+  ): Promise<QuestionnaireImport> {
+    if (this.csrf === null) {
+      await this.refreshCsrf()
+    }
+    const formData = new FormData()
+    formData.set('file', file)
+    formData.set('fingerprint', fingerprint)
+    return this.request<QuestionnaireImport>(`/api/enrolment/streams/${encodeURIComponent(id)}/questionnaire-imports/apply`, {
+      method: 'POST',
+      headers: {
+        [this.csrf!.headerName]: this.csrf!.token,
+        'Idempotency-Key': idempotencyKey
+      },
+      body: formData
+    })
+  }
+
+  async exportLmsRoster(id: EnrolmentStream['id'], payload: LmsRosterRequest): Promise<RosterFileDownload> {
+    if (this.csrf === null) {
+      await this.refreshCsrf()
+    }
+    const response = await fetch(`/api/enrolment/streams/${encodeURIComponent(id)}/lms-roster`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/json',
+        [this.csrf!.headerName]: this.csrf!.token
+      },
+      body: JSON.stringify(payload)
+    })
+    if (!response.ok) {
+      return this.throwResponseError(response)
+    }
+    return {
+      blob: await response.blob(),
+      fileName: fileNameFromContentDisposition(response.headers.get('Content-Disposition')),
+      exportId: response.headers.get('X-Roster-Export-Id') ?? ''
+    }
+  }
+
+  async markRosterExportTransferred(exportId: RosterExport['exportId'], idempotencyKey: string): Promise<RosterExportMarked> {
+    return this.command<RosterExportMarked>(
+      `/api/enrolment/roster-exports/${encodeURIComponent(exportId)}/transferred`,
+      undefined,
+      idempotencyKey
+    )
+  }
+
+  async searchLearners(payload: LearnerSearch): Promise<LearnerSummary[]> {
+    return this.post<LearnerSummary[]>('/api/enrolment/learners/search', payload)
+  }
+
+  async getLearner(id: LearnerCard['id']): Promise<LearnerCard> {
+    return this.request<LearnerCard>(`/api/enrolment/learners/${encodeURIComponent(id)}`)
+  }
+
+  async updateLearner(id: LearnerCard['id'], payload: LearnerUpdate, idempotencyKey: string): Promise<LearnerCard> {
+    return this.command<LearnerCard>(`/api/enrolment/learners/${encodeURIComponent(id)}`, payload, idempotencyKey, 'PATCH')
+  }
+
+  async revealLearnerFields(id: LearnerCard['id'], payload: LearnerReveal): Promise<LearnerRevealed> {
+    return this.post<LearnerRevealed>(`/api/enrolment/learners/${encodeURIComponent(id)}/reveal`, payload)
+  }
+
+  async moveLearnerEnrolments(id: LearnerCard['id'], payload: LearnerMove, idempotencyKey: string): Promise<LearnerMoveResult> {
+    return this.command<LearnerMoveResult>(`/api/enrolment/learners/${encodeURIComponent(id)}/move-enrolments`, payload, idempotencyKey)
+  }
+
+  async getLearnerHistory(id: LearnerCard['id']): Promise<LearnerHistoryEntry[]> {
+    return this.request<LearnerHistoryEntry[]>(`/api/enrolment/learners/${encodeURIComponent(id)}/history`)
   }
 
   async getAttachment(id: Attachment['id']): Promise<Attachment> {
@@ -741,6 +910,18 @@ export class ApiClient {
     )
   }
 
+  async restrictPersonalDataLearner(
+    id: SubjectLearner['id'],
+    payload: ContactRestriction,
+    idempotencyKey: string
+  ): Promise<SubjectLearner> {
+    return this.command<SubjectLearner>(
+      `/api/admin/personal-data/learners/${encodeURIComponent(id)}/restriction`,
+      payload,
+      idempotencyKey
+    )
+  }
+
   async anonymizePersonalData(payload: AnonymizationRequest, idempotencyKey: string): Promise<AnonymizationResult> {
     return this.command<AnonymizationResult>('/api/admin/personal-data/anonymization', payload, idempotencyKey)
   }
@@ -975,6 +1156,28 @@ export class ApiClient {
     idempotencyKey: string
   ): Promise<AdminCatalogEntry> {
     return this.command<AdminCatalogEntry>(`/api/admin/catalogs/${kind}/${encodeURIComponent(id)}`, payload, idempotencyKey, 'PATCH')
+  }
+
+  async listVendorContacts(vendorId: AdminCatalogEntry['id']): Promise<VendorContactList> {
+    return this.request<VendorContactList>(`/api/admin/catalogs/vendors/${encodeURIComponent(vendorId)}/contacts`)
+  }
+
+  async createVendorContact(vendorId: AdminCatalogEntry['id'], payload: VendorContactChange, idempotencyKey: string): Promise<VendorContact> {
+    return this.command<VendorContact>(`/api/admin/catalogs/vendors/${encodeURIComponent(vendorId)}/contacts`, payload, idempotencyKey)
+  }
+
+  async updateVendorContact(
+    vendorId: AdminCatalogEntry['id'],
+    id: VendorContact['id'],
+    payload: VendorContactChange,
+    idempotencyKey: string
+  ): Promise<VendorContact> {
+    return this.command<VendorContact>(
+      `/api/admin/catalogs/vendors/${encodeURIComponent(vendorId)}/contacts/${encodeURIComponent(id)}`,
+      payload,
+      idempotencyKey,
+      'PATCH'
+    )
   }
 
   async listCatalogChangeEvents(query: CatalogChangeEventListParams = {}): Promise<PageCatalogChangeEvent> {

@@ -26,7 +26,12 @@ public class AuditJournalRepository {
                    a.object_type, a.object_id, a.object_name, a.details, a.request_id
             FROM audit_events a
             UNION ALL
-            SELECT e.id, e.occurred_at, 'PROFILE', 'PROFILE_CHANGED', e.actor_profile_id, e.actor_display_name,
+            SELECT e.id, e.occurred_at, 'PROFILE',
+                   CASE WHEN e.previous_enrolment_operator <> e.enrolment_operator
+                             AND e.previous_display_name = e.display_name AND e.previous_role = e.role
+                             AND e.previous_team_id IS NOT DISTINCT FROM e.team_id AND e.previous_active = e.active
+                        THEN 'ENROLMENT_OPERATOR_CHANGED' ELSE 'PROFILE_CHANGED' END,
+                   e.actor_profile_id, e.actor_display_name,
                    'PROFILE', e.profile_id, p.display_name,
                    CONCAT_WS('; ',
                        CASE WHEN e.previous_display_name <> e.display_name
@@ -36,7 +41,10 @@ public class AuditJournalRepository {
                        CASE WHEN e.previous_team_id IS DISTINCT FROM e.team_id
                             THEN 'команда: ' || COALESCE(pt.name, 'без команды') || ' → ' || COALESCE(t.name, 'без команды') END,
                        CASE WHEN e.previous_active <> e.active
-                            THEN CASE WHEN e.active THEN 'доступ открыт' ELSE 'доступ закрыт' END END),
+                            THEN CASE WHEN e.active THEN 'доступ открыт' ELSE 'доступ закрыт' END END,
+                       CASE WHEN e.previous_enrolment_operator <> e.enrolment_operator
+                            THEN CASE WHEN e.enrolment_operator THEN 'флаг «Оператор зачисления» назначен'
+                                      ELSE 'флаг «Оператор зачисления» снят' END END),
                    e.request_id
             FROM crm_profile_events e
             JOIN crm_user_profiles p ON p.id = e.profile_id
@@ -62,7 +70,9 @@ public class AuditJournalRepository {
             JOIN teams t ON t.id = e.team_id
             UNION ALL
             SELECT r.id, r.created_at, 'SYNC', 'SYNC_STARTED', r.started_by, p.display_name,
-                   'SOURCE', CAST(NULL AS UUID), CASE r.source WHEN 'WEBSITE' THEN 'Сайт' ELSE 'Moodle' END,
+                   'SOURCE', CAST(NULL AS UUID),
+                   CASE WHEN r.run_trigger = 'UPLOAD' THEN 'Сайт: загрузка файла оплат'
+                        WHEN r.source = 'WEBSITE' THEN 'Сайт' ELSE 'Moodle' END,
                    CASE r.status WHEN 'SUCCEEDED' THEN 'выполнена' WHEN 'FAILED' THEN 'завершилась ошибкой'
                                  WHEN 'RUNNING' THEN 'выполняется' ELSE 'в очереди' END
                        || '; получено: ' || CAST(r.fetched_count AS VARCHAR(12))
@@ -113,7 +123,7 @@ public class AuditJournalRepository {
                 .update();
     }
 
-    public void recordAttachmentDownload(UUID actorProfileId, UUID attachmentId, String requestId) {
+    public void recordAttachmentAccess(AuditAction action, UUID actorProfileId, UUID attachmentId, String requestId) {
         jdbcClient.sql("""
                 INSERT INTO audit_events (
                     id, category, action, actor_profile_id, actor_display_name,
@@ -129,8 +139,8 @@ public class AuditJournalRepository {
                 WHERE a.id = :attachmentId
                 """)
                 .param("id", UUID.randomUUID())
-                .param("category", AuditAction.ATTACHMENT_DOWNLOADED.category().name())
-                .param("action", AuditAction.ATTACHMENT_DOWNLOADED.name())
+                .param("category", action.category().name())
+                .param("action", action.name())
                 .param("actorProfileId", actorProfileId)
                 .param("attachmentId", attachmentId)
                 .param("requestId", requestId)
@@ -186,6 +196,22 @@ public class AuditJournalRepository {
                 .param("action", action.name())
                 .query(this::mapEntry)
                 .optional();
+    }
+
+    public List<AuditEntry> findByObject(String objectType, UUID objectId, int limit) {
+        return jdbcClient.sql("""
+                SELECT id, occurred_at, category, action, actor_profile_id, actor_display_name,
+                       object_type, object_id, object_name, details, request_id
+                FROM audit_events
+                WHERE object_type = :objectType AND object_id = :objectId
+                ORDER BY occurred_at DESC, id DESC
+                LIMIT :limit
+                """)
+                .param("objectType", objectType)
+                .param("objectId", objectId)
+                .param("limit", limit)
+                .query(this::mapEntry)
+                .list();
     }
 
     public int deleteOlderThan(OffsetDateTime cutoff) {

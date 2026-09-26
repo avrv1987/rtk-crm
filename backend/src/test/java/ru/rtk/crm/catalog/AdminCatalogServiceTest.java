@@ -33,6 +33,8 @@ import ru.rtk.crm.interaction.InteractionValidationException;
 @Import({
         AdminCatalogRepository.class,
         AdminCatalogService.class,
+        VendorContactRepository.class,
+        VendorContactService.class,
         CatalogRepository.class,
         CatalogChangeEventRepository.class,
         CommandIdempotencyRepository.class,
@@ -55,6 +57,9 @@ class AdminCatalogServiceTest {
     private AdminCatalogService service;
 
     @Autowired
+    private VendorContactService vendorContactService;
+
+    @Autowired
     private CatalogRepository catalogRepository;
 
     @Autowired
@@ -67,7 +72,7 @@ class AdminCatalogServiceTest {
     void setUp() {
         createSchema();
         for (String table : List.of(
-                "catalog_change_events", "command_idempotency_records", "products", "vendors", "programs", "directions",
+                "catalog_change_events", "command_idempotency_records", "vendor_contacts", "products", "vendors", "programs", "directions",
                 "crm_user_profiles"
         )) {
             jdbcTemplate.update("DELETE FROM " + table);
@@ -111,6 +116,78 @@ class AdminCatalogServiceTest {
     }
 
     @Test
+    void vendorNameRuleRejectsSecondSpellingButAllowsRenamingTheSameVendor() {
+        AdminCatalogEntry vendor = service.create(admin, CatalogKind.VENDORS, new CatalogEntryRequest("ООО «Базис»", null, null, null),
+                "basis", REQUEST_ID);
+
+        assertThatThrownBy(() -> service.create(admin, CatalogKind.VENDORS, new CatalogEntryRequest("Базис", null, null, null),
+                "basis-short", REQUEST_ID))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                        assertThat(exception.getMessage()).contains("«ООО «Базис»» уже есть"));
+        AdminCatalogEntry renamed = service.update(admin, CatalogKind.VENDORS, vendor.id(),
+                new CatalogEntryRequest("АО «Базис»", null, null, 0), "basis-rename", REQUEST_ID);
+
+        assertThat(renamed.name()).isEqualTo("АО «Базис»");
+    }
+
+    @Test
+    void vendorContactsAreLinkedToProductsOfTheirVendorAndJournaledWithoutContactValues() {
+        AdminCatalogEntry vendor = service.create(admin, CatalogKind.VENDORS, new CatalogEntryRequest("ООО «Базис»", null, null, null),
+                "basis", REQUEST_ID);
+        AdminCatalogEntry product = service.create(admin, CatalogKind.PRODUCTS,
+                new CatalogEntryRequest("Базис Dynamix", vendor.id(), null, null), "dynamix", REQUEST_ID);
+        AdminCatalogEntry otherProduct = service.create(admin, CatalogKind.PRODUCTS,
+                new CatalogEntryRequest("Чужой продукт", VENDOR, null, null), "other", REQUEST_ID);
+        VendorContactRequest request = new VendorContactRequest(" Контакт  вендора Демо ", "8 (900) 100-00-01", "demo@example.test",
+                true, false, null, List.of(product.id()), null);
+
+        VendorContact contact = vendorContactService.create(admin, vendor.id(), request, "contact", REQUEST_ID);
+
+        assertThat(vendorContactService.create(admin, vendor.id(), request, "contact", REQUEST_ID)).isEqualTo(contact);
+        assertThat(contact.name()).isEqualTo("Контакт вендора Демо");
+        assertThat(contact.phone()).isEqualTo("+79001000001");
+        assertThat(contact.products()).extracting(CatalogReference::id).containsExactly(product.id());
+        assertThatThrownBy(() -> vendorContactService.create(admin, vendor.id(), new VendorContactRequest("Второй", null,
+                "DEMO@example.test", null, null, null, null, null), "duplicate", REQUEST_ID))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                        assertThat(exception.field()).isEqualTo("email"));
+        assertThatThrownBy(() -> vendorContactService.create(admin, vendor.id(), new VendorContactRequest("Третий", null, null,
+                null, null, null, List.of(otherProduct.id()), null), "foreign-product", REQUEST_ID))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                        assertThat(exception.field()).isEqualTo("productIds"));
+        assertThatThrownBy(() -> vendorContactService.create(admin, vendor.id(), new VendorContactRequest("Четвёртый", "12345",
+                null, null, null, null, null, null), "bad-phone", REQUEST_ID))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
+                    assertThat(exception.field()).isEqualTo("phone");
+                    assertThat(exception.getMessage()).doesNotContain("12345");
+                });
+        assertThatThrownBy(() -> vendorContactService.create(leader, vendor.id(), request, "leader", REQUEST_ID))
+                .isInstanceOf(AdminCrmProfileAccessDeniedException.class);
+
+        VendorContact changed = vendorContactService.update(admin, vendor.id(), contact.id(), new VendorContactRequest(null,
+                "+7 (900) 100-00-11", null, null, true, null, null, 0), "phone", REQUEST_ID);
+        assertThatThrownBy(() -> vendorContactService.update(admin, vendor.id(), contact.id(), new VendorContactRequest(null,
+                "+7 900 100-00-12", null, null, null, null, null, 0), "stale", REQUEST_ID))
+                .isInstanceOfSatisfying(InteractionConflictException.class, exception ->
+                        assertThat(exception.currentVersion()).isEqualTo(1));
+        VendorContact archived = vendorContactService.update(admin, vendor.id(), contact.id(), new VendorContactRequest(null, null,
+                null, null, null, true, null, changed.version()), "archive", REQUEST_ID);
+
+        assertThat(changed.phone()).isEqualTo("+79001000011");
+        assertThat(changed.prefersTelegram()).isTrue();
+        assertThat(archived.archived()).isTrue();
+        assertThat(archived.products()).isEmpty();
+        assertThat(jdbcTemplate.queryForObject("SELECT vendor_contact_id FROM products WHERE id = ?", UUID.class, product.id())).isNull();
+        assertThat(catalogChangeEventRepository.findPage(CatalogEntityType.VENDOR_CONTACT, 0, 10).items())
+                .extracting(CatalogChangeEvent::action)
+                .containsExactlyInAnyOrder(CatalogChangeAction.CREATE, CatalogChangeAction.UPDATE, CatalogChangeAction.UPDATE,
+                        CatalogChangeAction.ARCHIVE);
+        assertThat(catalogChangeEventRepository.findPage(CatalogEntityType.VENDOR_CONTACT, 0, 10).items())
+                .extracting(CatalogChangeEvent::changes)
+                .noneMatch(changes -> changes != null && (changes.contains("example.test") || changes.contains("900")));
+    }
+
+    @Test
     void archivedProgramDisappearsFromChoiceAndRenameIsJournaledWithVersionCheck() {
         AdminCatalogEntry renamed = service.update(admin, CatalogKind.PROGRAMS, PROGRAM,
                 new CatalogEntryRequest("UAT-программа (испр.)", null, null, 0), "program-rename", REQUEST_ID);
@@ -150,7 +227,7 @@ class AdminCatalogServiceTest {
     private void createSchema() {
         List.of(
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL)
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL)
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS directions (
@@ -178,10 +255,20 @@ class AdminCatalogServiceTest {
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS products (
-                    id UUID PRIMARY KEY, external_key VARCHAR(200) UNIQUE, vendor_id UUID NOT NULL,
+                    id UUID PRIMARY KEY, vendor_contact_id UUID, external_key VARCHAR(200) UNIQUE, vendor_id UUID NOT NULL,
                     name VARCHAR(200) NOT NULL, archived BOOLEAN NOT NULL, version INTEGER NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, UNIQUE (vendor_id, name)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS vendor_contacts (
+                    id UUID PRIMARY KEY, vendor_id UUID NOT NULL, name VARCHAR(200) NOT NULL, phone VARCHAR(16),
+                    email VARCHAR(320), prefers_email BOOLEAN DEFAULT FALSE NOT NULL,
+                    prefers_telegram BOOLEAN DEFAULT FALSE NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL,
+                    personal_data_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, external_key VARCHAR(200) UNIQUE,
+                    version INTEGER DEFAULT 0 NOT NULL, created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
                 """

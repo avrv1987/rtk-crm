@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.catalog.VendorContactRepository.VendorContactValues;
 
 @Repository
 public class CatalogImportRepository {
@@ -41,6 +42,16 @@ public class CatalogImportRepository {
                    agreement.archived_at
             FROM product_agreements agreement
             JOIN interactions interaction ON interaction.id = agreement.interaction_id
+            """;
+
+    private static final String VENDOR_CONTACT_COLUMNS = """
+            SELECT id, external_key, vendor_id, name, phone, email, prefers_email, prefers_telegram, archived,
+                   personal_data_status, version
+            FROM vendor_contacts
+            """;
+    private static final String VENDOR_PRODUCT_COLUMNS = """
+            SELECT id, external_key, name, vendor_id, vendor_contact_id, version
+            FROM products
             """;
 
     private final JdbcClient jdbcClient;
@@ -375,12 +386,15 @@ public class CatalogImportRepository {
             int expectedVersion,
             OffsetDateTime now
     ) {
+        String contactReset = PRODUCTS.equals(table)
+                ? "vendor_contact_id = CASE WHEN vendor_id = :parentId THEN vendor_contact_id END, "
+                : "";
         return jdbcClient.sql("""
                 UPDATE %s
-                SET %s = :parentId, name = :name, external_key = COALESCE(external_key, :externalKey),
+                SET %s%s = :parentId, name = :name, external_key = COALESCE(external_key, :externalKey),
                     version = version + 1, updated_at = :updatedAt
                 WHERE id = :id AND version = :expectedVersion
-                """.formatted(table, parentColumn(table)))
+                """.formatted(table, contactReset, parentColumn(table)))
                 .param("id", id)
                 .param("externalKey", externalKey)
                 .param("parentId", parentId)
@@ -400,6 +414,115 @@ public class CatalogImportRepository {
                 .param("value", id == null ? externalKey : id)
                 .query(this::mapContact)
                 .optional();
+    }
+
+    public List<ImportVendorContact> findVendorContacts() {
+        return jdbcClient.sql(VENDOR_CONTACT_COLUMNS).query(this::mapVendorContact).list();
+    }
+
+    public Optional<ImportVendorContact> findVendorContact(UUID id, String externalKey) {
+        String condition = id == null ? " WHERE external_key = :value" : " WHERE id = :value";
+        return jdbcClient.sql(VENDOR_CONTACT_COLUMNS + condition)
+                .param("value", id == null ? externalKey : id)
+                .query(this::mapVendorContact)
+                .optional();
+    }
+
+    public void insertVendorContact(
+            UUID id,
+            String externalKey,
+            UUID vendorId,
+            VendorContactValues values,
+            UUID createdBy,
+            OffsetDateTime now
+    ) {
+        jdbcClient.sql("""
+                INSERT INTO vendor_contacts (
+                    id, external_key, vendor_id, name, phone, email, prefers_email, prefers_telegram, archived, version,
+                    created_by, created_at, updated_at
+                ) VALUES (
+                    :id, :externalKey, :vendorId, :name, :phone, :email, :prefersEmail, :prefersTelegram, FALSE, 0,
+                    :createdBy, :now, :now
+                )
+                """)
+                .param("id", id)
+                .param("externalKey", externalKey)
+                .param("vendorId", vendorId)
+                .param("name", values.name())
+                .param("phone", values.phone())
+                .param("email", values.email())
+                .param("prefersEmail", values.prefersEmail())
+                .param("prefersTelegram", values.prefersTelegram())
+                .param("createdBy", createdBy)
+                .param("now", now)
+                .update();
+    }
+
+    public boolean updateVendorContact(
+            UUID id,
+            String externalKey,
+            VendorContactValues values,
+            int expectedVersion,
+            OffsetDateTime now
+    ) {
+        return jdbcClient.sql("""
+                UPDATE vendor_contacts
+                SET name = :name, phone = :phone, email = :email, prefers_email = :prefersEmail,
+                    prefers_telegram = :prefersTelegram, archived = FALSE,
+                    external_key = COALESCE(external_key, :externalKey), version = version + 1, updated_at = :now
+                WHERE id = :id AND version = :expectedVersion
+                """)
+                .param("id", id)
+                .param("externalKey", externalKey)
+                .param("name", values.name())
+                .param("phone", values.phone())
+                .param("email", values.email())
+                .param("prefersEmail", values.prefersEmail())
+                .param("prefersTelegram", values.prefersTelegram())
+                .param("expectedVersion", expectedVersion)
+                .param("now", now)
+                .update() == 1;
+    }
+
+    public List<ImportVendorProduct> findVendorProducts() {
+        return jdbcClient.sql(VENDOR_PRODUCT_COLUMNS).query(this::mapVendorProduct).list();
+    }
+
+    public Optional<ImportVendorProduct> findVendorProduct(UUID id, String externalKey) {
+        String condition = id == null ? " WHERE external_key = :value" : " WHERE id = :value";
+        return jdbcClient.sql(VENDOR_PRODUCT_COLUMNS + condition)
+                .param("value", id == null ? externalKey : id)
+                .query(this::mapVendorProduct)
+                .optional();
+    }
+
+    public void insertVendorProduct(UUID id, String externalKey, UUID vendorId, String name, UUID contactId, OffsetDateTime now) {
+        jdbcClient.sql("""
+                INSERT INTO products (id, external_key, vendor_id, name, vendor_contact_id, archived, version, created_at, updated_at)
+                VALUES (:id, :externalKey, :vendorId, :name, :contactId, FALSE, 0, :now, :now)
+                """)
+                .param("id", id)
+                .param("externalKey", externalKey)
+                .param("vendorId", vendorId)
+                .param("name", name)
+                .param("contactId", contactId)
+                .param("now", now)
+                .update();
+    }
+
+    public boolean updateVendorProduct(UUID id, String externalKey, UUID contactId, int expectedVersion, OffsetDateTime now) {
+        return jdbcClient.sql("""
+                UPDATE products
+                SET vendor_contact_id = :contactId, external_key = COALESCE(external_key, :externalKey),
+                    version = version + 1, updated_at = :now
+                WHERE id = :id AND version = :expectedVersion
+                """)
+                .param("id", id)
+                .param("externalKey", externalKey)
+                .param("contactId", contactId)
+                .param("expectedVersion", expectedVersion)
+                .param("now", now)
+                .update() == 1;
     }
 
     public List<ImportAgreement> findAgreements() {
@@ -809,6 +932,35 @@ public class CatalogImportRepository {
         );
     }
 
+    private ImportVendorContact mapVendorContact(ResultSet resultSet, int rowNumber) throws SQLException {
+        return new ImportVendorContact(
+                resultSet.getObject("id", UUID.class),
+                resultSet.getString("external_key"),
+                resultSet.getObject("vendor_id", UUID.class),
+                new VendorContactValues(
+                        resultSet.getString("name"),
+                        resultSet.getString("phone"),
+                        resultSet.getString("email"),
+                        resultSet.getBoolean("prefers_email"),
+                        resultSet.getBoolean("prefers_telegram"),
+                        resultSet.getBoolean("archived")
+                ),
+                resultSet.getInt("version"),
+                "ACTIVE".equals(resultSet.getString("personal_data_status"))
+        );
+    }
+
+    private ImportVendorProduct mapVendorProduct(ResultSet resultSet, int rowNumber) throws SQLException {
+        return new ImportVendorProduct(
+                resultSet.getObject("id", UUID.class),
+                resultSet.getString("external_key"),
+                resultSet.getString("name"),
+                resultSet.getObject("vendor_id", UUID.class),
+                resultSet.getObject("vendor_contact_id", UUID.class),
+                resultSet.getInt("version")
+        );
+    }
+
     private ImportAgreement mapAgreement(ResultSet resultSet, int rowNumber) throws SQLException {
         return new ImportAgreement(
                 resultSet.getObject("id", UUID.class),
@@ -909,6 +1061,20 @@ record ImportContact(
 }
 
 record AgreementValues(String contractNumber, Boolean licenseSigned, Integer licenseExpiryYear, String transferStatus) {
+}
+
+record ImportVendorContact(
+        UUID id,
+        String externalKey,
+        UUID vendorId,
+        VendorContactValues values,
+        int version,
+        boolean personalDataActive
+) implements ImportKeyed {
+}
+
+record ImportVendorProduct(UUID id, String externalKey, String name, UUID vendorId, UUID contactId, int version)
+        implements ImportKeyed {
 }
 
 record ImportAgreement(

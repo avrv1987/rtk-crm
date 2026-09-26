@@ -22,7 +22,7 @@ type EventsState =
   | { kind: 'ready'; events: OrganizationAssignmentEvent[]; deputies: OrganizationDeputy[] }
   | { kind: 'failed'; requestId?: string }
 
-const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' })
+const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Moscow' })
 
 const formatDateTime = (value: string) => {
   const date = new Date(value)

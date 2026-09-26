@@ -80,7 +80,7 @@ type DetailState =
   | { kind: 'idle' }
   | { kind: 'loading'; id: Interaction['id'] }
   | { kind: 'ready'; interaction: Interaction }
-  | { kind: 'failed'; id: Interaction['id']; requestId?: string }
+  | { kind: 'failed'; id: Interaction['id']; requestId?: string; code?: string }
 
 type EventsState =
   | { kind: 'idle' }
@@ -139,7 +139,8 @@ const templatesPageSize = 25
 
 const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', {
   dateStyle: 'medium',
-  timeStyle: 'short'
+  timeStyle: 'short',
+  timeZone: 'Europe/Moscow'
 })
 
 const eventLabel: Record<InteractionEvent['type'], string> = {
@@ -392,6 +393,8 @@ const stagePath = (interaction: Interaction, events: InteractionEvent[] | undefi
     return { stage, status: events !== undefined && stage.order < currentOrder ? 'skipped' : 'future' }
   })
 }
+
+const offered = (contact: Contact) => !contact.inactive && (contact.personalDataStatus ?? 'ACTIVE') === 'ACTIVE'
 
 const stagePathLabel = (item: StagePathItem) => {
   if (item.status === 'current') {
@@ -658,6 +661,7 @@ export const InteractionsPanel = ({
       const contacts = await apiClient.listOrganizationContacts(organizationId)
       if (requestVersion === contactsRequestVersion.current) {
         setContactsState({ kind: 'ready', contacts })
+        setSelectedContactIds((ids) => ids.filter((id) => contacts.some((contact) => contact.id === id && offered(contact))))
       }
     } catch (error) {
       if (requestVersion !== contactsRequestVersion.current) {
@@ -793,7 +797,7 @@ export const InteractionsPanel = ({
         onProfileUnavailable(error.requestId)
         return
       }
-      setDetailState({ kind: 'failed', id, requestId: requestIdOf(error) })
+      setDetailState({ kind: 'failed', id, requestId: requestIdOf(error), code: error instanceof ApiError ? error.code : undefined })
     }
   }, [onProfileUnavailable, onSessionExpired])
 
@@ -1886,12 +1890,11 @@ export const InteractionsPanel = ({
           {contactsState.kind === 'loading' && <p>Загружаем доступные контакты…</p>}
           {contactsState.kind === 'failed' && <p>Контакты пока недоступны. Их можно повторно загрузить выше.</p>}
           {contactsState.kind === 'ready' && (
-            contactsState.contacts.every((contact) => contact.inactive && !selectedContactIds.includes(contact.id)) ? (
+            !contactsState.contacts.some(offered) ? (
               <p>Сначала добавьте действующий контакт организации.</p>
             ) : (
               <ul>
-                {contactsState.contacts.filter((contact) => (contact.personalDataStatus ?? 'ACTIVE') === 'ACTIVE'
-                  && (!contact.inactive || selectedContactIds.includes(contact.id))).map((contact) => (
+                {contactsState.contacts.filter(offered).map((contact) => (
                   <li key={contact.id}>
                     <label>
                       <input
@@ -1902,7 +1905,6 @@ export const InteractionsPanel = ({
                       <span>{contact.name}</span>
                       {contact.position && <small>{contact.position}</small>}
                       {contact.role && <small>{contactRoleLabels[contact.role]}</small>}
-                      {contact.inactive && <small>Не актуален: снимите отметку</small>}
                     </label>
                   </li>
                 ))}
@@ -2080,10 +2082,16 @@ export const InteractionsPanel = ({
         {detailState.kind === 'loading' && (
           <p className="organizations-message" role="status">Загружаем карточку взаимодействия…</p>
         )}
-        {detailState.kind === 'failed' && (
+        {detailState.kind === 'failed' && detailState.code === 'NOT_FOUND' && (
+          <div className="organizations-message organizations-message--error" role="alert">
+            <p>Взаимодействие не найдено. Возможно, его удалили или у вас больше нет к нему доступа.</p>
+            <SupportDetails requestId={detailState.requestId} code={detailState.code} />
+          </div>
+        )}
+        {detailState.kind === 'failed' && detailState.code !== 'NOT_FOUND' && (
           <div className="organizations-message organizations-message--error" role="alert">
             <p>Не удалось загрузить карточку взаимодействия. Повторите попытку.</p>
-            <SupportDetails requestId={detailState.requestId} />
+            <SupportDetails requestId={detailState.requestId} code={detailState.code} />
             <button type="button" onClick={() => openInteraction(detailState.id)}>Повторить</button>
           </div>
         )}
@@ -2095,7 +2103,7 @@ export const InteractionsPanel = ({
                 <dd>{currentInteraction.title}</dd>
               </div>
               <div>
-                <dt>Текущий этап</dt>
+                <dt>Этап</dt>
                 <dd>{currentInteraction.currentStageName}</dd>
               </div>
               <div>
@@ -2228,6 +2236,7 @@ export const InteractionsPanel = ({
             />
 
             <InteractionCycles
+              key={`cycles:${currentInteraction.id}`}
               interaction={currentInteraction}
               canEdit={canManageDailyWork}
               onOpen={openInteraction}

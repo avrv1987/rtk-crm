@@ -39,6 +39,7 @@ type ProfileDraft = {
   role: CrmProfile['role']
   teamId: string
   active: boolean
+  enrolmentOperator: boolean
 }
 
 type EditState = {
@@ -77,11 +78,14 @@ const statusOf = (profile: CrmProfile) => {
 
 const teamLabel = (teamName: string | null) => teamName ?? 'Без команды'
 
+const operatorAllowed = (role: CrmProfile['role']) => role === 'USER' || role === 'LEADER'
+
 const draftOf = (profile: CrmProfile): ProfileDraft => ({
   displayName: profile.displayName,
   role: profile.role,
   teamId: profile.teamId ?? '',
-  active: profile.active
+  active: profile.active,
+  enrolmentOperator: profile.enrolmentOperator
 })
 
 const updateOf = (profile: CrmProfile, draft: ProfileDraft): CrmProfileUpdate => {
@@ -99,11 +103,16 @@ const updateOf = (profile: CrmProfile, draft: ProfileDraft): CrmProfileUpdate =>
   if (draft.active !== profile.active) {
     update.active = draft.active
   }
+  const enrolmentOperator = draft.enrolmentOperator && operatorAllowed(draft.role)
+  if (enrolmentOperator !== profile.enrolmentOperator && (enrolmentOperator || update.role === undefined)) {
+    update.enrolmentOperator = enrolmentOperator
+  }
   return update
 }
 
 const changesAccess = (update: CrmProfileUpdate) => (
   update.role !== undefined || update.teamId !== undefined || update.active !== undefined
+  || update.enrolmentOperator !== undefined
 )
 
 const teamNameById = (teams: Team[], teamId: string | null | undefined) => (
@@ -131,6 +140,14 @@ const accessSummary = (profile: CrmProfile, update: CrmProfileUpdate, teams: Tea
   if (update.role === 'MANAGEMENT') {
     lines.push('Роль «Руководство»: просмотр карточек и отчётов всех команд без права изменений; команда не требуется.')
   }
+  if (update.enrolmentOperator !== undefined) {
+    lines.push(update.enrolmentOperator
+      ? 'Флаг «Оператор зачисления»: появится раздел «Зачисление» и загрузка файла оплат с данными слушателей, если включён модуль «Слушатели».'
+      : 'Флаг «Оператор зачисления» снимается: раздел «Зачисление» закроется.')
+  }
+  if (profile.enrolmentOperator && update.role !== undefined && !operatorAllowed(update.role)) {
+    lines.push('Флаг «Оператор зачисления» будет снят: он доступен только КАМ и руководителю.')
+  }
   lines.push('Новые права действуют со следующего запроса пользователя; ранее сформированные им отчёты станут недоступны для скачивания.')
   return lines
 }
@@ -148,6 +165,9 @@ const eventChanges = (event: CrmProfileEvent) => {
   }
   if (event.previousActive !== event.active) {
     changes.push(event.active ? 'Доступ открыт' : 'Доступ закрыт')
+  }
+  if (event.previousEnrolmentOperator !== event.enrolmentOperator) {
+    changes.push(event.enrolmentOperator ? 'Назначен флаг «Оператор зачисления»' : 'Снят флаг «Оператор зачисления»')
   }
   return changes
 }
@@ -431,6 +451,18 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
           />
           Доступ к CRM открыт
         </label>
+        <label className="admin-profile-form__checkbox">
+          <input
+            type="checkbox"
+            checked={edit.draft.enrolmentOperator && operatorAllowed(edit.draft.role)}
+            disabled={edit.saving || !operatorAllowed(edit.draft.role)}
+            onChange={(event) => changeDraft({ enrolmentOperator: event.target.checked })}
+          />
+          Оператор зачисления: загрузка оплат и данные слушателей
+        </label>
+        {!operatorAllowed(edit.draft.role) && (
+          <p className="admin-profile-form__hint">Флаг «Оператор зачисления» доступен только КАМ и руководителю команды.</p>
+        )}
         {isCurrentProfile && (
           <p className="admin-profile-form__hint">Свою роль, команду и доступ изменить нельзя — это делает другой администратор.</p>
         )}
@@ -627,6 +659,12 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
                             <dt>Ревизия доступа</dt>
                             <dd>{profile.accessRevision}</dd>
                           </div>
+                          {profile.enrolmentOperator && (
+                            <div>
+                              <dt>Флаг</dt>
+                              <dd>Оператор зачисления</dd>
+                            </div>
+                          )}
                           {profile.login && (
                             <div>
                               <dt>Логин</dt>

@@ -48,7 +48,7 @@ final class SubjectTerms {
 
     static SubjectTerms of(SubjectQuery query) {
         if (query == null) {
-            throw new InteractionValidationException("name", "Укажите ФИО, почту, телефон или другое написание");
+            throw new InteractionValidationException("name", "Укажите ФИО, почту, телефон, СНИЛС или другое написание");
         }
         SubjectTerms terms = empty();
         String name = validatedText(query.name(), "name");
@@ -79,8 +79,8 @@ final class SubjectTerms {
                 }
             }
         }
-        if (terms.isEmpty()) {
-            throw new InteractionValidationException("name", "Укажите ФИО, почту, телефон или другое написание");
+        if (terms.isEmpty() && (query.snils() == null || query.snils().isBlank())) {
+            throw new InteractionValidationException("name", "Укажите ФИО, почту, телефон, СНИЛС или другое написание");
         }
         return terms;
     }

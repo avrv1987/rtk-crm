@@ -3,6 +3,7 @@ package ru.rtk.crm.source;
 import java.util.List;
 import java.util.UUID;
 
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import ru.rtk.crm.access.CurrentProfileService;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.security.RequestId;
 
 @RestController
 @RequestMapping("/api/admin")
@@ -78,10 +80,11 @@ public class SourcesApiController {
     public ResponseEntity<SourceOrganizationCreated> createOrganization(
             @AuthenticationPrincipal OidcUser user,
             @PathVariable String id,
-            @RequestBody(required = false) SourceOrganizationCreateRequest request
+            @RequestBody(required = false) SourceOrganizationCreateRequest request,
+            HttpServletRequest httpRequest
     ) {
         return ResponseEntity.status(HttpStatus.CREATED).body(sourceReviewService.createOrganization(
-                currentProfileService.requireActiveProfile(user), parseUuid(id), request));
+                currentProfileService.requireActiveProfile(user), parseUuid(id), request, RequestId.from(httpRequest)));
     }
 
     @GetMapping("/source-mappings")

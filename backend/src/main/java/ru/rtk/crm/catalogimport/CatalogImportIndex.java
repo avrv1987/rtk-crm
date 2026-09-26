@@ -9,6 +9,8 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 
+import ru.rtk.crm.catalog.CatalogNames;
+
 final class CatalogImportIndex<T extends ImportKeyed> {
     private final Map<UUID, T> byId = new HashMap<>();
     private final Map<String, T> byKey = new HashMap<>();
@@ -46,5 +48,9 @@ final class CatalogImportIndex<T extends ImportKeyed> {
 
     static String naturalKey(Object parent, String name) {
         return (parent == null ? "" : parent.toString()) + "|" + normalized(name);
+    }
+
+    static String productKey(Object parent, String name) {
+        return (parent == null ? "" : parent.toString()) + "|" + CatalogNames.normalized(name);
     }
 }

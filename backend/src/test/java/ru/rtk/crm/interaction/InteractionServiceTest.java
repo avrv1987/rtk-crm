@@ -364,6 +364,25 @@ class InteractionServiceTest {
     }
 
     @Test
+    void contactWithRestrictedProcessingIsRejectedWithItsOwnReason() {
+        Contact contact = contactService.create(
+                profileA,
+                ORGANIZATION_A,
+                new ContactCreateRequest("Иван Контактов", null, null, null),
+                "contact-restricted"
+        );
+        jdbcTemplate.update("UPDATE contacts SET personal_data_status = 'RESTRICTED' WHERE id = ?", contact.id());
+
+        assertThatThrownBy(() -> interactionService.create(
+                profileA,
+                new InteractionCreateRequest(ORGANIZATION_A, "Работа с ограниченным контактом", null, null, List.of(contact.id())),
+                "create-restricted-contact"
+        )).isInstanceOf(InteractionValidationException.class)
+                .hasMessage("Обработка данных контакта ограничена или контакт обезличен; выберите другой контакт");
+        assertThat(count("interactions")).isZero();
+    }
+
+    @Test
     void rejectsUnknownContactWithoutBlockingVisibleContactList() {
         Contact contact = contactService.create(
                 profileA,
@@ -2261,7 +2280,7 @@ class InteractionServiceTest {
 
         assertThat(replayed).isEqualTo(afterDeletion);
         assertThat(afterDeletion.version()).isEqualTo(1);
-        assertThat(afterDeletion.attachments()).extracting(Attachment::id).containsExactly(secondVersion.id(), leaderAct.id());
+        assertThat(afterDeletion.attachments()).extracting(Attachment::id).containsExactlyInAnyOrder(secondVersion.id(), leaderAct.id());
         assertThatThrownBy(() -> attachments.get(profileA, contract.id())).isInstanceOf(AttachmentNotFoundException.class);
         assertThatThrownBy(() -> attachments.download(profileA, contract.id())).isInstanceOf(AttachmentNotFoundException.class);
         assertThat(jdbcTemplate.queryForObject("SELECT deleted_by FROM attachments WHERE id = ?", UUID.class, contract.id()))
@@ -2284,6 +2303,14 @@ class InteractionServiceTest {
     void kamRecordsContractLicenseAndTransfersPerProductWithHistoryReplayAndConflicts() {
         UUID secureId = insertProduct("Защищённая связь", false);
         UUID cloudId = insertProduct("Облачная платформа", false);
+        UUID vendorContactId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO vendor_contacts (id, vendor_id, name, phone, email, prefers_telegram, created_by, created_at, updated_at)
+                SELECT ?, vendor_id, 'Контакт вендора Демо', '+79001000001', 'vendor@example.test', TRUE, ?,
+                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                FROM products WHERE id = ?
+                """, vendorContactId, MANAGER_A, secureId);
+        jdbcTemplate.update("UPDATE products SET vendor_contact_id = ? WHERE id = ?", vendorContactId, secureId);
         Interaction created = interactionService.create(
                 profileA,
                 new InteractionCreateRequest(ORGANIZATION_A, "Договор по продуктам", null, null, List.of(), null,
@@ -2312,8 +2339,11 @@ class InteractionServiceTest {
             assertThat(agreement.licenseExpiryYear()).isEqualTo(2027);
             assertThat(agreement.scanAttachmentId()).isEqualTo(scan.id());
             assertThat(agreement.vendorName()).startsWith("Вендор ");
+            assertThat(agreement.vendorContact()).isEqualTo(
+                    new VendorContactCard("Контакт вендора Демо", "+79001000001", "vendor@example.test", false, true));
         });
         assertThat(agreement(updated, cloudId)).satisfies(agreement -> {
+            assertThat(agreement.vendorContact()).isNull();
             assertThat(agreement.contractNumber()).isNull();
             assertThat(agreement.licenseSigned()).isNull();
             assertThat(agreement.scanAttachmentId()).isNull();
@@ -2701,7 +2731,7 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -2788,11 +2818,21 @@ class InteractionServiceTest {
                 """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS products (
-                    id UUID PRIMARY KEY,
+                    id UUID PRIMARY KEY, vendor_contact_id UUID,
                     vendor_id UUID NOT NULL,
                     name VARCHAR(200) NOT NULL,
                     archived BOOLEAN NOT NULL,
                     version INTEGER NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS vendor_contacts (
+                    id UUID PRIMARY KEY, vendor_id UUID NOT NULL, name VARCHAR(200) NOT NULL, phone VARCHAR(16),
+                    email VARCHAR(320), prefers_email BOOLEAN DEFAULT FALSE NOT NULL,
+                    prefers_telegram BOOLEAN DEFAULT FALSE NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL,
+                    personal_data_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, external_key VARCHAR(200) UNIQUE,
+                    version INTEGER DEFAULT 0 NOT NULL, created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """);
         jdbcTemplate.execute("""

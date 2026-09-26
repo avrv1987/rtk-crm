@@ -19,6 +19,7 @@ public final class AdminCrmProfileUpdateRequest {
     private UUID teamId;
     private boolean teamIdPresent;
     private Boolean active;
+    private Boolean enrolmentOperator;
 
     @JsonCreator
     public AdminCrmProfileUpdateRequest(@JsonProperty(value = "version", required = true) Integer version) {
@@ -56,6 +57,10 @@ public final class AdminCrmProfileUpdateRequest {
         return active;
     }
 
+    public Boolean enrolmentOperator() {
+        return enrolmentOperator;
+    }
+
     @JsonSetter("displayName")
     public AdminCrmProfileUpdateRequest setDisplayName(String displayName) {
         this.displayName = displayName;
@@ -81,8 +86,14 @@ public final class AdminCrmProfileUpdateRequest {
         return this;
     }
 
+    @JsonSetter("enrolmentOperator")
+    public AdminCrmProfileUpdateRequest setEnrolmentOperator(Boolean enrolmentOperator) {
+        this.enrolmentOperator = enrolmentOperator;
+        return this;
+    }
+
     @JsonAnySetter
     public void rejectUnsupportedField(String field, Object value) {
-        throw new IllegalArgumentException("Only version, displayName, role, teamId and active are supported");
+        throw new IllegalArgumentException("Only version, displayName, role, teamId, active and enrolmentOperator are supported");
     }
 }

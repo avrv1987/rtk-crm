@@ -13,6 +13,7 @@ const browserRounds = (process.env.LOAD_BROWSER_ROUNDS || '30,60,92,120,150,180,
 const thinkMin = Number(process.env.LOAD_THINK_MIN_MS || 1000)
 const thinkMax = Number(process.env.LOAD_THINK_MAX_MS || 3000)
 const cdpPort = Number(process.env.LOAD_CDP_PORT || 9333)
+const httpOnly = process.env.LOAD_HTTP_LOGIN === '1'
 
 const readEnv = (file) => Object.fromEntries(
   fs.readFileSync(file, 'utf8').split(/\r?\n/)
@@ -20,7 +21,42 @@ const readEnv = (file) => Object.fromEntries(
     .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)])
 )
 
+if (process.argv[2] === '--self-test') {
+  const rewrite = (absoluteUrl, internalOrigin) => {
+    const target = new URL(absoluteUrl)
+    const base = new URL(internalOrigin)
+    target.protocol = base.protocol
+    target.host = base.host
+    return target.toString()
+  }
+  const check = (actual, expected, message) => {
+    if (actual !== expected) {
+      throw new Error(`${message}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
+    }
+  }
+  check(
+    rewrite('https://crm.example.ru/idp/realms/rtk-crm/protocol/openid-connect/auth?x=1', 'http://web:8080'),
+    'http://web:8080/idp/realms/rtk-crm/protocol/openid-connect/auth?x=1',
+    'toInternal keeps path and query, rewrites scheme and host'
+  )
+  const html = '<form id="kc-form-login" onsubmit="x" action="https://crm.example.ru/idp/realms/rtk-crm/login-actions/authenticate?session_code=a&amp;execution=b" method="post">'
+  const formTag = (html.match(/<form[^>]*id="kc-form-login"[^>]*>/) || [])[0]
+  check(Boolean(formTag), true, 'finds the Keycloak login form tag')
+  const action = (formTag.match(/action="([^"]+)"/) || [])[1]
+  check(action?.replace(/&amp;/g, '&'), 'https://crm.example.ru/idp/realms/rtk-crm/login-actions/authenticate?session_code=a&execution=b', 'extracts and unescapes the form action')
+  console.log('load-test.mjs --self-test: OK')
+  process.exit(0)
+}
+
 const origin = (readEnv(envFile).PUBLIC_ORIGIN || 'http://rtk.localhost:8081').replace(/\/$/, '')
+
+const toInternal = (absoluteUrl) => {
+  const target = new URL(absoluteUrl)
+  const base = new URL(origin)
+  target.protocol = base.protocol
+  target.host = base.host
+  return target.toString()
+}
 const credentials = Object.entries(readEnv(path.join(stateDir, 'users.env')))
   .sort(([a], [b]) => a.localeCompare(b))
   .slice(0, userLimit)
@@ -109,6 +145,50 @@ async function browserLogin(username, password) {
   const me = await page.evaluate("fetch('/api/me').then((response) => response.status)")
   assert(me === 200, `${username}: login returned to CRM without a session, /api/me ${me}`)
   return page
+}
+
+async function httpLogin(username, password) {
+  const cookies = new Map()
+  const hop = async (url, init) => {
+    const headers = { ...(init?.headers || {}) }
+    if (cookies.size > 0) {
+      headers.Cookie = [...cookies].map(([name, value]) => `${name}=${value}`).join('; ')
+    }
+    const response = await fetch(url, { ...init, headers, redirect: 'manual' })
+    for (const line of response.headers.getSetCookie()) {
+      const [pair] = line.split(';')
+      const index = pair.indexOf('=')
+      cookies.set(pair.slice(0, index).trim(), pair.slice(index + 1).trim())
+    }
+    return response
+  }
+  const followRedirects = async (start, startUrl) => {
+    let response = start
+    let current = startUrl
+    for (let hops = 0; hops < 10 && response.status >= 300 && response.status < 400; hops += 1) {
+      current = toInternal(new URL(response.headers.get('location'), current).toString())
+      response = await hop(current)
+    }
+    return { response, current }
+  }
+  const start = await followRedirects(await hop(origin + '/api/auth/login'), origin + '/api/auth/login')
+  assert(start.response.status === 200, `${username}: Keycloak did not return a login page (${start.response.status} at ${start.current})`)
+  const html = await start.response.text()
+  const formTag = (html.match(/<form[^>]*id="kc-form-login"[^>]*>/) || [])[0]
+  assert(formTag, `${username}: Keycloak login form not found`)
+  const action = (formTag.match(/action="([^"]+)"/) || [])[1]
+  assert(action, `${username}: Keycloak login form has no action`)
+  const submitted = await hop(toInternal(action.replace(/&amp;/g, '&')), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ username, password, credentialId: '' }).toString()
+  })
+  const landed = await followRedirects(submitted, toInternal(action))
+  assert(landed.response.status === 200, `${username}: login did not return to the CRM (${landed.response.status} at ${landed.current})`)
+  const client = new Client(username, [...cookies].map(([name, value]) => ({ name, value, path: '/' })))
+  const me = await client.request('GET', '/api/me')
+  assert(me.status === 200, `${username}: login returned to CRM without a session, /api/me ${me.status}`)
+  return client
 }
 
 class Client {
@@ -536,11 +616,16 @@ const summarize = (items) => {
 
 const output = { origin, startedAt: new Date().toISOString(), users: credentials.length, durationSeconds, thinkMs: [thinkMin, thinkMax] }
 try {
-  await connectCdp()
+  if (!httpOnly) {
+    await connectCdp()
+  }
   const logins = []
   const loginStarted = Date.now()
   for (let index = 0; index < credentials.length; index += 5) {
     logins.push(...await Promise.all(credentials.slice(index, index + 5).map(async ([username, password]) => {
+      if (httpOnly) {
+        return httpLogin(username, password)
+      }
       const page = await browserLogin(username, password)
       const { cookies } = await cdp('Storage.getCookies', { browserContextId: page.browserContextId })
       await page.close()
@@ -562,15 +647,19 @@ try {
     user.foreign = others.flatMap((other) => other.writable.slice(0, 2)).filter((id) => !user.cards.some((card) => card.id === id)).slice(0, 20)
   }
 
-  const browserUser = users.find((user) => user.profile.role !== 'LEADER')
-  const [, browserPassword] = credentials.find(([username]) => username === browserUser.client.username)
-  const browserCard = await measure(browserUser.client, 'setup', 'POST', '/api/interactions', {
-    organizationId: browserUser.cards[0].organizationId,
-    title: 'LOAD-браузер ' + randomUUID().slice(0, 8),
-    contactIds: []
-  })
-  assert(browserCard.status === 201, 'Browser interaction was not created: ' + browserCard.status + ' ' + JSON.stringify(browserCard.payload))
-  const browserPage = await browserLogin(browserUser.client.username, browserPassword)
+  let browserCard = null
+  let browserPage = null
+  if (!httpOnly) {
+    const browserUser = users.find((user) => user.profile.role !== 'LEADER')
+    const [, browserPassword] = credentials.find(([username]) => username === browserUser.client.username)
+    browserCard = await measure(browserUser.client, 'setup', 'POST', '/api/interactions', {
+      organizationId: browserUser.cards[0].organizationId,
+      title: 'LOAD-браузер ' + randomUUID().slice(0, 8),
+      contactIds: []
+    })
+    assert(browserCard.status === 201, 'Browser interaction was not created: ' + browserCard.status + ' ' + JSON.stringify(browserCard.payload))
+    browserPage = await browserLogin(browserUser.client.username, browserPassword)
+  }
 
   const start = Date.now()
   const until = start + durationSeconds * 1000
@@ -579,12 +668,16 @@ try {
     await pause(start + second * 1000 - Date.now())
     return reportBurst(users, 'burst-' + (index + 1)).catch((error) => ({ label: 'burst-' + (index + 1), error: error.message }))
   })
-  const browser = browserMeasurements(browserPage, browserCard.payload, browserRounds, start).catch((error) => ({ error: error.message }))
+  const browser = httpOnly
+    ? Promise.resolve(null)
+    : browserMeasurements(browserPage, browserCard.payload, browserRounds, start).catch((error) => ({ error: error.message }))
   await Promise.all(users.map((user) => user.run(until)))
   output.loadFinishedAt = new Date().toISOString()
   output.reportBursts = await Promise.all(bursts)
   output.browser = await browser
-  await browserPage.close()
+  if (browserPage) {
+    await browserPage.close()
+  }
 
   const loadSamples = samples.filter((sample) => sample.at >= start)
   const reportWindows = output.reportBursts.filter((burst) => !burst.error).map((burst) => [Date.parse(burst.submittedAt), Date.parse(burst.windowEnd)])

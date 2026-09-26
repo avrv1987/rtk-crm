@@ -506,10 +506,14 @@ public class InteractionRepository {
         return jdbcClient.sql("""
                 SELECT agreement.id, agreement.product_id, product.name AS product_name, product.archived AS product_archived,
                        agreement.contract_number, agreement.license_signed, agreement.license_expiry_year, agreement.transfer_status,
-                       agreement.archived_at, vendor.name AS vendor_name, agreement.scan_attachment_id
+                       agreement.archived_at, vendor.name AS vendor_name, agreement.scan_attachment_id,
+                       contact.name AS contact_name, contact.phone AS contact_phone, contact.email AS contact_email,
+                       contact.prefers_email AS contact_prefers_email, contact.prefers_telegram AS contact_prefers_telegram
                 FROM product_agreements agreement
                 JOIN products product ON product.id = agreement.product_id
                 JOIN vendors vendor ON vendor.id = product.vendor_id
+                LEFT JOIN vendor_contacts contact ON contact.id = product.vendor_contact_id AND contact.archived = FALSE
+                    AND contact.personal_data_status = 'ACTIVE'
                 WHERE agreement.interaction_id = :interactionId
                 ORDER BY product.name ASC, agreement.id ASC
                 """)
@@ -527,6 +531,13 @@ public class InteractionRepository {
                             resultSet.getString("transfer_status"),
                             resultSet.getObject("archived_at") != null,
                             resultSet.getString("vendor_name"),
+                            resultSet.getString("contact_name") == null ? null : new VendorContactCard(
+                                    resultSet.getString("contact_name"),
+                                    resultSet.getString("contact_phone"),
+                                    resultSet.getString("contact_email"),
+                                    resultSet.getBoolean("contact_prefers_email"),
+                                    resultSet.getBoolean("contact_prefers_telegram")
+                            ),
                             resultSet.getObject("scan_attachment_id", UUID.class),
                             transfers.getOrDefault(id, List.of())
                     );

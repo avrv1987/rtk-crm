@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -118,6 +119,31 @@ class DemoBootstrapCommandTest {
     }
 
     @Test
+    void enrolmentOperatorJoinsTheOpenEnrolmentTeamOfTheMigrationAndCoursesOfTheSiteFixtureHavePrograms() {
+        UUID openEnrolment = UUID.fromString("0e7e0000-0000-4000-8000-000000000001");
+        jdbcTemplate.update("INSERT INTO teams (id, name) VALUES (?, 'Открытый набор')", openEnrolment);
+        List<DemoBootstrapProperties.Team> teams = new ArrayList<>(TEAMS);
+        teams.add(new DemoBootstrapProperties.Team("open-enrolment", "Открытый набор"));
+        List<DemoBootstrapProperties.Identity> identities = new ArrayList<>(DEMO_IDENTITIES);
+        identities.add(new DemoBootstrapProperties.Identity("enrol", ISSUER, "subject-enrol", "Оператор зачисления", UserRole.USER,
+                "open-enrolment", true));
+        DemoBootstrapCommand command = command(new DemoBootstrapProperties(true, false, teams, identities, DEMO_ORGANIZATIONS, null));
+
+        command.run(null);
+        command.run(null);
+
+        assertThat(jdbcTemplate.queryForList("SELECT display_name FROM crm_user_profiles WHERE enrolment_operator", String.class))
+                .containsExactly("Оператор зачисления");
+        assertThat(jdbcTemplate.queryForObject("SELECT team_id FROM crm_user_profiles WHERE display_name = 'Оператор зачисления'",
+                UUID.class)).isEqualTo(openEnrolment);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM teams", Integer.class)).isEqualTo(3);
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT p.name FROM programs p JOIN directions d ON d.id = p.direction_id
+                WHERE d.name = 'Демо-направление: курсы для физлиц' ORDER BY p.name
+                """, String.class)).containsExactly("Инженер-тестировщик", "Промпт-инжиниринг");
+    }
+
+    @Test
     void renamesOnlyTeamsStillNamedByTheirKeyAndKeepsAdministratorChanges() {
         insertTeam("team-a", "team-a");
         insertTeam("team-b", "Продажи Сибирь");
@@ -168,7 +194,7 @@ class DemoBootstrapCommandTest {
     }
 
     private static DemoBootstrapProperties.Identity identity(String key, String displayName, UserRole role, String teamKey) {
-        return new DemoBootstrapProperties.Identity(key, ISSUER, "subject-" + key, displayName, role, teamKey);
+        return new DemoBootstrapProperties.Identity(key, ISSUER, "subject-" + key, displayName, role, teamKey, null);
     }
 
     private void insertTeam(String key, String name) {
@@ -186,7 +212,7 @@ class DemoBootstrapCommandTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, issuer VARCHAR(512) NOT NULL, subject VARCHAR(512) NOT NULL,
                     display_name VARCHAR(200) NOT NULL, login VARCHAR(200), role VARCHAR(16) NOT NULL, team_id UUID,
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE, activation_requested_at TIMESTAMP WITH TIME ZONE,
@@ -223,8 +249,18 @@ class DemoBootstrapCommandTest {
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS products (
-                    id UUID PRIMARY KEY, vendor_id UUID NOT NULL, name VARCHAR(200) NOT NULL,
+                    id UUID PRIMARY KEY, vendor_contact_id UUID, vendor_id UUID NOT NULL, name VARCHAR(200) NOT NULL,
                     archived BOOLEAN NOT NULL DEFAULT FALSE, version INTEGER NOT NULL DEFAULT 0, UNIQUE (vendor_id, name)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS vendor_contacts (
+                    id UUID PRIMARY KEY, vendor_id UUID NOT NULL, name VARCHAR(200) NOT NULL, phone VARCHAR(16),
+                    email VARCHAR(320), prefers_email BOOLEAN DEFAULT FALSE NOT NULL,
+                    prefers_telegram BOOLEAN DEFAULT FALSE NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL,
+                    personal_data_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, external_key VARCHAR(200) UNIQUE,
+                    version INTEGER DEFAULT 0 NOT NULL, created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
                 """

@@ -1,0 +1,315 @@
+.enrolment {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.enrolment h2,
+.enrolment h3,
+.enrolment h4,
+.enrolment__intro,
+.enrolment__run {
+  margin: 0;
+}
+
+.enrolment__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.enrolment__form label {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.enrolment__protocol {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.enrolment__counters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.enrolment__counters div {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.enrolment__counters dd {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.enrolment__issues {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.enrolment__issue--warning {
+  color: var(--color-text-muted);
+}
+
+.enrolment__section {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.enrolment__upload {
+  display: grid;
+  gap: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-4);
+}
+
+.enrolment__hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+}
+
+.enrolment__search-results {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.enrolment__search-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--color-surface);
+}
+
+.enrolment__end-date {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.enrolment__end-date label {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.enrolment__end-date p {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.enrolment__stream-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.enrolment__dialog {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  background: var(--color-canvas);
+}
+
+.enrolment__dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.enrolment__exports {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.enrolment__exports li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--color-surface);
+}
+
+.enrolment__roster-mode {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+}
+
+.enrolment__roster-mode legend {
+  padding: 0 var(--space-1);
+  color: var(--color-text-label);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+}
+
+.enrolment__groups {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.enrolment__group {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  background: var(--color-surface);
+}
+
+.enrolment__group-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.enrolment__group-header h4 {
+  margin: 0;
+}
+
+.enrolment__group-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.enrolment__group-values {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.enrolment__group-values div {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.enrolment__group-values dt {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.enrolment__group-values dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.enrolment__group-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: start;
+  gap: var(--space-3);
+}
+
+.enrolment__group-form label {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--color-text-label);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+}
+
+.enrolment__group-form > .structured-api-error,
+.enrolment__group-form > .interaction-command-error,
+.enrolment__group-form > .enrolment__dialog-actions {
+  grid-column: 1 / -1;
+}
+
+.enrolment__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.enrolment__tabs button[aria-pressed='true'] {
+  background: var(--color-action-hover);
+}
+
+.enrolment__history {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.enrolment__history li {
+  display: grid;
+  gap: var(--space-1);
+  border-left: 3px solid var(--color-action);
+  padding: 10px var(--space-3);
+  background: var(--color-surface);
+}
+
+.enrolment__history li p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.enrolment__move {
+  display: grid;
+  gap: var(--space-3);
+  border: 2px solid var(--color-warning-accent);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  background: var(--color-warning-surface-soft);
+}
+
+.enrolment__move h3 {
+  margin: 0;
+}
+
+.enrolment__move-compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-4);
+}
+
+.enrolment__move-compare > div {
+  display: grid;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  background: var(--color-surface);
+}
+
+.enrolment__move-compare h4 {
+  margin: 0 0 var(--space-1);
+}
+
+.enrolment__move-compare p {
+  margin: 0;
+}

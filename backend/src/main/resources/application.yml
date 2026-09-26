@@ -87,6 +87,7 @@ app:
     inactive-contacts: ${APP_RETENTION_INACTIVE_CONTACTS:1095d}
     dismissed-profiles: ${APP_RETENTION_DISMISSED_PROFILES:365d}
     audit-events: ${APP_RETENTION_AUDIT_EVENTS:1095d}
+    learner-profiles: ${APP_RETENTION_LEARNER_PROFILES:P3Y}
   account-sync:
     base-url: ${APP_OIDC_INTERNAL_BASE_URL:}
     realm: rtk-crm

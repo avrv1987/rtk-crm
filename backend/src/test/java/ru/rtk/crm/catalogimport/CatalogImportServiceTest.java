@@ -70,6 +70,7 @@ import ru.rtk.crm.interaction.WorkflowTemplateRepository;
         AttachmentRepository.class,
         CommandIdempotencyRepository.class,
         InteractionService.class,
+        VendorContactImport.class,
         CatalogImportServiceTest.ImportTestConfiguration.class
 })
 class CatalogImportServiceTest {
@@ -82,6 +83,20 @@ class CatalogImportServiceTest {
     private static final List<String> TZ_HEADERS = List.of(
             "Название ВУЗа", "Вендор", "ПО", "Номер договора", "Подписание лицензии",
             "Срок действия лицензии (год)", "Статус по передаче", "ФИО Менеджера", "Ответственные от ВУЗа", "Комментарий"
+    );
+    private static final List<String> VENDOR_HEADERS = List.of("Компания", "Продукт", "ФИО", "Телефон", "Почта", "Способ связи");
+    private static final List<List<String>> VENDOR_ROWS = List.of(
+            List.of("ООО «Базис»", "«Базис Dynamix»", "Контакт вендора Демо 1", "+7 (900) 100-00-01", "vendor01@example.test", "Почта"),
+            List.of("ООО «ТДата»", "«RT.DataLake», «RT.Warehouse»", "Контакт вендора Демо 2", "+7 (900) 100-00-02",
+                    "vendor02@example.test", "Чат в ТГ"),
+            List.of("ПАО «Ростелеком»", "«RT.DataVision»", "Контакт вендора Демо 3", "+7 (900) 100-00-03", "vendor03@example.test",
+                    "Чат в ТГ"),
+            List.of("ООО «РТК ИТ Плюс»", "«AKOLA»", "Контакт вендора Демо 4", "+7 (900) 100-00-04", "vendor04@example.test", "Чат в ТГ"),
+            List.of("ООО «РТК ИТ Плюс»", "«Яга»", "Контакт вендора Демо 5", "+7 (900) 100-00-05", "vendor05@example.test",
+                    "Почта, Чат в ТГ"),
+            List.of("ООО «РТК ИТ»", "«Web3Gate»", "Контакт вендора Демо 6", "+7 (900) 100-00-06", "vendor06@example.test", "Чат в ТГ"),
+            List.of("ООО «РТК ИТ»", "«Аврора SDK»", "Контакт вендора Демо 7", "+7 (900) 100-00-07", "vendor07@example.test", "Чат в ТГ"),
+            List.of("ООО «РТК ИТ»", "«Нейрошлюз»", "Контакт вендора Демо 8", "+7 (900) 100-00-08", "vendor08@example.test", "Чат в ТГ")
     );
     private static final List<String> TZ_FIELDS = List.of(
             "organizationName", "vendorName", "productName", "contractNumber", "licenseSigned",
@@ -104,7 +119,7 @@ class CatalogImportServiceTest {
         createSchema();
         for (String table : List.of(
                 "catalog_change_events", "catalog_import_jobs", "catalog_import_rows", "catalog_imports", "organization_assignment_events",
-                "interaction_events", "command_idempotency_records", "interaction_contacts", "product_agreements",
+                "vendor_contacts", "interaction_events", "command_idempotency_records", "interaction_contacts", "product_agreements",
                 "interaction_stage_transitions", "interaction_stages", "interactions", "workflow_template_transitions",
                 "workflow_template_stages", "workflow_templates", "contacts", "products", "vendors", "programs",
                 "directions", "organizations", "crm_user_profiles", "teams"
@@ -166,6 +181,15 @@ class CatalogImportServiceTest {
                 .containsEntry("TRANSFER_STATUS", "В работе");
         assertThat(jdbcTemplate.queryForObject("SELECT created_by FROM interactions", UUID.class)).isEqualTo(ADMIN);
         assertThat(jdbcTemplate.queryForObject("SELECT owner_manager_id FROM organizations", UUID.class)).isEqualTo(IVAN);
+        assertThat(journal()).containsExactlyInAnyOrder(
+                "ORGANIZATION CREATE Университет Альфа: Тип: вуз; КАМ: Иван Петров; импорт каталога",
+                "VENDOR CREATE Вендор Один: импорт каталога",
+                "PRODUCT CREATE Платформа: Вендор: Вендор Один; импорт каталога",
+                "AGREEMENT CREATE Университет Альфа — Платформа: Номер договора: Д-001; Лицензия подписана: да; "
+                        + "Срок лицензии: 2027; Статус передачи: Передано; импорт каталога",
+                "AGREEMENT CREATE Университет Альфа — Платформа: Номер договора: Д-004; Лицензия подписана: да; "
+                        + "Срок лицензии: 2028; Статус передачи: В работе; импорт каталога"
+        );
 
         CatalogImportView repeated = preview(file, tzColumns(), Map.of());
 
@@ -456,6 +480,10 @@ class CatalogImportServiceTest {
         assertThat(jdbcTemplate.queryForMap("SELECT name, external_key FROM directions"))
                 .containsEntry("NAME", "Кибербезопасность").containsEntry("EXTERNAL_KEY", "dir:ib");
         assertThat(count("programs")).isEqualTo(1);
+        assertThat(journal()).containsExactlyInAnyOrder(
+                "PROGRAM CREATE Центр мониторинга: Направление: Информационная безопасность; импорт каталога",
+                "DIRECTION UPDATE Кибербезопасность: Название: «Информационная безопасность» → «Кибербезопасность»; импорт каталога"
+        );
         assertThat(previewDirections(renamed, columns).rows())
                 .extracting(CatalogImportRowView::status)
                 .containsExactly(CatalogImportRowStatus.UNCHANGED);
@@ -523,8 +551,8 @@ class CatalogImportServiceTest {
 
         assertThat(jdbcTemplate.queryForObject("SELECT archived_at FROM product_agreements WHERE id = ?", Object.class, agreementId))
                 .isNotNull();
-        assertThat(jdbcTemplate.queryForList("SELECT action FROM catalog_change_events WHERE entity_id = ?", String.class, agreementId))
-                .containsExactly("ARCHIVE");
+        assertThat(jdbcTemplate.queryForList("SELECT action FROM catalog_change_events WHERE entity_id = ? ORDER BY occurred_at",
+                String.class, agreementId)).containsExactly("CREATE", "ARCHIVE");
         assertThat(preview(shortRegistry, tzColumns(), Map.of()).missingRecords()).isEmpty();
 
         CatalogImportView restored = preview(file, tzColumns(), Map.of());
@@ -532,6 +560,168 @@ class CatalogImportServiceTest {
         applyEligible(restored);
         assertThat(jdbcTemplate.queryForObject("SELECT archived_at FROM product_agreements WHERE id = ?", Object.class, agreementId))
                 .isNull();
+    }
+
+    @Test
+    void emailAndPhoneInResponsibleCellGoToContactFieldsAndFindTheExistingContact() throws IOException {
+        jdbcTemplate.update("INSERT INTO teams (id, name) VALUES (?, 'team-a'), (?, 'team-b')", TEAM_A, TEAM_B);
+        byte[] first = workbook(TZ_HEADERS, List.of(
+                List.of("Университет Бета", "Вендор Один", "Платформа", "Д-002", "", "", "", "Иван Петров", "Олег Демонстрационный", "")
+        ));
+        applyEligible(preview(first, tzColumns(), Map.of()));
+        byte[] file = workbook(TZ_HEADERS, List.of(
+                List.of("Университет Бета", "Вендор Один", "Платформа", "Д-002", "", "", "", "Иван Петров",
+                        "Олег Демонстрационный, oleg.demo@example.test; Мария Примерова, +7 (900) 111-22-33", ""),
+                List.of("Университет Бета", "Вендор Один", "Облако", "Д-003", "", "", "", "Иван Петров",
+                        "Олег Демонстрационный, oleg.demo@example", ""),
+                List.of("Университет Бета", "Вендор Один", "Сервер", "Д-004", "", "", "", "Иван Петров",
+                        "Анна Первая, Илья Второй, anna@example.test", ""),
+                List.of("Университет Бета", "Вендор Один", "Шлюз", "Д-005", "", "", "", "Иван Петров",
+                        "Пётр Одиночный, petr.demo@example.test", "")
+        ));
+
+        CatalogImportView preview = preview(file, tzColumns(), Map.of());
+
+        assertThat(row(preview, 2).newValues())
+                .containsEntry("contactName", "Олег Демонстрационный; Мария Примерова")
+                .containsEntry("contactDetails", "Олег Демонстрационный: oleg.demo@example.test");
+        assertThat(row(preview, 3).fieldErrors().get("contactName")).contains("указана неверно");
+        assertThat(row(preview, 4).fieldErrors().get("contactName")).contains("одно ФИО");
+        applyEligible(preview);
+
+        assertThat(jdbcTemplate.queryForList("SELECT name, email, phone FROM contacts ORDER BY name"))
+                .extracting(values -> values.get("NAME") + "|" + values.get("EMAIL") + "|" + values.get("PHONE"))
+                .containsExactly("Мария Примерова|null|+79001112233", "Олег Демонстрационный|oleg.demo@example.test|null",
+                        "Пётр Одиночный|petr.demo@example.test|null");
+    }
+
+    @Test
+    void vendorFileOfOrganizerFormatCreatesVendorsProductsAndContactsAndRepeatsUnchanged() throws IOException {
+        CatalogImportView preview = previewVendors(workbook(VENDOR_HEADERS, VENDOR_ROWS));
+
+        assertThat(preview.rows()).extracting(CatalogImportRowView::status).containsOnly(CatalogImportRowStatus.CREATE);
+        assertThat(row(preview, 3).newValues())
+                .containsEntry("vendorName", "ООО «ТДата»")
+                .containsEntry("productNames", "RT.DataLake, RT.Warehouse")
+                .containsEntry("vendorContactPhone", "+79001000002")
+                .containsEntry("vendorContactChannels", "Telegram");
+        assertThat(row(preview, 6).newValues()).containsEntry("vendorContactChannels", "Почта, Telegram");
+
+        applyEligible(preview);
+
+        assertThat(count("vendors")).isEqualTo(5);
+        assertThat(count("products")).isEqualTo(9);
+        assertThat(count("vendor_contacts")).isEqualTo(8);
+        assertThat(journal()).filteredOn(entry -> entry.startsWith("VENDOR CREATE")).hasSize(5);
+        assertThat(journal()).filteredOn(entry -> entry.startsWith("PRODUCT CREATE")).hasSize(9)
+                .contains("PRODUCT CREATE RT.Warehouse: Вендор: ООО «ТДата»; контакт: Контакт вендора Демо 2; импорт каталога");
+        assertThat(jdbcTemplate.queryForList("SELECT name FROM vendors ORDER BY name", String.class))
+                .containsExactlyInAnyOrder("ООО «Базис»", "ООО «РТК ИТ Плюс»", "ООО «РТК ИТ»", "ООО «ТДата»", "ПАО «Ростелеком»");
+        assertThat(jdbcTemplate.queryForMap("""
+                SELECT c.phone, c.email, c.prefers_email, c.prefers_telegram, COUNT(p.id) AS products
+                FROM vendor_contacts c JOIN products p ON p.vendor_contact_id = c.id
+                WHERE c.name = 'Контакт вендора Демо 2'
+                GROUP BY c.phone, c.email, c.prefers_email, c.prefers_telegram
+                """))
+                .containsEntry("PHONE", "+79001000002")
+                .containsEntry("EMAIL", "vendor02@example.test")
+                .containsEntry("PREFERS_EMAIL", false)
+                .containsEntry("PREFERS_TELEGRAM", true)
+                .containsEntry("PRODUCTS", 2L);
+        assertThat(jdbcTemplate.queryForList("SELECT action FROM catalog_change_events WHERE entity_type = 'VENDOR_CONTACT'",
+                String.class)).hasSize(8).containsOnly("CREATE");
+        assertThat(jdbcTemplate.queryForList("SELECT changes FROM catalog_change_events", String.class))
+                .noneMatch(changes -> changes.contains("example.test") || changes.contains("+7"));
+
+        CatalogImportView repeated = previewVendors(workbook(VENDOR_HEADERS, VENDOR_ROWS));
+
+        assertThat(repeated.rows()).extracting(CatalogImportRowView::status).containsOnly(CatalogImportRowStatus.UNCHANGED);
+    }
+
+    @Test
+    void vendorRowsWithUnknownChannelOrProductOfAnotherCompanyAreReportedWithoutStoppingOthers() throws IOException {
+        List<List<String>> rows = new ArrayList<>(VENDOR_ROWS);
+        rows.set(0, List.of("ООО «Базис»", "«Базис Dynamix»", "Контакт вендора Демо 1", "+7 (900) 100-00-01",
+                "vendor01@example.test", "Голубиная почта"));
+        rows.add(List.of("ООО «Базис»", "«Яга»", "Контакт вендора Демо 9", "+7 (900) 100-00-09", "vendor09@example.test", "Почта"));
+
+        CatalogImportView preview = previewVendors(workbook(VENDOR_HEADERS, rows));
+
+        assertThat(row(preview, 2).status()).isEqualTo(CatalogImportRowStatus.INVALID);
+        assertThat(row(preview, 2).fieldErrors()).containsOnlyKeys("vendorContactChannels");
+        assertThat(row(preview, 10).status()).isEqualTo(CatalogImportRowStatus.CONFLICT);
+        assertThat(row(preview, 10).fieldErrors().get("productNames")).contains("продукт указан у другого вендора");
+        assertThat(row(preview, 3).status()).isEqualTo(CatalogImportRowStatus.CREATE);
+    }
+
+    @Test
+    void agreementWithShortVendorNameFindsVendorCreatedWithLegalFormAndKeepsItsName() throws IOException {
+        applyEligible(preview(workbook(TZ_HEADERS, List.of(List.of(
+                "Университет Альфа", "ООО «Базис»", "Базис Dynamix", "Д-001", "", "", "", "Иван Петров", "", ""
+        ))), tzColumns(), Map.of()));
+
+        CatalogImportView preview = preview(workbook(TZ_HEADERS, List.of(List.of(
+                "Университет Альфа", "Базис", "Базис Dynamix", "Д-001", "", "", "", "Иван Петров", "", ""
+        ))), tzColumns(), Map.of());
+
+        assertThat(row(preview, 2).status()).isEqualTo(CatalogImportRowStatus.UNCHANGED);
+        assertThat(row(preview, 2).newValues()).containsEntry("vendorName", "ООО «Базис»");
+        applyEligible(preview);
+        assertThat(jdbcTemplate.queryForList("SELECT name FROM vendors", String.class)).containsExactly("ООО «Базис»");
+        assertThat(count("products")).isEqualTo(1);
+    }
+
+    @Test
+    void agreementWithShortVendorNameFindsVendorImportedWithContacts() throws IOException {
+        applyEligible(previewVendors(workbook(VENDOR_HEADERS, VENDOR_ROWS)));
+        String key = jdbcTemplate.queryForObject("SELECT external_key FROM vendors WHERE name = 'ООО «Базис»'", String.class);
+
+        applyEligible(preview(workbook(TZ_HEADERS, List.of(List.of(
+                "Университет Альфа", "Базис", "Базис Dynamix", "Д-001", "", "", "", "Иван Петров", "", ""
+        ))), tzColumns(), Map.of()));
+
+        assertThat(count("vendors")).isEqualTo(5);
+        assertThat(count("products")).isEqualTo(9);
+        assertThat(jdbcTemplate.queryForObject("SELECT name FROM vendors WHERE external_key = ?", String.class, key))
+                .isEqualTo("ООО «Базис»");
+    }
+
+    @Test
+    void savedVendorKeyIsNotRecalculatedAndSeparateSpellingsOfOneVendorAreConflict() throws IOException {
+        UUID legacyId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO vendors (id, external_key, name, archived, version) VALUES (?, 'vendor:ооо «базис»', 'ООО «Базис»', FALSE, 0)
+                """, legacyId);
+        applyEligible(preview(workbook(TZ_HEADERS, List.of(List.of(
+                "Университет Альфа", "Базис", "Базис Dynamix", "Д-001", "", "", "", "Иван Петров", "", ""
+        ))), tzColumns(), Map.of()));
+        assertThat(jdbcTemplate.queryForObject("SELECT external_key FROM vendors WHERE id = ?", String.class, legacyId))
+                .isEqualTo("vendor:ооо «базис»");
+        assertThat(count("vendors")).isEqualTo(1);
+
+        jdbcTemplate.update("INSERT INTO vendors (id, name, archived, version) VALUES (?, 'Базис', FALSE, 0)", UUID.randomUUID());
+
+        CatalogImportView agreement = preview(workbook(TZ_HEADERS, List.of(List.of(
+                "Университет Альфа", "Базис", "Базис Dynamix", "Д-003", "", "", "", "Иван Петров", "", ""
+        ))), tzColumns(), Map.of());
+        CatalogImportView vendors = previewVendors(workbook(VENDOR_HEADERS, VENDOR_ROWS.subList(0, 1)));
+
+        assertThat(row(agreement, 2).status()).isEqualTo(CatalogImportRowStatus.CONFLICT);
+        assertThat(row(agreement, 2).fieldErrors()).containsKey("vendorName");
+        assertThat(row(vendors, 2).status()).isEqualTo(CatalogImportRowStatus.CONFLICT);
+        assertThat(row(vendors, 2).fieldErrors().get("vendorName")).contains("«ООО «Базис»»", "«Базис»");
+    }
+
+    private CatalogImportView previewVendors(byte[] file) {
+        Map<String, String> columns = new LinkedHashMap<>();
+        List<String> fields = List.of("vendorName", "productNames", "vendorContactName", "vendorContactPhone", "vendorContactEmail",
+                "vendorContactChannels");
+        for (int index = 0; index < fields.size(); index++) {
+            columns.put(fields.get(index), VENDOR_HEADERS.get(index));
+        }
+        CatalogImportPreviewResponse response = service.preview(admin, file(file), CatalogImportProfile.VENDOR_CONTACTS, "Каталог",
+                new CatalogImportMapping(columns, Map.of(), Map.of(), null));
+        return service.get(admin, response.importId());
     }
 
     private CatalogImportView preview(byte[] file, Map<String, String> columns, Map<Integer, CatalogImportRowTarget> targets) {
@@ -596,6 +786,13 @@ class CatalogImportServiceTest {
         return new MockMultipartFile("file", "catalog.xlsx", "application/octet-stream", content);
     }
 
+    private List<String> journal() {
+        return jdbcTemplate.queryForList("SELECT entity_type, action, entity_name, changes FROM catalog_change_events").stream()
+                .map(values -> values.get("ENTITY_TYPE") + " " + values.get("ACTION") + " " + values.get("ENTITY_NAME") + ": "
+                        + values.get("CHANGES"))
+                .toList();
+    }
+
     private long count(String table) {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + table, Long.class);
     }
@@ -650,7 +847,7 @@ class CatalogImportServiceTest {
                 CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL, default_workflow_template_id UUID)
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, login VARCHAR(200), idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     activation_requested_at TIMESTAMP WITH TIME ZONE, anonymized_at TIMESTAMP WITH TIME ZONE, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL, access_revision INTEGER NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -708,10 +905,20 @@ class CatalogImportServiceTest {
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS products (
-                    id UUID PRIMARY KEY, external_key VARCHAR(200) UNIQUE, vendor_id UUID NOT NULL,
+                    id UUID PRIMARY KEY, vendor_contact_id UUID, external_key VARCHAR(200) UNIQUE, vendor_id UUID NOT NULL,
                     name VARCHAR(200) NOT NULL, archived BOOLEAN NOT NULL, version INTEGER NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, UNIQUE (vendor_id, name)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS vendor_contacts (
+                    id UUID PRIMARY KEY, vendor_id UUID NOT NULL, name VARCHAR(200) NOT NULL, phone VARCHAR(16),
+                    email VARCHAR(320), prefers_email BOOLEAN DEFAULT FALSE NOT NULL,
+                    prefers_telegram BOOLEAN DEFAULT FALSE NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL,
+                    personal_data_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, external_key VARCHAR(200) UNIQUE,
+                    version INTEGER DEFAULT 0 NOT NULL, created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
                 """

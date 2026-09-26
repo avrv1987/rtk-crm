@@ -14,6 +14,7 @@ public record ProductAgreement(
         String transferStatus,
         boolean archived,
         String vendorName,
+        VendorContactCard vendorContact,
         UUID scanAttachmentId,
         List<ProductTransfer> transfers
 ) {

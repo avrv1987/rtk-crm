@@ -78,6 +78,7 @@ public final class WorkModels {
             String organizationName,
             String productName,
             String vendorName,
+            String contractNumber,
             int licenseExpiryYear
     ) {
     }

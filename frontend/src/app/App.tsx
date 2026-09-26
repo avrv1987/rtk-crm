@@ -8,6 +8,7 @@ import { CatalogImportPanel } from '../features/admin/CatalogImportPanel'
 import { AdminProfilesScreen } from '../features/admin/AdminProfilesScreen'
 import { SourcesPanel } from '../features/admin/SourcesPanel'
 import { AuditJournalPanel } from '../features/admin/AuditJournalPanel'
+import { EnrolmentScreen } from '../features/enrolment/EnrolmentScreen'
 import { PersonalDataPanel } from '../features/admin/PersonalDataPanel'
 import { RetentionPanel } from '../features/admin/RetentionPanel'
 import { ActivationRequest, PasswordLink } from '../features/session/ActivationRequest'
@@ -23,6 +24,7 @@ import {
   takeReturnRoute
 } from '../features/interactions/drafts'
 import { UnsavedDraftNotice } from '../features/interactions/UnsavedDraftNotice'
+import { HelpScreen } from '../features/help/HelpScreen'
 import { LandingPage } from '../features/landing/LandingPage'
 import { OrganizationsScreen } from '../features/organizations/OrganizationsScreen'
 import { KamReviewPanel } from '../features/reports/KamReviewPanel'
@@ -40,18 +42,26 @@ type SessionState =
   | { kind: 'failed' }
   | { kind: 'logoutFailed' }
 
-type Section = 'work' | 'organizations' | 'reports' | 'admin'
+type Section = 'work' | 'organizations' | 'reports' | 'admin' | 'enrolment' | 'help'
 
 const sectionTitles: Record<Section, string> = {
   work: 'Моя работа',
   organizations: 'Вузы',
   reports: 'Отчёты и статистика',
-  admin: 'Администрирование'
+  admin: 'Администрирование',
+  enrolment: 'Зачисление',
+  help: 'Справка'
 }
 
-const sectionsFor = (role: Me['role']): Section[] => (
-  role === 'ADMIN' ? ['admin'] : ['work', 'organizations', 'reports']
-)
+const sectionsFor = (profile: Me): Section[] => {
+  if (profile.role === 'ADMIN') {
+    return ['admin', 'help']
+  }
+  if (profile.enrolmentOperator) {
+    return ['work', 'organizations', 'reports', 'enrolment', 'help']
+  }
+  return ['work', 'organizations', 'reports', 'help']
+}
 
 const parseRoute = (hash: string) => {
   const [path, query = ''] = hash.replace(/^#\/?/, '').split('?')
@@ -62,7 +72,9 @@ const parseRoute = (hash: string) => {
 export const App = () => {
   const [state, setState] = useState<SessionState>({ kind: 'loading' })
   const [hash, setHash] = useState(() => window.location.hash)
+  const [sourcesRevision, setSourcesRevision] = useState(0)
   const activeProfileId = useRef<string | null>(null)
+  const route = parseRoute(hash)
 
   useEffect(() => {
     void loadSession()
@@ -137,6 +149,26 @@ export const App = () => {
   if (state.kind === 'loading') {
     return <SessionScreen title="Проверяем сессию" />
   }
+  if ((state.kind === 'anonymous' || state.kind === 'forbidden') && route.section === 'help') {
+    return (
+      <div className="app-shell">
+        <header className="app-header">
+          <p className="app-header__brand">CRM ИТ Школы РТК</p>
+          <nav className="app-nav" aria-label="Разделы CRM">
+            <ul>
+              <li><a href="#/" aria-current="page">Ко входу</a></li>
+            </ul>
+          </nav>
+        </header>
+        <main className="app-main">
+          <h1>Справка</h1>
+          <div className="app-content">
+            <HelpScreen />
+          </div>
+        </main>
+      </div>
+    )
+  }
   if (state.kind === 'anonymous') {
     return (
       <LandingPage onLogin={() => apiClient.login()} />
@@ -152,6 +184,7 @@ export const App = () => {
         </p>
         {state.pending && <ActivationRequest onSessionExpired={handleSessionExpired} />}
         <SupportDetails requestId={state.requestId} />
+        <p><a href="#/help">Открыть справку</a></p>
         <button type="button" className="button--secondary" onClick={() => void logout()}>Выйти</button>
       </SessionScreen>
     )
@@ -172,8 +205,7 @@ export const App = () => {
       </SessionScreen>
     )
   }
-  const sections = sectionsFor(state.profile.role)
-  const route = parseRoute(hash)
+  const sections = sectionsFor(state.profile)
   const section = sections.find((item) => item === route.section) ?? sections[0]
 
   return (
@@ -209,7 +241,11 @@ export const App = () => {
           {section === 'admin' && (
             <>
               <AdminSectionNav />
-              <SourceAlerts onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
+              <SourceAlerts
+                onSessionExpired={handleSessionExpired}
+                onProfileUnavailable={handleProfileUnavailable}
+                refreshSignal={sourcesRevision}
+              />
               <AdminProfilesScreen
                 currentProfile={state.profile}
                 onSessionExpired={handleSessionExpired}
@@ -228,6 +264,7 @@ export const App = () => {
               <SourcesPanel
                 onSessionExpired={handleSessionExpired}
                 onProfileUnavailable={handleProfileUnavailable}
+                onSynced={() => setSourcesRevision((value) => value + 1)}
               />
               <AuditJournalPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
               <PersonalDataPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
@@ -288,6 +325,10 @@ export const App = () => {
           {section === 'reports' && (
             <KamReviewPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
           )}
+          {section === 'enrolment' && (
+            <EnrolmentScreen onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
+          )}
+          {section === 'help' && <HelpScreen />}
         </div>
         <UnsavedDraftNotice />
       </main>

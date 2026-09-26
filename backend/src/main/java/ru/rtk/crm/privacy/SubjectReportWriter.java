@@ -8,16 +8,22 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
+import ru.rtk.crm.catalog.PersonalDataStatus;
+import ru.rtk.crm.enrolment.LearnerPrivacyService.LearnerDisclosure;
+import ru.rtk.crm.enrolment.LearnerPrivacyService.SubjectLearnerEnrolment;
 import ru.rtk.crm.report.PdfLayout;
 
 @Component
 public class SubjectReportWriter {
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
             .withZone(ZoneId.of("Europe/Moscow"));
+    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
 
     private final ObjectMapper objectMapper;
 
@@ -69,13 +75,23 @@ public class SubjectReportWriter {
                                 new int[]{12, 16, 20, 14, 22, 16}, report.data().sourceRecords(),
                                 record -> List.of(record.source(), record.recordType(), record.externalId(), record.status(),
                                         text(record.organizationName()), date(record.submittedAt())));
+                        section(layout, "7. Анкеты слушателей", List.of("Слушатель", "Состояние", "Заполнено полей", "Потоки"),
+                                new int[]{18, 20, 14, 48}, report.data().learners(),
+                                learner -> List.of(learnerName(learner.id()), learnerState(learner.status()),
+                                        learner.filledFields() + " из 30", streams(learner.enrolments())));
+                        for (LearnerDisclosure learner : report.learnerProfiles()) {
+                            if (!learner.fields().isEmpty()) {
+                                section(layout, "Анкета: " + learnerName(learner.id()), List.of("Поле", "Значение"),
+                                        new int[]{35, 65}, learner.fields(), field -> List.of(field.name(), field.value()));
+                            }
+                        }
                         layout.gap(PdfLayout.NOTE_SIZE);
-                        layout.paragraph("7. Сроки хранения", PdfLayout.TITLE_SIZE);
+                        layout.paragraph("8. Сроки хранения", PdfLayout.TITLE_SIZE);
                         for (String line : report.retention()) {
                             layout.paragraph(line, PdfLayout.NOTE_SIZE);
                         }
                         layout.gap(PdfLayout.NOTE_SIZE);
-                        layout.paragraph("8. Источники и получатели", PdfLayout.TITLE_SIZE);
+                        layout.paragraph("9. Источники и получатели", PdfLayout.TITLE_SIZE);
                         layout.paragraph("Источники: " + report.sources(), PdfLayout.NOTE_SIZE);
                         layout.paragraph("Получатели: " + report.recipients(), PdfLayout.NOTE_SIZE);
                     }
@@ -91,7 +107,8 @@ public class SubjectReportWriter {
         notes.add("Оператор: " + report.operator());
         SubjectQuery terms = report.searchTerms();
         notes.add("Поиск: ФИО «" + text(terms.name()) + "», почта «" + text(terms.email()) + "», телефон «"
-                + text(terms.phone()) + "», другие написания «" + text(terms.otherSpellings()) + "»");
+                + text(terms.phone()) + "», СНИЛС «" + text(terms.snils()) + "», другие написания «"
+                + text(terms.otherSpellings()) + "»");
         if (report.data().truncated()) {
             notes.add("Показаны первые 200 строк каждого раздела; уточните условия поиска");
         }
@@ -124,6 +141,25 @@ public class SubjectReportWriter {
             case RESTRICTED -> "обработка ограничена";
             case ANONYMIZED -> "обезличен";
         };
+    }
+
+    private static String learnerName(UUID learnerId) {
+        return "слушатель " + learnerId.toString().substring(0, 8);
+    }
+
+    private static String learnerState(PersonalDataStatus status) {
+        return switch (status) {
+            case ACTIVE -> "обрабатывается";
+            case RESTRICTED -> "обработка ограничена";
+            case ANONYMIZED -> "обезличена";
+        };
+    }
+
+    private static String streams(List<SubjectLearnerEnrolment> enrolments) {
+        return enrolments.stream()
+                .map(enrolment -> enrolment.courseName() + ", поток " + enrolment.streamNo()
+                        + (enrolment.streamEndsOn() == null ? "" : ", окончание " + DATE.format(enrolment.streamEndsOn())))
+                .collect(Collectors.joining("; "));
     }
 
     private static String profileState(SubjectProfile profile) {

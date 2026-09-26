@@ -236,6 +236,12 @@ class ReportServiceTest {
                 .filteredOn(row -> row.interactionId().equals(INTERACTION_WITHOUT_LINKS)).singleElement()
                 .satisfies(row -> assertThat(ReportColumn.WORK_STATUS.text(row)).isEqualTo("Завершена"));
         assertThat(ReportKind.PORTFOLIO.columns()).contains(ReportColumn.WORK_STATUS);
+        assertThat(reportService.preview(LEADER_A_PROFILE, portfolio(filters()), 0, 50).columns())
+                .extracting(ReportColumnView::id, ReportColumnView::title)
+                .contains(tuple(ReportColumn.STAGE, "Этап"), tuple(ReportColumn.WORK_STATUS, "Статус работы"));
+        ReportDocument file = reportService.document(LEADER_A_PROFILE, portfolio(filters()));
+        assertThat(file.columnTitle(ReportColumn.STAGE)).isEqualTo("Этап");
+        assertThat(file.columnTitle(ReportColumn.WORK_STATUS)).isEqualTo("Статус работы");
         assertThatThrownBy(() -> reportService.document(
                 LEADER_A_PROFILE,
                 demand(null, null, filters().workStatuses(InteractionWorkStatus.ACTIVE), null)
@@ -461,6 +467,8 @@ class ReportServiceTest {
                 tuple(ReportColumn.DIRECTION, ReportColumn.UNSPECIFIED),
                 tuple(ReportColumn.PROGRAM, ReportColumn.UNSPECIFIED),
                 tuple(ReportColumn.APPLICATIONS, ReportColumn.NO_DATA),
+                tuple(ReportColumn.PAID_ORDERS, ReportColumn.NO_DATA),
+                tuple(ReportColumn.PAID_STREAMS, ReportColumn.NO_DATA),
                 tuple(ReportColumn.PARTICIPANTS, ReportColumn.NO_DATA),
                 tuple(ReportColumn.LEARNERS_COMPLETED, ReportColumn.NO_DATA),
                 tuple(ReportColumn.PARALLEL_RUNS, ReportColumn.NO_DATA)

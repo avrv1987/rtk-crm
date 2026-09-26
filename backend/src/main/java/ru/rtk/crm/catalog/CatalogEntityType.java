@@ -7,5 +7,6 @@ public enum CatalogEntityType {
     PROGRAM,
     VENDOR,
     PRODUCT,
-    AGREEMENT
+    AGREEMENT,
+    VENDOR_CONTACT
 }

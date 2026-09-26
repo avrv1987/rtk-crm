@@ -1,0 +1,134 @@
+.help {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.help section {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.help h2,
+.help h3 {
+  margin: 0;
+}
+
+.help p,
+.help ul,
+.help ol {
+  margin: 0;
+}
+
+.help ul,
+.help ol {
+  padding-left: var(--space-5);
+  display: grid;
+  gap: var(--space-1);
+}
+
+.help code {
+  font-family: var(--font-family-mono);
+  font-size: 0.9em;
+  background: var(--color-surface-accent);
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+}
+
+.help__toc {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-accent);
+  padding: var(--space-3) var(--space-4);
+}
+
+.help__toc-title {
+  font-size: var(--font-size-md);
+}
+
+.help__toc ul {
+  list-style: none;
+  padding-left: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+.help-screenshots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+
+.help-screenshot {
+  margin: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.help-screenshot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.help-screenshot__placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  margin: 0;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  padding: var(--space-3);
+}
+
+.help-screenshot figcaption {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.help__table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.help__table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.help__table-scroll caption {
+  caption-side: top;
+  text-align: left;
+  padding: var(--space-2) 10px;
+  color: var(--color-text-label);
+}
+
+.help__table-scroll th,
+.help__table-scroll td {
+  min-width: 140px;
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-2) 10px;
+  color: var(--color-text);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.help__table-scroll th {
+  color: var(--color-text-label);
+  background: var(--color-surface-accent);
+}
+
+.help__table-scroll tr:last-child td {
+  border-bottom: 0;
+}

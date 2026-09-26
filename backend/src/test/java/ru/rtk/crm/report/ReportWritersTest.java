@@ -159,7 +159,7 @@ class ReportWritersTest {
                 .normalized();
         ReportRow row = new ReportRow(null, null, null, null, UUID.randomUUID(), "Программирование", UUID.randomUUID(),
                 "Java-разработчик", List.of(), null, null, null, null, null, null, null, null, null, null, null, null, null,
-                5L, null, null, null, List.of(), null, null, null);
+                5L, null, null, null, List.of(), null, null, null, 2L, 1L);
         ReportDocument document = new ReportDocument(request, OffsetDateTime.parse("2026-09-24T12:00:00+03:00"),
                 List.of("Сформирован: 24.09.2026 12:00"), List.of(row));
 
@@ -167,14 +167,16 @@ class ReportWritersTest {
             Sheet sheet = workbook.getSheetAt(0);
             int headerIndex = document.notes().size() + 2;
             assertThat(texts(sheet.getRow(headerIndex))).containsExactly(
-                    "ИТ-направление", "ИТ-программа", "Заявки (сайт)", "Обучающиеся (Moodle)", "Завершили (Moodle)",
-                    "Параллельные потоки (Moodle)");
+                    "ИТ-направление", "ИТ-программа", "Заявки (сайт)", "Оплаченные заявки (сайт)", "Потоки с оплатами (сайт)",
+                    "Обучающиеся (Moodle)", "Завершили (Moodle)", "Параллельные потоки (Moodle)");
             Row data = sheet.getRow(headerIndex + 1);
             assertThat(data.getCell(2).getCellType()).isEqualTo(CellType.NUMERIC);
             assertThat(data.getCell(2).getNumericCellValue()).isEqualTo(5.0);
-            assertThat(data.getCell(3).getStringCellValue()).isEqualTo("нет данных");
-            assertThat(data.getCell(4).getStringCellValue()).isEqualTo("нет данных");
+            assertThat(data.getCell(3).getNumericCellValue()).isEqualTo(2.0);
+            assertThat(data.getCell(4).getNumericCellValue()).isEqualTo(1.0);
             assertThat(data.getCell(5).getStringCellValue()).isEqualTo("нет данных");
+            assertThat(data.getCell(6).getStringCellValue()).isEqualTo("нет данных");
+            assertThat(data.getCell(7).getStringCellValue()).isEqualTo("нет данных");
         }
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -183,6 +185,8 @@ class ReportWritersTest {
         assertThat(json.path("rows").get(0).path("APPLICATIONS").asLong()).isEqualTo(5);
         assertThat(json.path("rows").get(0).path("PARTICIPANTS").isNull()).isTrue();
         assertThat(json.path("totals").path("applications").asLong()).isEqualTo(5);
+        assertThat(json.path("totals").path("paidOrders").asLong()).isEqualTo(2);
+        assertThat(json.path("rows").get(0).path("PAID_STREAMS").asLong()).isEqualTo(1);
         assertThat(json.path("quality").path("noData")).extracting(JsonNode::asText)
                 .containsExactly("PARTICIPANTS", "LEARNERS_COMPLETED", "PARALLEL_RUNS");
     }
@@ -246,6 +250,8 @@ class ReportWritersTest {
                 null,
                 new InteractionMarks(InteractionWorkStatus.ACTIVE, null, null, null, null, null, null),
                 List.of(),
+                null,
+                null,
                 null,
                 null,
                 null

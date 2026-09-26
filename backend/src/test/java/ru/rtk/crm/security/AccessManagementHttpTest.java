@@ -5,16 +5,20 @@ import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oidcLogin;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.Base64;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -27,7 +31,10 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
@@ -39,7 +46,8 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
         "app.oidc.issuer-uri=http://crm.test/idp/realms/rtk-crm",
         "app.oidc.public-base-url=http://crm.test",
         "app.oidc.internal-base-url=http://keycloak.test",
-        "app.oidc.client-secret=test-client-secret"
+        "app.oidc.client-secret=test-client-secret",
+        "app.reports.max-rows=3"
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("oidc")
@@ -54,9 +62,25 @@ class AccessManagementHttpTest {
     private static final UUID PENDING = UUID.fromString("50000000-0000-0000-0000-000000000004");
     private static final UUID ORGANIZATION_A = UUID.fromString("60000000-0000-0000-0000-000000000001");
     private static final UUID ORGANIZATION_B = UUID.fromString("60000000-0000-0000-0000-000000000002");
+    private static final String ENROLMENT_KEY = randomKey();
+    private static final String ENROLMENT_FINGERPRINT_KEY = randomKey();
 
     @Autowired
     private MockMvc mockMvc;
+
+    @DynamicPropertySource
+    static void enrolmentModule(DynamicPropertyRegistry registry) {
+        registry.add("app.enrolment.enabled", () -> "true");
+        registry.add("app.enrolment.active-key-version", () -> "v1");
+        registry.add("app.enrolment.keys.v1", () -> ENROLMENT_KEY);
+        registry.add("app.enrolment.fingerprint-key", () -> ENROLMENT_FINGERPRINT_KEY);
+    }
+
+    private static String randomKey() {
+        byte[] key = new byte[32];
+        new SecureRandom().nextBytes(key);
+        return Base64.getEncoder().encodeToString(key);
+    }
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -81,6 +105,113 @@ class AccessManagementHttpTest {
         insertProfile(PENDING, "Новый сотрудник", "USER", null, false, true);
         insertOrganization(ORGANIZATION_A, "Университет А", TEAM_A, USER_A);
         insertOrganization(ORGANIZATION_B, "Университет Б", TEAM_B, null);
+    }
+
+    @Test
+    void paidOrderUploadIsForbiddenWithoutOperatorFlagAndMeReportsTheFlag() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "orders.json", "application/json", "[null]".getBytes(StandardCharsets.UTF_8)
+        );
+        for (UUID profile : new UUID[] {ADMIN, USER_A}) {
+            mockMvc.perform(multipart("/api/enrolment/paid-orders")
+                            .file(file)
+                            .with(login(profile))
+                            .with(csrf())
+                            .header("Idempotency-Key", "orders-" + profile))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("FORBIDDEN"))
+                    .andExpect(jsonPath("$.message").value(containsString("оператору зачисления")))
+                    .andExpect(jsonPath("$.requestId").isNotEmpty());
+        }
+        mockMvc.perform(get("/api/me").with(login(USER_A)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enrolmentOperator").value(false));
+
+        mockMvc.perform(patch("/api/admin/crm-profiles/{id}", USER_A)
+                        .with(login(ADMIN))
+                        .with(csrf())
+                        .header("Idempotency-Key", "grant-operator")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":0,\"enrolmentOperator\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enrolmentOperator").value(true));
+
+        mockMvc.perform(get("/api/me").with(login(USER_A)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enrolmentOperator").value(true));
+    }
+
+    @Test
+    void enrolmentSectionAnswersForbiddenWithoutFlagBeforeLookingUpObjectsAndServesTheOperator() throws Exception {
+        UUID unknown = UUID.randomUUID();
+        for (UUID profile : new UUID[] {ADMIN, LEADER_A, USER_A}) {
+            mockMvc.perform(get("/api/enrolment/streams").with(login(profile)))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+            mockMvc.perform(get("/api/enrolment/learners/{id}", unknown).with(login(profile)))
+                    .andExpect(status().isForbidden());
+            mockMvc.perform(post("/api/enrolment/learners/search")
+                            .with(login(profile))
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"kind\":\"LAST_NAME\",\"value\":\"Тестова\"}"))
+                    .andExpect(status().isForbidden());
+            mockMvc.perform(patch("/api/enrolment/learners/{id}", unknown)
+                            .with(login(profile))
+                            .with(csrf())
+                            .header("Idempotency-Key", "edit-" + profile)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"version\":0,\"fields\":{\"APARTMENT\":\"1\"}}"))
+                    .andExpect(status().isForbidden());
+            mockMvc.perform(post("/api/enrolment/streams/{id}/lms-roster", unknown)
+                            .with(login(profile))
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"mode\":\"ALL\",\"incomplete\":\"INCLUDE\"}"))
+                    .andExpect(status().isForbidden());
+        }
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM audit_events WHERE category = 'LEARNER'", Integer.class)).isZero();
+
+        jdbcTemplate.update("UPDATE crm_user_profiles SET enrolment_operator = TRUE WHERE id = ?", USER_A);
+
+        mockMvc.perform(get("/api/enrolment/streams").with(login(USER_A)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.streams").isEmpty())
+                .andExpect(jsonPath("$.counters.profilesLimit").value(100000));
+        mockMvc.perform(get("/api/enrolment/learners/{id}", unknown).with(login(USER_A)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("Слушатель не найден"));
+        mockMvc.perform(get("/api/enrolment/streams/{id}/learners", unknown).with(login(USER_A)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("Поток не найден"));
+        mockMvc.perform(get("/api/enrolment/learners/{id}", "not-an-id").with(login(USER_A)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.id").exists());
+        mockMvc.perform(post("/api/enrolment/learners/search")
+                        .with(login(USER_A))
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"kind\":\"SNILS\",\"value\":\"112-233-445 95\"}"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", containsString("no-store")))
+                .andExpect(jsonPath("$").isEmpty());
+        mockMvc.perform(patch("/api/enrolment/learners/{id}", unknown)
+                        .with(login(USER_A))
+                        .with(csrf())
+                        .header("Idempotency-Key", "edit-unknown")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":0,\"fields\":{\"BIRTH_DATE\":\"31.02.2001\",\"SNILS\":\"1\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors.BIRTH_DATE").value("Дата должна быть в формате ГГГГ-ММ-ДД"));
+        mockMvc.perform(post("/api/enrolment/roster-exports/{id}/transferred", unknown)
+                        .with(login(USER_A))
+                        .with(csrf())
+                        .header("Idempotency-Key", "mark-unknown"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("Выгрузка для LMS не найдена"));
+        assertThat(jdbcTemplate.queryForList("SELECT action FROM audit_events WHERE category = 'LEARNER'", String.class))
+                .containsExactly("LEARNER_SEARCHED");
     }
 
     @Test
@@ -224,6 +355,13 @@ class AccessManagementHttpTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].action").value("JOURNAL_EXPORTED"))
                 .andExpect(jsonPath("$.items[0].details").value("формат CSV, строк: 2"));
+        mockMvc.perform(get("/api/admin/audit-events/export").param("format", "XLSX").with(login(ADMIN)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("REPORT_ROW_LIMIT"))
+                .andExpect(jsonPath("$.message").value("В выгрузку журнала попадает больше 3 строк; сузьте период или фильтры"));
+        mockMvc.perform(get("/api/admin/audit-events").param("category", "DOWNLOAD").with(login(ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1));
         mockMvc.perform(get("/api/admin/audit-events/export").with(login(USER_A)))
                 .andExpect(status().isForbidden());
     }
@@ -342,7 +480,7 @@ class AccessManagementHttpTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -429,7 +567,7 @@ class AccessManagementHttpTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_profile_events (
+                CREATE TABLE IF NOT EXISTS crm_profile_events (previous_enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     profile_id UUID NOT NULL,
                     command_id UUID NOT NULL,
@@ -471,6 +609,7 @@ class AccessManagementHttpTest {
                     created_count INTEGER NOT NULL DEFAULT 0,
                     updated_count INTEGER NOT NULL DEFAULT 0,
                     needs_mapping_count INTEGER NOT NULL DEFAULT 0,
+                    run_trigger VARCHAR(16) NOT NULL DEFAULT 'MANUAL',
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """);
@@ -487,6 +626,53 @@ class AccessManagementHttpTest {
                     details VARCHAR(2000),
                     request_id VARCHAR(64),
                     occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS enrolment_streams (
+                    id UUID PRIMARY KEY,
+                    course_key VARCHAR(310) NOT NULL,
+                    course_name VARCHAR(1333) NOT NULL,
+                    stream_no INTEGER NOT NULL,
+                    ends_on DATE,
+                    version INTEGER NOT NULL DEFAULT 0
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS learners (
+                    id UUID PRIMARY KEY,
+                    key_version VARCHAR(16),
+                    fields TEXT,
+                    email_hmac CHAR(64),
+                    phone_hmac CHAR(64),
+                    snils_hmac CHAR(64),
+                    name_hmac CHAR(64),
+                    last_name_hmac CHAR(64),
+                    missing_fields VARCHAR(600) NOT NULL DEFAULT '',
+                    personal_data_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+                    anonymized_at TIMESTAMP WITH TIME ZONE,
+                    version INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS learner_enrolments (
+                    id UUID PRIMARY KEY,
+                    learner_id UUID NOT NULL,
+                    stream_id UUID NOT NULL,
+                    source_record_id UUID,
+                    lms_export_id UUID,
+                    lms_exported_at TIMESTAMP WITH TIME ZONE,
+                    lms_transferred_at TIMESTAMP WITH TIME ZONE
+                )
+                """);
+        jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS source_records (id UUID PRIMARY KEY, external_id VARCHAR(200), program_id UUID)");
+        jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS programs (id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL)");
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS source_mappings (
+                    id UUID PRIMARY KEY, source VARCHAR(16) NOT NULL, kind VARCHAR(16) NOT NULL, external_key VARCHAR(310) NOT NULL,
+                    program_id UUID
                 )
                 """);
     }

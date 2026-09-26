@@ -7,6 +7,7 @@ public record AnonymizationRequest(
         SubjectQuery subject,
         List<UUID> contactIds,
         List<UUID> profileIds,
-        List<UUID> attachmentIds
+        List<UUID> attachmentIds,
+        List<UUID> learnerIds
 ) {
 }

@@ -21,6 +21,9 @@ import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.catalog.Contact;
 import ru.rtk.crm.catalog.ContactRepository;
 import ru.rtk.crm.catalog.PersonalDataStatus;
+import ru.rtk.crm.enrolment.LearnerIntake;
+import ru.rtk.crm.enrolment.PaidOrder;
+import ru.rtk.crm.enrolment.PaidOrderEnrolment;
 import ru.rtk.crm.interaction.CommandFingerprint;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
 import ru.rtk.crm.interaction.CommandOperation;
@@ -43,6 +46,7 @@ public class SiteRecordApplier {
     private final ContactRepository contactRepository;
     private final InteractionService interactionService;
     private final CommandIdempotencyRepository commandIdempotencyRepository;
+    private final PaidOrderEnrolment paidOrderEnrolment;
     private final ObjectMapper objectMapper;
 
     public SiteRecordApplier(
@@ -50,21 +54,39 @@ public class SiteRecordApplier {
             ContactRepository contactRepository,
             InteractionService interactionService,
             CommandIdempotencyRepository commandIdempotencyRepository,
+            PaidOrderEnrolment paidOrderEnrolment,
             ObjectMapper objectMapper
     ) {
         this.repository = repository;
         this.contactRepository = contactRepository;
         this.interactionService = interactionService;
         this.commandIdempotencyRepository = commandIdempotencyRepository;
+        this.paidOrderEnrolment = paidOrderEnrolment;
         this.objectMapper = objectMapper;
     }
 
     @Transactional
     public SyncOutcome apply(SiteRecord item, UUID runId, UUID actorProfileId) {
+        return store(item, runId, actorProfileId).outcome();
+    }
+
+    @Transactional
+    public PaidOrderApplied applyPaidOrder(SiteRecord item, PaidOrder order, UUID runId, UUID actorProfileId, UUID learnerActorId) {
+        StoredOutcome stored = store(item, runId, actorProfileId);
+        if (stored.outcome() == SyncOutcome.FAILED || !paidOrderEnrolment.enabled()) {
+            return new PaidOrderApplied(stored.outcome(), LearnerIntake.NONE);
+        }
+        LearnerIntake intake = paidOrderEnrolment.accept(
+                order, SiteRecord.programKey(item.programName()), stored.recordId(), learnerActorId
+        );
+        return new PaidOrderApplied(stored.outcome(), intake);
+    }
+
+    private StoredOutcome store(SiteRecord item, UUID runId, UUID actorProfileId) {
         OffsetDateTime now = OffsetDateTime.now();
         Optional<StoredRecord> existing = repository.findRecordForUpdate(SOURCE, item.type(), item.externalId());
         if (existing.isPresent() && !replaces(existing.get(), item)) {
-            return SyncOutcome.SKIPPED;
+            return new StoredOutcome(existing.get().id(), SyncOutcome.SKIPPED);
         }
         UUID recordId = existing.map(StoredRecord::id).orElseGet(UUID::randomUUID);
         ApplyResult result = resolve(recordId, item, existing.map(StoredRecord::interactionId).orElse(null), actorProfileId, now);
@@ -73,12 +95,16 @@ public class SiteRecordApplier {
         } else {
             repository.insertRecord(recordId, SOURCE, item.version(), result, runId, now);
         }
-        return switch (result.status()) {
+        SyncOutcome outcome = switch (result.status()) {
             case APPLIED -> existing.isPresent() ? SyncOutcome.UPDATED : SyncOutcome.CREATED;
             case NEEDS_MAPPING -> SyncOutcome.NEEDS_MAPPING;
             case FAILED -> SyncOutcome.FAILED;
             case SKIPPED -> SyncOutcome.SKIPPED;
         };
+        return new StoredOutcome(recordId, outcome);
+    }
+
+    private record StoredOutcome(UUID recordId, SyncOutcome outcome) {
     }
 
     @Transactional
@@ -135,6 +161,10 @@ public class SiteRecordApplier {
     }
 
     private static boolean replaces(StoredRecord existing, SiteRecord item) {
+        if (item.paidOrder()) {
+            return !Objects.equals(item.payloadHash(), existing.payloadHash())
+                    || existing.status() == SourceRecordStatus.NEEDS_MAPPING || existing.status() == SourceRecordStatus.FAILED;
+        }
         if (item.updatedAt().isAfter(existing.externalUpdatedAt())) {
             return true;
         }
@@ -151,6 +181,9 @@ public class SiteRecordApplier {
     ) {
         if (item.problem() != null) {
             return failed("Запись не соответствует контракту: " + item.problem(), previousInteractionId);
+        }
+        if (item.paidOrder()) {
+            return resolvePaidOrder(item);
         }
         boolean partnership = PARTNERSHIP_REQUEST.equals(item.type());
         if (!partnership && !LEARNING_APPLICATION.equals(item.type())) {
@@ -185,6 +218,26 @@ public class SiteRecordApplier {
             return new ApplyResult(SourceRecordStatus.APPLIED, null, organizationId, programId, applications, null);
         }
         return applyPartnership(recordId, item, organization.get(), programId, previousInteractionId, actorProfileId, now);
+    }
+
+    private ApplyResult resolvePaidOrder(SiteRecord item) {
+        if (item.programName() == null || item.streamNo() == null || item.payloadHash() == null) {
+            return failed("В записи оплаты нет курса, номера потока или версии", null);
+        }
+        Optional<SourceOrganization> organization = organization(item);
+        if (organization.isEmpty()) {
+            return new ApplyResult(SourceRecordStatus.NEEDS_MAPPING,
+                    "Служебная организация «" + SiteRecord.OPEN_ENROLMENT_NAME + "» не найдена в CRM", null, null, 1, null);
+        }
+        UUID organizationId = organization.get().id();
+        Optional<UUID> program = repository.findMappedProgramId(SOURCE, SiteRecord.programKey(item.programName()))
+                .or(() -> Optional.ofNullable(uniqueOrNull(repository.findActiveProgramIdsByNormalizedName(item.programName()))));
+        if (program.isEmpty()) {
+            return new ApplyResult(SourceRecordStatus.NEEDS_MAPPING,
+                    "Курс «" + item.programName() + "» не сопоставлен с программой CRM; выберите программу",
+                    organizationId, null, 1, null);
+        }
+        return new ApplyResult(SourceRecordStatus.APPLIED, null, organizationId, program.get(), 1, null);
     }
 
     private ApplyResult applyPartnership(

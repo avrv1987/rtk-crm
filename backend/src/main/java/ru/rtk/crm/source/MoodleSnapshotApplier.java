@@ -376,7 +376,7 @@ public class MoodleSnapshotApplier {
     }
 
     private RecordVersion version(LearningUnit unit, OffsetDateTime observedAt) {
-        return new RecordVersion(unit.recordType(), unit.externalId(), observedAt, observedAt, null, write(unit));
+        return new RecordVersion(unit.recordType(), unit.externalId(), observedAt, observedAt, null, write(unit), null, null);
     }
 
     private static String truncate(String value) {

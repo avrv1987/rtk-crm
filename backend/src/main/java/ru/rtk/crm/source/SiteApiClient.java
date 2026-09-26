@@ -1,5 +1,6 @@
 package ru.rtk.crm.source;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -15,6 +16,9 @@ import java.util.List;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
+import ru.rtk.crm.enrolment.PaidOrderBatch;
+import ru.rtk.crm.enrolment.PaidOrderParser;
+import ru.rtk.crm.interaction.InteractionValidationException;
 
 @Component
 public class SiteApiClient {
@@ -22,11 +26,13 @@ public class SiteApiClient {
 
     private final SourceProperties.Website properties;
     private final ObjectMapper objectMapper;
+    private final PaidOrderParser paidOrderParser;
     private final HttpClient httpClient;
 
-    public SiteApiClient(SourceProperties properties, ObjectMapper objectMapper) {
+    public SiteApiClient(SourceProperties properties, ObjectMapper objectMapper, PaidOrderParser paidOrderParser) {
         this.properties = properties.website();
         this.objectMapper = objectMapper;
+        this.paidOrderParser = paidOrderParser;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(this.properties.connectTimeout())
                 .followRedirects(HttpClient.Redirect.NEVER)
@@ -37,7 +43,7 @@ public class SiteApiClient {
         return properties.configured();
     }
 
-    List<SiteRecord> fetch(OffsetDateTime updatedSince) {
+    SiteResponse fetch(OffsetDateTime updatedSince) {
         List<SiteRecord> records = new ArrayList<>();
         int page = 1;
         for (int loaded = 0; ; loaded++) {
@@ -46,7 +52,14 @@ public class SiteApiClient {
                         "Сайт вернул больше " + properties.maxPages() + " страниц; синхронизация остановлена без изменений"
                 );
             }
-            JsonNode body = get(recordsUri(updatedSince, page));
+            byte[] bytes = get(recordsUri(updatedSince, page));
+            JsonNode body = json(bytes);
+            if (body.isArray() && page == 1) {
+                return new SiteResponse(List.of(), paidOrders(bytes));
+            }
+            if (!body.isObject()) {
+                throw SourceFetchException.invalidResponse("Ответ сайта не является JSON-объектом или массивом оплат");
+            }
             JsonNode items = body.path("items");
             if (!items.isArray()) {
                 throw SourceFetchException.invalidResponse("Ответ сайта не содержит массив items (страница " + page + ")");
@@ -54,7 +67,7 @@ public class SiteApiClient {
             items.forEach(item -> records.add(SiteRecord.parse(item)));
             JsonNode nextPage = body.path("nextPage");
             if (nextPage.isMissingNode() || nextPage.isNull()) {
-                return records;
+                return new SiteResponse(List.copyOf(records), null);
             }
             if (!nextPage.isIntegralNumber() || nextPage.intValue() <= page) {
                 throw SourceFetchException.invalidResponse("Поле nextPage должно быть номером следующей страницы или null");
@@ -63,7 +76,28 @@ public class SiteApiClient {
         }
     }
 
-    private JsonNode get(URI uri) {
+    private PaidOrderBatch paidOrders(byte[] bytes) {
+        try {
+            return paidOrderParser.parse(new ByteArrayInputStream(bytes));
+        } catch (InteractionValidationException exception) {
+            throw SourceFetchException.invalidResponse("Ответ сайта с оплатами отклонён: " + exception.getMessage());
+        }
+    }
+
+    private JsonNode json(byte[] bytes) {
+        JsonNode json;
+        try {
+            json = objectMapper.readTree(bytes);
+        } catch (IOException exception) {
+            throw SourceFetchException.invalidResponse("Ответ сайта не является корректным JSON");
+        }
+        if (json == null || json.isMissingNode()) {
+            throw SourceFetchException.invalidResponse("Ответ сайта не является JSON-объектом или массивом оплат");
+        }
+        return json;
+    }
+
+    private byte[] get(URI uri) {
         HttpRequest.Builder request = HttpRequest.newBuilder(uri)
                 .timeout(properties.readTimeout())
                 .header("Accept", "application/json")
@@ -92,11 +126,7 @@ public class SiteApiClient {
             if (bytes.length > limit) {
                 throw SourceFetchException.invalidResponse("Страница ответа сайта больше " + properties.maxPageSize());
             }
-            JsonNode json = objectMapper.readTree(bytes);
-            if (json == null || !json.isObject()) {
-                throw SourceFetchException.invalidResponse("Ответ сайта не является JSON-объектом");
-            }
-            return json;
+            return bytes;
         } catch (IOException exception) {
             throw SourceFetchException.invalidResponse("Ответ сайта не является корректным JSON");
         }
@@ -119,5 +149,8 @@ public class SiteApiClient {
             throw SourceFetchException.unavailable("Адрес сайта в конфигурации развёртывания некорректен");
         }
         throw SourceFetchException.unavailable("Адрес сайта в конфигурации развёртывания должен начинаться с http:// или https://");
+    }
+
+    record SiteResponse(List<SiteRecord> records, PaidOrderBatch paidOrders) {
     }
 }

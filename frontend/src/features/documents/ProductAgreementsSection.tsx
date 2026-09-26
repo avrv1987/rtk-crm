@@ -115,6 +115,23 @@ const FileReference = ({ attachment, onError }: { attachment: Attachment | undef
   )
 }
 
+const VendorContactDetails = ({ agreement }: { agreement: ProductAgreement }) => {
+  const contact = agreement.vendorContact
+  if (contact === null) {
+    return <span className="product-contract__muted">не указан в справочнике вендоров</span>
+  }
+  const channels = [contact.prefersEmail ? 'почта' : null, contact.prefersTelegram ? 'чат в Telegram' : null]
+    .filter((channel) => channel !== null)
+  return (
+    <span className="product-contract__vendor-contact">
+      {contact.name}
+      {contact.phone !== null && <> · <a href={`tel:${contact.phone}`}>{contact.phone}</a></>}
+      {contact.email !== null && <> · <a href={`mailto:${contact.email}`}>{contact.email}</a></>}
+      {channels.length > 0 && <> · удобно: {channels.join(', ')}</>}
+    </span>
+  )
+}
+
 export const ProductAgreementsSection = ({
   interaction,
   canEdit,
@@ -239,6 +256,9 @@ export const ProductAgreementsSection = ({
     return (
       <form className="product-contract__form" onSubmit={(event) => void submit(event, agreement, 'contract')}>
         <h6>Договор и лицензия: {agreement.productName}</h6>
+        <p className="product-contract__wide">
+          Контакт вендора «{agreement.vendorName}» по лицензии и документации: <VendorContactDetails agreement={agreement} />
+        </p>
         <div className="product-contract__grid">
           <label>
             Номер договора
@@ -412,6 +432,10 @@ export const ProductAgreementsSection = ({
                 <div>
                   <dt>Статус передачи</dt>
                   <dd>{agreement.transferStatus ?? 'Не указан'}</dd>
+                </div>
+                <div className="product-contract__wide">
+                  <dt>Контакт вендора</dt>
+                  <dd><VendorContactDetails agreement={agreement} /></dd>
                 </div>
                 <div className="product-contract__wide">
                   <dt>Скан</dt>

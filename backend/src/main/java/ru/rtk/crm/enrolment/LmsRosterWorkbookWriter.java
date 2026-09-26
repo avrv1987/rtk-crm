@@ -4,9 +4,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.time.LocalDate;
 import java.util.EnumSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -20,7 +18,6 @@ import org.apache.poi.xssf.usermodel.XSSFDataValidationHelper;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Component;
-import ru.rtk.crm.interaction.InteractionValidationException;
 
 @Component
 public class LmsRosterWorkbookWriter {
@@ -45,17 +42,7 @@ public class LmsRosterWorkbookWriter {
             LearnerField.PASSPORT_ISSUE_DATE, LearnerField.BIRTH_DATE, LearnerField.DIPLOMA_ISSUE_DATE
     );
 
-    public int write(List<LearnerProfile> profiles, OutputStream output) throws IOException {
-        Map<String, LearnerProfile> byEmail = new LinkedHashMap<>();
-        for (int index = 0; index < profiles.size(); index++) {
-            String email = profiles.get(index).email();
-            if (email == null || email.isBlank()) {
-                throw new InteractionValidationException(
-                        "email", "Анкета № " + (index + 1) + ": не заполнен Email; файл для LMS не сформирован"
-                );
-            }
-            byEmail.putIfAbsent(LearnerRules.emailKey(email), profiles.get(index));
-        }
+    public void write(List<LearnerProfile> profiles, OutputStream output) throws IOException {
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
             XSSFSheet sheet = workbook.createSheet(DATA_SHEET);
             XSSFSheet lists = workbook.createSheet(LISTS_SHEET);
@@ -75,7 +62,7 @@ public class LmsRosterWorkbookWriter {
             }
 
             int rowIndex = 1;
-            for (LearnerProfile profile : byEmail.values()) {
+            for (LearnerProfile profile : profiles) {
                 Row row = sheet.createRow(rowIndex++);
                 for (int column = 0; column < fields.length; column++) {
                     Object value = profile.value(fields[column]);
@@ -93,7 +80,6 @@ public class LmsRosterWorkbookWriter {
             workbook.setActiveSheet(0);
             workbook.write(output);
         }
-        return profiles.size() - byEmail.size();
     }
 
     private static void fillLists(XSSFSheet lists) {

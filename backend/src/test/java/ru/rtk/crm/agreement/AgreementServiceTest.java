@@ -46,6 +46,7 @@ import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
 import ru.rtk.crm.agreement.AgreementModels.Confirmation;
 import ru.rtk.crm.agreement.AgreementModels.ConfirmationQuery;
 import ru.rtk.crm.attachment.AttachmentStorage;
+import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.catalog.OrganizationNotFoundException;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
@@ -72,6 +73,7 @@ import ru.rtk.crm.report.StatisticsGroupBy;
         CommandIdempotencyRepository.class,
         AgreementRepository.class,
         AgreementService.class,
+        AuditJournalRepository.class,
         ReportRepository.class,
         ReportService.class,
         AgreementServiceTest.TestBeans.class
@@ -121,7 +123,7 @@ class AgreementServiceTest {
         createSchema();
         for (String table : List.of(
                 "agreement_activity_attachments", "agreement_activity_interactions", "agreement_activities", "agreements",
-                "agreement_activity_kinds", "learning_snapshots", "source_mappings", "source_records", "attachments", "interaction_stages", "interactions",
+                "audit_events", "agreement_activity_kinds", "learning_snapshots", "source_mappings", "source_records", "attachments", "interaction_stages", "interactions",
                 "command_idempotency_records", "organizations", "crm_user_profiles", "teams"
         )) {
             jdbc.update("DELETE FROM " + table);
@@ -145,6 +147,7 @@ class AgreementServiceTest {
         learningRun(uuid(603), "course-3", null, 100, null, null);
         learningRun(uuid(604), "course-4", null, 40, LocalDate.parse("2025-02-01"), LocalDate.parse("2025-06-30"));
         learningRun(uuid(605), "course-5", null, 50, LocalDate.parse("2026-09-01"), LocalDate.parse("2026-12-25"));
+        learningRun(uuid(606), "course-6/group-1", 6L, 9, LocalDate.parse("2026-03-01"), LocalDate.parse("2026-04-01"), "TEACHERS");
         jdbc.update("""
                 INSERT INTO agreement_activity_kinds (id, name, sort_order, archived, version) VALUES
                     (?, 'Разработка и актуализация образовательных программ', 10, FALSE, 0),
@@ -295,8 +298,13 @@ class AgreementServiceTest {
         Map<String, String> entries = unzip(output.toByteArray());
         jdbc.update("UPDATE attachments SET size_bytes = ? WHERE id IN (?, ?)", 600L * 1024 * 1024, ACT_CLEAN, PROGRAM_CLEAN);
         assertThat(agreementService.confirmations(managerA, query(ORGANIZATION_A, null))).hasSize(2);
-        assertThat(agreementService.archiveRows(managerA, query(ORGANIZATION_A, KIND_TRAINING))).hasSize(1);
-        assertThatThrownBy(() -> agreementService.archiveRows(managerA, query(ORGANIZATION_A, null)))
+        assertThat(agreementService.archiveRows(managerA, query(ORGANIZATION_A, KIND_TRAINING), "archive.zip", "rq-archive"))
+                .hasSize(1);
+        assertThat(jdbc.queryForMap("SELECT category, action, actor_profile_id, object_name, details, request_id FROM audit_events"))
+                .containsEntry("CATEGORY", "DOWNLOAD").containsEntry("ACTION", "CONFIRMATIONS_DOWNLOADED")
+                .containsEntry("ACTOR_PROFILE_ID", MANAGER_A).containsEntry("OBJECT_NAME", "archive.zip")
+                .containsEntry("DETAILS", "файлов в архиве: 1, строк описи: 1").containsEntry("REQUEST_ID", "rq-archive");
+        assertThatThrownBy(() -> agreementService.archiveRows(managerA, query(ORGANIZATION_A, null), "archive.zip", "rq-archive"))
                 .isInstanceOfSatisfying(AgreementException.class, exception -> {
                     assertThat(exception.status().value()).isEqualTo(422);
                     assertThat(exception.code()).isEqualTo("CONFIRMATION_LIMIT");
@@ -487,11 +495,23 @@ class AgreementServiceTest {
             LocalDate runStartsOn,
             LocalDate runEndsOn
     ) {
+        learningRun(recordId, externalId, groupId, participants, runStartsOn, runEndsOn, "STUDENTS");
+    }
+
+    private void learningRun(
+            UUID recordId,
+            String externalId,
+            Long groupId,
+            int participants,
+            LocalDate runStartsOn,
+            LocalDate runEndsOn,
+            String runKind
+    ) {
         jdbc.update("INSERT INTO source_records (id, source, external_id) VALUES (?, 'MOODLE', ?)", recordId, externalId);
         jdbc.update("""
-                INSERT INTO source_mappings (id, source, kind, external_key, run_starts_on, run_ends_on)
-                VALUES (?, 'MOODLE', ?, ?, ?, ?)
-                """, UUID.randomUUID(), groupId == null ? "COURSE" : "GROUP", externalId, runStartsOn, runEndsOn);
+                INSERT INTO source_mappings (id, source, kind, external_key, run_starts_on, run_ends_on, run_kind)
+                VALUES (?, 'MOODLE', ?, ?, ?, ?, ?)
+                """, UUID.randomUUID(), groupId == null ? "COURSE" : "GROUP", externalId, runStartsOn, runEndsOn, runKind);
         jdbc.update("""
                 INSERT INTO learning_snapshots (source_record_id, organization_id, program_id, group_id, participants_count)
                 VALUES (?, ?, ?, ?, ?)
@@ -499,9 +519,17 @@ class AgreementServiceTest {
     }
 
     private void createSchema() {
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id UUID PRIMARY KEY, category VARCHAR(32) NOT NULL, action VARCHAR(64) NOT NULL, actor_profile_id UUID,
+                    actor_display_name VARCHAR(200) NOT NULL, object_type VARCHAR(32), object_id UUID,
+                    object_name VARCHAR(500), details VARCHAR(2000), request_id VARCHAR(64),
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
         jdbc.execute("CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL)");
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     display_name VARCHAR(200) NOT NULL,
                     role VARCHAR(16) NOT NULL,
@@ -598,7 +626,7 @@ class AgreementServiceTest {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS source_records (
+                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), 
                     id UUID PRIMARY KEY,
                     source VARCHAR(16) NOT NULL,
                     external_id VARCHAR(200) NOT NULL
@@ -611,7 +639,8 @@ class AgreementServiceTest {
                     kind VARCHAR(16) NOT NULL,
                     external_key VARCHAR(310) NOT NULL,
                     run_starts_on DATE,
-                    run_ends_on DATE
+                    run_ends_on DATE,
+                    run_kind VARCHAR(16) NOT NULL DEFAULT 'STUDENTS'
                 )
                 """);
         jdbc.execute("""

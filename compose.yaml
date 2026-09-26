@@ -18,6 +18,7 @@ services:
     volumes:
       - ./infra/web/default.conf:/etc/nginx/templates/default.conf.template:ro
       - ./infra/web/crm-site.conf:/etc/nginx/crm-site.conf:ro
+      - ./infra/web/security-headers.conf:/etc/nginx/security-headers.conf:ro
     networks:
       - rtk-crm
 
@@ -50,8 +51,14 @@ services:
       APP_RETENTION_INACTIVE_CONTACTS: ${RETENTION_INACTIVE_CONTACTS:-1095d}
       APP_RETENTION_DISMISSED_PROFILES: ${RETENTION_DISMISSED_PROFILES:-365d}
       APP_RETENTION_AUDIT_EVENTS: ${RETENTION_AUDIT_EVENTS:-1095d}
+      APP_RETENTION_LEARNER_PROFILES: ${RETENTION_LEARNER_PROFILES:-P3Y}
       APP_SOURCES_STALE_AFTER: ${SOURCES_STALE_AFTER:-26h}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      APP_ENROLMENT_ENABLED: ${ENROLMENT_ENABLED:-false}
+      APP_ENROLMENT_ACTIVE_KEY_VERSION: ${ENROLMENT_ACTIVE_KEY_VERSION:-}
+      APP_ENROLMENT_KEYS_V1: ${ENROLMENT_KEYS_V1:-}
+      APP_ENROLMENT_KEYS_V2: ${ENROLMENT_KEYS_V2:-}
+      APP_ENROLMENT_FINGERPRINT_KEY: ${ENROLMENT_FINGERPRINT_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

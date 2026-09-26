@@ -10,7 +10,6 @@ import java.time.format.ResolverStyle;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumMap;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -27,6 +26,7 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.apache.poi.ss.util.CellReference;
 import org.apache.poi.xssf.usermodel.XSSFCell;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
@@ -41,12 +41,14 @@ public class LearnerWorkbookReader {
     private static final long MAX_DECOMPRESSED_BYTES = 12L * 1024L * 1024L;
     private static final String DATE_MESSAGE = "Дата должна быть в формате ДД.ММ.ГГГГ";
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("d.M.uuuu").withResolverStyle(ResolverStyle.STRICT);
-    private static final Set<LearnerField> REQUIRED_COLUMNS =
-            Set.of(LearnerField.LAST_NAME, LearnerField.FIRST_NAME, LearnerField.PHONE, LearnerField.EMAIL);
+    private static final String LEADING_ZEROS = "Восстановлены ведущие нули: Excel сохранил значение числом";
+    private static final Set<LearnerField> REQUIRED_COLUMNS = Set.of(LearnerField.LAST_NAME, LearnerField.FIRST_NAME);
+    private static final Set<LearnerField> CONTACT_COLUMNS = Set.of(LearnerField.PHONE, LearnerField.EMAIL);
     private static final Map<LearnerField, Integer> DIGIT_COLUMNS = Map.of(
             LearnerField.SNILS, 11,
             LearnerField.PASSPORT_SERIES, 4,
             LearnerField.PASSPORT_NUMBER, 6,
+            LearnerField.PASSPORT_DIVISION_CODE, 6,
             LearnerField.POSTAL_CODE, 6
     );
     private static final Map<String, LearnerField> FIELDS_BY_HEADER = Arrays.stream(LearnerField.values())
@@ -59,7 +61,7 @@ public class LearnerWorkbookReader {
         ZipSecureFile.setMaxEntrySize(MAX_DECOMPRESSED_BYTES);
     }
 
-    public LearnerWorkbook read(MultipartFile file, LocalDate today) {
+    public LearnerWorkbook read(MultipartFile file) {
         if (file.getSize() > MAX_FILE_BYTES) {
             throw new InteractionValidationException("file", "Файл больше " + MAX_FILE_BYTES / (1024 * 1024) + " МиБ");
         }
@@ -69,14 +71,14 @@ public class LearnerWorkbookReader {
                      rowIndex <= Math.min(sheet.getLastRowNum(), HEADER_SEARCH_ROWS - 1); rowIndex++) {
                     Row row = sheet.getRow(rowIndex);
                     Map<LearnerField, Integer> columns = row == null ? Map.of() : columns(sheet, row);
-                    if (columns.keySet().containsAll(REQUIRED_COLUMNS)) {
-                        return new LearnerWorkbook(ignoredHeaders(row), rows(sheet, rowIndex, columns, today));
+                    if (columns.keySet().containsAll(REQUIRED_COLUMNS)
+                            && CONTACT_COLUMNS.stream().anyMatch(columns::containsKey)) {
+                        return new LearnerWorkbook(ignoredHeaders(row), described(row, columns), rows(sheet, rowIndex, columns));
                     }
                 }
             }
-            throw new InteractionValidationException(
-                    "file", "Не найдена строка заголовков шаблона «Загрузка пользователей»: нужны столбцы Фамилия, Имя, Номер телефона и Email"
-            );
+            throw new InteractionValidationException("file", "Не найдена строка заголовков шаблона «Загрузка пользователей»: "
+                    + "нужны столбцы Фамилия, Имя и для сопоставления со слушателями Email или Номер телефона");
         } catch (InteractionValidationException exception) {
             throw exception;
         } catch (EncryptedDocumentException exception) {
@@ -123,9 +125,16 @@ public class LearnerWorkbookReader {
         return columns;
     }
 
-    private List<LearnerWorkbookRow> rows(Sheet sheet, int headerIndex, Map<LearnerField, Integer> columns, LocalDate today) {
+    private static Map<LearnerField, LearnerWorkbookColumn> described(Row header, Map<LearnerField, Integer> columns) {
+        Map<LearnerField, LearnerWorkbookColumn> described = new EnumMap<>(LearnerField.class);
+        columns.forEach((field, index) -> described.put(field, new LearnerWorkbookColumn(
+                CellReference.convertNumToColString(index), LearnerRules.collapseSpaces(header.getCell(index).getStringCellValue())
+        )));
+        return described;
+    }
+
+    private List<LearnerWorkbookRow> rows(Sheet sheet, int headerIndex, Map<LearnerField, Integer> columns) {
         List<LearnerWorkbookRow> rows = new ArrayList<>();
-        Map<String, Integer> rowsByEmail = new HashMap<>();
         for (int rowIndex = headerIndex + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
             Row row = sheet.getRow(rowIndex);
             if (row == null) {
@@ -141,16 +150,7 @@ public class LearnerWorkbookReader {
                 );
             }
             LearnerProfile profile = parser.profile().normalized();
-            List<LearnerFieldError> errors = new ArrayList<>(parser.errors);
-            Set<LearnerField> failed = parser.errors.stream().map(LearnerFieldError::field).collect(Collectors.toSet());
-            LearnerRules.check(profile, today).stream().filter(error -> !failed.contains(error.field())).forEach(errors::add);
-            if (profile.email() != null) {
-                Integer previous = rowsByEmail.putIfAbsent(LearnerRules.emailKey(profile.email()), rowIndex + 1);
-                if (previous != null) {
-                    errors.add(new LearnerFieldError(LearnerField.EMAIL, "Email совпадает со строкой " + previous));
-                }
-            }
-            rows.add(new LearnerWorkbookRow(rowIndex + 1, profile, List.copyOf(errors)));
+            rows.add(new LearnerWorkbookRow(rowIndex + 1, profile, List.copyOf(parser.errors), List.copyOf(parser.warnings)));
         }
         return List.copyOf(rows);
     }
@@ -163,6 +163,7 @@ public class LearnerWorkbookReader {
         private final Row row;
         private final Map<LearnerField, Integer> columns;
         private final List<LearnerFieldError> errors = new ArrayList<>();
+        private final List<LearnerFieldError> warnings = new ArrayList<>();
 
         private RowParser(Row row, Map<LearnerField, Integer> columns) {
             this.row = row;
@@ -228,9 +229,11 @@ public class LearnerWorkbookReader {
                     }
                     String digits = BigDecimal.valueOf(cell.getNumericCellValue()).stripTrailingZeros().toPlainString();
                     Integer length = DIGIT_COLUMNS.get(field);
-                    yield length != null && digits.matches("\\d+") && digits.length() < length
-                            ? "0".repeat(length - digits.length()) + digits
-                            : digits;
+                    if (length != null && digits.matches("\\d+") && digits.length() < length) {
+                        warnings.add(new LearnerFieldError(field, LEADING_ZEROS));
+                        yield "0".repeat(length - digits.length()) + digits;
+                    }
+                    yield digits;
                 }
                 default -> null;
             };

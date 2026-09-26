@@ -92,7 +92,6 @@ defaults=(
     KEYCLOAK_ADMIN_USERNAME=bootstrap-admin
     PUBLIC_ORIGIN=http://rtk.localhost:8081
     'SOURCES_SYNC_CRON=0 0 * * * *'
-    ENROLMENT_ENABLED=false
     ENROLMENT_ACTIVE_KEY_VERSION=v1
 )
 secrets=(
@@ -106,12 +105,13 @@ secrets=(
     ENROLMENT_FINGERPRINT_KEY
 )
 if [[ ${values[DEMO_DATA]} == true ]]; then
-    defaults+=(SITE_BASE_URL=$site_fixture_url DEMO_LMS=true)
+    defaults+=(SITE_BASE_URL=$site_fixture_url DEMO_LMS=true ENROLMENT_ENABLED=true)
     secrets+=(DEMO_USER_PASSWORD SITE_TOKEN)
 else
     [[ ${values[DEMO_LMS]-} != true ]] || fail 'DEMO_LMS=true requires DEMO_DATA=true'
     [[ ${values[SITE_BASE_URL]-} != "$site_fixture_url" ]] || set_value SITE_BASE_URL ''
-    defaults+=(DEMO_LMS=false CRM_ADMIN_USERNAME=admin 'CRM_ADMIN_DISPLAY_NAME=Администратор')
+    defaults+=(DEMO_LMS=false ENROLMENT_ENABLED=false CRM_ADMIN_USERNAME=admin 'CRM_ADMIN_DISPLAY_NAME=Администратор')
+    defaults+=(CRM_ADMIN_EMAIL=admin@rtk-crm.local)
     secrets+=(CRM_ADMIN_PASSWORD)
 fi
 for pair in "${defaults[@]}"; do
@@ -197,14 +197,18 @@ ensure_user() {
 }
 
 ensure_administrator() {
-    local username=${values[CRM_ADMIN_USERNAME]} id
+    local username=${values[CRM_ADMIN_USERNAME]} email=${values[CRM_ADMIN_EMAIL]} id
     id=$(find_user "$username")
     if [[ -z $id ]]; then
-        id=$(user_definition "$username" "${values[CRM_ADMIN_DISPLAY_NAME]}" CRM '' true | kcadm create users -r rtk-crm -f - -i)
+        id=$(user_definition "$username" "${values[CRM_ADMIN_DISPLAY_NAME]}" CRM "$email" true | kcadm create users -r rtk-crm -f - -i)
         id=$(single_id "Keycloak user $username" "$id")
         set_password "$id" "${values[CRM_ADMIN_PASSWORD]}" true
     fi
-    subjects[$username]=$(single_id "Keycloak user $username" "$id")
+    id=$(single_id "Keycloak user $username" "$id")
+    if [[ -z $(kcadm get "users/$id" -r rtk-crm --fields email --format csv --noquotes) ]]; then
+        printf '{"email":%s,"emailVerified":true}' "$(json_string "$email")" | kcadm update "users/$id" -r rtk-crm -f -
+    fi
+    subjects[$username]=$id
 }
 
 compose up -d --wait postgres keycloak
@@ -254,6 +258,7 @@ demo_identities=(
     'leader|Руководитель|LEADER|team-a'
     'leader-b|Руководитель Б|LEADER|team-b'
     'admin|Администратор|ADMIN|team-a'
+    'enrol|Оператор зачисления|USER|open-enrolment|operator'
 )
 spare_accounts=(
     'unprofiled|Без профиля CRM'
@@ -266,6 +271,7 @@ identity_yaml() {
     printf '      - key: %s\n        issuer: %s\n        subject: %s\n        display-name: %s\n        role: %s\n' \
         "$(yaml_literal "$1")" "$issuer" "$(yaml_literal "${subjects[$1]}")" "$(yaml_literal "$2")" "$3"
     [[ -z ${4-} ]] || printf '        team-key: %s\n' "$(yaml_literal "$4")"
+    [[ ${5-} != operator ]] || printf '        enrolment-operator: true\n'
 }
 
 if [[ ${values[DEMO_DATA]} == true ]]; then
@@ -283,11 +289,13 @@ app:
         name: 'Команда А'
       - key: 'team-b'
         name: 'Команда Б'
+      - key: 'open-enrolment'
+        name: 'Открытый набор'
     identities:
 YAML
         for entry in "${demo_identities[@]}"; do
-            IFS='|' read -r username display_name role team <<< "$entry"
-            identity_yaml "$username" "$display_name" "$role" "$team"
+            IFS='|' read -r username display_name role team flag <<< "$entry"
+            identity_yaml "$username" "$display_name" "$role" "$team" "$flag"
         done
         cat <<'YAML'
     organizations:

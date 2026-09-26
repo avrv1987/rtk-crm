@@ -27,6 +27,7 @@ public class PaidOrderParser {
     static final String PHONE = "Телефон";
     static final String EMAIL = "Email";
     static final String STREAM_NUMBER = "Номер потока";
+    static final String PERSONAL_WARNING = "; поле не сохранено";
     private static final Pattern ORDER_NUMBER_FORM = Pattern.compile("ORD-\\d+-[A-Z0-9]+");
 
     private final ObjectMapper objectMapper;
@@ -62,11 +63,13 @@ public class PaidOrderParser {
             }
         }
         List<PaidOrder> orders = new ArrayList<>();
+        int duplicates = 0;
         for (List<Candidate> candidates : byNumber.values()) {
             Candidate first = candidates.get(0);
             boolean identical = candidates.stream().allMatch(candidate -> candidate.order().equals(first.order()));
             if (identical) {
                 orders.add(first.order());
+                duplicates += candidates.size() - 1;
                 candidates.stream().skip(1).forEach(candidate -> issues.add(new PaidOrderIssue(
                         candidate.position(), ORDER_NUMBER, "Повтор заявки с тем же содержимым пропущен"
                 )));
@@ -77,7 +80,7 @@ public class PaidOrderParser {
             }
         }
         issues.sort(Comparator.comparingInt(PaidOrderIssue::position));
-        return new PaidOrderBatch(List.copyOf(orders), List.copyOf(issues), emptyElements);
+        return new PaidOrderBatch(List.copyOf(orders), List.copyOf(issues), root.size(), emptyElements, duplicates);
     }
 
     private JsonNode read(InputStream input) {
@@ -93,23 +96,30 @@ public class PaidOrderParser {
     }
 
     private PaidOrder order(JsonNode item, int position, List<PaidOrderIssue> issues) {
-        int issuesBefore = issues.size();
-        String orderNumber = text(item, ORDER_NUMBER, 100, true, position, issues);
-        String course = text(item, COURSE, 300, true, position, issues);
-        String lastName = text(item, LAST_NAME, 100, true, position, issues);
-        String firstName = text(item, FIRST_NAME, 100, true, position, issues);
-        String middleName = text(item, MIDDLE_NAME, 100, false, position, issues);
-        String phoneText = text(item, PHONE, 50, true, position, issues);
+        List<PaidOrderIssue> found = new ArrayList<>();
+        String orderNumber = text(item, ORDER_NUMBER, 100, true, position, found);
+        String course = text(item, COURSE, 300, true, position, found);
+        int personalFrom = found.size();
+        String lastName = text(item, LAST_NAME, 100, true, position, found);
+        String firstName = text(item, FIRST_NAME, 100, true, position, found);
+        String middleName = text(item, MIDDLE_NAME, 100, false, position, found);
+        String phoneText = text(item, PHONE, 50, true, position, found);
         String phone = phoneText == null ? null : LearnerRules.normalizePhone(phoneText);
         if (phoneText != null && phone == null) {
-            issues.add(new PaidOrderIssue(position, PHONE, "Телефон должен содержать 10 цифр после +7 или 8"));
+            found.add(new PaidOrderIssue(position, PHONE, "Телефон должен содержать 10 цифр после +7 или 8"));
         }
-        String email = text(item, EMAIL, LearnerRules.MAX_EMAIL_LENGTH, true, position, issues);
-        if (email != null && !LearnerRules.isEmail(email)) {
-            issues.add(new PaidOrderIssue(position, EMAIL, "Email указан неверно"));
+        String emailText = text(item, EMAIL, LearnerRules.MAX_EMAIL_LENGTH, true, position, found);
+        String email = emailText != null && LearnerRules.isEmail(emailText) ? emailText : null;
+        if (emailText != null && email == null) {
+            found.add(new PaidOrderIssue(position, EMAIL, "Email указан неверно"));
         }
-        Integer streamNumber = streamNumber(item, position, issues);
-        if (issues.size() > issuesBefore) {
+        for (int index = personalFrom; index < found.size(); index++) {
+            PaidOrderIssue issue = found.get(index);
+            found.set(index, new PaidOrderIssue(position, issue.field(), issue.message() + PERSONAL_WARNING, true));
+        }
+        Integer streamNumber = streamNumber(item, position, found);
+        issues.addAll(found);
+        if (found.stream().anyMatch(issue -> !issue.warning())) {
             return null;
         }
         if (!ORDER_NUMBER_FORM.matcher(orderNumber).matches()) {

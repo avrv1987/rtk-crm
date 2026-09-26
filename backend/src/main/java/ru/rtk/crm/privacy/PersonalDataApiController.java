@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import ru.rtk.crm.access.CurrentProfileService;
+import ru.rtk.crm.enrolment.LearnerPrivacyService.SubjectLearner;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.security.RequestId;
 
@@ -95,6 +96,19 @@ public class PersonalDataApiController {
             HttpServletRequest request
     ) {
         return personalDataService.restrict(
+                currentProfileService.requireActiveProfile(user), parseId(id), restriction, idempotencyKey, RequestId.from(request)
+        );
+    }
+
+    @PostMapping("/personal-data/learners/{id}/restriction")
+    public SubjectLearner restrictLearner(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody(required = false) ContactRestriction restriction,
+            HttpServletRequest request
+    ) {
+        return personalDataService.restrictLearner(
                 currentProfileService.requireActiveProfile(user), parseId(id), restriction, idempotencyKey, RequestId.from(request)
         );
     }

@@ -9,5 +9,6 @@ public enum AuditCategory {
     DOWNLOAD,
     PERSONAL_DATA,
     RETENTION,
-    ACCOUNT
+    ACCOUNT,
+    LEARNER
 }

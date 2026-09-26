@@ -72,6 +72,15 @@ const directionProgramFields: MappingField[] = [
   field('programDirectionRef', 'Ключ направления программы', false, false, ['directionRef'])
 ]
 
+const vendorContactFields: MappingField[] = [
+  field('vendorName', 'Компания', true, false, ['Вендор', 'Производитель']),
+  field('productNames', 'Продукт', false, false, ['Продукты', 'ПО', 'ИТ-продукт']),
+  field('vendorContactName', 'ФИО', false, false, ['ФИО контакта', 'Контактное лицо', 'Контакт']),
+  field('vendorContactPhone', 'Телефон', false, false, ['Телефон контакта']),
+  field('vendorContactEmail', 'Почта', false, false, ['Email', 'E-mail', 'Электронная почта']),
+  field('vendorContactChannels', 'Способ связи', false, false, ['Канал связи', 'Предпочтительный способ связи'])
+]
+
 const targetFields: Array<{ key: keyof CatalogImportRowTarget; label: string }> = [
   { key: 'organizationId', label: 'UUID вуза' },
   { key: 'managerProfileId', label: 'UUID КАМ' },
@@ -85,6 +94,9 @@ const extraLabels: Record<string, string> = {
   agreementProduct: 'ПО договора',
   contactDetails: 'Данные ответственного',
   programDirection: 'Направление программы',
+  productContact: 'Контакт у продуктов',
+  vendorContactArchived: 'Контакт в архиве',
+  vendorExternalKey: 'Ключ вендора',
   organizationId: 'UUID вуза',
   managerProfileId: 'UUID КАМ',
   productAgreementId: 'UUID договора',
@@ -103,14 +115,29 @@ const extraLabels: Record<string, string> = {
 }
 
 const fieldLabels: Record<string, string> = Object.fromEntries(
-  [...agreementFields, ...directionProgramFields].map((mappingField) => [mappingField.key, mappingField.label])
+  [...vendorContactFields, ...agreementFields, ...directionProgramFields].map((mappingField) => [mappingField.key, mappingField.label])
 )
 
-const labelOf = (key: string) => fieldLabels[key] ?? extraLabels[key] ?? key
+const indexedProductKey = /^product(\d+)ExternalKey$/
 
-const fieldsFor = (profile: CatalogImportProfile) => (
-  profile === 'AGREEMENT' ? agreementFields : directionProgramFields
-)
+const labelOf = (key: string) => {
+  const indexedProduct = key.match(indexedProductKey)
+  if (indexedProduct) {
+    return `Ключ ПО № ${indexedProduct[1]}`
+  }
+  return fieldLabels[key] ?? extraLabels[key] ?? key
+}
+
+const fieldsFor = (profile: CatalogImportProfile) => {
+  switch (profile) {
+    case 'AGREEMENT':
+      return agreementFields
+    case 'VENDOR_CONTACTS':
+      return vendorContactFields
+    default:
+      return directionProgramFields
+  }
+}
 
 const normalizedHeader = (value: string) => value
   .toLowerCase()
@@ -507,6 +534,9 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
       <a className="catalog-import__template" href="/catalog-import-template.xlsx" download>
         Скачать шаблон файла (10 полей ТЗ, 3 примера)
       </a>
+      <a className="catalog-import__template" href="/vendor-contacts-template.xlsx" download>
+        Скачать шаблон «Вендоры, продукты и контакты» (формат файла организатора, вымышленные контакты)
+      </a>
 
       <form className="catalog-import__file-form" onSubmit={(event) => void inspect(event)}>
         <label>
@@ -522,6 +552,7 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
           <select value={profile} disabled={busy !== null} onChange={(event) => selectProfile(event.target.value as CatalogImportProfile)}>
             <option value="AGREEMENT">Каталог по ТЗ (10 полей)</option>
             <option value="DIRECTION_PROGRAM">Направления и программы</option>
+            <option value="VENDOR_CONTACTS">Вендоры, продукты и контакты</option>
           </select>
         </label>
         <button type="submit" disabled={file === null || busy !== null}>

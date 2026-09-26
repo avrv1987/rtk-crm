@@ -14,7 +14,7 @@ export const landingLinks: LandingLinks = {
   documentationUrl: '',
   juryAccessNote: '',
   privacyPolicyUrl: '',
-  operatorDetails: '',
+  operatorDetails: 'Оператор персональных данных — ИТ Школа РТК, заказчик системы',
   moodleUrl: 'https://moodle-rtk.baichein.ru',
   sourceCodeUrl: 'https://github.com/avrv1987/rtk-crm',
   showJurySection: true

@@ -37,7 +37,7 @@ public class WorkRepository {
             JOIN source_mappings source_mapping ON source_mapping.source = source_record.source
                 AND source_mapping.external_key = source_record.external_id
                 AND source_mapping.kind = CASE WHEN snapshot.group_id IS NULL THEN 'COURSE' ELSE 'GROUP' END
-                AND source_mapping.run_starts_on IS NOT NULL
+                AND source_mapping.run_starts_on IS NOT NULL AND source_mapping.run_kind = 'STUDENTS'
             JOIN organizations ON organizations.id = snapshot.organization_id
             WHERE organizations.team_id = team.id AND %s""";
 
@@ -107,7 +107,8 @@ public class WorkRepository {
     public List<TeamOrganizations> countOrganizationsByTeam(VisibilityScope scope) {
         return jdbcClient.sql("""
                 SELECT team.id, team.name,
-                       (SELECT COUNT(*) FROM organizations WHERE organizations.team_id = team.id AND %1$s) AS organizations,
+                       (SELECT COUNT(*) FROM organizations WHERE organizations.team_id = team.id AND %1$s
+                            AND organizations.type <> 'OPEN_ENROLLMENT') AS organizations,
                        (SELECT COUNT(*) FROM organizations WHERE organizations.team_id = team.id AND %1$s AND %2$s)
                            AS unassigned_organizations,
                        (SELECT COUNT(DISTINCT snapshot.organization_id) %3$s AND snapshot.participants_count > 0)
@@ -115,6 +116,8 @@ public class WorkRepository {
                        (SELECT COALESCE(SUM(snapshot.participants_count), 0) %3$s) AS participants,
                        (SELECT COALESCE(SUM(snapshot.teachers_count), 0) %3$s) AS teachers
                 FROM teams team
+                WHERE team.archived = FALSE
+                   OR EXISTS (SELECT 1 FROM organizations WHERE organizations.team_id = team.id AND %1$s)
                 ORDER BY team.name, team.id
                 """.formatted(
                         scope.condition(),
@@ -171,7 +174,8 @@ public class WorkRepository {
     public List<ReminderLicense> findExpiringLicenses(VisibilityScope scope, int expiresBy, int limit) {
         return jdbcClient.sql("""
                 SELECT i.id, i.organization_id, i.title, o.name AS organization_name,
-                       product.name AS product_name, vendor.name AS vendor_name, agreement.license_expiry_year
+                       product.name AS product_name, vendor.name AS vendor_name, agreement.contract_number,
+                       agreement.license_expiry_year
                 FROM product_agreements agreement
                 JOIN products product ON product.id = agreement.product_id
                 LEFT JOIN vendors vendor ON vendor.id = product.vendor_id
@@ -201,6 +205,7 @@ public class WorkRepository {
                         resultSet.getString("organization_name"),
                         resultSet.getString("product_name"),
                         resultSet.getString("vendor_name"),
+                        resultSet.getString("contract_number"),
                         resultSet.getInt("license_expiry_year")
                 ))
                 .list();

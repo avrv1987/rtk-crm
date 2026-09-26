@@ -16,6 +16,10 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.catalog.CatalogChangeAction;
+import ru.rtk.crm.catalog.CatalogChangeEventRepository;
+import ru.rtk.crm.catalog.CatalogEntityType;
+import ru.rtk.crm.catalog.OrganizationDetails;
 import ru.rtk.crm.catalog.OrganizationNotFoundException;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
@@ -36,6 +40,7 @@ public class SourceReviewService {
     private final SiteRecordApplier applier;
     private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper;
+    private final CatalogChangeEventRepository catalogChangeEventRepository;
 
     public SourceReviewService(
             SourceRepository repository,
@@ -43,8 +48,10 @@ public class SourceReviewService {
             SourceSyncService syncService,
             SiteRecordApplier applier,
             PlatformTransactionManager transactionManager,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            CatalogChangeEventRepository catalogChangeEventRepository
     ) {
+        this.catalogChangeEventRepository = catalogChangeEventRepository;
         this.repository = repository;
         this.organizationRepository = organizationRepository;
         this.syncService = syncService;
@@ -93,7 +100,12 @@ public class SourceReviewService {
         return syncService.applyWebsiteMatching(recordId, sameOrganization(item), profile.id());
     }
 
-    public SourceOrganizationCreated createOrganization(CrmProfile profile, UUID recordId, SourceOrganizationCreateRequest request) {
+    public SourceOrganizationCreated createOrganization(
+            CrmProfile profile,
+            UUID recordId,
+            SourceOrganizationCreateRequest request,
+            String requestId
+    ) {
         StoredRecord stored = profile.role() == UserRole.ADMIN
                 ? repository.findRecord(recordId).orElseThrow(SourceException::recordNotFound)
                 : requireVisibleRecord(profile, recordId);
@@ -126,6 +138,9 @@ public class SourceReviewService {
                 }
                 OffsetDateTime now = OffsetDateTime.now();
                 repository.insertOrganization(organizationId, name, type, teamId, now);
+                catalogChangeEventRepository.insert(CatalogEntityType.ORGANIZATION, organizationId, CatalogChangeAction.CREATE, name,
+                        "Тип: " + OrganizationDetails.typeLabel(OrganizationType.valueOf(type)) + "; из заявки сайта",
+                        profile.id(), requestId, now);
                 repository.insertMapping(SourceCode.WEBSITE, "ORGANIZATION", item.organizationKey(), organizationId, null, null,
                         null, profile.id(), now);
             });
@@ -208,7 +223,11 @@ public class SourceReviewService {
         String value = request == null || request.type() == null ? OrganizationType.UNIVERSITY.name()
                 : request.type().strip().toUpperCase(Locale.ROOT);
         try {
-            return OrganizationType.valueOf(value).name();
+            OrganizationType type = OrganizationType.valueOf(value);
+            if (type == OrganizationType.OPEN_ENROLLMENT) {
+                throw new InteractionValidationException("type", "Выберите тип организации из списка");
+            }
+            return type.name();
         } catch (IllegalArgumentException exception) {
             throw new InteractionValidationException("type", "Выберите тип организации из списка");
         }

@@ -90,7 +90,7 @@ export const handledAccessError = (
   return false
 }
 
-const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' })
+const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Moscow' })
 
 export const formatDateTime = (value: string) => {
   const date = new Date(value)

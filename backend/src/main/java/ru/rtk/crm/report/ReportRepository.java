@@ -383,6 +383,8 @@ public class ReportRepository {
     private List<ReportRow> findDemandRows(VisibilityScope scope, ReportRequest request, int limit, long offset) {
         Selection selection = demandUnion(scope, request);
         String metric = switch (request.sortBy()) {
+            case PAID_ORDERS -> "paid_orders";
+            case PAID_STREAMS -> "paid_streams";
             case PARTICIPANTS -> "participants";
             case PARALLEL_RUNS -> "parallel_runs";
             case LEARNERS_COMPLETED -> "completed";
@@ -393,7 +395,11 @@ public class ReportRepository {
                                CAST(SUM(x.applications) AS BIGINT) AS applications,
                                CAST(SUM(x.participants) AS BIGINT) AS participants,
                                CAST(SUM(x.completed) AS BIGINT) AS completed,
-                               CAST(SUM(x.parallel_runs) AS BIGINT) AS parallel_runs
+                               CAST(SUM(x.parallel_runs) AS BIGINT) AS parallel_runs,
+                               CAST(CASE WHEN COUNT(x.paid_order) = 0 THEN NULL ELSE COUNT(DISTINCT x.paid_order) END AS BIGINT)
+                                   AS paid_orders,
+                               CAST(CASE WHEN COUNT(x.paid_stream) = 0 THEN NULL ELSE COUNT(DISTINCT x.paid_stream) END AS BIGINT)
+                                   AS paid_streams
                         FROM (""" + selection.sql() + """
                         ) x
                         LEFT JOIN programs p ON p.id = x.program_id
@@ -656,18 +662,36 @@ public class ReportRepository {
     private Selection demandUnion(VisibilityScope scope, ReportRequest request) {
         Selection applications = demandSelection(scope, request);
         Selection learning = learningSelection(scope, request);
+        Selection paidOrders = paidOrderSelection(scope, request);
         Map<String, Object> parameters = merged(applications, learning);
+        parameters.putAll(paidOrders.parameters());
         parameters.put("runsAsOf", request.runsAsOf());
         return new Selection(
                 "SELECT r.program_id, CAST(r.applications_count AS BIGINT) AS applications, CAST(NULL AS BIGINT) AS participants,"
-                        + " CAST(NULL AS BIGINT) AS completed, CAST(NULL AS BIGINT) AS parallel_runs " + DEMAND_FROM
+                        + " CAST(NULL AS BIGINT) AS completed, CAST(NULL AS BIGINT) AS parallel_runs,"
+                        + " CAST(NULL AS VARCHAR(200)) AS paid_order, CAST(NULL AS VARCHAR(64)) AS paid_stream " + DEMAND_FROM
                         + applications.sql()
                         + " UNION ALL SELECT s.program_id, CAST(NULL AS BIGINT), CAST(s.participants_count AS BIGINT),"
                         + " CAST(s.completed_count AS BIGINT),"
                         + " CAST(CASE WHEN sm.run_starts_on <= :runsAsOf AND :runsAsOf < sm.run_ends_on THEN 1 ELSE 0 END"
-                        + " AS BIGINT) " + LEARNING_FROM + learning.sql(),
+                        + " AS BIGINT), CAST(NULL AS VARCHAR(200)), CAST(NULL AS VARCHAR(64)) " + LEARNING_FROM + learning.sql()
+                        + " UNION ALL SELECT r.program_id, CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), CAST(NULL AS BIGINT),"
+                        + " CAST(NULL AS BIGINT), CAST(r.external_id AS VARCHAR(200)), CAST(r.payload_hash AS VARCHAR(64)) "
+                        + DEMAND_FROM + paidOrders.sql(),
                 parameters
         );
+    }
+
+    private Selection paidOrderSelection(VisibilityScope scope, ReportRequest request) {
+        List<String> conditions = new ArrayList<>(List.of(
+                "r.source = 'WEBSITE'",
+                "r.record_type = 'paid_order'",
+                "r.status = 'APPLIED'",
+                "(o.type = 'OPEN_ENROLLMENT' OR r.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition() + "))"
+        ));
+        Map<String, Object> parameters = new HashMap<>(scope.parameters());
+        demandFilters(conditions, parameters, request.filters(), "r.program_id");
+        return new Selection(" WHERE " + String.join(" AND ", conditions), parameters);
     }
 
     private Selection learningSelection(VisibilityScope scope, ReportRequest request) {
@@ -931,6 +955,8 @@ public class ReportRepository {
                 List.of(),
                 null,
                 null,
+                null,
+                null,
                 null
         );
     }
@@ -969,7 +995,9 @@ public class ReportRepository {
                 List.of(),
                 null,
                 resultSet.getObject("completed", Long.class),
-                null
+                null,
+                resultSet.getObject("paid_orders", Long.class),
+                resultSet.getObject("paid_streams", Long.class)
         );
     }
 
@@ -1054,7 +1082,7 @@ public class ReportRepository {
                         JOIN source_records sr ON sr.id = s.source_record_id
                         JOIN source_mappings sm ON sm.source = sr.source AND sm.external_key = sr.external_id
                             AND sm.kind = CASE WHEN s.group_id IS NULL THEN 'COURSE' ELSE 'GROUP' END
-                            AND sm.run_starts_on IS NOT NULL
+                            AND sm.run_starts_on IS NOT NULL AND sm.run_kind = 'STUDENTS'
                         JOIN agreement_activities ac ON ac.id = ai.activity_id
                         JOIN agreements ag ON ag.id = ac.agreement_id
                         WHERE ai.activity_id IN (:ids) AND %s
@@ -1244,7 +1272,9 @@ public class ReportRepository {
                             works,
                             confirmations,
                             links
-                    )
+                    ),
+                    null,
+                    null
             );
         }
     }

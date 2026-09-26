@@ -16,6 +16,8 @@ type RunState =
   | { kind: 'done'; run: RetentionRun }
   | { kind: 'failed'; error: unknown }
 
+const number = (value: number) => value.toLocaleString('ru-RU')
+
 const runError = (error: unknown) => (
   error instanceof ApiError && error.code === 'RETENTION_RUNNING'
     ? 'Сроки хранения уже применяются. Дождитесь завершения и обновите страницу.'
@@ -98,6 +100,33 @@ export const RetentionPanel = ({ onSessionExpired, onProfileUnavailable }: Sessi
               <dd>записи удаляются через {state.policy.auditEventsDays} дн.</dd>
             </div>
             <div>
+              <dt>Анкеты слушателей</dt>
+              <dd>обезличиваются через {state.policy.learnerProfilesTerm} после окончания последнего потока слушателя</dd>
+            </div>
+            <div>
+              <dt>Анкет в CRM</dt>
+              <dd>
+                {number(state.policy.learners.profiles)} из {number(state.policy.learners.profilesLimit)} — условие
+                уровня защищённости УЗ-4
+              </dd>
+            </div>
+            <div>
+              <dt>Потоки без даты окончания</dt>
+              <dd>
+                {state.policy.learners.streamsWithoutEndDate === 0
+                  ? 'нет'
+                  : `${number(state.policy.learners.streamsWithoutEndDate)}: срок хранения анкет не определён`}
+              </dd>
+            </div>
+            <div>
+              <dt>Анкеты со старой версией ключа</dt>
+              <dd>
+                {state.policy.learners.moduleEnabled
+                  ? number(state.policy.learners.profilesWithOldKey)
+                  : 'модуль «Слушатели» выключен'}
+              </dd>
+            </div>
+            <div>
               <dt>Последний запуск</dt>
               <dd>
                 {state.policy.lastRun === null
@@ -106,6 +135,19 @@ export const RetentionPanel = ({ onSessionExpired, onProfileUnavailable }: Sessi
               </dd>
             </div>
           </dl>
+          {state.policy.learners.nearLimit && (
+            <p className="security-warning" role="status">
+              Анкет слушателей уже {number(state.policy.learners.profiles)}. При {number(state.policy.learners.profilesLimit)} и
+              более субъектов в CRM уровень защищённости повышается с УЗ-4 до УЗ-3: согласуйте с оператором
+              персональных данных срок хранения анкет или меры УЗ-3.
+            </p>
+          )}
+          {state.policy.learners.streamsWithoutEndDate > 0 && (
+            <p className="security-warning" role="status">
+              Анкеты слушателей потоков без даты окончания автоматически не обезличиваются, пока оператор зачисления
+              не укажет дату окончания потока.
+            </p>
+          )}
           <div className="security-actions">
             <button
               type="button"
@@ -121,7 +163,8 @@ export const RetentionPanel = ({ onSessionExpired, onProfileUnavailable }: Sessi
       {runState.kind === 'done' && (
         <p className="security-success" role="status">
           Удалено файлов отчётов: {runState.run.reportFilesDeleted}, обезличено контактов: {runState.run.contactsAnonymized},
-          профилей: {runState.run.profilesAnonymized}, удалено записей журнала: {runState.run.auditEventsDeleted}.
+          профилей: {runState.run.profilesAnonymized}, анкет слушателей: {runState.run.learnersAnonymized}, удалено записей
+          журнала: {runState.run.auditEventsDeleted}.
         </p>
       )}
       {runState.kind === 'failed' && (
@@ -133,7 +176,7 @@ export const RetentionPanel = ({ onSessionExpired, onProfileUnavailable }: Sessi
       <ConfirmDialog
         open={runState.kind === 'confirming'}
         title="Применить сроки хранения сейчас?"
-        description="Файлы отчётов старше срока будут удалены, контакты и профили с истёкшим сроком — обезличены без возможности восстановления."
+        description="Файлы отчётов старше срока будут удалены, контакты, профили и анкеты слушателей с истёкшим сроком — обезличены без возможности восстановления."
         confirmLabel="Применить"
         onConfirm={() => void run()}
         onCancel={() => setRunState({ kind: 'idle' })}

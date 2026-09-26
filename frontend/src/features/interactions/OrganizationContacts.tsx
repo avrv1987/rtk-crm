@@ -232,6 +232,9 @@ const ContactItem = ({
         {contact.primary && <span className="status status--planned">Основной контакт</span>}
         {contact.role && <span className="status status--planned">{contactRoleLabels[contact.role]}</span>}
         {contact.inactive && <span className="status status--missing">Не актуален</span>}
+        {contact.personalDataStatus === 'RESTRICTED' && (
+          <span className="status status--missing" title="Обработка данных контакта ограничена по запросу субъекта">Обработка ограничена</span>
+        )}
       </div>
       <dl className="contact-card__facts">
         {contact.position && <div><dt>Должность</dt><dd>{contact.position}</dd></div>}
@@ -247,10 +250,13 @@ const ContactItem = ({
         </div>
       </dl>
       <div className="interaction-plan-form__actions">
-        {canEdit && draft === null && (
+        {canEdit && contact.personalDataStatus === 'RESTRICTED' && draft === null && (
+          <p className="interaction-field-hint">Правка недоступна: обработка данных контакта ограничена.</p>
+        )}
+        {canEdit && contact.personalDataStatus !== 'RESTRICTED' && draft === null && (
           <button type="button" className="button--secondary" onClick={() => change({})}>Изменить</button>
         )}
-        {canEdit && !contact.inactive && draft === null && (
+        {canEdit && !contact.inactive && contact.personalDataStatus !== 'RESTRICTED' && draft === null && (
           <button type="button" className="button--secondary" disabled={state.kind === 'saving'} onClick={confirm}>
             Отметить «Контакт подтверждён»
           </button>

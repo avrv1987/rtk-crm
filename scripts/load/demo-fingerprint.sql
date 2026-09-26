@@ -25,5 +25,6 @@ FROM (
     UNION ALL SELECT 'source_mappings', count(*), md5(coalesce(string_agg(x::text, '|' ORDER BY x::text), '')) FROM source_mappings x
     UNION ALL SELECT 'catalog_imports', count(*), md5(coalesce(string_agg(x::text, '|' ORDER BY x::text), '')) FROM catalog_imports x
     UNION ALL SELECT 'command_idempotency_records', count(*), md5(coalesce(string_agg(x::text, '|' ORDER BY x::text), '')) FROM command_idempotency_records x
+    UNION ALL SELECT 'audit_events', count(*), md5(coalesce(string_agg(x::text, '|' ORDER BY x::text), '')) FROM audit_events x
 ) t
 ORDER BY t.name;

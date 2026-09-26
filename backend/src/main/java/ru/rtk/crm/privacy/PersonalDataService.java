@@ -22,6 +22,9 @@ import ru.rtk.crm.attachment.AttachmentStorageException;
 import ru.rtk.crm.audit.AuditAction;
 import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.catalog.PersonalDataStatus;
+import ru.rtk.crm.enrolment.LearnerPrivacyService;
+import ru.rtk.crm.enrolment.LearnerPrivacyService.LearnerDisclosure;
+import ru.rtk.crm.enrolment.LearnerPrivacyService.SubjectLearner;
 import ru.rtk.crm.interaction.CommandFingerprint;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
 import ru.rtk.crm.interaction.CommandOperation;
@@ -54,6 +57,7 @@ public class PersonalDataService {
     private final ReportStorage reportStorage;
     private final SubjectReportWriter reportWriter;
     private final RetentionProperties retentionProperties;
+    private final LearnerPrivacyService learnerPrivacyService;
     private final ObjectMapper objectMapper;
 
     public PersonalDataService(
@@ -65,6 +69,7 @@ public class PersonalDataService {
             ReportStorage reportStorage,
             SubjectReportWriter reportWriter,
             RetentionProperties retentionProperties,
+            LearnerPrivacyService learnerPrivacyService,
             ObjectMapper objectMapper
     ) {
         this.searchRepository = searchRepository;
@@ -75,14 +80,16 @@ public class PersonalDataService {
         this.reportStorage = reportStorage;
         this.reportWriter = reportWriter;
         this.retentionProperties = retentionProperties;
+        this.learnerPrivacyService = learnerPrivacyService;
         this.objectMapper = objectMapper;
     }
 
     @Transactional
     public SubjectSearchResult search(CrmProfile actor, SubjectQuery query, String requestId) {
         AdminAuthorization.requireAdmin(actor);
-        SubjectSearchResult result = searchRepository.search(SubjectTerms.of(query));
+        SubjectSearchResult result = find(query);
         auditJournalRepository.record(AuditAction.SUBJECT_SEARCHED, actor.id(), "SUBJECT", null, null, found(result), requestId);
+        learnerPrivacyService.journal(AuditAction.SUBJECT_SEARCHED, actor.id(), learnerIds(result), null, requestId);
         return result;
     }
 
@@ -92,7 +99,9 @@ public class PersonalDataService {
         if (format == null) {
             throw new InteractionValidationException("format", "Выберите формат выгрузки: JSON или PDF");
         }
-        SubjectSearchResult result = searchRepository.search(SubjectTerms.of(query));
+        SubjectSearchResult result = find(query);
+        List<UUID> learnerIds = learnerIds(result);
+        List<LearnerDisclosure> learners = learnerPrivacyService.disclose(learnerIds);
         SubjectReport report = new SubjectReport(
                 OffsetDateTime.now(),
                 SubjectReport.OPERATOR,
@@ -101,12 +110,14 @@ public class PersonalDataService {
                 SubjectReport.SOURCES,
                 SubjectReport.RECIPIENTS,
                 RetentionService.policyLines(retentionProperties),
-                result
+                result,
+                learners
         );
         byte[] content = format == SubjectExportFormat.PDF ? reportWriter.pdf(report) : reportWriter.json(report);
         auditJournalRepository.record(
                 AuditAction.SUBJECT_EXPORTED, actor.id(), "SUBJECT", null, null, "формат " + format + "; " + found(result), requestId
         );
+        learnerPrivacyService.journal(AuditAction.SUBJECT_EXPORTED, actor.id(), learnerIds, "формат " + format, requestId);
         return new SubjectExport(content, format);
     }
 
@@ -184,6 +195,47 @@ public class PersonalDataService {
     }
 
     @Transactional
+    public SubjectLearner restrictLearner(
+            CrmProfile actor,
+            UUID learnerId,
+            ContactRestriction request,
+            String idempotencyKey,
+            String requestId
+    ) {
+        AdminAuthorization.requireAdmin(actor);
+        requiredId(learnerId, "id");
+        if (request == null || request.restricted() == null) {
+            throw new InteractionValidationException("restricted", "Укажите, ограничить обработку или снять ограничение");
+        }
+        int version = requiredVersion(request.version());
+        boolean restricted = request.restricted();
+        RestrictLearnerCommand command = new RestrictLearnerCommand(learnerId, version, restricted);
+        return idempotent(actor, CommandOperation.RESTRICT_LEARNER_PROCESSING, idempotencyKey, command, SubjectLearner.class, () -> {
+            SubjectLearner learner = learnerPrivacyService.lock(learnerId).orElseThrow(PrivacyException::learnerNotFound);
+            if (learner.status() == PersonalDataStatus.ANONYMIZED) {
+                throw PrivacyException.learnerAnonymized();
+            }
+            if (learner.version() != version) {
+                throw PrivacyException.learnerVersion(learner.version());
+            }
+            PersonalDataStatus next = restricted ? PersonalDataStatus.RESTRICTED : PersonalDataStatus.ACTIVE;
+            if (learner.status() == next) {
+                throw new InteractionValidationException(
+                        "restricted", restricted ? "Обработка анкеты уже ограничена" : "Обработка анкеты не ограничена"
+                );
+            }
+            if (!learnerPrivacyService.updateStatus(learnerId, version, next)) {
+                throw PrivacyException.learnerVersion(learner.version());
+            }
+            learnerPrivacyService.journal(
+                    restricted ? AuditAction.LEARNER_RESTRICTED : AuditAction.LEARNER_RESTRICTION_LIFTED,
+                    actor.id(), List.of(learnerId), null, requestId
+            );
+            return learnerPrivacyService.lock(learnerId).orElseThrow(PrivacyException::learnerNotFound);
+        });
+    }
+
+    @Transactional
     public AnonymizationResult anonymize(
             CrmProfile actor,
             AnonymizationRequest request,
@@ -197,18 +249,32 @@ public class PersonalDataService {
         List<UUID> contactIds = ids(request.contactIds(), "contactIds");
         List<UUID> profileIds = ids(request.profileIds(), "profileIds");
         List<UUID> attachmentIds = ids(request.attachmentIds(), "attachmentIds");
+        List<UUID> learnerIds = ids(request.learnerIds(), "learnerIds");
         SubjectTerms terms = hasTerms(request.subject()) ? SubjectTerms.of(request.subject()) : null;
-        if (terms == null && contactIds.isEmpty() && profileIds.isEmpty() && attachmentIds.isEmpty()) {
-            throw new InteractionValidationException("contactIds", "Выберите контакты, профили или файлы либо укажите данные субъекта");
+        if (terms == null && contactIds.isEmpty() && profileIds.isEmpty() && attachmentIds.isEmpty() && learnerIds.isEmpty()) {
+            throw new InteractionValidationException(
+                    "contactIds", "Выберите контакты, профили, анкеты слушателей или файлы либо укажите данные субъекта"
+            );
         }
-        AnonymizeCommand command = new AnonymizeCommand(request.subject(), contactIds, profileIds, attachmentIds);
+        AnonymizeCommand command = new AnonymizeCommand(request.subject(), contactIds, profileIds, attachmentIds, learnerIds);
         return idempotent(actor, CommandOperation.ANONYMIZE_PERSONAL_DATA, idempotencyKey, command, AnonymizationResult.class, () -> {
-            AnonymizationResult result = anonymizeLocked(
+            List<SubjectLearner> learners = learnerIds.stream()
+                    .map(id -> learnerPrivacyService.lock(id).orElseThrow(PrivacyException::learnerNotFound))
+                    .toList();
+            AnonymizationResult changed = anonymizeLocked(
                     terms, lockContacts(contactIds), lockProfiles(profileIds), attachmentFiles(attachmentIds), false, true
             );
+            List<UUID> anonymizedLearners = new ArrayList<>();
+            for (SubjectLearner learner : learners) {
+                if (learnerPrivacyService.anonymize(learner.id())) {
+                    anonymizedLearners.add(learner.id());
+                }
+            }
+            AnonymizationResult result = changed.withLearners(anonymizedLearners.size());
             auditJournalRepository.record(
                     AuditAction.SUBJECT_ANONYMIZED, actor.id(), "SUBJECT", null, null, result.summary(), requestId
             );
+            learnerPrivacyService.journal(AuditAction.SUBJECT_ANONYMIZED, actor.id(), anonymizedLearners, null, requestId);
             return result;
         });
     }
@@ -266,7 +332,7 @@ public class PersonalDataService {
         afterCommit(() -> deleteAttachmentFiles(files));
         AnonymizationResult changed = new AnonymizationResult(
                 pendingContacts.size(), pendingProfiles.size(), counts.mentions, counts.sourceRecords, counts.technical,
-                files.size(), 0
+                files.size(), 0, 0
         );
         if (!expireReports || !changed.changedAnything()) {
             return changed;
@@ -275,7 +341,7 @@ public class PersonalDataService {
         afterCommit(() -> reportFiles.forEach(key -> reportStorage.delete(reportStorage.resultFile(key))));
         return new AnonymizationResult(
                 changed.contacts(), changed.profiles(), changed.mentions(), changed.sourceRecords(), changed.technicalRecords(),
-                changed.attachmentsDeleted(), reportFiles.size()
+                changed.attachmentsDeleted(), reportFiles.size(), 0
         );
     }
 
@@ -415,10 +481,20 @@ public class PersonalDataService {
         });
     }
 
+    private SubjectSearchResult find(SubjectQuery query) {
+        SubjectTerms terms = SubjectTerms.of(query);
+        return searchRepository.search(terms)
+                .withLearners(learnerPrivacyService.find(query.name(), query.email(), query.phone(), query.snils()));
+    }
+
+    private static List<UUID> learnerIds(SubjectSearchResult result) {
+        return result.learners().stream().map(SubjectLearner::id).toList();
+    }
+
     private static String found(SubjectSearchResult result) {
         return "найдено контактов: " + result.contacts().size() + ", профилей: " + result.profiles().size()
                 + ", упоминаний: " + result.mentions().size() + ", файлов: " + result.attachments().size()
-                + ", записей источников: " + result.sourceRecords().size();
+                + ", записей источников: " + result.sourceRecords().size() + ", слушателей: " + result.learners().size();
     }
 
     private static boolean hasTerms(SubjectQuery query) {
@@ -494,6 +570,15 @@ public class PersonalDataService {
     private record RestrictCommand(UUID contactId, int version, boolean restricted) {
     }
 
-    private record AnonymizeCommand(SubjectQuery subject, List<UUID> contactIds, List<UUID> profileIds, List<UUID> attachmentIds) {
+    private record RestrictLearnerCommand(UUID learnerId, int version, boolean restricted) {
+    }
+
+    private record AnonymizeCommand(
+            SubjectQuery subject,
+            List<UUID> contactIds,
+            List<UUID> profileIds,
+            List<UUID> attachmentIds,
+            List<UUID> learnerIds
+    ) {
     }
 }

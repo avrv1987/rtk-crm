@@ -166,7 +166,7 @@ export const OrganizationCatalogPanel = <T extends CatalogOrganization>({
           submitLabel="Сохранить реквизиты"
           initial={{
             name: organization.name,
-            type: organization.type,
+            ...(organization.type === 'OPEN_ENROLLMENT' ? {} : { type: organization.type }),
             city: organization.city ?? '',
             website: organization.website ?? '',
             inn: organization.inn ?? ''
@@ -185,7 +185,7 @@ export const OrganizationCatalogPanel = <T extends CatalogOrganization>({
       ) : (
         (canEdit || actions.length > 0) && (
           <div className="admin-profiles__confirmation-actions">
-            {canEdit && organization.status !== 'ARCHIVED' && (
+            {canEdit && organization.status !== 'ARCHIVED' && organization.type !== 'OPEN_ENROLLMENT' && (
               <button
                 type="button"
                 className="button--secondary"

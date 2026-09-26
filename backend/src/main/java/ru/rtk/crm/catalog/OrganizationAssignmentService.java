@@ -186,6 +186,11 @@ public class OrganizationAssignmentService {
             String auditRequestId,
             OffsetDateTime now
     ) {
+        if (organization.type() == OrganizationType.OPEN_ENROLLMENT) {
+            throw new InteractionValidationException(
+                    "ownerManagerId", "У служебной организации «Открытый набор (физлица)» нет ответственного КАМ"
+            );
+        }
         Map<UUID, OrganizationAssignmentProfile> lockedProfiles = lockAssignmentProfiles(
                 organization.ownerManagerId(),
                 ownerManagerId

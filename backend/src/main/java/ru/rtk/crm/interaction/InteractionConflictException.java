@@ -106,6 +106,46 @@ public class InteractionConflictException extends RuntimeException {
         );
     }
 
+    public static InteractionConflictException learnerVersion(int currentVersion) {
+        return new InteractionConflictException(
+                "VERSION_CONFLICT",
+                "Анкету слушателя уже изменили",
+                currentVersion
+        );
+    }
+
+    public static InteractionConflictException learnerAnonymized() {
+        return new InteractionConflictException(
+                "PERSONAL_DATA_ANONYMIZED",
+                "Анкета слушателя обезличена; её данные больше не показываются и не изменяются",
+                null
+        );
+    }
+
+    public static InteractionConflictException learnerRestricted() {
+        return new InteractionConflictException(
+                "PERSONAL_DATA_RESTRICTED",
+                "Обработка анкеты ограничена по обращению субъекта; снять ограничение может администратор",
+                null
+        );
+    }
+
+    public static InteractionConflictException enrolmentStreamVersion(int currentVersion) {
+        return new InteractionConflictException(
+                "VERSION_CONFLICT",
+                "Поток уже изменили",
+                currentVersion
+        );
+    }
+
+    public static InteractionConflictException questionnaireChanged() {
+        return new InteractionConflictException(
+                "VERSION_CONFLICT",
+                "Анкеты потока изменились после предпросмотра; постройте предпросмотр заново",
+                null
+        );
+    }
+
     public String code() {
         return code;
     }

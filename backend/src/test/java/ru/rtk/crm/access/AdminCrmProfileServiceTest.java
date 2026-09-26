@@ -2,6 +2,7 @@ package ru.rtk.crm.access;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -430,6 +431,33 @@ class AdminCrmProfileServiceTest {
             assertThat(event.previousDisplayName()).isEqualTo("Елена Руководитель");
             assertThat(event.displayName()).isEqualTo("Елена Менеджер");
         });
+    }
+
+    @Test
+    void enrolmentOperatorFlagIsGrantedOnlyToKamOrLeaderAndDropsWhenRoleNoLongerAllowsIt() throws Exception {
+        AdminCrmProfileUpdateRequest grant = objectMapper.readValue(
+                "{\"version\":0,\"enrolmentOperator\":true}", AdminCrmProfileUpdateRequest.class
+        );
+
+        AdminCrmProfile granted = adminCrmProfileService.update(administrator, USER_A, grant, "grant-operator", REQUEST_ID);
+
+        assertThat(granted.enrolmentOperator()).isTrue();
+        assertThat(granted.accessRevision()).isEqualTo(1);
+        assertThat(userProfileRepository.isEnrolmentOperator(USER_A)).isTrue();
+        assertThatThrownBy(() -> adminCrmProfileService.update(administrator, ADMIN,
+                new AdminCrmProfileUpdateRequest(0).setEnrolmentOperator(true), "grant-self", REQUEST_ID))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                        assertThat(exception.field()).isEqualTo("enrolmentOperator"));
+        assertThat(userProfileRepository.isEnrolmentOperator(ADMIN)).isFalse();
+
+        AdminCrmProfile promoted = adminCrmProfileService.update(administrator, USER_A,
+                new AdminCrmProfileUpdateRequest(1).setRole(UserRole.ADMIN).setTeamId(null), "promote-operator", REQUEST_ID);
+
+        assertThat(promoted.enrolmentOperator()).isFalse();
+        assertThat(userProfileRepository.isEnrolmentOperator(USER_A)).isFalse();
+        assertThat(adminCrmProfileService.events(administrator, USER_A))
+                .extracting(CrmProfileEvent::previousEnrolmentOperator, CrmProfileEvent::enrolmentOperator)
+                .containsExactly(tuple(true, false), tuple(false, true));
     }
 
     @Test
@@ -868,7 +896,7 @@ class AdminCrmProfileServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -949,7 +977,7 @@ class AdminCrmProfileServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_profile_events (
+                CREATE TABLE IF NOT EXISTS crm_profile_events (previous_enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     profile_id UUID NOT NULL,
                     command_id UUID NOT NULL REFERENCES command_idempotency_records(id),

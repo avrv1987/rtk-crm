@@ -1249,7 +1249,7 @@ scenario('UAT-ИБ-05', 'Журнал значимых событий', {}, asyn
   })
 })
 
-scenario('UAT-ИБ-06', 'Ошибки: по-русски, с кодом для поддержки', { gaps: ['шаг 9, значимое, BL-22: встроенной «Справки» с перечнем кодов ошибок нет'] }, async ({ step }) => {
+scenario('UAT-ИБ-06', 'Ошибки: по-русски, с кодом для поддержки', {}, async ({ step }) => {
   const kamA = await session('kam-a')
   const kamB = await session('kam-b')
   const university = await kamView('kam-a', demo.universityA)
@@ -1293,6 +1293,10 @@ scenario('UAT-ИБ-06', 'Ошибки: по-русски, с кодом для �
     const line = backendLog('10m').split(/\r?\n/).find((item) => item.includes('requestId=' + requestId))
     assert(line && line.includes('code=NOT_FOUND') && !line.includes(demoPassword()), 'Запись не найдена')
     return line.slice(line.indexOf('API error')).replace(/user=\S+/, 'user=<sub>').slice(0, 160)
+  })
+  await step(9, 'Встроенная справка: код NOT_FOUND из шага 4 описан', async () => {
+    await screenTexts(kamB, '/#/help', ['NOT_FOUND', 'Request ID'], 'Справка: коды ошибок')
+    return 'Код и Request ID найдены в справке'
   })
 })
 

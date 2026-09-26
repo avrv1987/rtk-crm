@@ -35,6 +35,8 @@ public record ReportRequest(
     );
     private static final Set<ReportColumn> DEMAND_SORTS = EnumSet.of(
             ReportColumn.APPLICATIONS,
+            ReportColumn.PAID_ORDERS,
+            ReportColumn.PAID_STREAMS,
             ReportColumn.PARTICIPANTS,
             ReportColumn.LEARNERS_COMPLETED,
             ReportColumn.PARALLEL_RUNS
@@ -198,7 +200,8 @@ public record ReportRequest(
         }
         if (sortBy != null && !DEMAND_SORTS.contains(sortBy)) {
             throw new InteractionValidationException(
-                    "sortBy", "Сортировать можно по заявкам, обучающимся, завершившим или параллельным потокам"
+                    "sortBy", "Сортировать можно по заявкам, оплаченным заявкам, потокам с оплатами, обучающимся, завершившим или"
+                            + " параллельным потокам"
             );
         }
     }

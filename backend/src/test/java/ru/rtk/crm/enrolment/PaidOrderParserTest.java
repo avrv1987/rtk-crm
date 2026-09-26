@@ -64,9 +64,9 @@ class PaidOrderParserTest {
         assertThat(batch.orders()).isEmpty();
         assertThat(batch.issues()).containsExactly(
                 new PaidOrderIssue(1, "Номер заявки", "Нет поля «Номер заявки»"),
-                new PaidOrderIssue(2, "Имя", "Поле «Имя» пустое"),
-                new PaidOrderIssue(2, "Телефон", "Телефон должен содержать 10 цифр после +7 или 8"),
-                new PaidOrderIssue(2, "Email", "Email указан неверно"),
+                new PaidOrderIssue(2, "Имя", "Поле «Имя» пустое; поле не сохранено", true),
+                new PaidOrderIssue(2, "Телефон", "Телефон должен содержать 10 цифр после +7 или 8; поле не сохранено", true),
+                new PaidOrderIssue(2, "Email", "Email указан неверно; поле не сохранено", true),
                 new PaidOrderIssue(2, "Номер потока", "Номер потока должен быть целым числом больше 0"),
                 new PaidOrderIssue(3, null, "Элемент не является объектом с полями заявки"),
                 new PaidOrderIssue(4, "Курс", "Поле «Курс» должно быть строкой"),
@@ -78,6 +78,29 @@ class PaidOrderParserTest {
     }
 
     @Test
+    void acceptsOrderWhoseContactsFailChecksAndDropsOnlyThoseFields() {
+        PaidOrderBatch batch = parser.parse(json("""
+                [null,
+                 {"Номер заявки": "ORD-20260901000001-TST001", "Курс": "Курс А", "Имя": "Иван",
+                  "Телефон": "12345", "Email": "ivan-at-example", "Номер потока": 3}]
+                """));
+
+        assertThat(batch.orders()).singleElement().satisfies(order -> {
+            assertThat(order.lastName()).isNull();
+            assertThat(order.phone()).isNull();
+            assertThat(order.email()).isNull();
+            assertThat(order.emailKey()).isNull();
+            assertThat(order.streamNumber()).isEqualTo(3);
+        });
+        assertThat(batch.issues()).filteredOn(PaidOrderIssue::warning).extracting(PaidOrderIssue::field)
+                .containsExactly("Фамилия", "Телефон", "Email");
+        assertThat(batch.issues()).extracting(PaidOrderIssue::message)
+                .noneMatch(message -> message.contains("12345") || message.contains("ivan-at-example"));
+        assertThat(batch.received()).isEqualTo(1);
+        assertThat(batch.rejected()).isZero();
+    }
+
+    @Test
     void keepsOneOfIdenticalDuplicatesAndRejectsConflictingOnes() {
         String same = order("ORD-6-TST", "Курс А", 1, "Тестов");
         String conflictA = order("ORD-7-TST", "Курс А", 1, "Тестов");
@@ -85,6 +108,8 @@ class PaidOrderParserTest {
         PaidOrderBatch batch = parser.parse(json("[" + String.join(",", same, same, conflictA, conflictB) + "]"));
 
         assertThat(batch.orders()).extracting(PaidOrder::orderNumber).containsExactly("ORD-6-TST");
+        assertThat(batch.duplicates()).isEqualTo(1);
+        assertThat(batch.rejected()).isEqualTo(2);
         assertThat(batch.issues()).containsExactly(
                 new PaidOrderIssue(2, "Номер заявки", "Повтор заявки с тем же содержимым пропущен"),
                 new PaidOrderIssue(3, "Номер заявки", "Номер заявки повторяется в файле с разным содержимым; запись не принята"),

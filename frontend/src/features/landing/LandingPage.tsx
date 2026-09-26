@@ -241,6 +241,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               <a href="#lp-roles">Роли</a>
               <a href="#lp-features">Возможности</a>
               {showJurySection && <a href="#lp-check">Для проверки</a>}
+              <a href="#/help">Справка</a>
             </nav>
             <LoginButton label="Войти" pending={pending} onLogin={login} />
           </div>

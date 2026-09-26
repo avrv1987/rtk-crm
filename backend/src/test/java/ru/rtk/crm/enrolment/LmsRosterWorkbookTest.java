@@ -2,12 +2,12 @@ package ru.rtk.crm.enrolment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static ru.rtk.crm.enrolment.LearnerTestData.TODAY;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
@@ -57,7 +57,8 @@ class LmsRosterWorkbookTest {
             assertThat(IntStream.range(0, header.getLastCellNum()).mapToObj(index -> header.getCell(index).getStringCellValue()))
                     .containsExactlyElementsOf(ORGANIZER_HEADERS)
                     .containsExactlyElementsOf(Arrays.stream(LearnerField.values()).map(LearnerField::header).toList());
-            assertThat(sheet.getLastRowNum()).isEqualTo(2);
+            assertThat(sheet.getLastRowNum()).isEqualTo(3);
+            assertThat(cell(sheet.getRow(3), LearnerField.LAST_NAME).getStringCellValue()).isEqualTo("Другой");
 
             Row first = sheet.getRow(1);
             Cell phone = cell(first, LearnerField.PHONE);
@@ -99,17 +100,19 @@ class LmsRosterWorkbookTest {
     }
 
     @Test
-    void countsSkippedDuplicateEmailsAndRefusesProfilesWithoutEmail() throws IOException {
-        LearnerProfile full = LearnerTestData.fullProfile();
-        LearnerProfile minimal = LearnerTestData.requiredOnly("Примеров", "Пётр", "+79000000002", "petr@example.test");
-        LearnerProfile sameEmail = LearnerTestData.requiredOnly("Другой", "Пётр", "+79000000003", "PETR@example.test");
-        LearnerProfile noEmail = LearnerTestData.requiredOnly("Тестов", "Иван", "+79000000004", null);
+    void writesOneRowPerEnrolmentKeepingRepeatedEmailAndEmptyRequiredCells() throws IOException {
+        LearnerProfile sibling = LearnerTestData.requiredOnly("Шестаков", "Егор", "+79000000007", "egor.sh@example.test");
+        LearnerProfile sameEmail = LearnerTestData.requiredOnly("Шестакова", "Ева", "+79000000008", "EGOR.SH@example.test");
+        LearnerProfile noEmail = LearnerTestData.requiredOnly("Восьмова", "Лада", null, null);
 
-        assertThat(writer.write(List.of(full, minimal, sameEmail), OutputStream.nullOutputStream())).isEqualTo(1);
-        assertThat(writer.write(List.of(full, minimal), OutputStream.nullOutputStream())).isZero();
-        assertThatThrownBy(() -> writer.write(List.of(full, noEmail), OutputStream.nullOutputStream()))
-                .isInstanceOf(InteractionValidationException.class)
-                .hasMessage("Анкета № 2: не заполнен Email; файл для LMS не сформирован");
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(write(List.of(sibling, sameEmail, noEmail))))) {
+            XSSFSheet sheet = workbook.getSheet("Лист1");
+            assertThat(IntStream.rangeClosed(1, sheet.getLastRowNum())
+                    .mapToObj(index -> cell(sheet.getRow(index), LearnerField.LAST_NAME).getStringCellValue()))
+                    .containsExactly("Шестаков", "Шестакова", "Восьмова");
+            assertThat(sheet.getRow(3).getCell(LearnerField.EMAIL.ordinal())).isNull();
+            assertThat(sheet.getRow(3).getCell(LearnerField.PHONE.ordinal())).isNull();
+        }
     }
 
     @Test
@@ -117,7 +120,7 @@ class LmsRosterWorkbookTest {
         LearnerProfile full = LearnerTestData.fullProfile();
         LearnerProfile minimal = LearnerTestData.requiredOnly("Примеров", "Пётр", "+79000000002", "petr@example.test");
 
-        LearnerWorkbook workbook = reader.read(file(write(List.of(full, minimal))), TODAY);
+        LearnerWorkbook workbook = reader.read(file(write(List.of(full, minimal))));
         List<LearnerWorkbookRow> rows = workbook.rows();
 
         assertThat(workbook.ignoredHeaders()).isEmpty();
@@ -151,13 +154,17 @@ class LmsRosterWorkbookTest {
         XSSFFormulaEvaluator.evaluateAllFormulaCells(workbook);
         formulas.createCell(1).setCellFormula("\"Ив\"&\"ан\"");
 
-        LearnerWorkbook result = reader.read(file(bytes(workbook)), TODAY);
+        LearnerWorkbook result = reader.read(file(bytes(workbook)));
         List<LearnerWorkbookRow> rows = result.rows();
 
         assertThat(result.ignoredHeaders()).containsExactly("Комментарий");
+        assertThat(result.columns().get(LearnerField.MIDDLE_NAME)).isEqualTo(new LearnerWorkbookColumn("C", "Отчество (при наличии)"));
+        assertThat(result.columns().get(LearnerField.SNILS)).isEqualTo(new LearnerWorkbookColumn("F", "СНИЛС"));
         assertThat(rows).extracting(LearnerWorkbookRow::rowNumber).containsExactly(4, 6, 7);
         LearnerWorkbookRow first = rows.get(0);
         assertThat(first.errors()).isEmpty();
+        assertThat(first.warnings()).extracting(LearnerFieldError::field, LearnerFieldError::message)
+                .containsExactly(tuple(LearnerField.PASSPORT_SERIES, "Восстановлены ведущие нули: Excel сохранил значение числом"));
         assertThat(first.profile().phone()).isEqualTo("+79000000001");
         assertThat(first.profile().middleName()).isNull();
         assertThat(first.profile().passportSeries()).isEqualTo("0123");
@@ -168,15 +175,12 @@ class LmsRosterWorkbookTest {
         assertThat(messages(rows.get(1))).containsExactly(
                 "PASSPORT_ISSUE_DATE: Дата должна быть в формате ДД.ММ.ГГГГ",
                 "GENDER: Пол: выберите «М» или «Ж»",
-                "EDUCATION: Образование: выберите значение из списка на листе «Лист2»",
-                "PHONE: Телефон должен содержать 10 цифр после +7 или 8, например +7 900 000-00-00",
-                "SNILS: Контрольное число СНИЛС не совпадает с номером",
-                "PASSPORT_SERIES: Серия паспорта — 4 цифры",
-                "BIRTH_DATE: Дата рождения не может быть в будущем"
+                "EDUCATION: Образование: выберите значение из списка на листе «Лист2»"
         );
+        assertThat(rows.get(1).profile().snils()).isEqualTo("11223344596");
+        assertThat(rows.get(1).profile().birthDate()).isEqualTo(TODAY.plusDays(1));
         assertThat(messages(rows.get(2))).containsExactly(
-                "FIRST_NAME: Формула без сохранённого значения; откройте и сохраните файл в Excel",
-                "EMAIL: Email совпадает со строкой 4"
+                "FIRST_NAME: Формула без сохранённого значения; откройте и сохраните файл в Excel"
         );
         assertThat(rows.get(2).profile().lastName()).isEqualTo("Тестов");
     }
@@ -191,7 +195,7 @@ class LmsRosterWorkbookTest {
                 "Анне", "8 900 000 00 09");
         data.createCell(5).setCellValue(2000d);
 
-        LearnerWorkbook result = reader.read(file(bytes(workbook)), TODAY);
+        LearnerWorkbook result = reader.read(file(bytes(workbook)));
 
         assertThat(result.ignoredHeaders()).containsExactly("Телефон родителя");
         LearnerWorkbookRow row = result.rows().get(0);
@@ -206,7 +210,11 @@ class LmsRosterWorkbookTest {
         XSSFWorkbook noHeaders = new XSSFWorkbook();
         row(noHeaders.createSheet("Лист1"), 0, "Фамилия", "Имя", "Телефон");
         assertFileError(bytes(noHeaders), "Не найдена строка заголовков шаблона «Загрузка пользователей»: "
-                + "нужны столбцы Фамилия, Имя, Номер телефона и Email");
+                + "нужны столбцы Фамилия, Имя и для сопоставления со слушателями Email или Номер телефона");
+        XSSFWorkbook emailOnly = new XSSFWorkbook();
+        row(emailOnly.createSheet("Лист1"), 0, "Фамилия", "Имя", "Email");
+        assertThat(reader.read(file(bytes(emailOnly))).columns()).containsOnlyKeys(
+                LearnerField.LAST_NAME, LearnerField.FIRST_NAME, LearnerField.EMAIL);
 
         XSSFWorkbook duplicate = new XSSFWorkbook();
         row(duplicate.createSheet("Лист1"), 0, "Фамилия", "Имя", "Номер телефона", "Email", "E-mail");
@@ -238,7 +246,7 @@ class LmsRosterWorkbookTest {
     }
 
     private void assertFileError(byte[] content, String message) {
-        assertThatThrownBy(() -> reader.read(file(content), TODAY))
+        assertThatThrownBy(() -> reader.read(file(content)))
                 .isInstanceOf(InteractionValidationException.class)
                 .hasMessage(message);
     }

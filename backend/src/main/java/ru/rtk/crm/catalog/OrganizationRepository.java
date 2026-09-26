@@ -144,14 +144,14 @@ public class OrganizationRepository {
 
     public static String requiresAssignment(String organization) {
         return """
-                (%1$s.owner_manager_id IS NULL OR NOT EXISTS (
+                (%1$s.type <> 'OPEN_ENROLLMENT' AND (%1$s.owner_manager_id IS NULL OR NOT EXISTS (
                     SELECT 1
                     FROM crm_user_profiles owner_profile
                     WHERE owner_profile.id = %1$s.owner_manager_id
                       AND owner_profile.active = TRUE
                       AND owner_profile.role IN ('USER', 'LEADER')
                       AND owner_profile.team_id = %1$s.team_id
-                ))""".formatted(organization);
+                )))""".formatted(organization);
     }
 
     public static String activeDeputy(String organization) {

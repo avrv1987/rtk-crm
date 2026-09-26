@@ -131,6 +131,10 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                     .param("id", proposedId)
                     .query(UUID.class)
                     .optional()
+                    .or(() -> jdbcClient.sql("SELECT id FROM teams WHERE LOWER(name) = LOWER(:name)")
+                            .param("name", name)
+                            .query(UUID.class)
+                            .optional())
                     .orElseThrow(() -> new IllegalStateException("Demo bootstrap team key conflicts with existing data"));
             teamIds.put(identity.teamKey(), teamId);
         }
@@ -180,6 +184,15 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                     .query(UUID.class)
                     .optional()
                     .orElseThrow(() -> new IllegalStateException("Demo bootstrap profile is unavailable after insert"));
+            if (Boolean.TRUE.equals(identity.enrolmentOperator())) {
+                jdbcClient.sql("""
+                        UPDATE crm_user_profiles
+                        SET enrolment_operator = TRUE
+                        WHERE id = :id AND role IN ('USER', 'LEADER') AND enrolment_operator = FALSE
+                        """)
+                        .param("id", profileId)
+                        .update();
+            }
             profileIds.put(identity.key(), profileId);
         }
         return profileIds;
@@ -227,9 +240,12 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     }
 
     private DemoCatalog createCatalogs() {
-        UUID directionId = createDirection("Демо-направление: цифровая трансформация");
+        UUID directionId = createDirection("demo-direction:digital-transformation", "Демо-направление: цифровая трансформация");
         UUID programId = createProgram(directionId, "demo-program:digital-transformation", "Демо-программа: цифровой университет");
         createProgram(directionId, "demo-program:data-analysis", "Демо-программа: анализ данных");
+        UUID openEnrolmentId = createDirection("demo-direction:open-enrolment", "Демо-направление: курсы для физлиц");
+        createProgram(openEnrolmentId, "demo-program:prompt-engineering", "Промпт-инжиниринг");
+        createProgram(openEnrolmentId, "demo-program:software-tester", "Инженер-тестировщик");
         UUID vendorId = createVendor("Демо-вендор: РТК");
         UUID secureCommunicationsId = createProduct(
                 vendorId,
@@ -240,13 +256,13 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         return new DemoCatalog(programId, List.of(secureCommunicationsId, cloudPlatformId));
     }
 
-    private UUID createDirection(String name) {
+    private UUID createDirection(String key, String name) {
         jdbcClient.sql("""
                 INSERT INTO directions (id, name)
                 VALUES (:id, :name)
                 ON CONFLICT DO NOTHING
                 """)
-                .param("id", stableId("demo-direction:digital-transformation"))
+                .param("id", stableId(key))
                 .param("name", name)
                 .update();
         return jdbcClient.sql("SELECT id FROM directions WHERE name = :name")

@@ -450,6 +450,10 @@ p {
   font-size: var(--font-size-sm);
 }
 
+fieldset {
+  min-width: 0;
+}
+
 input,
 textarea,
 select {
@@ -484,6 +488,7 @@ input[type='radio'] {
 
 .interactions-panel {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-5);
   margin-top: var(--space-7);
   border-top: 1px solid var(--color-border);
@@ -531,6 +536,7 @@ input[type='radio'] {
 .interaction-create-form,
 .interaction-detail {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -864,6 +870,11 @@ input[type='radio'] {
   background: var(--color-surface);
 }
 
+.interaction-linked-contacts li > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .interaction-linked-contacts li span {
   color: var(--color-text-muted);
   font-size: var(--font-size-md);
@@ -1046,6 +1057,7 @@ input[type='radio'] {
 
 .interaction-plan-form {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);

@@ -5,6 +5,8 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import ru.rtk.crm.enrolment.LearnerIntake;
+
 enum SourceCode {
     WEBSITE("Сайт ИТ Школы (Laravel)"),
     MOODLE("LMS Moodle");
@@ -43,7 +45,8 @@ enum SyncTrigger {
     MANUAL,
     SCHEDULE,
     CARD,
-    BOOTSTRAP
+    BOOTSTRAP,
+    UPLOAD
 }
 
 enum SyncOutcome {
@@ -104,6 +107,7 @@ record SourceRecordView(
         String organizationExternalId,
         String organizationName,
         String programName,
+        Integer streamNo,
         UUID organizationId,
         UUID programId,
         UUID interactionId,
@@ -191,4 +195,7 @@ record SourceOrganizationCreateRequest(String name, String type, UUID teamId) {
 }
 
 record SourceOrganizationCreated(UUID organizationId, String organizationName, SourceRecordApplyResult result) {
+}
+
+record PaidOrderApplied(SyncOutcome outcome, LearnerIntake intake) {
 }

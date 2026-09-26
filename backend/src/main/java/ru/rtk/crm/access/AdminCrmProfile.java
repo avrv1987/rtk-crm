@@ -10,6 +10,7 @@ public record AdminCrmProfile(
         UUID teamId,
         String teamName,
         boolean active,
+        boolean enrolmentOperator,
         boolean pendingActivation,
         int accessRevision,
         int version,
@@ -20,7 +21,7 @@ public record AdminCrmProfile(
 ) {
     AdminCrmProfile withAccountSyncError(String error) {
         return new AdminCrmProfile(
-                id, displayName, role, teamId, teamName, active, pendingActivation, accessRevision, version, login,
+                id, displayName, role, teamId, teamName, active, enrolmentOperator, pendingActivation, accessRevision, version, login,
                 activationRequestedAt, accountSyncRequired, error
         );
     }

@@ -29,7 +29,7 @@ type CommandState =
 type Draft = {
   organizationId: string
   name: string
-  type: 'UNIVERSITY' | 'SCHOOL'
+  type: 'UNIVERSITY' | 'COLLEGE' | 'SCHOOL'
 }
 
 const recordTypeLabels: Record<string, string> = {
@@ -175,6 +175,7 @@ export const PendingSourceRecords = ({ role, onSessionExpired, onProfileUnavaila
                       Тип
                       <select value={draft.type} onChange={(event) => update(record, { type: event.target.value as Draft['type'] })}>
                         <option value="UNIVERSITY">Вуз</option>
+                        <option value="COLLEGE">Колледж (СПО)</option>
                         <option value="SCHOOL">Школа</option>
                       </select>
                     </label>

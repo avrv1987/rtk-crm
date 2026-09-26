@@ -24,10 +24,16 @@ import ru.rtk.crm.security.RequestId;
 public class AdminCatalogsApiController {
     private final CurrentProfileService currentProfileService;
     private final AdminCatalogService adminCatalogService;
+    private final VendorContactService vendorContactService;
 
-    public AdminCatalogsApiController(CurrentProfileService currentProfileService, AdminCatalogService adminCatalogService) {
+    public AdminCatalogsApiController(
+            CurrentProfileService currentProfileService,
+            AdminCatalogService adminCatalogService,
+            VendorContactService vendorContactService
+    ) {
         this.currentProfileService = currentProfileService;
         this.adminCatalogService = adminCatalogService;
+        this.vendorContactService = vendorContactService;
     }
 
     @GetMapping("/catalogs/{kind}")
@@ -73,6 +79,47 @@ public class AdminCatalogsApiController {
         return adminCatalogService.update(
                 currentProfileService.requireActiveProfile(user),
                 CatalogKind.parse(kind),
+                parseId(id),
+                request,
+                idempotencyKey,
+                RequestId.from(httpRequest)
+        );
+    }
+
+    @GetMapping("/catalogs/vendors/{vendorId}/contacts")
+    public VendorContactList vendorContacts(@AuthenticationPrincipal OidcUser user, @PathVariable String vendorId) {
+        return vendorContactService.list(currentProfileService.requireActiveProfile(user), parseId(vendorId));
+    }
+
+    @PostMapping("/catalogs/vendors/{vendorId}/contacts")
+    public ResponseEntity<VendorContact> createVendorContact(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String vendorId,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody VendorContactRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(vendorContactService.create(
+                currentProfileService.requireActiveProfile(user),
+                parseId(vendorId),
+                request,
+                idempotencyKey,
+                RequestId.from(httpRequest)
+        ));
+    }
+
+    @PatchMapping("/catalogs/vendors/{vendorId}/contacts/{id}")
+    public VendorContact updateVendorContact(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String vendorId,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody VendorContactRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        return vendorContactService.update(
+                currentProfileService.requireActiveProfile(user),
+                parseId(vendorId),
                 parseId(id),
                 request,
                 idempotencyKey,

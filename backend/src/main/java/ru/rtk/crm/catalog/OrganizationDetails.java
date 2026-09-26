@@ -24,6 +24,9 @@ public record OrganizationDetails(String name, OrganizationType type, String cit
         if (request.type() == null) {
             throw new InteractionValidationException("type", "Выберите тип организации");
         }
+        if (request.type() == OrganizationType.OPEN_ENROLLMENT) {
+            throw new InteractionValidationException("type", "Служебный тип «Открытый набор» создаётся системой; выберите вуз, колледж или школу");
+        }
         String city = optional(request.city(), "city", CITY_LIMIT, "Город или регион длиннее 200 символов");
         return new OrganizationDetails(name, request.type(), city, website(request.website()), inn(request.inn()));
     }
@@ -58,6 +61,7 @@ public record OrganizationDetails(String name, OrganizationType type, String cit
             case UNIVERSITY -> "Университет";
             case COLLEGE -> "Колледж (СПО)";
             case SCHOOL -> "Школа";
+            case OPEN_ENROLLMENT -> "Открытый набор (физлица)";
         };
     }
 

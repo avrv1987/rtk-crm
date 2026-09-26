@@ -7,6 +7,7 @@ import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Binder;
@@ -75,6 +76,33 @@ class LearnerDataCipherTest {
                     .hasMessage("Зашифрованное значение повреждено или не соответствует ключу");
         }
         assertThat(cipher.decrypt(stored, SNILS_CONTEXT)).isEqualTo(LearnerTestData.VALID_SNILS);
+    }
+
+    @Test
+    void fieldValueIsBoundToLearnerFieldCodeAndKeyVersion() {
+        UUID learner = UUID.randomUUID();
+        String stored = cipher.encryptField(learner, LearnerField.SNILS, LearnerTestData.VALID_SNILS);
+
+        assertThat(cipher.decryptField(learner, LearnerField.SNILS, stored)).isEqualTo(LearnerTestData.VALID_SNILS);
+        assertThat(cipher.decrypt(stored, "learner:" + learner + ":SNILS")).isEqualTo(LearnerTestData.VALID_SNILS);
+        assertThatThrownBy(() -> cipher.decryptField(UUID.randomUUID(), LearnerField.SNILS, stored))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Зашифрованное значение повреждено или не соответствует ключу");
+        assertThatThrownBy(() -> cipher.decryptField(learner, LearnerField.PASSPORT_NUMBER, stored))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Зашифрованное значение повреждено или не соответствует ключу");
+    }
+
+    @Test
+    void nameFingerprintsIgnoreCaseYoAndSpacesButNotWordOrder() {
+        assertThat(cipher.nameFingerprint("Семёнова", "Алёна"))
+                .matches("[0-9a-f]{64}")
+                .isEqualTo(cipher.nameFingerprint("  СЕМЕНОВА ", "алена"))
+                .isNotEqualTo(cipher.nameFingerprint("Алёна", "Семёнова"))
+                .isNotEqualTo(cipher.lastNameFingerprint("Семёнова Алёна"));
+        assertThat(cipher.lastNameFingerprint("Семёнова")).isEqualTo(cipher.lastNameFingerprint("семенова"));
+        assertThat(cipher.nameFingerprint("Семёнова", null)).isNull();
+        assertThat(cipher.lastNameFingerprint(null)).isNull();
     }
 
     @Test

@@ -6,6 +6,7 @@ import {
   type AnonymizationResult,
   type SubjectContact,
   type SubjectExportFormat,
+  type SubjectLearner,
   type SubjectMention,
   type SubjectQuery,
   type SubjectSearchResult
@@ -19,6 +20,7 @@ type QueryDraft = {
   name: string
   email: string
   phone: string
+  snils: string
   otherSpellings: string
 }
 
@@ -47,6 +49,7 @@ type Selection = {
   contactIds: string[]
   profileIds: string[]
   attachmentIds: string[]
+  learnerIds: string[]
 }
 
 type AnonymizeState =
@@ -56,15 +59,21 @@ type AnonymizeState =
   | { kind: 'done'; result: AnonymizationResult }
   | { kind: 'failed'; idempotencyKey: string; error: unknown }
 
-type ActionError = { contactId: string; error: unknown }
+type ActionError = { id: string; error: unknown }
 
-const emptyDraft: QueryDraft = { name: '', email: '', phone: '', otherSpellings: '' }
-const emptySelection: Selection = { contactIds: [], profileIds: [], attachmentIds: [] }
+const emptyDraft: QueryDraft = { name: '', email: '', phone: '', snils: '', otherSpellings: '' }
+const emptySelection: Selection = { contactIds: [], profileIds: [], attachmentIds: [], learnerIds: [] }
 
 const statusLabels: Record<SubjectContact['status'], string> = {
   ACTIVE: 'Обрабатывается',
   RESTRICTED: 'Обработка ограничена',
   ANONYMIZED: 'Обезличен'
+}
+
+const learnerStatusLabels: Record<SubjectLearner['status'], string> = {
+  ACTIVE: 'Обрабатывается',
+  RESTRICTED: 'Обработка ограничена',
+  ANONYMIZED: 'Обезличена'
 }
 
 const placeLabels: Record<SubjectMention['place'], string> = {
@@ -92,6 +101,7 @@ const queryOf = (draft: QueryDraft): SubjectQuery => ({
   name: draft.name.trim() || null,
   email: draft.email.trim() || null,
   phone: draft.phone.trim() || null,
+  snils: draft.snils.trim() || null,
   otherSpellings: draft.otherSpellings.trim() || null
 })
 
@@ -105,7 +115,7 @@ const sizeLabel = (bytes: number) => (
 
 const errorText = (error: unknown) => {
   if (error instanceof ApiError && error.code === 'PERSONAL_DATA_ANONYMIZED') {
-    return 'Контакт уже обезличен; его данные больше не изменяются.'
+    return 'Данные уже обезличены и больше не изменяются.'
   }
   if (error instanceof ApiError && error.code === 'PROFILE_ACTIVE') {
     return 'Обезличить можно только профиль с закрытым доступом. Сначала заблокируйте сотрудника в «Профилях CRM».'
@@ -125,7 +135,7 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
   const [search, setSearch] = useState<SearchState>({ kind: 'idle' })
   const [selection, setSelection] = useState<Selection>(emptySelection)
   const [edit, setEdit] = useState<ContactEdit | null>(null)
-  const [busyContactId, setBusyContactId] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<ActionError | null>(null)
   const [anonymize, setAnonymize] = useState<AnonymizeState>({ kind: 'idle' })
   const [exporting, setExporting] = useState(false)
@@ -163,6 +173,20 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
             result: {
               ...current.result,
               contacts: current.result.contacts.map((item) => (item.id === contact.id ? contact : item))
+            }
+          }
+        : current
+    ))
+  }
+
+  const replaceLearner = (learner: SubjectLearner) => {
+    setSearch((current) => (
+      current.kind === 'ready'
+        ? {
+            ...current,
+            result: {
+              ...current.result,
+              learners: current.result.learners.map((item) => (item.id === learner.id ? learner : item))
             }
           }
         : current
@@ -231,7 +255,7 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
   }
 
   const restrict = async (contact: SubjectContact, restricted: boolean) => {
-    setBusyContactId(contact.id)
+    setBusyId(contact.id)
     setActionError(null)
     try {
       replaceContact(await apiClient.restrictPersonalDataContact(
@@ -241,10 +265,28 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
       ))
     } catch (error) {
       if (!handleError(error)) {
-        setActionError({ contactId: contact.id, error })
+        setActionError({ id: contact.id, error })
       }
     } finally {
-      setBusyContactId(null)
+      setBusyId(null)
+    }
+  }
+
+  const restrictLearner = async (learner: SubjectLearner, restricted: boolean) => {
+    setBusyId(learner.id)
+    setActionError(null)
+    try {
+      replaceLearner(await apiClient.restrictPersonalDataLearner(
+        learner.id,
+        { version: learner.version, restricted },
+        createIdempotencyKey()
+      ))
+    } catch (error) {
+      if (!handleError(error)) {
+        setActionError({ id: learner.id, error })
+      }
+    } finally {
+      setBusyId(null)
     }
   }
 
@@ -263,7 +305,7 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
 
   const renderContact = (contact: SubjectContact) => {
     const anonymized = contact.status === 'ANONYMIZED'
-    const busy = busyContactId === contact.id
+    const busy = busyId === contact.id
     if (edit !== null && edit.contact.id === contact.id) {
       return (
         <form className="security-form" onSubmit={(event) => void saveEdit(event)} aria-label={`Уточнение контакта ${contact.name}`}>
@@ -375,15 +417,70 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
             </label>
           </div>
         )}
-        {actionError?.contactId === contact.id && <ErrorBox error={actionError.error} />}
+        {actionError?.id === contact.id && <ErrorBox error={actionError.error} />}
+      </>
+    )
+  }
+
+  const renderLearner = (learner: SubjectLearner) => {
+    const anonymized = learner.status === 'ANONYMIZED'
+    const busy = busyId === learner.id
+    return (
+      <>
+        <div className="security-item__title">
+          <h4>Слушатель {learner.id.slice(0, 8)}</h4>
+          <span className={`security-badge security-badge--${learner.status.toLowerCase()}`}>
+            {learnerStatusLabels[learner.status]}
+          </span>
+        </div>
+        <dl className="security-fields">
+          <div>
+            <dt>Анкета</dt>
+            <dd>{anonymized ? 'обезличена' : `заполнено полей: ${learner.filledFields} из 30`}</dd>
+          </div>
+          <div>
+            <dt>Потоки</dt>
+            <dd>
+              {learner.enrolments.length === 0
+                ? '—'
+                : learner.enrolments.map((enrolment) => `${enrolment.courseName}, поток ${enrolment.streamNo}`).join('; ')}
+            </dd>
+          </div>
+          <div>
+            <dt>Изменена</dt>
+            <dd>{formatDateTime(learner.updatedAt)}</dd>
+          </div>
+        </dl>
+        {!anonymized && (
+          <div className="security-actions">
+            <button
+              type="button"
+              className="button--secondary"
+              disabled={busy}
+              onClick={() => void restrictLearner(learner, learner.status !== 'RESTRICTED')}
+            >
+              {learner.status === 'RESTRICTED' ? 'Снять ограничение' : 'Ограничить обработку'}
+            </button>
+            <label className="security-check">
+              <input
+                type="checkbox"
+                checked={selection.learnerIds.includes(learner.id)}
+                onChange={() => setSelection({ ...selection, learnerIds: toggle(selection.learnerIds, learner.id) })}
+              />
+              Обезличить анкету
+            </label>
+          </div>
+        )}
+        {actionError?.id === learner.id && <ErrorBox error={actionError.error} />}
       </>
     )
   }
 
   const renderResult = (query: SubjectQuery, result: SubjectSearchResult) => {
     const selectedCount = selection.contactIds.length + selection.profileIds.length + selection.attachmentIds.length
+      + selection.learnerIds.length
     const nothingFound = result.contacts.length + result.profiles.length + result.mentions.length
-      + result.attachments.length + result.sourceRecords.length === 0
+      + result.attachments.length + result.sourceRecords.length + result.learners.length === 0
     const canAnonymize = selectedCount > 0 || result.mentions.length > 0 || result.sourceRecords.length > 0
     const running = anonymize.kind === 'running'
     return (
@@ -513,12 +610,28 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
           </section>
         )}
 
+        {result.learners.length > 0 && (
+          <section aria-labelledby="subject-learners-title">
+            <h3 id="subject-learners-title">Анкеты слушателей: {result.learners.length}</h3>
+            <p className="security-muted">
+              Значения анкеты на экране не показываются, они входят в выгрузку сведений. Уточнить данные по обращению
+              субъекта может оператор зачисления в анкете слушателя.
+            </p>
+            <ul className="security-list">
+              {result.learners.map((learner) => (
+                <li key={learner.id} className="security-item">{renderLearner(learner)}</li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {!nothingFound && (
           <div className="security-danger-zone">
             <p>
               Обезличивание заменяет ФИО, почту и телефон субъекта маркером «Контакт обезличен» или «Сотрудник обезличен»
               в выбранных контактах и профилях, комментариях, следующих шагах и записях источников. История работ
-              сохраняется, выбранные файлы удаляются, заказанные файлы отчётов удаляются. Действие необратимо.
+              сохраняется, выбранные файлы удаляются, заказанные файлы отчётов удаляются. У выбранных анкет слушателей
+              удаляются все поля, зачисления остаются в статистике. Действие необратимо.
             </p>
             <button
               type="button"
@@ -539,7 +652,7 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
         <ConfirmDialog
           open={anonymize.kind === 'confirming'}
           title="Обезличить данные субъекта?"
-          description={`Будут обезличены: контактов ${selection.contactIds.length}, профилей ${selection.profileIds.length}, упоминания и записи источников с этими данными; удалено файлов: ${selection.attachmentIds.length}. Восстановить данные будет нельзя.`}
+          description={`Будут обезличены: контактов ${selection.contactIds.length}, профилей ${selection.profileIds.length}, анкет слушателей ${selection.learnerIds.length}, упоминания и записи источников с этими данными; удалено файлов: ${selection.attachmentIds.length}. Восстановить данные будет нельзя.`}
           confirmLabel="Обезличить"
           onConfirm={() => {
             if (anonymize.kind === 'confirming') {
@@ -562,8 +675,9 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
       </div>
       <p className="security-panel__intro">
         Запрос субъекта: найдите его данные в контактах, профилях, комментариях, названиях файлов и записях источников,
-        выгрузите сведения, уточните, ограничьте обработку или обезличьте. Каждое действие записывается в журнал;
-        сами условия поиска в журнал не попадают.
+        выгрузите сведения, уточните, ограничьте обработку или обезличьте. Анкеты слушателей находятся только по точному
+        совпадению почты, телефона, СНИЛС или фамилии и имени. Каждое действие записывается в журнал; сами условия
+        поиска в журнал не попадают.
       </p>
       <form className="security-form" onSubmit={submit} aria-label="Поиск данных субъекта">
         <label>
@@ -588,6 +702,16 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
             onChange={(event) => setDraft({ ...draft, phone: event.target.value })}
           />
         </label>
+        <label>
+          СНИЛС
+          <input
+            inputMode="numeric"
+            value={draft.snils}
+            maxLength={20}
+            placeholder="000-000-000 00"
+            onChange={(event) => setDraft({ ...draft, snils: event.target.value })}
+          />
+        </label>
         <label className="security-form__wide">
           Другие написания (через запятую)
           <input
@@ -608,7 +732,8 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
       </form>
       {anonymize.kind === 'done' && (
         <p className="security-success" role="status">
-          Обезличено контактов: {anonymize.result.contacts}, профилей: {anonymize.result.profiles}, упоминаний:
+          Обезличено контактов: {anonymize.result.contacts}, профилей: {anonymize.result.profiles}, анкет слушателей:
+          {' '}{anonymize.result.learners}, упоминаний:
           {' '}{anonymize.result.mentions}, записей источников: {anonymize.result.sourceRecords}, служебных записей:
           {' '}{anonymize.result.technicalRecords}; удалено файлов: {anonymize.result.attachmentsDeleted}, файлов отчётов:
           {' '}{anonymize.result.reportFilesDeleted}.

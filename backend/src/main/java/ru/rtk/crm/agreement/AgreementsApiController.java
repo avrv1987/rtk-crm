@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -39,6 +40,7 @@ import ru.rtk.crm.agreement.AgreementModels.ConfirmationQuery;
 import ru.rtk.crm.agreement.AgreementModels.LinkOptions;
 import ru.rtk.crm.agreement.AgreementRepository.ConfirmationRow;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.security.RequestId;
 
 @RestController
 @RequestMapping("/api")
@@ -184,13 +186,16 @@ public class AgreementsApiController {
             @RequestParam(required = false) UUID kindId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            HttpServletRequest request,
             HttpServletResponse response
     ) throws IOException {
+        String fileName = "Подтверждения_" + (from == null ? "начало" : from) + "_" + (to == null ? "сегодня" : to) + ".zip";
         List<ConfirmationRow> rows = agreementService.archiveRows(
                 currentProfileService.requireActiveProfile(user),
-                new ConfirmationQuery(organizationId, agreementId, kindId, from, to)
+                new ConfirmationQuery(organizationId, agreementId, kindId, from, to),
+                fileName,
+                RequestId.from(request)
         );
-        String fileName = "Подтверждения_" + (from == null ? "начало" : from) + "_" + (to == null ? "сегодня" : to) + ".zip";
         response.setContentType("application/zip");
         response.setHeader(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
                 .filename(fileName, StandardCharsets.UTF_8)

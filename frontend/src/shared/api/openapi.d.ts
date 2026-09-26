@@ -83,7 +83,7 @@ export interface paths {
         put?: never;
         /**
          * Сообщить администратору о профиле, ожидающем активации
-         * @description Available only to an identity whose CRM profile waits for activation. The first call stores the request time, the administrator sees it in the profile list and the security journal; repeated calls return the same time.
+         * @description Доступно только личности, чей профиль CRM ожидает активации. Первый вызов сохраняет время запроса, администратор видит его в списке профилей и журнале безопасности; повторные вызовы возвращают то же время.
          */
         post: operations["requestProfileActivation"];
         delete?: never;
@@ -224,7 +224,7 @@ export interface paths {
         head?: never;
         /**
          * Изменить контакт организации
-         * @description Replaces the editable fields of the contact: name, position, email, phone, role, primary and inactive flags. confirm=true stamps the confirmation with the current user and time. Only one contact of an organization is primary: marking a new primary contact clears the previous one with its own history event. An inactive contact cannot be primary and is not accepted for new links to interactions; existing links and history keep its name. Every effective change writes one contact event with previous and new values; a request without changes returns the contact unchanged.
+         * @description Заменяет редактируемые поля контакта: имя, должность, email, телефон, роль, флаги основного и неактивного контакта. confirm=true фиксирует подтверждение текущим пользователем и временем. Основным может быть только один контакт организации: назначение нового основного контакта снимает признак с предыдущего отдельным событием истории. Неактивный контакт не может быть основным и не принимается для новых связей со взаимодействиями; существующие связи и история сохраняют его имя. Каждое эффективное изменение записывает одно событие контакта с прежними и новыми значениями; запрос без изменений возвращает контакт без изменений.
          */
         patch: operations["updateOrganizationContact"];
         trace?: never;
@@ -517,7 +517,7 @@ export interface paths {
         head?: never;
         /**
          * Изменить план и данные взаимодействия
-         * @description Changes the plan of the card (next step, its due date, program and products) and its details (title, date of the last contact, linked contacts). An absent property keeps the current value, an explicit null clears it; the title cannot be cleared. contactIds replaces the linked contacts; newly linked contacts must belong to the organization and must not be inactive. Removing a product whose agreement already has contract data is rejected. A change writes one history event: DETAILS_UPDATED when the title, the last contact or the linked contacts changed, otherwise PLAN_UPDATED; its comment lists previous and new values. Added and removed contacts are stored as references and named from the current contact record when history or a report is read, so a renamed or anonymised contact never keeps its former name in the event. A request without effective changes returns the card unchanged.
+         * @description Изменяет план карточки (следующий шаг, срок его выполнения, программу и продукты) и её реквизиты (заголовок, дату последнего контакта, связанные контакты). Отсутствующее свойство сохраняет текущее значение, явный null очищает его; заголовок очистить нельзя. contactIds заменяет связанные контакты; вновь связываемые контакты должны принадлежать организации и не быть неактивными. Удаление продукта, у которого в соглашении уже есть данные договора, отклоняется. Изменение записывает одно событие истории: DETAILS_UPDATED, если изменились заголовок, последний контакт или связанные контакты, иначе PLAN_UPDATED; в комментарии перечислены прежние и новые значения. Добавленные и удалённые контакты хранятся как ссылки и именуются по текущей записи контакта при чтении истории или отчёта, поэтому переименованный или обезличенный контакт никогда не сохраняет прежнее имя в событии. Запрос без эффективных изменений возвращает карточку без изменений.
          */
         patch: operations["updateInteractionPlan"];
         trace?: never;
@@ -548,7 +548,7 @@ export interface paths {
         };
         /**
          * Данные обучения из LMS для взаимодействия
-         * @description Latest Moodle snapshots of the courses and groups an administrator mapped to the same organization and program as the interaction. Counts only: no names, emails or grades of learners are stored. The interaction is checked against the current organization scope in the same query; an invisible or unknown interaction gets 404.
+         * @description Последние снимки Moodle по курсам и группам, которые администратор сопоставил той же организации и программе, что и взаимодействие. Только счётчики: имена, email и оценки обучающихся не хранятся. Взаимодействие проверяется на принадлежность текущей области организации в том же запросе; невидимое или неизвестное взаимодействие даёт 404.
          */
         get: operations["listInteractionLearningSnapshots"];
         put?: never;
@@ -588,7 +588,7 @@ export interface paths {
         };
         /**
          * Состояние источников данных для карточки
-         * @description Any profile that sees the interaction. For LMS and the site: whether the source is configured, the last successful run that covered the organization of the interaction (full runs or runs started from its cards), the error of the last finished run when it failed after that success, and the stale flag (no success within SOURCES_STALE_AFTER, 26 hours by default). learning.state explains why the card has no LMS data: NO_PROGRAM, NOT_CONFIGURED, NOT_MAPPED, OTHER_CYCLE, NOT_DATED, SOURCE_FAILED, RUN_ENDED, NOT_SYNCED; AVAILABLE when snapshots exist.
+         * @description Любой профиль, видящий взаимодействие. Для LMS и сайта: настроен ли источник, последний успешный запуск, охвативший организацию взаимодействия (полные запуски или запуски, начатые из его карточек), ошибка последнего завершённого запуска, если он завершился неудачей после этого успеха, и признак устаревания (нет успеха за SOURCES_STALE_AFTER, по умолчанию 26 часов). learning.state объясняет, почему у карточки нет данных LMS: NO_PROGRAM, NOT_CONFIGURED, NOT_MAPPED, OTHER_CYCLE, NOT_DATED, SOURCE_FAILED, RUN_ENDED, NOT_SYNCED; AVAILABLE, если снимки есть.
          */
         get: operations["getInteractionSourceStatus"];
         put?: never;
@@ -610,7 +610,7 @@ export interface paths {
         put?: never;
         /**
          * Обновить данные LMS и сайта по карточке
-         * @description USER or LEADER of the interaction scope, without waiting for the administrator. LMS: the same scoped read as /learning-snapshots/sync. Site: reads the records changed since the source watermark and applies only those whose organization resolves to the organization of the interaction; the watermark is not moved, other organizations wait for the full run. Each source reports UPDATED, UNCHANGED, FAILED or SKIPPED with a Russian message; a failure of one source does not stop the other and keeps stored data. The runs are stored with trigger CARD and the organization.
+         * @description USER или LEADER области взаимодействия, без ожидания администратора. LMS: то же чтение в рамках области, что и /learning-snapshots/sync. Сайт: читает записи, изменённые после отметки watermark источника, и применяет только те, чья организация разрешается в организацию взаимодействия; watermark не сдвигается, остальные организации ждут полного запуска. Каждый источник сообщает UPDATED, UNCHANGED, FAILED или SKIPPED с сообщением на русском; сбой одного источника не останавливает другой и сохраняет уже имеющиеся данные. Запуски сохраняются с trigger CARD и организацией.
          */
         post: operations["refreshInteractionSources"];
         delete?: never;
@@ -668,7 +668,7 @@ export interface paths {
         put?: never;
         /**
          * Начать новый цикл работы
-         * @description USER or LEADER of the interaction scope. Creates a new interaction of the same organization with the program, products and contacts of this one, by the chosen template (the default template when templateId is omitted), and links it as the next cycle starting on startsOn (today by default, later than the start of this cycle). A work has at most one next cycle (400). The history of this interaction is not changed. LMS training runs of the same organization and program belong to the cycle whose [startsOn, next startsOn) contains the run start.
+         * @description USER или LEADER области взаимодействия. Создаёт новое взаимодействие той же организации с программой, продуктами и контактами текущего, по выбранному шаблону (шаблон по умолчанию, если templateId не указан), и связывает его как следующий цикл, начинающийся с startsOn (сегодня по умолчанию, позже начала текущего цикла). У работы может быть не более одного следующего цикла (400). История текущего взаимодействия не изменяется. Запуски обучения LMS той же организации и программы относятся к циклу, чей интервал [startsOn, следующий startsOn) содержит начало запуска.
          */
         post: operations["startInteractionCycle"];
         delete?: never;
@@ -686,7 +686,7 @@ export interface paths {
         };
         /**
          * Заявки сайта, ожидающие разбора
-         * @description Site records in NEEDS_MAPPING or FAILED with the reason. A LEADER sees the records of organizations of the team and the records whose university is not in CRM yet; a USER sees only the records of own universities (for example, an unknown program). Contacts of the applications are not returned. ADMIN uses /api/admin/source-records.
+         * @description Записи сайта со статусом NEEDS_MAPPING или FAILED с причиной. LEADER видит записи организаций команды и записи, чей вуз ещё не заведён в CRM; USER видит только записи своих вузов (например, неизвестную программу). Контакты заявок не возвращаются. ADMIN использует /api/admin/source-records.
          */
         get: operations["listPendingSourceRecords"];
         put?: never;
@@ -708,7 +708,7 @@ export interface paths {
         put?: never;
         /**
          * Сопоставить заявку сайта с вузом команды
-         * @description LEADER only (403 for USER on a visible record). The university of a record without an organization is mapped to an organization of the leader team (another organization is 404); the record and the other waiting records of the same site university are applied again. A repeated request for an applied record returns it unchanged.
+         * @description Только LEADER (403 для USER на видимой записи). Вуз записи без организации сопоставляется организации команды руководителя (другая организация — 404); запись и остальные ожидающие записи того же вуза сайта применяются заново. Повторный запрос для уже применённой записи возвращает её без изменений.
          */
         post: operations["resolvePendingSourceRecord"];
         delete?: never;
@@ -822,7 +822,7 @@ export interface paths {
         put?: never;
         /**
          * Отметить ожидание, проблему и риск работы
-         * @description Replaces the flags of the work: whose answer is awaited (university or RTK) with a note, an open problem and a risk level with its reason. Omitted or null values clear the flag; a risk level requires a reason. An effective change writes one DETAILS_UPDATED history event; a request without changes returns the card unchanged.
+         * @description Заменяет флаги работы: от кого ожидается ответ (вуз или РТК) с примечанием, открытую проблему и уровень риска с причиной. Отсутствующие или null значения снимают флаг; уровень риска требует причину. Эффективное изменение записывает одно событие истории DETAILS_UPDATED; запрос без изменений возвращает карточку без изменений.
          */
         post: operations["updateInteractionFlags"];
         delete?: never;
@@ -910,7 +910,7 @@ export interface paths {
         put?: never;
         /**
          * Удалить ошибочно загруженный документ
-         * @description Soft deletion: the file is no longer listed, downloaded, previewed or offered for binding; the record stays for audit and one ATTACHMENT_DELETED history event with the file name, kind, revision and optional reason is written. Allowed to the author of the upload and to the team leader. A document used as a contract scan or as a transfer confirmation is rejected with 400 until it is replaced there.
+         * @description Мягкое удаление: файл больше не отображается в списках, не скачивается, не предпросматривается и не предлагается для привязки; запись остаётся для аудита, записывается одно событие истории ATTACHMENT_DELETED с именем файла, kind, revision и опциональной причиной. Разрешено автору загрузки и руководителю команды. Документ, используемый как скан договора или как подтверждение передачи, отклоняется с 400, пока не будет заменён там.
          */
         post: operations["deleteInteractionAttachment"];
         delete?: never;
@@ -955,7 +955,7 @@ export interface paths {
         head?: never;
         /**
          * Изменить вид документа
-         * @description Sets the document kind; version is the attachment version. Repeating the current kind returns the attachment unchanged
+         * @description Устанавливает kind документа; version — версия вложения. Повтор текущего kind возвращает вложение без изменений
          */
         patch: operations["updateAttachmentKind"];
         trace?: never;
@@ -969,7 +969,7 @@ export interface paths {
         };
         /**
          * Просмотреть документ в браузере
-         * @description CLEAN PDF, PNG and JPEG only, served inline with Content-Security-Policy default-src 'none', nosniff and Cache-Control private, no-store. Other formats are rejected with 400 and are downloaded instead.
+         * @description Только PDF, PNG и JPEG со статусом CLEAN, отдаются inline с Content-Security-Policy default-src 'none', nosniff и Cache-Control private, no-store. Другие форматы отклоняются с 400 и вместо этого скачиваются. Просмотр записывается в журнал администратора (ATTACHMENT_PREVIEWED), как скачивание.
          */
         get: operations["previewAttachment"];
         put?: never;
@@ -1046,7 +1046,7 @@ export interface paths {
         head?: never;
         /**
          * Изменить вид мероприятия
-         * @description Renames or archives a kind; an archived kind stays on existing activities and cannot be chosen for new ones
+         * @description Переименовывает или архивирует вид; архивный вид остаётся у существующих мероприятий и не может быть выбран для новых
          */
         patch: operations["updateAgreementActivityKind"];
         trace?: never;
@@ -1063,7 +1063,7 @@ export interface paths {
         put?: never;
         /**
          * Добавить соглашение с вузом
-         * @description USER for own organizations and LEADER for the team; the number is unique within the organization
+         * @description USER для своих организаций и LEADER для команды; номер уникален в пределах организации
          */
         post: operations["createOrganizationAgreement"];
         delete?: never;
@@ -1136,14 +1136,14 @@ export interface paths {
         post?: never;
         /**
          * Удалить мероприятие из плана
-         * @description Removes the activity and its links; the documents themselves stay in the works
+         * @description Удаляет мероприятие и его связи; сами документы остаются в работах
          */
         delete: operations["deleteAgreementActivity"];
         options?: never;
         head?: never;
         /**
          * Изменить мероприятие плана
-         * @description Replaces the fields and the full lists of linked works and confirmation documents; version is required
+         * @description Заменяет поля и полные списки связанных работ и подтверждающих документов; version обязательна
          */
         patch: operations["updateAgreementActivity"];
         trace?: never;
@@ -1157,7 +1157,7 @@ export interface paths {
         };
         /**
          * Подтверждения мероприятий соглашений
-         * @description Documents linked to agreement activities in the caller's scope, ordered by activity kind. The period selects activities whose actual dates, otherwise planned dates, otherwise the agreement term intersect [from, to]. More than 500 documents returns 422 CONFIRMATION_LIMIT.
+         * @description Документы, связанные с мероприятиями соглашений в области вызывающего, упорядоченные по виду мероприятия. Период отбирает мероприятия, чьи фактические даты, при их отсутствии плановые даты, а при их отсутствии срок соглашения пересекаются с [from, to]. Более 500 документов возвращает 422 CONFIRMATION_LIMIT.
          */
         get: operations["listAgreementConfirmations"];
         put?: never;
@@ -1216,7 +1216,7 @@ export interface paths {
         put?: never;
         /**
          * Заказать отчёт или диаграмму
-         * @description Persists a PENDING report job and hands it to one of the bounded report slots. The same Idempotency-Key with the same payload returns the same jobId; a different payload under the key returns 409 IDEMPOTENCY_CONFLICT. 503 REPORT_CAPACITY_EXCEEDED with Retry-After means all slots and the bounded queue are busy and no job was kept. With groupBy the job renders a chart of POST /api/statistics for the same request as PNG or PDF (chart, basis table, unit, period, filters and generation time) instead of the row report. chartType LINE (or seriesBy) renders a line chart of MONTH grouping, one line per seriesBy group; more than maxChartSeries lines or maxChartBars months fail the job with REPORT_CHART_LIMIT. DURATION rejects groupBy with 400 VALIDATION_ERROR.
+         * @description Сохраняет задание отчёта со статусом PENDING и передаёт его в один из ограниченных слотов отчётов. Тот же Idempotency-Key с тем же телом возвращает тот же jobId; другое тело под тем же ключом возвращает 409 IDEMPOTENCY_CONFLICT. 503 REPORT_CAPACITY_EXCEEDED с Retry-After означает, что все слоты и ограниченная очередь заняты и задание не сохранено. При указании groupBy задание строит диаграмму POST /api/statistics для того же запроса в виде PNG или PDF (диаграмма, базовая таблица, единица измерения, период, фильтры и время формирования) вместо построчного отчёта. chartType LINE (или seriesBy) строит линейный график с группировкой MONTH, по одной линии на группу seriesBy; более maxChartSeries линий или maxChartBars месяцев приводит к ошибке задания REPORT_CHART_LIMIT. DURATION отклоняет groupBy с 400 VALIDATION_ERROR.
          */
         post: operations["createReportJob"];
         delete?: never;
@@ -1236,7 +1236,7 @@ export interface paths {
         put?: never;
         /**
          * Предпросмотр строк отчёта
-         * @description Synchronous page of the same rows that the report file contains, filtered by the current server-side scope
+         * @description Синхронная страница тех же строк, что содержит файл отчёта, отфильтрованных по текущей серверной области
          */
         post: operations["previewReport"];
         delete?: never;
@@ -1308,7 +1308,7 @@ export interface paths {
         };
         /**
          * Скачать файл отчёта
-         * @description File is served only to the owner whose role, team and access revision are unchanged since the order
+         * @description Файл отдаётся только владельцу, чьи роль, команда и ревизия доступа не изменились с момента заказа
          */
         get: operations["downloadReportJobResult"];
         put?: never;
@@ -1382,7 +1382,7 @@ export interface paths {
         put?: never;
         /**
          * Сохранить набор фильтров и колонок как отчёт
-         * @description Stores kind, period, periodBasis, asOf, filters, columns in their order and sortBy under a name unique for the profile (case-insensitive); format, groupBy, chartType and seriesBy are not stored. The definition is validated like a report request. At most 50 reports per profile. The same Idempotency-Key with the same payload returns the stored result.
+         * @description Сохраняет kind, period, periodBasis, asOf, filters, columns в их порядке и sortBy под именем, уникальным для профиля (без учёта регистра); format, groupBy, chartType и seriesBy не сохраняются. Определение проверяется так же, как запрос отчёта. Не более 50 отчётов на профиль. Тот же Idempotency-Key с тем же телом возвращает сохранённый результат.
          */
         post: operations["createSavedReport"];
         delete?: never;
@@ -1407,7 +1407,7 @@ export interface paths {
         head?: never;
         /**
          * Изменить сохранённый отчёт
-         * @description Replaces name and definition when version matches; another profile's report is 404, a stale version 409 VERSION_CONFLICT
+         * @description Заменяет name и определение при совпадении version; отчёт другого профиля — 404, устаревшая version — 409 VERSION_CONFLICT
          */
         patch: operations["updateSavedReport"];
         trace?: never;
@@ -1548,7 +1548,7 @@ export interface paths {
         put?: never;
         /**
          * Синхронизировать учётную запись Keycloak с доступом в CRM
-         * @description Disables the Keycloak account of a blocked profile and ends its sessions, or enables the account of an active profile. Does nothing when the account is already in sync.
+         * @description Отключает учётную запись Keycloak заблокированного профиля и завершает её сессии либо включает учётную запись активного профиля. Ничего не делает, если учётная запись уже синхронизирована.
          */
         post: operations["syncCrmProfileAccount"];
         delete?: never;
@@ -1621,7 +1621,7 @@ export interface paths {
         };
         /**
          * Организации и команды
-         * @description Service list for team transfer; contains no contacts, interactions or other business data
+         * @description Служебный список для передачи команде; не содержит контактов, взаимодействий и других бизнес-данных
          */
         get: operations["listAdminOrganizations"];
         put?: never;
@@ -1682,7 +1682,7 @@ export interface paths {
         head?: never;
         /**
          * Перенести вуз в другую команду
-         * @description A responsible manager outside the new team is removed with an assignment event; leaders of both teams and the removed manager get a new accessRevision
+         * @description Ответственный менеджер вне новой команды снимается отдельным событием назначения; руководители обеих команд и снятый менеджер получают новую accessRevision
          */
         patch: operations["transferOrganizationTeam"];
         trace?: never;
@@ -1728,6 +1728,52 @@ export interface paths {
         patch: operations["updateAdminCatalogEntry"];
         trace?: never;
     };
+    "/api/admin/catalogs/vendors/{vendorId}/contacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vendorId: string;
+            };
+            cookie?: never;
+        };
+        /** Контакты вендора */
+        get: operations["listVendorContacts"];
+        put?: never;
+        /**
+         * Добавить контакт вендора
+         * @description Телефон хранится как +7XXXXXXXXXX, почта у вендора уникальна без учёта регистра. У продукта один контакт: выбранные продукты открепляются от прежнего контакта. В журнал справочников пишутся поля, но не значения.
+         */
+        post: operations["createVendorContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/catalogs/vendors/{vendorId}/contacts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vendorId: string;
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить, архивировать или восстановить контакт вендора
+         * @description Не переданное поле не меняется; пустая строка очищает телефон или почту; productIds задаёт полный список продуктов контакта. Архивирование открепляет продукты.
+         */
+        patch: operations["updateVendorContact"];
+        trace?: never;
+    };
     "/api/admin/catalog-events": {
         parameters: {
             query?: never;
@@ -1754,7 +1800,7 @@ export interface paths {
         };
         /**
          * Состояние источников данных
-         * @description ADMIN only. WEBSITE is the adapter of the proposed site contract (docs/integrations/site-api.yaml), not a confirmed API of the customer; MOODLE reads aggregated course and group data through a restricted Moodle web service (docs/integrations.md). Base URL, token and the allowed course list come only from the deployment configuration and are never returned.
+         * @description Только ADMIN. WEBSITE — адаптер предложенного контракта сайта (docs/integrations/site-api.yaml), а не подтверждённый API заказчика; MOODLE читает агрегированные данные курсов и групп через ограниченный веб-сервис Moodle (docs/integrations.md). Base URL, токен и список разрешённых курсов берутся только из конфигурации развёртывания и никогда не возвращаются.
          */
         get: operations["listDataSources"];
         put?: never;
@@ -1776,7 +1822,7 @@ export interface paths {
         put?: never;
         /**
          * Запустить синхронизацию источника
-         * @description ADMIN only. Persists a PENDING run and hands it to the bounded sync executor (not the HTTP thread); returns 202 with runId. Only one PENDING or RUNNING run per source exists: a second start gets 409 SYNC_ALREADY_RUNNING. Repeating a sync is safe: a site record with the same source, type, externalId and updatedAt is skipped, and a Moodle snapshot with unchanged counts only gets a new observation time. A source error fails the run and leaves stored records, published Moodle snapshots, demand numbers and the updated_since watermark intact. The same runs are started by the server schedule SOURCES_SYNC_CRON on behalf of the active administrator who started the latest run of the source; a source nobody started yet is not scheduled.
+         * @description Только ADMIN. Сохраняет запуск со статусом PENDING и передаёт его в ограниченный исполнитель синхронизации (не поток HTTP); возвращает 202 с runId. На источник существует не более одного запуска PENDING или RUNNING: повторный запуск получает 409 SYNC_ALREADY_RUNNING. Повтор синхронизации безопасен: запись сайта с тем же source, type, externalId и updatedAt пропускается, а снимок Moodle с неизменившимися счётчиками получает только новое время наблюдения. Ошибка источника завершает запуск неудачей и оставляет сохранённые записи, опубликованные снимки Moodle, числа спроса и отметку updated_since без изменений. Те же запуски запускаются по серверному расписанию SOURCES_SYNC_CRON от имени активного администратора, который запускал последний запуск источника; источник, который ещё никто не запускал, по расписанию не запускается.
          */
         post: operations["startSourceSync"];
         delete?: never;
@@ -1794,7 +1840,7 @@ export interface paths {
         };
         /**
          * Записи источников для разбора
-         * @description ADMIN only. Up to 200 latest records with status NEEDS_MAPPING or FAILED
+         * @description Только ADMIN. До 200 последних записей со статусом NEEDS_MAPPING или FAILED
          */
         get: operations["listSourceProblemRecords"];
         put?: never;
@@ -1833,7 +1879,7 @@ export interface paths {
         put?: never;
         /**
          * Сопоставить и применить запись источника
-         * @description ADMIN only. For a WEBSITE record saves the optional organization mapping (for the record's external organization ID, or its name when the ID is absent) and program mapping (for the program name). For a MOODLE NEEDS_MAPPING course or group record organizationId, programId, runStartsOn and runEndsOn are required: the mapping confirms a training run [runStartsOn, runEndsOn); a FAILED MOODLE record without them is applied again with its saved mapping. A run that ended before its first observation is SKIPPED without a snapshot, a run that has ended keeps its last observation. A group cannot be mapped when its course is mapped as a whole and vice versa (400). Then applies the stored record again and re-applies up to 500 other NEEDS_MAPPING records of the same source. Applying an APPLIED or SKIPPED record changes nothing, so a repeated request is safe.
+         * @description Только ADMIN. Для записи WEBSITE сохраняет опциональное сопоставление организации (по внешнему ID организации записи либо по её имени, если ID отсутствует) и сопоставление программы (по имени программы). Для записи курса или группы MOODLE со статусом NEEDS_MAPPING обязательны organizationId, programId, runStartsOn и runEndsOn: сопоставление подтверждает учебный запуск [runStartsOn, runEndsOn); запись MOODLE со статусом FAILED без них применяется заново с её сохранённым сопоставлением. Запуск, завершившийся до своего первого наблюдения, получает статус SKIPPED без снимка, завершённый запуск сохраняет своё последнее наблюдение. Группу нельзя сопоставить, если её курс сопоставлен целиком, и наоборот (400). Затем сохранённая запись применяется заново, и повторно применяются до 500 других записей того же источника со статусом NEEDS_MAPPING. Применение записи со статусом APPLIED или SKIPPED ничего не меняет, поэтому повторный запрос безопасен.
          */
         post: operations["applySourceRecord"];
         delete?: never;
@@ -1851,7 +1897,7 @@ export interface paths {
         };
         /**
          * Журнал администратора и безопасности
-         * @description Profile changes, KAM assignments, organization transfers, team changes, source synchronization runs, file and report downloads, personal data actions, retention runs and Keycloak account synchronization, newest first.
+         * @description Изменения профилей, назначения КАМ, переводы организаций, изменения команд, запуски синхронизации источников, скачивания файлов и отчётов, действия с персональными данными, запуски хранения данных и синхронизация учётных записей Keycloak, сначала новые.
          */
         get: operations["listAuditEvents"];
         put?: never;
@@ -1871,7 +1917,7 @@ export interface paths {
         };
         /**
          * Выгрузить журнал администратора и безопасности
-         * @description Up to 10000 newest rows matching the filters; the export itself is written to the journal
+         * @description Строки, соответствующие фильтрам экрана журнала, сначала новые; права те же, что на просмотр журнала (ADMIN). Если строк больше app.reports.max-rows (как у отчётов, по умолчанию 50000), ответ 422 REPORT_ROW_LIMIT: сузьте период или фильтры. Само выполнение выгрузки записывается в журнал (JOURNAL_EXPORTED).
          */
         get: operations["exportAuditEvents"];
         put?: never;
@@ -1893,7 +1939,7 @@ export interface paths {
         put?: never;
         /**
          * Найти данные субъекта ПДн
-         * @description Searches contacts, CRM profiles, comments and next steps, attachment names and source records by name, email, phone and other spellings. The search terms travel in the body and are not written to the journal; the journal keeps the author, time and counts.
+         * @description Ищет контакты, профили CRM, комментарии и следующие шаги, имена вложений и записи источников по имени, email, телефону и другим написаниям. Профили обучающихся находятся только по точному нормализованному email, телефону, СНИЛС или фамилии и имени через HMAC-отпечатки; результат показывает лишь факт существования профиля, его потоки и уровень заполненности, без значений. Поисковые термины передаются в теле запроса и не записываются в журнал; журнал хранит автора, время и счётчики, а также по одному событию SUBJECT_SEARCHED на найденного обучающегося с типом объекта LEARNER.
          */
         post: operations["searchPersonalDataSubject"];
         delete?: never;
@@ -1913,7 +1959,7 @@ export interface paths {
         put?: never;
         /**
          * Выгрузить сведения о субъекте ПДн
-         * @description Operator, purposes, sources, recipients, retention periods and every found record in JSON or PDF
+         * @description Оператор, цели, источники, получатели, сроки хранения и все найденные записи в JSON или PDF, включая расшифрованный профиль каждого найденного обучающегося; на каждого экспортированного обучающегося создаётся событие SUBJECT_EXPORTED с типом объекта LEARNER
          */
         post: operations["exportPersonalDataSubject"];
         delete?: never;
@@ -1937,7 +1983,7 @@ export interface paths {
         head?: never;
         /**
          * Уточнить данные контакта
-         * @description Replaces name, position, email and phone of a contact; the changed field names are written to the journal
+         * @description Заменяет имя, должность, email и телефон контакта; названия изменённых полей записываются в журнал
          */
         patch: operations["rectifyPersonalDataContact"];
         trace?: never;
@@ -1953,9 +1999,29 @@ export interface paths {
         put?: never;
         /**
          * Ограничить обработку данных контакта или снять ограничение
-         * @description A restricted contact stays readable in history but cannot be linked to interactions
+         * @description Ограниченный контакт остаётся доступным для чтения в истории, но не может быть связан со взаимодействиями
          */
         post: operations["restrictPersonalDataContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/personal-data/learners/{id}/restriction": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ограничить обработку анкеты слушателя или снять ограничение
+         * @description Ограниченный профиль обучающегося остаётся сохранённым и учитывается в статистике, но оператор зачисления не может ни раскрыть, ни изменить его (409 PERSONAL_DATA_RESTRICTED в модуле зачисления)
+         */
+        post: operations["restrictPersonalDataLearner"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1973,7 +2039,7 @@ export interface paths {
         put?: never;
         /**
          * Обезличить данные субъекта ПДн
-         * @description Replaces the subject's name, email and phone with a marker in the chosen contacts, blocked CRM profiles, comments, next steps, source records and technical snapshots; deletes the chosen attachments and report files that could contain the subject. Interaction history and event links are kept.
+         * @description Заменяет имя, email и телефон субъекта на маркер в выбранных контактах, заблокированных профилях CRM, комментариях, следующих шагах, записях источников и технических снимках; удаляет выбранные вложения и файлы отчётов, которые могли содержать данные субъекта. Выбранные профили обучающихся теряют зашифрованные поля и отпечатки; их зачисления и оплаченные заказы остаются для статистики. История взаимодействий и связи событий сохраняются.
          */
         post: operations["anonymizePersonalDataSubject"];
         delete?: never;
@@ -2010,7 +2076,7 @@ export interface paths {
         put?: never;
         /**
          * Применить сроки хранения сейчас
-         * @description Same work as the nightly job; repeating it is safe because expired data is already removed
+         * @description Та же работа, что и у ночного задания; повтор безопасен, так как истёкшие данные уже удалены
          */
         post: operations["runRetention"];
         delete?: never;
@@ -2096,7 +2162,7 @@ export interface paths {
         };
         /**
          * История запусков синхронизации
-         * @description ADMIN only. The last 50 runs of the source with the author, trigger and, for card runs, the organization
+         * @description Только ADMIN. Последние 50 запусков источника с автором, триггером и, для запусков из карточки, организацией
          */
         get: operations["listSourceSyncRuns"];
         put?: never;
@@ -2116,7 +2182,7 @@ export interface paths {
         };
         /**
          * Сохранённые сопоставления источников
-         * @description ADMIN only. Site university and program mappings and Moodle training runs (course or group → organization, program, run dates and run kind) with the current snapshot. outdated marks an open run whose snapshot was not observed by the last successful full Moodle run.
+         * @description Только ADMIN. Сопоставления вузов и программ сайта и учебные запуски Moodle (курс или группа → организация, программа, даты и вид запуска) с текущим снимком. outdated отмечает открытый запуск, снимок которого не был замечен последним успешным полным запуском Moodle.
          */
         get: operations["listSourceMappings"];
         put?: never;
@@ -2143,7 +2209,7 @@ export interface paths {
         post?: never;
         /**
          * Снять сопоставление источника
-         * @description ADMIN only, with version. A Moodle run is removed with its snapshot, so its numbers leave cards and reports; the course and group records are evaluated again and return to review when nothing maps them. Site records resolved through a removed university or program mapping return to NEEDS_MAPPING; history events stay.
+         * @description Только ADMIN, с version. Запуск Moodle удаляется вместе со снимком, поэтому его числа уходят из карточек и отчётов; записи курса и группы оцениваются заново и возвращаются на проверку, если их больше ничего не сопоставляет. Записи сайта, разрешённые через удалённое сопоставление вуза или программы, возвращаются в NEEDS_MAPPING; события истории сохраняются.
          */
         delete: operations["removeSourceMapping"];
         options?: never;
@@ -2162,7 +2228,7 @@ export interface paths {
         put?: never;
         /**
          * Добавить поток на сопоставленный курс
-         * @description ADMIN only. Adds another training run with new dates to the same Moodle course or group (for a new cycle); runs of one course or group follow each other and must not overlap (400). An observation is published into the earliest run that has not ended on its date; a run that ended keeps its last snapshot.
+         * @description Только ADMIN. Добавляет ещё один учебный запуск с новыми датами тому же курсу или группе Moodle (для нового цикла); запуски одного курса или группы следуют друг за другом и не должны пересекаться (400). Наблюдение публикуется в самый ранний запуск, ещё не завершившийся на дату наблюдения; завершённый запуск сохраняет свой последний снимок.
          */
         post: operations["addSourceMappingRun"];
         delete?: never;
@@ -2183,7 +2249,7 @@ export interface paths {
         post?: never;
         /**
          * Удалить устаревший снимок потока
-         * @description ADMIN only. Deletes the stored snapshot of a Moodle run and keeps the mapping, for example after the group was deleted in Moodle. The next sync publishes the run again if Moodle still returns it. 400 when the run has no snapshot.
+         * @description Только ADMIN. Удаляет сохранённый снимок запуска Moodle и сохраняет сопоставление, например после удаления группы в Moodle. Следующая синхронизация публикует запуск заново, если Moodle всё ещё его возвращает. 400, если у запуска нет снимка.
          */
         delete: operations["deleteSourceMappingSnapshot"];
         options?: never;
@@ -2202,9 +2268,273 @@ export interface paths {
         put?: never;
         /**
          * Создать организацию из записи разбора
-         * @description Same as /api/source-records/{id}/organization for ADMIN; teamId is required
+         * @description То же, что /api/source-records/{id}/organization, для ADMIN; teamId обязателен
          */
         post: operations["createOrganizationFromAdminSourceRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/paid-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Загрузить файл оплат в формате организатора
+         * @description Пока модуль «Слушатели» выключен (APP_ENROLMENT_ENABLED=false, по умолчанию), метод отвечает 404 всем. Во включённом модуле — только профиль USER или LEADER с флагом «Оператор зачисления» (флаг читается заново при каждом запросе), остальным 403. Файл — JSON-массив «Данные оплат» (до 5 МиБ и 10 000 элементов, null пропускается со счётчиком) разбирается PaidOrderParser и регистрируется запуском UPLOAD источника «Сайт»: в source_records пишутся только номер заявки, курс (программа по сопоставлению) и номер потока; организация — служебная «Открытый набор (физлица)». ФИО, телефон и email не сохраняются. Повтор файла даёт «Пропущено», повтор с тем же Idempotency-Key возвращает прежний результат. Запрос ждёт окончания запуска; при идущей синхронизации сайта — 409 SYNC_ALREADY_RUNNING.
+         */
+        post: operations["uploadPaidOrders"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/streams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Потоки «курс + номер» со счётчиками зачислений и анкет
+         * @description Модуль «Слушатели» выключен — 404 всем; включён — только оператор зачисления (флаг читается заново при каждом запросе), остальным 403. Только числа: paid — зачислений в потоке (одно на слушателя, повторная заявка второго не создаёт), profilesComplete — полных анкет, exported и transferred — отметки файла для LMS, pending — зачисления без отметки «передано». keepUntil — дата окончания потока плюс срок хранения анкет (app.retention.learner-profiles, по умолчанию P3Y); у потока без даты окончания срок не определён. Программа — по сопоставлению курса у записей оплат. Счётчики — как в блоке «Сроки хранения» администратора.
+         */
+        get: operations["listEnrolmentStreams"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/streams/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить дату окончания потока
+         * @description Дата окончания задаёт срок хранения анкет потока до связи с потоками LMS (D-7712bc). null снимает дату. Изменение пишется в журнал (STREAM_END_DATE_CHANGED) без персональных данных.
+         */
+        patch: operations["updateEnrolmentStream"];
+        trace?: never;
+    };
+    "/api/enrolment/streams/{id}/learners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Слушатели потока с масками, выгрузки для LMS и сводка перед выгрузкой
+         * @description Весь поток одним ответом: поток — до нескольких тысяч зачислений, сортировка по ФИО выполняется в приложении, потому что ФИО хранятся зашифрованными. ФИО полностью, телефон и email — маской; у обезличенной анкеты ФИО нет. Просмотр пишется в журнал (LEARNER_LIST_VIEWED: поток и число строк). Ответ с Cache-Control no-store.
+         */
+        get: operations["listEnrolmentStreamLearners"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/streams/{id}/questionnaire-imports/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Предпросмотр заполненного шаблона «Загрузка пользователей»
+         * @description XLSX или XLS до 5 МиБ и 5 000 строк проверяется антивирусом. Нужны столбцы Фамилия, Имя и хотя бы один из столбцов Email или Номер телефона; лишние столбцы — предупреждение (ignoredHeaders). Строка сопоставляется только со слушателями этого потока: по отпечатку email или телефона вместе с фамилией и именем (отчество — если есть в строке и в анкете). Пустая ячейка не стирает значение анкеты. Статусы строк: UPDATE — будут изменены поля changedFields, UNCHANGED, ERROR — ошибки ячеек по правилам полей или слушателя нет в потоке, CONFLICT — ФИО не совпадает с анкетой, несколько слушателей потока подходят или обработка анкеты ограничена. Файл на сервере не сохраняется; fingerprint — отпечаток файла, потока и версий затронутых анкет для применения. Журнал — LEARNER_TEMPLATE_PREVIEWED. Ответ с Cache-Control no-store.
+         */
+        post: operations["previewQuestionnaireImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/streams/{id}/questionnaire-imports/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Применить заполненный шаблон после предпросмотра
+         * @description Передаётся тот же файл и fingerprint предпросмотра. Если анкеты потока изменились после предпросмотра — 409 VERSION_CONFLICT и ничего не применяется: нужен новый предпросмотр. Иначе одной транзакцией применяются строки UPDATE (LEARNER_CHANGED с кодами полей по каждой анкете, LEARNER_TEMPLATE_IMPORTED по потоку), строки с ошибками и конфликтами пропускаются. Повтор с тем же Idempotency-Key возвращает прежний итог без ФИО строк.
+         */
+        post: operations["applyQuestionnaireImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/streams/{id}/lms-roster": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Сформировать файл «Загрузка пользователей» для LMS по потоку
+         * @description XLSX по шаблону организатора: Лист1 — 30 заголовков дословно, одна строка на зачисление (одинаковый email у двух слушателей строк не убирает), Лист2 и проверки данных «Пол» и «Образование», телефон числом, даты — датами, защита от формул. mode PENDING — только зачисления без отметки «передано», ALL — весь поток; incomplete EXCLUDE исключает анкеты без Фамилии, Имени, телефона или email, INCLUDE выгружает их с пустыми ячейками. Анкеты с ограниченной обработкой и обезличенные не выгружаются. Выгруженным и ещё не переданным зачислениям ставится идентификатор выгрузки (заголовок X-Roster-Export-Id). Нет строк — 400. Журнал — LMS_ROSTER_EXPORTED. Ответ с Cache-Control no-store, имя файла LMS_<курс>_поток<N>_<дата>.xlsx без персональных данных. Idempotency-Key не используется: сохранять файл с анкетами для повтора нельзя, повторный запрос создаёт новую выгрузку.
+         */
+        post: operations["exportLmsRoster"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/roster-exports/{id}/transferred": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Отметить слушателей выгрузки переданными в LMS
+         * @description Отметка ставится ровно по зачислениям этой выгрузки, ещё не отмеченным (marked = 0 — неотмеченных нет). Журнал — LMS_ROSTER_MARKED. Неизвестная выгрузка — 404.
+         */
+        post: operations["markRosterExportTransferred"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/learners/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Точный поиск слушателя по email, телефону, СНИЛС или фамилии
+         * @description Поиск по отпечаткам HMAC без расшифровки таблицы, только точное совпадение нормализованного значения; до 200 слушателей. Значение передаётся в теле, чтобы не попасть в адрес и журнал доступа. Журнал — LEARNER_SEARCHED (вид поиска и число найденных, без значения). Ответ с Cache-Control no-store.
+         */
+        post: operations["searchLearners"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/learners/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Анкета слушателя с маскированными группами и зачислениями
+         * @description ФИО и дательный падеж — полностью, телефон и email — частично, группы «Документы», «Личные сведения», «Адрес», «Образование» — маской. Журнал — LEARNER_VIEWED. Ответ с Cache-Control no-store.
+         */
+        get: operations["getLearner"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить поля анкеты слушателя
+         * @description fields — только изменяемые поля: код поля → значение, пустая строка или null очищает поле. Даты — ГГГГ-ММ-ДД, пол — «М» или «Ж», образование — значение из списка шаблона. Проверки п. 11.8: СНИЛС с контрольным числом, паспорт заполняется целиком, дата выдачи паспорта не раньше 14-летия, слушатель не младше 18 лет, телефон, email, индекс, даты. Фамилию, имя, телефон и email нельзя очистить. Ошибки — 400 VALIDATION_ERROR, fieldErrors по кодам полей без значений; СНИЛС другого слушателя — ошибка поля SNILS, для переноса зачислений — POST /api/enrolment/learners/{id}/move-enrolments. Правка с version: 409 VERSION_CONFLICT, анкета с ограниченной обработкой — 409 PERSONAL_DATA_RESTRICTED, обезличенная — 409 PERSONAL_DATA_ANONYMIZED. Журнал — LEARNER_CHANGED с кодами полей. Ответ — анкета с масками.
+         */
+        patch: operations["updateLearner"];
+        trace?: never;
+    };
+    "/api/enrolment/learners/{id}/reveal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Показать значения скрытых групп анкеты
+         * @description Значения выбранных групп: даты — ГГГГ-ММ-ДД, пол и образование — в написании шаблона. Журнал — LEARNER_FIELDS_REVEALED с кодами групп. Анкета с ограниченной обработкой и обезличенная не раскрываются (409). Ответ с Cache-Control no-store.
+         */
+        post: operations["revealLearnerFields"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/learners/{id}/move-enrolments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Перенести зачисления к слушателю с этим СНИЛС
+         * @description Исправляет дубль слушателя: зачисления открытой анкеты переходят к слушателю с указанным СНИЛС; зачисление в потоке, где он уже зачислен, удаляется (заявка остаётся в учёте спроса); непустые поля открытой анкеты, пустые у найденного, переносятся; открытая анкета удаляется. Одна транзакция, журнал — LEARNER_ENROLMENTS_MOVED с обоими идентификаторами, числом зачислений и кодами полей. version — версия открытой анкеты.
+         */
+        post: operations["moveLearnerEnrolments"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/learners/{id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * История анкеты слушателя без значений
+         * @description События журнала по анкете (просмотры, раскрытия, изменения с кодами полей, перенос зачислений, функции субъекта ПДн), новые сначала, до 200.
+         */
+        get: operations["getLearnerHistory"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2215,6 +2545,316 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        PaidOrderUpload: {
+            /** Format: uuid */
+            runId: string;
+            /** @description Непустых элементов массива */
+            received: number;
+            emptyElements: number;
+            created: number;
+            /** @description Заявки, у которых изменились курс или номер потока */
+            updated: number;
+            /** @description Заявки без изменений и повторы с тем же содержимым */
+            skipped: number;
+            /** @description Курс не сопоставлен с программой; сопоставляет администратор в разборе источника */
+            needsMapping: number;
+            /** @description Записи с ошибкой в номере заявки, курсе или номере потока */
+            failed: number;
+            message: string | null;
+            streams: components["schemas"]["PaidOrderStream"][];
+            issues: components["schemas"]["PaidOrderIssue"][];
+            learners: components["schemas"]["LearnerIntake"];
+        };
+        PaidOrderStream: {
+            course: string;
+            streamNo: number;
+            orders: number;
+        };
+        /** @description Замечание к элементу массива без значений персональных данных */
+        PaidOrderIssue: {
+            /** @description Порядковый номер элемента в массиве с 1 */
+            position: number;
+            field: string | null;
+            message: string;
+            /** @description true — запись принята (например, телефон не прошёл проверку и не сохранён) */
+            warning: boolean;
+        };
+        /** @description Приём оплат в модуль «Слушатели» — только числа, без персональных данных */
+        LearnerIntake: {
+            /** @description Созданы новые слушатели */
+            newLearners: number;
+            /** @description Найдены существующие слушатели — по заявке или по email или телефону вместе с фамилией и именем */
+            foundLearners: number;
+            /** @description Созданы зачисления */
+            enrolled: number;
+            /** @description Повторные заявки слушателя в потоке, где он уже зачислен; второго зачисления нет */
+            repeatOrders: number;
+            /** @description Зачисления перенесены в другой поток после смены курса или номера потока в заявке */
+            movedStreams: number;
+            /** @description Из них уже выгружались для LMS; отметки сняты, из прежнего потока в LMS исключить вручную */
+            movedAfterLms: number;
+            /** @description Телефон или email в оплате отличаются от анкеты; анкета не перезаписана */
+            contactsDiffer: number;
+        };
+        /**
+         * @description Код поля анкеты в порядке колонок A…AD шаблона «Загрузка пользователей»
+         * @enum {string}
+         */
+        LearnerFieldCode: "LAST_NAME" | "FIRST_NAME" | "MIDDLE_NAME" | "PHONE" | "EMAIL" | "SNILS" | "PASSPORT_SERIES" | "PASSPORT_NUMBER" | "PASSPORT_ISSUED_BY" | "PASSPORT_ISSUE_DATE" | "PASSPORT_DIVISION_CODE" | "GENDER" | "BIRTH_DATE" | "REGION" | "LOCALITY" | "STREET" | "HOUSE" | "APARTMENT" | "POSTAL_CODE" | "FIRST_NAME_DATIVE" | "LAST_NAME_DATIVE" | "MIDDLE_NAME_DATIVE" | "EDUCATION" | "DIPLOMA_PROFESSION" | "DIPLOMA_INSTITUTION" | "DIPLOMA_LAST_NAME" | "DIPLOMA_NUMBER" | "DIPLOMA_SERIES" | "DIPLOMA_REGISTRATION_NUMBER" | "DIPLOMA_ISSUE_DATE";
+        /**
+         * @description MAIN основное (ФИО, телефон, email), DOCUMENTS документы (СНИЛС и паспорт), PERSONAL личные сведения (пол, дата рождения), ADDRESS адрес регистрации, DATIVE ФИО в дательном падеже, EDUCATION образование и диплом
+         * @enum {string}
+         */
+        LearnerFieldGroup: "MAIN" | "DOCUMENTS" | "PERSONAL" | "ADDRESS" | "DATIVE" | "EDUCATION";
+        /**
+         * @description PENDING ожидает выгрузки, EXPORTED выгружено в файл, TRANSFERRED передано в LMS
+         * @enum {string}
+         */
+        LmsStatus: "PENDING" | "EXPORTED" | "TRANSFERRED";
+        EnrolmentStreams: {
+            streams: components["schemas"]["EnrolmentStream"][];
+            counters: components["schemas"]["EnrolmentCounters"];
+        };
+        EnrolmentStream: {
+            /** Format: uuid */
+            id: string;
+            courseName: string;
+            streamNo: number;
+            /** @description Программа CRM по сопоставлению курса; null — курс ещё не сопоставлен администратором */
+            programName: string | null;
+            /** Format: date */
+            endsOn: string | null;
+            /**
+             * Format: date
+             * @description Хранить анкеты до; null — дата окончания не задана и срок хранения не определён
+             */
+            keepUntil: string | null;
+            version: number;
+            paid: number;
+            profilesComplete: number;
+            exported: number;
+            transferred: number;
+            pending: number;
+        };
+        EnrolmentCounters: {
+            /** @description Анкет в CRM без обезличенных */
+            profiles: number;
+            profilesLimit: number;
+            nearLimit: boolean;
+            streamsWithoutEndDate: number;
+        };
+        EnrolmentStreamUpdate: {
+            version: number;
+            /** Format: date */
+            endsOn: string | null;
+        };
+        EnrolmentStreamLearners: {
+            stream: components["schemas"]["EnrolmentStream"];
+            learners: components["schemas"]["StreamLearner"][];
+            /** @description Выгрузки для LMS, новые сначала */
+            exports: components["schemas"]["RosterExport"][];
+            roster: components["schemas"]["RosterSummary"];
+        };
+        StreamLearner: {
+            /** Format: uuid */
+            learnerId: string;
+            /** Format: uuid */
+            enrolmentId: string;
+            /** @description Номер заявки оплаты */
+            orderNumber: string | null;
+            status: components["schemas"]["PersonalDataStatus"];
+            lastName: string | null;
+            firstName: string | null;
+            middleName: string | null;
+            /** @description Маска, например +7 9** ***-**-34 */
+            phone: string | null;
+            /** @description Маска, например i***@example.test */
+            email: string | null;
+            filledFields: number;
+            /** @description Поля полноты анкеты — все, кроме отчества, квартиры и отчества в дательном падеже без отчества */
+            requiredFields: number;
+            complete: boolean;
+            /** @description Незаполненные обязательные для LMS поля (Фамилия, Имя, телефон, email) */
+            missingForLms: components["schemas"]["LearnerFieldCode"][];
+            /** @description Тот же email у другого слушателя этого потока */
+            duplicateEmail: boolean;
+            lmsStatus: components["schemas"]["LmsStatus"];
+            /** Format: uuid */
+            lmsExportId: string | null;
+            /** Format: date-time */
+            lmsExportedAt: string | null;
+            /** Format: date-time */
+            lmsTransferredAt: string | null;
+        };
+        RosterExport: {
+            /** Format: uuid */
+            exportId: string;
+            /** Format: date-time */
+            exportedAt: string;
+            /** @description Зачислений с этим идентификатором выгрузки */
+            rows: number;
+            transferred: number;
+        };
+        RosterSummary: {
+            pending: components["schemas"]["RosterScope"];
+            all: components["schemas"]["RosterScope"];
+        };
+        /** @description Что попадёт в файл в режиме выгрузки */
+        RosterScope: {
+            /** @description Строк, которые можно выгрузить */
+            rows: number;
+            /** @description Из них без Фамилии, Имени, телефона или email */
+            missingRequired: number;
+            /** @description Из них с email, который повторяется у другого слушателя в том же файле */
+            duplicateEmails: number;
+            /** @description Не выгружаются — обработка анкеты ограничена или анкета обезличена */
+            unavailable: number;
+        };
+        LmsRosterRequest: {
+            /** @enum {string} */
+            mode: "PENDING" | "ALL";
+            /** @enum {string} */
+            incomplete: "INCLUDE" | "EXCLUDE";
+        };
+        RosterExportMarked: {
+            /** Format: uuid */
+            exportId: string;
+            /** Format: uuid */
+            streamId: string;
+            rows: number;
+            marked: number;
+        };
+        LearnerSearch: {
+            /** @enum {string} */
+            kind: "EMAIL" | "PHONE" | "SNILS" | "LAST_NAME";
+            value: string;
+        };
+        LearnerSummary: {
+            /** Format: uuid */
+            id: string;
+            status: components["schemas"]["PersonalDataStatus"];
+            lastName: string | null;
+            firstName: string | null;
+            middleName: string | null;
+            phone: string | null;
+            email: string | null;
+            filledFields: number;
+            requiredFields: number;
+            complete: boolean;
+            enrolments: components["schemas"]["LearnerEnrolment"][];
+        };
+        LearnerEnrolment: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            streamId: string;
+            courseName: string;
+            streamNo: number;
+            /** Format: date */
+            streamEndsOn: string | null;
+            orderNumber: string | null;
+            lmsStatus: components["schemas"]["LmsStatus"];
+            /** Format: date-time */
+            lmsExportedAt: string | null;
+            /** Format: date-time */
+            lmsTransferredAt: string | null;
+        };
+        LearnerCard: {
+            /** Format: uuid */
+            id: string;
+            status: components["schemas"]["PersonalDataStatus"];
+            version: number;
+            /** @description Код поля → значение с маской; незаполненных полей нет */
+            values: {
+                [key: string]: string;
+            };
+            missingFields: components["schemas"]["LearnerFieldCode"][];
+            filledFields: number;
+            requiredFields: number;
+            complete: boolean;
+            enrolments: components["schemas"]["LearnerEnrolment"][];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        LearnerReveal: {
+            groups: components["schemas"]["LearnerFieldGroup"][];
+        };
+        LearnerRevealed: {
+            /** @description Код поля → значение; незаполненных полей нет */
+            values: {
+                [key: string]: string;
+            };
+        };
+        LearnerUpdate: {
+            version: number;
+            /** @description Код поля → новое значение; пустая строка или null очищает поле */
+            fields: {
+                [key: string]: string | null;
+            };
+        };
+        LearnerMove: {
+            snils: string;
+            version: number;
+        };
+        LearnerMoveResult: {
+            /**
+             * Format: uuid
+             * @description Слушатель с этим СНИЛС, к которому перенесены зачисления
+             */
+            learnerId: string;
+            enrolmentsMoved: number;
+            /** @description Зачисления в потоках, где слушатель уже был зачислен; удалены, заявки остались в учёте спроса */
+            enrolmentsDropped: number;
+            fieldsMoved: components["schemas"]["LearnerFieldCode"][];
+        };
+        LearnerHistoryEntry: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            occurredAt: string;
+            action: string;
+            actionLabel: string;
+            actorDisplayName: string;
+            /** @description Коды полей и групп, числа и идентификаторы; значений нет */
+            details: string | null;
+        };
+        QuestionnaireImport: {
+            /** @description false — предпросмотр, true — итог применения */
+            applied: boolean;
+            fingerprint: string;
+            /** @description Заголовки столбцов, которых нет в шаблоне; их значения не читаются */
+            ignoredHeaders: string[];
+            rows: components["schemas"]["QuestionnaireRow"][];
+            /** @description Строк «Обновить»; в итоге применения — применено */
+            updated: number;
+            unchanged: number;
+            errors: number;
+            conflicts: number;
+        };
+        QuestionnaireRow: {
+            /** @description Номер строки Excel */
+            rowNumber: number;
+            /** @enum {string} */
+            status: "UPDATE" | "UNCHANGED" | "ERROR" | "CONFLICT";
+            /** Format: uuid */
+            learnerId: string | null;
+            /** @description Фамилия из строки файла; в сохранённом для повтора итоге нет */
+            lastName: string | null;
+            firstName: string | null;
+            changedFields: components["schemas"]["LearnerFieldCode"][];
+            issues: components["schemas"]["QuestionnaireIssue"][];
+        };
+        /** @description Ошибка или предупреждение по ячейке без значения */
+        QuestionnaireIssue: {
+            /** @description Буква колонки файла, например F */
+            column: string | null;
+            header: string | null;
+            field: components["schemas"]["LearnerFieldCode"] | null;
+            message: string;
+            warning: boolean;
+        };
         /**
          * @description DRAFT проект, ACTIVE действует, COMPLETED завершено, TERMINATED расторгнуто
          * @enum {string}
@@ -2257,22 +2897,22 @@ export interface components {
             version: number;
         };
         AgreementInput: {
-            /** @description Required when updating */
+            /** @description Обязательно при обновлении */
             version?: number | null;
             number: string;
             /** Format: date */
             concludedOn?: string | null;
             /**
              * Format: date
-             * @description Last day of the term; not earlier than concludedOn
+             * @description Последний день срока действия; не раньше concludedOn
              */
             validUntil?: string | null;
-            /** @description Parties and signatories */
+            /** @description Стороны и подписанты */
             parties?: string | null;
             status: components["schemas"]["AgreementStatus"];
             /**
              * Format: uuid
-             * @description CLEAN document from a work of the same organization holding the signed agreement
+             * @description Документ CLEAN из работы той же организации, содержащий подписанное соглашение
              */
             fileAttachmentId?: string | null;
         };
@@ -2326,11 +2966,11 @@ export interface components {
             attachments: components["schemas"]["AgreementLinkedDocument"][];
         };
         AgreementActivityInput: {
-            /** @description Required when updating */
+            /** @description Обязательно при обновлении */
             version?: number | null;
             /**
              * Format: uuid
-             * @description Active kind; an archived kind is accepted only if the activity already has it
+             * @description Активный вид; архивный вид принимается только если он уже установлен у мероприятия
              */
             kindId: string;
             title: string;
@@ -2347,13 +2987,13 @@ export interface components {
             actualEnd?: string | null;
             /**
              * Format: uuid
-             * @description Active USER or LEADER of the organization team
+             * @description Активный USER или LEADER команды организации
              */
             responsibleProfileId?: string | null;
             status: components["schemas"]["AgreementActivityStatus"];
-            /** @description Works of the same organization; the list replaces the current links */
+            /** @description Работы той же организации; список заменяет текущие связи */
             interactionIds?: string[];
-            /** @description CLEAN documents of works of the same organization; the list replaces the current links */
+            /** @description Документы CLEAN работ той же организации; список заменяет текущие связи */
             attachmentIds?: string[];
         };
         AgreementLinkedWork: {
@@ -2421,11 +3061,13 @@ export interface components {
             teamId: string | null;
             teamName: string | null;
             accessRevision: number;
+            /** @description true, если модуль «Слушатели» включён и у профиля есть флаг «Оператор зачисления» (только USER и LEADER); открывает раздел «Зачисление» и загрузку оплат */
+            enrolmentOperator: boolean;
         };
         LogoutResult: {
             /**
              * Format: uri
-             * @description Keycloak end_session_endpoint with id_token_hint and post_logout_redirect_uri
+             * @description end_session_endpoint Keycloak с id_token_hint и post_logout_redirect_uri
              */
             logoutUrl: string;
         };
@@ -2436,7 +3078,7 @@ export interface components {
         };
         ApiError: {
             /** @enum {string} */
-            code: "VALIDATION_ERROR" | "BAD_REQUEST" | "UNAUTHENTICATED" | "FORBIDDEN" | "CRM_PROFILE_REQUIRED" | "CRM_PROFILE_PENDING" | "LAST_ACTIVE_ADMIN" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "CONFLICT" | "VERSION_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "DEPENDENCY_UNAVAILABLE" | "REPORT_NOT_READY" | "REPORT_ACCESS_CHANGED" | "REPORT_RESULT_UNAVAILABLE" | "REPORT_CAPACITY_EXCEEDED" | "SOURCE_NOT_CONFIGURED" | "SYNC_ALREADY_RUNNING" | "SYNC_CAPACITY_EXCEEDED" | "LMS_NOT_MAPPED" | "LMS_SYNC_FAILED" | "ACCOUNT_SYNC_FAILED" | "PERSONAL_DATA_ANONYMIZED" | "PROFILE_ACTIVE" | "RETENTION_RUNNING" | "CONFIRMATION_LIMIT";
+            code: "VALIDATION_ERROR" | "BAD_REQUEST" | "UNAUTHENTICATED" | "FORBIDDEN" | "CRM_PROFILE_REQUIRED" | "CRM_PROFILE_PENDING" | "LAST_ACTIVE_ADMIN" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "CONFLICT" | "VERSION_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "DEPENDENCY_UNAVAILABLE" | "REPORT_NOT_READY" | "REPORT_ACCESS_CHANGED" | "REPORT_RESULT_UNAVAILABLE" | "REPORT_CAPACITY_EXCEEDED" | "REPORT_ROW_LIMIT" | "SOURCE_NOT_CONFIGURED" | "SYNC_ALREADY_RUNNING" | "SYNC_CAPACITY_EXCEEDED" | "LMS_NOT_MAPPED" | "LMS_SYNC_FAILED" | "ACCOUNT_SYNC_FAILED" | "PERSONAL_DATA_ANONYMIZED" | "PROFILE_ACTIVE" | "RETENTION_RUNNING" | "CONFIRMATION_LIMIT" | "PERSONAL_DATA_RESTRICTED";
             message: string;
             /** Format: uuid */
             requestId: string;
@@ -2464,7 +3106,7 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            type: "UNIVERSITY" | "SCHOOL" | "COLLEGE";
+            type: "UNIVERSITY" | "SCHOOL" | "COLLEGE" | "OPEN_ENROLLMENT";
             /** Format: uuid */
             teamId: string;
             /** Format: uuid */
@@ -2502,7 +3144,7 @@ export interface components {
             version: number;
             /**
              * Format: uuid
-             * @description An active USER of the organization team, or null to explicitly remove the owner
+             * @description Активный USER команды организации либо null для явного снятия ответственного
              */
             ownerManagerId: string | null;
             /** @description Комментарий к передаче, который видит новый ответственный в истории назначений */
@@ -2526,7 +3168,7 @@ export interface components {
             actorDisplayName: string;
             requestId: string;
             /**
-             * @description Reason of an automatic owner change; null for a change made by the team leader
+             * @description Причина автоматической смены ответственного; null для изменения, сделанного руководителем команды
              * @enum {string|null}
              */
             reason?: "PROFILE_BLOCKED" | "PROFILE_ROLE_CHANGED" | "PROFILE_TEAM_CHANGED" | "ORGANIZATION_TEAM_CHANGED" | "IMPORT" | null;
@@ -2590,7 +3232,7 @@ export interface components {
             role?: components["schemas"]["ContactRole"] | null;
             primary: boolean;
             inactive: boolean;
-            /** @description true records that the current user confirmed the contact now */
+            /** @description true фиксирует, что текущий пользователь подтвердил контакт сейчас */
             confirm?: boolean;
         };
         ContactEvent: {
@@ -2632,7 +3274,7 @@ export interface components {
         ProductTransferKind: "MATERIALS" | "LICENSE" | "DOCUMENTATION";
         /** @enum {string} */
         ProductTransferStatus: "TRANSFERRED" | "NOT_TRANSFERRED";
-        /** @description TRANSFERRED requires transferredOn not later than today in Europe/Moscow; NOT_TRANSFERRED takes neither date nor file */
+        /** @description TRANSFERRED требует transferredOn не позже сегодняшнего дня по Europe/Moscow; NOT_TRANSFERRED не принимает ни дату, ни файл */
         ProductTransfer: {
             kind: components["schemas"]["ProductTransferKind"];
             status: components["schemas"]["ProductTransferStatus"];
@@ -2642,7 +3284,7 @@ export interface components {
             attachmentId?: string | null;
         };
         ProductAgreementContract: {
-            /** @description Stored as text; leading zeros are kept, surrounding spaces are removed, blank clears the value */
+            /** @description Хранится как текст; ведущие нули сохраняются, окружающие пробелы удаляются, пустое значение очищает поле */
             contractNumber?: string | null;
             licenseSigned?: boolean | null;
             licenseExpiryYear?: number | null;
@@ -2650,7 +3292,7 @@ export interface components {
             scanAttachmentId?: string | null;
         };
         ProductAgreementUpdate: {
-            /** @description Current version of the interaction card */
+            /** @description Текущая version карточки взаимодействия */
             version: number;
             contract?: components["schemas"]["ProductAgreementContract"] | null;
             transfers?: components["schemas"]["ProductTransfer"][] | null;
@@ -2669,9 +3311,20 @@ export interface components {
             /** @description Договор архивирован при импорте реестра, в котором его нет */
             archived: boolean;
             vendorName: string;
+            /** @description Контакт вендора по продукту из справочника; архивный или с ограниченной обработкой не показывается */
+            vendorContact: components["schemas"]["VendorContactCard"] | null;
             /** Format: uuid */
             scanAttachmentId: string | null;
             transfers: components["schemas"]["ProductTransfer"][];
+        };
+        VendorContactCard: {
+            name: string;
+            /** @description +7XXXXXXXXXX */
+            phone: string | null;
+            email: string | null;
+            prefersEmail: boolean;
+            /** @description Удобен чат в Telegram; ника в справочнике нет */
+            prefersTelegram: boolean;
         };
         InteractionStage: {
             /** Format: uuid */
@@ -2747,7 +3400,7 @@ export interface components {
             program: components["schemas"]["CatalogReference"] | null;
             productAgreements: components["schemas"]["ProductAgreement"][];
             attachments: components["schemas"]["Attachment"][];
-            /** @description Stages marked completed outside the current stage, in route order */
+            /** @description Этапы, отмеченные завершёнными, кроме текущего, в порядке маршрута */
             stageCompletions: components["schemas"]["InteractionStageCompletion"][];
         };
         PageInteraction: components["schemas"]["PageMeta"] & {
@@ -2793,7 +3446,7 @@ export interface components {
             toStageId: string;
             comment?: string | null;
             attachmentIds?: string[];
-            /** @description When present, replaces both the next step and its due date in the same command */
+            /** @description При наличии заменяет одновременно и следующий шаг, и срок его выполнения в этой же команде */
             nextStep?: components["schemas"]["InteractionNextStep"] | null;
         };
         InteractionComment: {
@@ -2802,7 +3455,7 @@ export interface components {
             stageId: string;
             text: string;
             attachmentIds?: string[];
-            /** @description When present, replaces both the next step and its due date in the same command */
+            /** @description При наличии заменяет одновременно и следующий шаг, и срок его выполнения в этой же команде */
             nextStep?: components["schemas"]["InteractionNextStep"] | null;
         };
         InteractionStepCompletion: {
@@ -2928,6 +3581,7 @@ export interface components {
             organizationName: string;
             productName: string;
             vendorName: string | null;
+            contractNumber: string | null;
             licenseExpiryYear: number;
         };
         ReminderTraining: {
@@ -3012,7 +3666,7 @@ export interface components {
             optional?: boolean | null;
         };
         /**
-         * @description Document kind; OTHER when not specified
+         * @description Вид документа; OTHER, если не указан
          * @enum {string}
          */
         AttachmentKind: "CONTRACT" | "LICENSE_AGREEMENT" | "APPENDIX" | "ACT" | "SIGNED_SCAN" | "MATERIALS" | "DOCUMENTATION" | "CURRICULUM" | "QUALIFICATION" | "OTHER";
@@ -3021,7 +3675,7 @@ export interface components {
             kind: components["schemas"]["AttachmentKind"];
         };
         AttachmentDeletion: {
-            /** @description Current version of the interaction card */
+            /** @description Текущая version карточки взаимодействия */
             version: number;
             reason?: string | null;
         };
@@ -3041,13 +3695,13 @@ export interface components {
             /** @enum {string} */
             status: "QUARANTINE" | "CLEAN" | "REJECTED" | "UNVERIFIABLE";
             kind: components["schemas"]["AttachmentKind"];
-            /** @description Document version number within its chain of replacements */
+            /** @description Номер версии документа в цепочке замен */
             revision: number;
             /** Format: uuid */
             replacesId: string | null;
             /** Format: uuid */
             createdBy: string;
-            /** @description Optimistic lock version of the attachment metadata */
+            /** @description Версия оптимистической блокировки метаданных вложения */
             version: number;
             /** Format: date-time */
             createdAt: string;
@@ -3060,7 +3714,7 @@ export interface components {
             comment: string | null;
             /**
              * Format: uuid
-             * @description STAGE_COMPLETED history event; files bound to the mark reference it
+             * @description Событие истории STAGE_COMPLETED; файлы, привязанные к отметке, ссылаются на него
              */
             eventId: string;
             actorDisplayName: string;
@@ -3073,7 +3727,7 @@ export interface components {
             stageId: string;
             /**
              * Format: date
-             * @description Completion date, not later than today in Moscow time
+             * @description Дата завершения, не позже сегодняшнего дня по московскому времени
              */
             completedOn: string;
             comment?: string | null;
@@ -3098,7 +3752,7 @@ export interface components {
             toStageId?: string | null;
             toStageNameSnapshot?: string | null;
             comment?: string | null;
-            /** @description Next step and due date set by this event; null when the event did not change them */
+            /** @description Следующий шаг и срок, установленные этим событием; null, если событие их не изменило */
             nextStep: components["schemas"]["InteractionNextStep"] | null;
             /** Format: uuid */
             actorProfileId: string;
@@ -3175,23 +3829,25 @@ export interface components {
             teamId: string | null;
             teamName: string | null;
             active: boolean;
-            /** @description Profile created at the first OIDC login and never activated by an administrator */
+            /** @description Флаг «Оператор зачисления»; только у USER и LEADER */
+            enrolmentOperator: boolean;
+            /** @description Профиль, созданный при первом входе OIDC и ни разу не активированный администратором */
             pendingActivation: boolean;
             accessRevision: number;
             version: number;
-            /** @description Keycloak preferred_username from the last login */
+            /** @description preferred_username Keycloak из последнего входа */
             login?: string | null;
             /**
              * Format: date-time
              * @description When the employee pressed «Сообщить администратору» on the waiting screen
              */
             activationRequestedAt?: string | null;
-            /** @description The Keycloak account is still enabled for a blocked profile or disabled for an active one */
+            /** @description Учётная запись Keycloak всё ещё включена для заблокированного профиля либо отключена для активного */
             accountSyncRequired?: boolean;
-            /** @description Why the Keycloak account was not synchronized right after this change; returned only by the profile update, null when the account is synchronized or no synchronization was needed */
+            /** @description Почему учётная запись Keycloak не была синхронизирована сразу после этого изменения; возвращается только при обновлении профиля, null, если учётная запись синхронизирована или синхронизация не требовалась */
             accountSyncError?: string | null;
         };
-        /** @description Changes only the listed fields. An administrator cannot change own role, team or activity; an active USER or LEADER needs a team, MANAGEMENT (read-only access to all teams) and ADMIN do not; the last active ADMIN cannot be demoted or blocked (409 LAST_ACTIVE_ADMIN) */
+        /** @description Изменяет только перечисленные поля. Администратор не может изменить собственную роль, команду или активность; активному USER или LEADER нужна команда, MANAGEMENT (доступ на чтение ко всем командам) и ADMIN — нет; последнего активного ADMIN нельзя понизить или заблокировать (409 LAST_ACTIVE_ADMIN). enrolmentOperator разрешён только для USER и LEADER; смена роли на ADMIN или MANAGEMENT сбрасывает его в том же изменении */
         CrmProfileUpdate: {
             version: number;
             displayName?: string;
@@ -3200,6 +3856,8 @@ export interface components {
             /** Format: uuid */
             teamId?: string | null;
             active?: boolean;
+            /** @description Назначить или снять флаг «Оператор зачисления» (400 для ADMIN и MANAGEMENT) */
+            enrolmentOperator?: boolean;
         };
         CrmProfileEvent: {
             /** Format: uuid */
@@ -3225,6 +3883,8 @@ export interface components {
             teamName: string | null;
             previousActive: boolean;
             active: boolean;
+            previousEnrolmentOperator: boolean;
+            enrolmentOperator: boolean;
             requestId: string;
             version: number;
             /** Format: date-time */
@@ -3266,7 +3926,7 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            type: "UNIVERSITY" | "SCHOOL" | "COLLEGE";
+            type: "UNIVERSITY" | "SCHOOL" | "COLLEGE" | "OPEN_ENROLLMENT";
             /** Format: uuid */
             teamId: string;
             teamName: string;
@@ -3289,7 +3949,7 @@ export interface components {
         };
         PageCrmProfile: components["schemas"]["PageMeta"] & {
             items: components["schemas"]["CrmProfile"][];
-            /** @description All profiles waiting for activation, regardless of the filters */
+            /** @description Все профили, ожидающие активации, независимо от фильтров */
             pendingTotal: number;
         };
         /**
@@ -3327,7 +3987,7 @@ export interface components {
             id: string | null;
             name: string;
             /** @enum {string} */
-            type: "UNIVERSITY" | "SCHOOL" | "COLLEGE";
+            type: "UNIVERSITY" | "SCHOOL" | "COLLEGE" | "OPEN_ENROLLMENT";
             status: components["schemas"]["OrganizationStatus"];
             teamName: string;
             exact: boolean;
@@ -3335,7 +3995,7 @@ export interface components {
         /** @enum {string} */
         CatalogKind: "directions" | "programs" | "vendors" | "products";
         /** @enum {string} */
-        CatalogEntityType: "ORGANIZATION" | "TEAM" | "DIRECTION" | "PROGRAM" | "VENDOR" | "PRODUCT" | "AGREEMENT";
+        CatalogEntityType: "ORGANIZATION" | "TEAM" | "DIRECTION" | "PROGRAM" | "VENDOR" | "PRODUCT" | "AGREEMENT" | "VENDOR_CONTACT";
         AdminCatalogEntry: {
             /** Format: uuid */
             id: string;
@@ -3357,6 +4017,40 @@ export interface components {
              */
             parentId?: string | null;
             archived?: boolean | null;
+            /** @description Обязательна при изменении */
+            version?: number | null;
+        };
+        VendorContact: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            vendorId: string;
+            name: string;
+            /** @description +7XXXXXXXXXX */
+            phone: string | null;
+            email: string | null;
+            prefersEmail: boolean;
+            prefersTelegram: boolean;
+            archived: boolean;
+            version: number;
+            products: components["schemas"]["CatalogReference"][];
+        };
+        VendorContactList: {
+            contacts: components["schemas"]["VendorContact"][];
+            products: components["schemas"]["CatalogReference"][];
+        };
+        VendorContactChange: {
+            /** @description ФИО, обязательно при создании */
+            name?: string | null;
+            /** @description 11 цифр с ведущей 7 или 8 либо 10 цифр; скобки, пробелы и дефисы допускаются */
+            phone?: string | null;
+            email?: string | null;
+            prefersEmail?: boolean | null;
+            prefersTelegram?: boolean | null;
+            /** @description Только при изменении */
+            archived?: boolean | null;
+            /** @description Продукты этого вендора, за которые отвечает контакт */
+            productIds?: string[] | null;
             /** @description Обязательна при изменении */
             version?: number | null;
         };
@@ -3396,17 +4090,17 @@ export interface components {
             interactionTitle: string;
         };
         /**
-         * @description AGREEMENT loads the ten TZ catalog fields; DIRECTION_PROGRAM loads directions and programs by stable keys. Matching rules are described in docs/import.md.
+         * @description AGREEMENT загружает десять полей каталога ТЗ; DIRECTION_PROGRAM загружает направления и программы по устойчивым ключам; VENDOR_CONTACTS загружает поставщиков, продукты и контакты поставщиков в формате файла поставщиков организатора. Правила сопоставления описаны в docs/import.md.
          * @enum {string}
          */
-        CatalogImportProfile: "AGREEMENT" | "DIRECTION_PROGRAM";
-        /** @description Optional explicit record choice for one workbook row. An explicit id takes precedence over external keys and names in both preview and apply. */
+        CatalogImportProfile: "AGREEMENT" | "DIRECTION_PROGRAM" | "VENDOR_CONTACTS";
+        /** @description Опциональный явный выбор записи для одной строки книги. Явный id имеет приоритет над внешними ключами и именами как при предпросмотре, так и при применении. */
         CatalogImportRowTarget: {
             /** Format: uuid */
             organizationId?: string | null;
             /**
              * Format: uuid
-             * @description Active USER profile with a team; resolves a manager name shared by several profiles.
+             * @description Активный профиль USER с командой; разрешает имя менеджера, общее для нескольких профилей.
              */
             managerProfileId?: string | null;
             /** Format: uuid */
@@ -3415,15 +4109,15 @@ export interface components {
             productAgreementId?: string | null;
         };
         CatalogImportMapping: {
-            /** @description Import field to workbook header. AGREEMENT requires organizationName, vendorName and productName and accepts contractNumber, licenseSigned, licenseExpiryYear, transferStatus, managerName, contactName, comment, organizationType, organizationExternalKey, vendorExternalKey, productExternalKey, agreementExternalKey, contactExternalKey, contactPosition, contactEmail, contactPhone and interactionId. Missing external keys are derived from normalized names. DIRECTION_PROGRAM requires directionExternalKey and directionName and accepts programExternalKey, programName and programDirectionRef. */
+            /** @description Соответствие поля импорта заголовку книги. AGREEMENT требует organizationName, vendorName и productName и принимает contractNumber, licenseSigned, licenseExpiryYear, transferStatus, managerName, contactName, comment, organizationType, organizationExternalKey, vendorExternalKey, productExternalKey, agreementExternalKey, contactExternalKey, contactPosition, contactEmail, contactPhone и interactionId. Недостающие внешние ключи выводятся из нормализованных имён. DIRECTION_PROGRAM требует directionExternalKey и directionName и принимает programExternalKey, programName и programDirectionRef. VENDOR_CONTACTS требует vendorName и принимает productNames, vendorContactName, vendorContactPhone, vendorContactEmail и vendorContactChannels. */
             columns: {
                 [key: string]: string;
             };
-            /** @description Workbook row number (2 or greater) to explicit record ids. */
+            /** @description Номер строки книги (2 и более) в явные id записей. */
             rowTargets?: {
                 [key: string]: components["schemas"]["CatalogImportRowTarget"];
             };
-            /** @description Optional dictionary from a workbook transfer status to the stored value. Without a dictionary the normalized workbook value is stored as is. */
+            /** @description Опциональный словарь из статуса передачи книги в сохраняемое значение. Без словаря нормализованное значение книги сохраняется как есть. */
             transferStatuses?: {
                 [key: string]: string;
             };
@@ -3515,22 +4209,22 @@ export interface components {
          */
         ReportKind: "PORTFOLIO" | "EVENTS" | "DEMAND" | "SNAPSHOT" | "DURATION" | "AGREEMENTS";
         /**
-         * @description PNG is allowed only for a chart (groupBy set); a chart is exported as PNG or PDF
+         * @description PNG допустим только для диаграммы (при заданном groupBy); диаграмма экспортируется как PNG или PDF
          * @enum {string}
          */
         ReportFormat: "XLSX" | "XLS" | "PDF" | "JSON" | "PNG";
         /**
-         * @description PORTFOLIO only. CREATED selects interactions created in the period, ACTIVITY those with at least one event in it, ACTIVE those created before the end of the period and not completed before its start (the work status is not taken into account yet, so every interaction created before the end is active)
+         * @description Только PORTFOLIO. CREATED отбирает взаимодействия, созданные в периоде, ACTIVITY — имеющие в нём хотя бы одно событие, ACTIVE — созданные до конца периода и не завершённые до его начала (статус работы пока не учитывается, поэтому активно любое взаимодействие, созданное до конца периода)
          * @enum {string}
          */
         PeriodBasis: "CREATED" | "ACTIVITY" | "ACTIVE";
         /**
-         * @description BAR (default) for horizontal bars, LINE for a line chart of MONTH grouping
+         * @description BAR (по умолчанию) для горизонтальных столбцов, LINE для линейного графика с группировкой MONTH
          * @enum {string}
          */
         ChartType: "BAR" | "LINE";
         /**
-         * @description EVENTS filter; ASSIGNMENT covers assignment, reassignment and removal of the organization KAM and selects rows for LEADER only (USER gets no rows for it)
+         * @description Фильтр EVENTS; ASSIGNMENT охватывает назначение, переназначение и снятие КАМ организации и отбирает строки только для LEADER (USER не получает по нему строк)
          * @enum {string}
          */
         ReportEventType: "CREATED" | "TRANSITIONED" | "COMMENTED" | "STAGES_EDITED" | "PLAN_UPDATED" | "DETAILS_UPDATED" | "STATUS_CHANGED" | "AGREEMENT_UPDATED" | "ATTACHMENT_DELETED" | "STAGE_COMPLETED" | "STAGE_COMPLETION_CLEARED" | "ASSIGNMENT";
@@ -3540,11 +4234,11 @@ export interface components {
          */
         InteractionFlag: "WAITING_UNIVERSITY" | "WAITING_RTK" | "PROBLEM" | "RISK";
         /**
-         * @description PORTFOLIO allows ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON; DAYS_ON_STAGE is the number of whole days from the last entry into the current stage (creation when the card never entered it by a transition) until the report is generated; agreement columns show the value itself for one product and «product: value» pairs for several products. EVENTS allows EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE, FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND allows DIRECTION, PROGRAM, APPLICATIONS, PARTICIPANTS, LEARNERS_COMPLETED, PARALLEL_RUNS; DEMAND column titles carry the application period, the latest Moodle observation and the parallel-runs date. SNAPSHOT allows ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT. DURATION allows TEAM, PROGRAM, STAGE, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; days are decimal numbers with one fractional digit. AGREEMENTS allows ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS, PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS.
+         * @description PORTFOLIO allows ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON; DAYS_ON_STAGE is the number of whole days from the last entry into the current stage (creation when the card never entered it by a transition) until the report is generated; agreement columns show the value itself for one product and «product: value» pairs for several products. EVENTS allows EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE, FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND allows DIRECTION, PROGRAM, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, PARALLEL_RUNS; DEMAND column titles carry the application period, the latest Moodle observation and the parallel-runs date. PAID_ORDERS counts distinct paid order numbers and PAID_STREAMS distinct course and stream pairs of applied paid_order records of the service organization «Открытый набор (физлица)», visible to every USER and LEADER; the report period does not apply to them because the site does not send a payment date. SNAPSHOT allows ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT. DURATION allows TEAM, PROGRAM, STAGE, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; days are decimal numbers with one fractional digit. AGREEMENTS allows ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS, PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS.
          * @enum {string}
          */
-        ReportColumn: "ORGANIZATION" | "INTERACTION" | "DIRECTION" | "PROGRAM" | "PRODUCTS" | "STAGE" | "DAYS_ON_STAGE" | "WORK_STATUS" | "WAITING" | "PROBLEM" | "RISK" | "MANAGER" | "CREATED_AT" | "LAST_EVENT_AT" | "NEXT_ACTION" | "NEXT_ACTION_AT" | "EVENT_AT" | "EVENT_TYPE" | "FROM_STAGE" | "COMMENT" | "AUTHOR" | "APPLICATIONS" | "PARTICIPANTS" | "LEARNERS_COMPLETED" | "PARALLEL_RUNS" | "VENDORS" | "CONTRACT_NUMBER" | "LICENSE_SIGNED" | "LICENSE_EXPIRY_YEAR" | "TRANSFER_STATUS" | "MATERIALS_TRANSFERRED_ON" | "TEAM" | "COMPLETED" | "AVG_DAYS" | "MAX_DAYS" | "CURRENT" | "CURRENT_MAX_DAYS" | "AGREEMENT" | "AGREEMENT_STATUS" | "AGREEMENT_TERM" | "ACTIVITY_KIND" | "ACTIVITY" | "PLANNED_VOLUME" | "ACTUAL_VOLUME" | "VOLUME_UNIT" | "PLANNED_DATES" | "ACTUAL_DATES" | "ACTIVITY_STATUS" | "WORKS" | "CONFIRMATIONS" | "CONFIRMATION_LINKS";
-        /** @description An empty list with the include flag false leaves the dimension unfiltered, including rows without a value. includeNo* adds rows without the value to the selected ids. managerIds and includeNoManager use the current organization owner in PORTFOLIO and DEMAND and the owner snapshot of the event in EVENTS. DEMAND rejects productIds, includeNoProduct, stages, workStatuses and flags with 400 VALIDATION_ERROR. */
+        ReportColumn: "ORGANIZATION" | "INTERACTION" | "DIRECTION" | "PROGRAM" | "PRODUCTS" | "STAGE" | "DAYS_ON_STAGE" | "WORK_STATUS" | "WAITING" | "PROBLEM" | "RISK" | "MANAGER" | "CREATED_AT" | "LAST_EVENT_AT" | "NEXT_ACTION" | "NEXT_ACTION_AT" | "EVENT_AT" | "EVENT_TYPE" | "FROM_STAGE" | "COMMENT" | "AUTHOR" | "APPLICATIONS" | "PAID_ORDERS" | "PAID_STREAMS" | "PARTICIPANTS" | "LEARNERS_COMPLETED" | "PARALLEL_RUNS" | "VENDORS" | "CONTRACT_NUMBER" | "LICENSE_SIGNED" | "LICENSE_EXPIRY_YEAR" | "TRANSFER_STATUS" | "MATERIALS_TRANSFERRED_ON" | "TEAM" | "COMPLETED" | "AVG_DAYS" | "MAX_DAYS" | "CURRENT" | "CURRENT_MAX_DAYS" | "AGREEMENT" | "AGREEMENT_STATUS" | "AGREEMENT_TERM" | "ACTIVITY_KIND" | "ACTIVITY" | "PLANNED_VOLUME" | "ACTUAL_VOLUME" | "VOLUME_UNIT" | "PLANNED_DATES" | "ACTUAL_DATES" | "ACTIVITY_STATUS" | "WORKS" | "CONFIRMATIONS" | "CONFIRMATION_LINKS";
+        /** @description Пустой список с флагом include=false оставляет измерение без фильтрации, включая строки без значения. includeNo* добавляет к выбранным id строки без значения. managerIds и includeNoManager используют текущего ответственного организации в PORTFOLIO и DEMAND и снимок ответственного события в EVENTS. DEMAND отклоняет productIds, includeNoProduct, stages, workStatuses и flags с 400 VALIDATION_ERROR. */
         ReportFilters: {
             organizationIds?: string[];
             directionIds?: string[];
@@ -3557,15 +4251,15 @@ export interface components {
             includeNoManager?: boolean;
             stages?: string[];
             /** @enum {string|null} */
-            organizationType?: "UNIVERSITY" | "SCHOOL" | "COLLEGE" | null;
+            organizationType?: "UNIVERSITY" | "SCHOOL" | "COLLEGE" | "OPEN_ENROLLMENT" | null;
             /** @description Статусы работы (активна, приостановлена, завершена); пустой список не ограничивает отбор */
             workStatuses?: ("ACTIVE" | "PAUSED" | "COMPLETED")[];
             /** @description Отметки работы; выбранные отметки должны быть у работы одновременно, пустой список не ограничивает отбор */
             flags?: components["schemas"]["InteractionFlag"][];
             agreement?: components["schemas"]["ReportAgreementFilters"];
-            /** @description EVENTS only; empty means all kinds including KAM assignments, other kinds reject a non-empty list */
+            /** @description Только EVENTS; пусто означает все виды, включая назначения КАМ, другие виды отклоняют непустой список */
             eventTypes?: components["schemas"]["ReportEventType"][];
-            /** @description PORTFOLIO only; keeps interactions whose last entry into the current stage was at least this many days before the report is generated, the same rule as DAYS_ON_STAGE and the minDaysOnStage filter of the work list; other kinds reject it with 400 VALIDATION_ERROR */
+            /** @description Только PORTFOLIO; оставляет взаимодействия, чей последний вход в текущий этап произошёл не менее чем за столько дней до формирования отчёта — то же правило, что у DAYS_ON_STAGE и фильтра minDaysOnStage списка работ; другие виды отклоняют его с 400 VALIDATION_ERROR */
             minDaysOnStage?: number | null;
         };
         /** @description Conditions on one and the same product agreement of the interaction (restricted to productIds when they are given): vendor, license signed (false means not signed or not specified), license expiry year not later than licenseExpiresBy, and no TRANSFERRED mark for each notTransferred kind; an agreement without any marks whose stored transferStatus is «Передано» counts as fully transferred. DEMAND rejects any of them with 400. */
@@ -3575,7 +4269,7 @@ export interface components {
             licenseExpiresBy?: number | null;
             notTransferred?: components["schemas"]["ProductTransferKind"][];
         };
-        /** @description from and to are inclusive dates converted to [from 00:00, to+1 00:00) in Europe/Moscow */
+        /** @description from и to — включительные даты, преобразуемые в [from 00:00, to+1 00:00) по Europe/Moscow */
         ReportPreviewRequest: {
             kind: components["schemas"]["ReportKind"];
             /** Format: date */
@@ -3584,22 +4278,22 @@ export interface components {
             to?: string | null;
             /**
              * Format: date
-             * @description SNAPSHOT only; state at the end of this Moscow day, today when omitted, a future date is rejected
+             * @description Только SNAPSHOT; состояние на конец этого дня по московскому времени, сегодня, если не указано; будущая дата отклоняется
              */
             asOf?: string | null;
             periodBasis?: components["schemas"]["PeriodBasis"] | null;
             filters?: components["schemas"]["ReportFilters"];
-            /** @description Omitted or empty means the default columns of the kind in the default order: for PORTFOLIO all columns except the agreement ones (VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON), which are returned only when listed explicitly; for EVENTS and DEMAND all columns */
+            /** @description Отсутствие или пустое значение означает столбцы по умолчанию для вида в порядке по умолчанию: для PORTFOLIO все столбцы, кроме относящихся к соглашению (VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON), которые возвращаются только при явном указании; для EVENTS и DEMAND — все столбцы */
             columns?: components["schemas"]["ReportColumn"][];
-            /** @description DEMAND only, APPLICATIONS (default), PARTICIPANTS, LEARNERS_COMPLETED or PARALLEL_RUNS; rows are sorted by that measure descending with «нет данных» last, then by program name. Other kinds reject it with 400 VALIDATION_ERROR. */
+            /** @description DEMAND only, APPLICATIONS (default), PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED or PARALLEL_RUNS; rows are sorted by that measure descending with «нет данных» last, then by program name. Other kinds reject it with 400 VALIDATION_ERROR. */
             sortBy?: components["schemas"]["ReportColumn"] | null;
         };
         ReportRequest: components["schemas"]["ReportPreviewRequest"] & {
             format: components["schemas"]["ReportFormat"];
-            /** @description Set to order a chart of the statistics grouped this way instead of the row report; columns are ignored and format must be PNG or PDF */
+            /** @description Указывается, чтобы заказать диаграмму статистики с такой группировкой вместо построчного отчёта; columns игнорируется, format должен быть PNG или PDF */
             groupBy?: components["schemas"]["StatisticsGroupBy"] | null;
             chartType?: components["schemas"]["ChartType"] | null;
-            /** @description Line chart only, with groupBy MONTH; one line per group of this grouping */
+            /** @description Только для линейного графика, с groupBy MONTH; одна линия на группу этой группировки */
             seriesBy?: components["schemas"]["StatisticsGroupBy"] | null;
         };
         ReportJobCreated: {
@@ -3611,11 +4305,11 @@ export interface components {
             id: string;
             kind: components["schemas"]["ReportKind"];
             format: components["schemas"]["ReportFormat"];
-            /** @description Grouping of a chart job; null for a row report */
+            /** @description Группировка задания диаграммы; null для построчного отчёта */
             groupBy?: components["schemas"]["StatisticsGroupBy"] | null;
-            /** @description BAR or LINE for a chart job; null for a row report */
+            /** @description BAR или LINE для задания диаграммы; null для построчного отчёта */
             chartType?: components["schemas"]["ChartType"] | null;
-            /** @description Grouping of the separate lines of a line chart job; null otherwise */
+            /** @description Группировка отдельных линий задания линейного графика; иначе null */
             seriesBy?: components["schemas"]["StatisticsGroupBy"] | null;
             /** @enum {string} */
             status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
@@ -3623,7 +4317,7 @@ export interface components {
             resultReady: boolean;
             rowCount?: number | null;
             fileName?: string | null;
-            /** @description Present for FAILED jobs, e.g. REPORT_ROW_LIMIT, REPORT_XLS_ROW_LIMIT, REPORT_PDF_ROW_LIMIT, REPORT_CHART_LIMIT, REPORT_ACCESS_CHANGED, REPORT_INTERRUPTED, REPORT_FAILED */
+            /** @description Присутствует для заданий со статусом FAILED, например REPORT_ROW_LIMIT, REPORT_XLS_ROW_LIMIT, REPORT_PDF_ROW_LIMIT, REPORT_CHART_LIMIT, REPORT_ACCESS_CHANGED, REPORT_INTERRUPTED, REPORT_FAILED */
             error?: {
                 code: string;
                 message: string;
@@ -3638,17 +4332,17 @@ export interface components {
         ReportColumnView: {
             id: components["schemas"]["ReportColumn"];
             title: string;
-            /** @description Text shown for null values, «Не указано» for direction, program, products and manager, «нет данных» for APPLICATIONS, PARTICIPANTS and PARALLEL_RUNS */
+            /** @description Text shown for null values, «Не указано» for direction, program, products and manager, «нет данных» for APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS and PARALLEL_RUNS */
             emptyText: string;
         };
         ReportPreview: {
             kind: components["schemas"]["ReportKind"];
             /** Format: date-time */
             generatedAt: string;
-            /** @description The same generation time, period rule, manager semantics and filter lines as in the file header */
+            /** @description Те же время формирования, правило периода, семантика менеджера и строки фильтров, что и в заголовке файла */
             notes: string[];
             columns: components["schemas"]["ReportColumnView"][];
-            /** @description Row objects keyed by column id; dates are ISO 8601 strings, DEMAND measures and DURATION counts are integers, DURATION days are decimal numbers, missing values are null */
+            /** @description Объекты строк с ключами по id столбца; даты — строки ISO 8601, показатели DEMAND и счётчики DURATION — целые числа, дни DURATION — числа с плавающей точкой, отсутствующие значения — null */
             items: {
                 [key: string]: string | number | null;
             }[];
@@ -3657,7 +4351,7 @@ export interface components {
             total: number;
         };
         /**
-         * @description DEMAND sums applications and accepts ORGANIZATION, DIRECTION, PROGRAM, MANAGER and MONTH (month of submission)
+         * @description DEMAND суммирует заявки и принимает ORGANIZATION, DIRECTION, PROGRAM, MANAGER и MONTH (месяц подачи)
          * @enum {string}
          */
         StatisticsGroupBy: "STAGE" | "ORGANIZATION" | "DIRECTION" | "PROGRAM" | "PRODUCT" | "MANAGER" | "MONTH";
@@ -3672,7 +4366,7 @@ export interface components {
             filters?: components["schemas"]["ReportFilters"];
             /** Format: date */
             asOf?: string | null;
-            /** @description Only with groupBy MONTH; splits monthly counts into series of this grouping for a line chart */
+            /** @description Только с groupBy MONTH; разбивает месячные счётчики на серии этой группировки для линейного графика */
             seriesBy?: components["schemas"]["StatisticsGroupBy"] | null;
         };
         StatisticsSeries: {
@@ -3680,7 +4374,7 @@ export interface components {
             label: string;
             /** @description Rows without a value of seriesBy («Не указано»), always the last series */
             unspecified: boolean;
-            /** @description One count per item of the result, in the same order */
+            /** @description По одному счётчику на элемент результата, в том же порядке */
             counts: number[];
         };
         StatisticsItem: {
@@ -3702,7 +4396,7 @@ export interface components {
             generatedAt: string;
             filters: components["schemas"]["ReportFilters"];
             notes: string[];
-            /** @description Number of report rows; for DEMAND the number of applications. PRODUCT counts may add up to more because one interaction can have several products */
+            /** @description Число строк отчёта; для DEMAND — число заявок. Суммы по PRODUCT могут превышать это число, так как у одного взаимодействия может быть несколько продуктов */
             total: number;
             unknownCount: number;
             items: components["schemas"]["StatisticsItem"][];
@@ -3713,11 +4407,11 @@ export interface components {
             seriesBy?: components["schemas"]["StatisticsGroupBy"] | null;
             /** @description Empty without seriesBy; ordered by total descending with «Не указано» last */
             series: components["schemas"]["StatisticsSeries"][];
-            /** @description Largest number of lines a PNG/PDF line chart can hold; a job with more lines fails with REPORT_CHART_LIMIT */
+            /** @description Наибольшее число линий, которое может вместить линейный график PNG/PDF; задание с большим числом линий завершается ошибкой REPORT_CHART_LIMIT */
             maxChartSeries: number;
         };
         /**
-         * @description Relative period of a saved report resolved in Europe/Moscow when the list is read: calendar month or quarter containing today, or the one before it
+         * @description Относительный период сохранённого отчёта, вычисляемый по Europe/Moscow при чтении списка: календарный месяц или квартал, содержащий сегодня, либо предыдущий
          * @enum {string}
          */
         SavedReportPeriod: "CURRENT_MONTH" | "PREVIOUS_MONTH" | "CURRENT_QUARTER" | "PREVIOUS_QUARTER";
@@ -3725,7 +4419,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
-            /** @description With a period, from and to hold the dates of that period for the current day */
+            /** @description При заданном period поля from и to содержат даты этого периода для текущего дня */
             definition: components["schemas"]["ReportPreviewRequest"];
             period?: components["schemas"]["SavedReportPeriod"] | null;
             version: number;
@@ -3737,9 +4431,9 @@ export interface components {
         SavedReportRequest: {
             name: string;
             definition: components["schemas"]["ReportPreviewRequest"];
-            /** @description Required for update */
+            /** @description Обязательно при обновлении */
             version?: number | null;
-            /** @description Null keeps the from and to of the definition; a relative period replaces them each time the report is opened. SNAPSHOT rejects a period with 400 VALIDATION_ERROR (field period): an empty asOf already means today */
+            /** @description Null сохраняет from и to определения; относительный период заменяет их каждый раз при открытии отчёта. SNAPSHOT отклоняет period с 400 VALIDATION_ERROR (поле period): пустое asOf уже означает сегодня */
             period?: components["schemas"]["SavedReportPeriod"] | null;
         };
         ReportManagerOption: {
@@ -3758,19 +4452,19 @@ export interface components {
             status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
             /**
              * Format: date-time
-             * @description Watermark sent to the source as updated_since
+             * @description Отметка (watermark), отправляемая источнику как updated_since
              */
             updatedSince?: string | null;
             fetchedCount: number;
-            /** @description New external records applied; for MOODLE, snapshots published for the first time */
+            /** @description Применены новые внешние записи; для MOODLE — впервые опубликованные снимки */
             createdCount: number;
-            /** @description Known external records applied again because the source sent a newer updatedAt; for MOODLE, snapshots whose counts changed */
+            /** @description Повторно применены известные внешние записи, так как источник прислал более новый updatedAt; для MOODLE — снимки, чьи счётчики изменились */
             updatedCount: number;
-            /** @description Repeats of an already stored version, Moodle snapshots with unchanged counts and records that are not applied by design (withdrawn, unknown type, a group of a course mapped as a whole) */
+            /** @description Повторы уже сохранённой версии, снимки Moodle с неизменившимися счётчиками и записи, которые намеренно не применяются (отозванные, неизвестного типа, группа курса, сопоставленного целиком) */
             skippedCount: number;
             needsMappingCount: number;
             failedCount: number;
-            /** @description For FAILED runs SOURCE_UNAVAILABLE, SOURCE_UNAUTHORIZED, SOURCE_INVALID_RESPONSE, SYNC_INTERRUPTED or SYNC_FAILED */
+            /** @description Для запусков со статусом FAILED: SOURCE_UNAVAILABLE, SOURCE_UNAUTHORIZED, SOURCE_INVALID_RESPONSE, SYNC_INTERRUPTED или SYNC_FAILED */
             errorCode?: string | null;
             errorMessage?: string | null;
             /** Format: date-time */
@@ -3780,15 +4474,15 @@ export interface components {
             /** Format: date-time */
             finishedAt?: string | null;
             trigger?: components["schemas"]["SyncTrigger"];
-            /** @description Profile that started the run; for scheduled runs the administrator on whose behalf they run */
+            /** @description Профиль, запустивший запуск; для запусков по расписанию — администратор, от имени которого они выполняются */
             startedByName?: string | null;
-            /** @description Organization of a run started from its card */
+            /** @description Организация запуска, начатого из её карточки */
             organizationName?: string | null;
         };
         /** @enum {string} */
-        SyncTrigger: "MANUAL" | "SCHEDULE" | "CARD" | "BOOTSTRAP";
+        SyncTrigger: "MANUAL" | "SCHEDULE" | "CARD" | "BOOTSTRAP" | "UPLOAD";
         /**
-         * @description STUDENTS — classes of learners, counted in reports; TEACHERS — training of university teachers, shown separately and excluded from DEMAND
+         * @description STUDENTS — занятия обучающихся, учитываются в отчётах; TEACHERS — обучение преподавателей вуза, показывается отдельно и исключается из DEMAND
          * @enum {string}
          */
         RunKind: "STUDENTS" | "TEACHERS";
@@ -3800,32 +4494,32 @@ export interface components {
             source: components["schemas"]["SourceCode"];
             title: string;
             adapterAvailable: boolean;
-            /** @description The deployment configuration sets the base URL of the source (for MOODLE also the token and the allowed courses) */
+            /** @description Конфигурация развёртывания задаёт base URL источника (для MOODLE также токен и разрешённые курсы) */
             configured: boolean;
-            /** @description The adapter follows the proposed contract, not a contract confirmed by the customer */
+            /** @description Адаптер следует предложенному контракту, а не контракту, подтверждённому заказчиком */
             proposedContract: boolean;
             /** Format: date-time */
             updatedSince?: string | null;
             /** Format: date-time */
             lastSuccessAt?: string | null;
-            /** @description Records with status NEEDS_MAPPING or FAILED */
+            /** @description Записи со статусом NEEDS_MAPPING или FAILED */
             problemCount: number;
             lastRun?: components["schemas"]["SyncRun"] | null;
-            /** @description Spring cron of SOURCES_SYNC_CRON (Moscow time); null when the schedule is off */
+            /** @description Spring cron-выражение SOURCES_SYNC_CRON (московское время); null, если расписание отключено */
             schedule?: string | null;
             /**
              * Format: date-time
-             * @description Next scheduled start; null when the schedule is off, the source is not configured or no administrator started it yet
+             * @description Следующий запланированный запуск; null, если расписание отключено, источник не настроен либо его ещё не запускал ни один администратор
              */
             nextRunAt?: string | null;
-            /** @description Configured source without a successful run within SOURCES_STALE_AFTER */
+            /** @description Настроенный источник без успешного запуска за период SOURCES_STALE_AFTER */
             stale?: boolean;
         };
         SourceRecord: {
             /** Format: uuid */
             id: string;
             source: components["schemas"]["SourceCode"];
-            /** @description partnership_request or learning_application in the proposed site contract; moodle_course or moodle_group (externalId courseId or courseId:groupId) for Moodle */
+            /** @description partnership_request или learning_application в предложенном контракте сайта; paid_order для оплаченных заказов в формате организатора (загрузка файла или массив с сайта); moodle_course или moodle_group (externalId вида courseId или courseId:groupId) для Moodle */
             recordType: string;
             externalId: string;
             /** Format: date-time */
@@ -3835,9 +4529,12 @@ export interface components {
             status: "APPLIED" | "NEEDS_MAPPING" | "FAILED" | "SKIPPED";
             error?: string | null;
             organizationExternalId?: string | null;
-            /** @description Organization name on the site; for Moodle records the course or group label */
+            /** @description Название организации на сайте; для записей Moodle — название курса или группы */
             organizationName?: string | null;
+            /** @description Название программы на сайте; для paid_order — курс */
             programName?: string | null;
+            /** @description Номер потока paid_order */
+            streamNo?: number | null;
             /** Format: uuid */
             organizationId?: string | null;
             /** Format: uuid */
@@ -3854,12 +4551,12 @@ export interface components {
             programId?: string | null;
             /**
              * Format: date
-             * @description First day of the Moodle training run; required for a MOODLE NEEDS_MAPPING record
+             * @description Первый день учебного запуска Moodle; обязателен для записи MOODLE со статусом NEEDS_MAPPING
              */
             runStartsOn?: string | null;
             /**
              * Format: date
-             * @description Day after the last day of the run (exclusive end); later than runStartsOn
+             * @description День после последнего дня запуска (исключающая граница окончания); позже runStartsOn
              */
             runEndsOn?: string | null;
             runKind?: components["schemas"]["RunKind"] | null;
@@ -3875,7 +4572,7 @@ export interface components {
         LearningSnapshot: {
             /**
              * Format: uuid
-             * @description Training run (saved mapping) of the snapshot
+             * @description Учебный запуск (сохранённое сопоставление) снимка
              */
             mappingId: string;
             runKind: components["schemas"]["RunKind"];
@@ -3884,38 +4581,38 @@ export interface components {
             courseName: string;
             /**
              * Format: int64
-             * @description Set when a group of a mixed course is mapped on its own
+             * @description Устанавливается, когда группа смешанного курса сопоставлена отдельно
              */
             groupId?: number | null;
             groupName?: string | null;
-            /** @description Active enrolments with a learner role (participations, not unique people across courses) */
+            /** @description Активные зачисления с ролью обучающегося (участия, а не уникальные люди по всем курсам) */
             participants: number;
             teachers: number;
-            /** @description null when course completion is not tracked in Moodle; never replaced by 0 */
+            /** @description null, если завершение курса не отслеживается в Moodle; никогда не заменяется на 0 */
             completed?: number | null;
             notCompleted?: number | null;
-            /** @description Participants whose completion status Moodle did not report */
+            /** @description Участники, по которым Moodle не сообщил статус завершения */
             unknown: number;
-            /** @description Groups of the course that have learners; 0 for a group snapshot */
+            /** @description Группы курса, в которых есть обучающиеся; 0 для снимка группы */
             groupsCount: number;
             /**
              * Format: date
-             * @description First day of the confirmed training run; null for a mapping saved without run dates
+             * @description Первый день подтверждённого учебного запуска; null для сопоставления, сохранённого без дат запуска
              */
             runStartsOn?: string | null;
             /**
              * Format: date
-             * @description Exclusive end of the training run; the snapshot is not updated from this day on
+             * @description Исключающая граница окончания учебного запуска; начиная с этого дня снимок не обновляется
              */
             runEndsOn?: string | null;
             /**
              * Format: date-time
-             * @description Time of the last successful observation, not a completion date
+             * @description Время последнего успешного наблюдения, а не дата завершения
              */
             observedAt: string;
             /**
              * Format: date-time
-             * @description Observation that last changed the counts
+             * @description Наблюдение, последним изменившее счётчики
              */
             changedAt: string;
         };
@@ -3925,7 +4622,7 @@ export interface components {
             lastSuccessAt?: string | null;
             /**
              * Format: date-time
-             * @description Finish of the last run when it failed after the last success
+             * @description Завершение последнего запуска, если он окончился неудачей после последнего успеха
              */
             errorAt?: string | null;
             errorCode?: string | null;
@@ -3933,7 +4630,7 @@ export interface components {
             stale: boolean;
             /**
              * Format: date-time
-             * @description For LMS, the latest observation of the card snapshots
+             * @description Для LMS — последнее наблюдение снимков карточки
              */
             dataObservedAt?: string | null;
         };
@@ -3986,7 +4683,7 @@ export interface components {
             stageId: string;
             /**
              * Format: date
-             * @description Not later than today
+             * @description Не позже сегодняшнего дня
              */
             trainedOn: string;
             courseName: string;
@@ -3997,7 +4694,7 @@ export interface components {
             attachmentId?: string | null;
             /** Format: date */
             nextCycleOn?: string | null;
-            /** @description Set the next step of the card to the next cycle date */
+            /** @description Устанавливает следующий шаг карточки на дату следующего цикла */
             remind?: boolean | null;
         };
         TeacherTrainingCreated: {
@@ -4018,7 +4715,7 @@ export interface components {
             interactionId: string;
             /**
              * Format: date
-             * @description Start of this cycle; null for a work that is not a repeated cycle
+             * @description Начало текущего цикла; null для работы, не являющейся повторным циклом
              */
             startsOn?: string | null;
             previous?: components["schemas"]["CycleLink"] | null;
@@ -4044,14 +4741,14 @@ export interface components {
             /** @enum {string} */
             status: "APPLIED" | "NEEDS_MAPPING" | "FAILED" | "SKIPPED";
             error?: string | null;
-            /** @description University name on the site */
+            /** @description Название вуза на сайте */
             organizationName?: string | null;
             organizationExternalId?: string | null;
             programName?: string | null;
             /** Format: uuid */
             organizationId?: string | null;
             crmOrganizationName?: string | null;
-            /** @description The caller is a leader and the record has no organization yet */
+            /** @description Вызывающий — руководитель, и у записи ещё нет организации */
             canResolve: boolean;
         };
         SourceRecordResolve: {
@@ -4059,13 +4756,13 @@ export interface components {
             organizationId: string;
         };
         SourceOrganizationCreate: {
-            /** @description Name of the new organization; the university name of the record when omitted */
+            /** @description Название новой организации; при отсутствии — название вуза из записи */
             name?: string | null;
-            /** @description Organization type, UNIVERSITY by default */
+            /** @description Тип организации, по умолчанию UNIVERSITY */
             type?: string | null;
             /**
              * Format: uuid
-             * @description Required for ADMIN; a leader creates the organization in the own team
+             * @description Обязателен для ADMIN; руководитель создаёт организацию в своей команде
              */
             teamId?: string | null;
         };
@@ -4093,7 +4790,7 @@ export interface components {
             runStartsOn?: string | null;
             /**
              * Format: date
-             * @description Exclusive end
+             * @description Исключающая граница окончания
              */
             runEndsOn?: string | null;
             runKind: components["schemas"]["RunKind"];
@@ -4104,12 +4801,12 @@ export interface components {
             participants?: number | null;
             /** Format: date-time */
             observedAt?: string | null;
-            /** @description The run has ended; its snapshot is no longer updated */
+            /** @description Запуск завершён; его снимок больше не обновляется */
             closed: boolean;
             outdated: boolean;
         };
         SourceMappingUpdate: {
-            /** @description Required for PUT */
+            /** @description Обязательно для PUT */
             version?: number | null;
             /** Format: uuid */
             organizationId?: string | null;
@@ -4119,7 +4816,7 @@ export interface components {
             runStartsOn?: string | null;
             /**
              * Format: date
-             * @description Exclusive end, later than runStartsOn
+             * @description Исключающая граница окончания, позже runStartsOn
              */
             runEndsOn?: string | null;
             runKind?: components["schemas"]["RunKind"] | null;
@@ -4138,7 +4835,7 @@ export interface components {
             requestedAt: string;
         };
         /** @enum {string} */
-        AuditCategory: "PROFILE" | "ASSIGNMENT" | "ORGANIZATION" | "TEAM" | "SYNC" | "DOWNLOAD" | "PERSONAL_DATA" | "RETENTION" | "ACCOUNT";
+        AuditCategory: "PROFILE" | "ASSIGNMENT" | "ORGANIZATION" | "TEAM" | "SYNC" | "DOWNLOAD" | "PERSONAL_DATA" | "RETENTION" | "ACCOUNT" | "LEARNER";
         AuditEntry: {
             /** Format: uuid */
             id: string;
@@ -4146,11 +4843,11 @@ export interface components {
             occurredAt: string;
             category: components["schemas"]["AuditCategory"];
             /** @enum {string} */
-            action: "PROFILE_CHANGED" | "ACTIVATION_REQUESTED" | "KAM_ASSIGNED" | "KAM_CHANGED" | "KAM_UNASSIGNED" | "ORGANIZATION_TEAM_CHANGED" | "TEAM_CREATED" | "TEAM_RENAMED" | "TEAM_ARCHIVED" | "TEAM_RESTORED" | "SYNC_STARTED" | "ATTACHMENT_DOWNLOADED" | "REPORT_DOWNLOADED" | "JOURNAL_EXPORTED" | "SUBJECT_SEARCHED" | "SUBJECT_EXPORTED" | "CONTACT_RECTIFIED" | "CONTACT_RESTRICTED" | "CONTACT_RESTRICTION_LIFTED" | "SUBJECT_ANONYMIZED" | "RETENTION_APPLIED" | "ACCOUNT_DISABLED" | "ACCOUNT_ENABLED" | "ACCOUNT_SYNC_FAILED";
+            action: "PROFILE_CHANGED" | "ACTIVATION_REQUESTED" | "KAM_ASSIGNED" | "KAM_CHANGED" | "KAM_UNASSIGNED" | "ORGANIZATION_TEAM_CHANGED" | "TEAM_CREATED" | "TEAM_RENAMED" | "TEAM_ARCHIVED" | "TEAM_RESTORED" | "SYNC_STARTED" | "ATTACHMENT_DOWNLOADED" | "ATTACHMENT_PREVIEWED" | "ENROLMENT_OPERATOR_CHANGED" | "REPORT_DOWNLOADED" | "JOURNAL_EXPORTED" | "CONFIRMATIONS_DOWNLOADED" | "SUBJECT_SEARCHED" | "SUBJECT_EXPORTED" | "CONTACT_RECTIFIED" | "CONTACT_RESTRICTED" | "CONTACT_RESTRICTION_LIFTED" | "SUBJECT_ANONYMIZED" | "RETENTION_APPLIED" | "ACCOUNT_DISABLED" | "ACCOUNT_ENABLED" | "ACCOUNT_SYNC_FAILED" | "LEARNER_RESTRICTED" | "LEARNER_RESTRICTION_LIFTED" | "PAID_ORDERS_UPLOADED" | "LEARNERS_SYNCED" | "LEARNER_LIST_VIEWED" | "LEARNER_SEARCHED" | "LEARNER_VIEWED" | "LEARNER_FIELDS_REVEALED" | "LEARNER_CHANGED" | "LEARNER_ENROLMENTS_MOVED" | "LEARNER_TEMPLATE_PREVIEWED" | "LEARNER_TEMPLATE_IMPORTED" | "LMS_ROSTER_EXPORTED" | "LMS_ROSTER_MARKED" | "STREAM_END_DATE_CHANGED";
             actionLabel: string;
             /**
              * Format: uuid
-             * @description Null for the nightly retention job
+             * @description Null для ночного задания хранения данных
              */
             actorProfileId: string | null;
             actorDisplayName: string;
@@ -4165,17 +4862,19 @@ export interface components {
             items: components["schemas"]["AuditEntry"][];
         };
         /**
-         * @description RESTRICTED contacts stay in history but cannot be linked to interactions
+         * @description Контакты со статусом RESTRICTED остаются в истории, но не могут быть связаны со взаимодействиями
          * @enum {string}
          */
         PersonalDataStatus: "ACTIVE" | "RESTRICTED" | "ANONYMIZED";
         SubjectQuery: {
             name?: string | null;
             email?: string | null;
-            /** @description At least 5 digits; spaces, brackets and dashes are ignored */
+            /** @description Не менее 5 цифр; пробелы, скобки и дефисы игнорируются */
             phone?: string | null;
-            /** @description Up to 10 other spellings separated by commas, semicolons or new lines */
+            /** @description До 10 других написаний, разделённых запятыми, точками с запятой или переводами строк */
             otherSpellings?: string | null;
+            /** @description 11 цифр, пробелы и дефисы игнорируются; поиск только среди профилей обучающихся */
+            snils?: string | null;
         };
         /**
          * @default JSON
@@ -4250,8 +4949,28 @@ export interface components {
             mentions: components["schemas"]["SubjectMention"][];
             attachments: components["schemas"]["SubjectAttachment"][];
             sourceRecords: components["schemas"]["SubjectSourceRecord"][];
-            /** @description Some lists were cut at the display limit; narrow the search */
+            learners: components["schemas"]["SubjectLearner"][];
+            /** @description Некоторые списки были обрезаны по лимиту отображения; сузьте поиск */
             truncated: boolean;
+        };
+        SubjectLearner: {
+            /** Format: uuid */
+            id: string;
+            status: components["schemas"]["PersonalDataStatus"];
+            version: number;
+            /** @description Заполненные поля профиля из 30; 0 для обезличенного профиля */
+            filledFields: number;
+            enrolments: components["schemas"]["SubjectLearnerEnrolment"][];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        SubjectLearnerEnrolment: {
+            courseName: string;
+            streamNo: number;
+            /** Format: date */
+            streamEndsOn: string | null;
         };
         ContactRectification: {
             version: number;
@@ -4269,6 +4988,7 @@ export interface components {
             contactIds?: string[];
             profileIds?: string[];
             attachmentIds?: string[];
+            learnerIds?: string[];
         };
         AnonymizationResult: {
             contacts: number;
@@ -4278,15 +4998,33 @@ export interface components {
             technicalRecords: number;
             attachmentsDeleted: number;
             reportFilesDeleted: number;
+            learners: number;
         };
         RetentionPolicy: {
             reportFilesDays: number;
             inactiveContactsDays: number;
             dismissedProfilesDays: number;
             auditEventsDays: number;
-            /** @description Spring cron expression, Moscow time */
+            /** @description Learner profile retention after the end of the learner's last stream, for display, for example «3 г.»; configured by APP_RETENTION_LEARNER_PROFILES as an ISO-8601 period */
+            learnerProfilesTerm: string;
+            /** @description Spring cron-выражение, московское время */
             schedule: string;
             lastRun: components["schemas"]["AuditEntry"] | null;
+            learners: components["schemas"]["LearnerRetention"];
+        };
+        LearnerRetention: {
+            /** @description APP_ENROLMENT_ENABLED; сохранённые профили учитываются и обезличиваются по сроку, даже если модуль отключён */
+            moduleEnabled: boolean;
+            /** @description Профили обучающихся, которые не обезличены */
+            profiles: number;
+            /** @description 100 000 subjects, the condition of the fourth protection level (УЗ-4) */
+            profilesLimit: number;
+            /** @description True, начиная с 80 000 профилей */
+            nearLimit: boolean;
+            /** @description Потоки без даты окончания; их обучающиеся не обезличиваются автоматически */
+            streamsWithoutEndDate: number;
+            /** @description Профили, зашифрованные с версией ключа, отличной от активной; 0, если модуль отключён */
+            profilesWithOldKey: number;
         };
         RetentionRun: {
             /** Format: date-time */
@@ -4294,11 +5032,12 @@ export interface components {
             reportFilesDeleted: number;
             contactsAnonymized: number;
             profilesAnonymized: number;
+            learnersAnonymized: number;
             auditEventsDeleted: number;
         };
     };
     responses: {
-        /** @description Validation or request format error */
+        /** @description Ошибка валидации или формата запроса */
         BadRequest: {
             headers: {
                 [name: string]: unknown;
@@ -4307,7 +5046,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description BFF session is absent or expired */
+        /** @description Сессия BFF отсутствует или истекла */
         Unauthorized: {
             headers: {
                 [name: string]: unknown;
@@ -4316,7 +5055,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description Authenticated identity is not allowed to perform the action */
+        /** @description Аутентифицированной личности не разрешено выполнять действие */
         Forbidden: {
             headers: {
                 [name: string]: unknown;
@@ -4325,7 +5064,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description The OIDC identity has no active CRM profile (CRM_PROFILE_REQUIRED) or its profile created at first login waits for administrator activation (CRM_PROFILE_PENDING) */
+        /** @description У личности OIDC нет активного профиля CRM (CRM_PROFILE_REQUIRED), либо её профиль, созданный при первом входе, ожидает активации администратором (CRM_PROFILE_PENDING) */
         CrmProfileRequired: {
             headers: {
                 [name: string]: unknown;
@@ -4334,7 +5073,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description A visible organization or interaction can be changed only by an active USER or LEADER of its scope; the scope is checked first, so a hidden object is 404. Also returned when the OIDC identity has no active CRM profile */
+        /** @description Видимую организацию или взаимодействие может изменить только активный USER или LEADER её области; область проверяется первой, поэтому скрытый объект — 404. Также возвращается, если у личности OIDC нет активного профиля CRM */
         ContactInteractionMutationForbidden: {
             headers: {
                 [name: string]: unknown;
@@ -4343,7 +5082,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description Object does not exist or is outside the current server-side scope */
+        /** @description Объект не существует либо находится вне текущей серверной области */
         NotFound: {
             headers: {
                 [name: string]: unknown;
@@ -4352,7 +5091,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description Version or idempotency conflict; VERSION_CONFLICT includes currentVersion */
+        /** @description Конфликт version или идемпотентности; VERSION_CONFLICT включает currentVersion */
         Conflict: {
             headers: {
                 [name: string]: unknown;
@@ -4361,7 +5100,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description Uploaded payload exceeds the configured limit */
+        /** @description Загружаемые данные превышают настроенный лимит */
         PayloadTooLarge: {
             headers: {
                 [name: string]: unknown;
@@ -4370,7 +5109,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description Request rate limit exceeded */
+        /** @description Превышен лимит частоты запросов */
         RateLimited: {
             headers: {
                 [name: string]: unknown;
@@ -4379,7 +5118,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description Required dependency is unavailable */
+        /** @description Обязательная зависимость недоступна */
         DependencyUnavailable: {
             headers: {
                 [name: string]: unknown;
@@ -4388,7 +5127,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description Unexpected server error; the stack trace is written only to the server log under the same requestId */
+        /** @description Непредвиденная ошибка сервера; трассировка стека записывается только в серверный лог под тем же requestId */
         InternalError: {
             headers: {
                 [name: string]: unknown;
@@ -4397,7 +5136,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description CONFIRMATION_LIMIT, the selection has more than 500 documents or, for the archive, its CLEAN files exceed app.agreements.archive-max-size; narrow the period, university or kind */
+        /** @description CONFIRMATION_LIMIT — в выборке более 500 документов, либо, для архива, её файлы CLEAN превышают app.agreements.archive-max-size; сузьте период, вуз или вид */
         ConfirmationLimit: {
             headers: {
                 [name: string]: unknown;
@@ -4406,7 +5145,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description REPORT_CAPACITY_EXCEEDED, all report slots and the bounded queue are busy; nothing was stored */
+        /** @description REPORT_CAPACITY_EXCEEDED — все слоты отчётов и ограниченная очередь заняты; ничего не сохранено */
         ReportCapacityExceeded: {
             headers: {
                 "Retry-After"?: number;
@@ -4416,7 +5155,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description REPORT_ACCESS_CHANGED after a role, team or access revision change, or REPORT_RESULT_UNAVAILABLE when the file is gone */
+        /** @description REPORT_ACCESS_CHANGED после изменения роли, команды или ревизии доступа, либо REPORT_RESULT_UNAVAILABLE, если файл отсутствует */
         ReportGone: {
             headers: {
                 [name: string]: unknown;
@@ -4438,7 +5177,7 @@ export interface components {
         InteractionSort: "createdAt,asc" | "createdAt,desc" | "updatedAt,asc" | "updatedAt,desc" | "nextActionAt,asc";
         WorkflowTemplateSort: "name,asc" | "name,desc" | "version,asc" | "version,desc";
         CrmProfileSort: "displayName,asc" | "displayName,desc" | "role,asc" | "role,desc" | "accessRevision,asc" | "accessRevision,desc";
-        /** @description Visible organization; a hidden one returns 404 */
+        /** @description Видимая организация; скрытая возвращает 404 */
         AgreementConfirmationOrganization: string;
         AgreementConfirmationAgreement: string;
         AgreementConfirmationKind: string;
@@ -4463,10 +5202,10 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to the BFF authorization endpoint, which redirects to the configured OIDC provider */
+            /** @description Редирект на эндпоинт авторизации BFF, который перенаправляет на настроенный провайдер OIDC */
             302: {
                 headers: {
-                    /** @description Browser redirect target at the OIDC provider */
+                    /** @description Адрес редиректа браузера у провайдера OIDC */
                     Location: string;
                     [name: string]: unknown;
                 };
@@ -4489,10 +5228,10 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description BFF session is established and the browser is redirected to the SPA */
+            /** @description Сессия BFF установлена, браузер перенаправлен на SPA */
             302: {
                 headers: {
-                    /** @description Browser redirect target in the SPA */
+                    /** @description Адрес редиректа браузера в SPA */
                     Location: string;
                     [name: string]: unknown;
                 };
@@ -4514,7 +5253,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description BFF session and browser cookies are cleared; the browser opens logoutUrl to end the Keycloak session */
+            /** @description Сессия BFF и cookie браузера очищены; браузер открывает logoutUrl для завершения сессии Keycloak */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4536,7 +5275,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Active CRM profile for the authenticated identity */
+            /** @description Активный профиль CRM для аутентифицированной личности */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4562,7 +5301,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Time when the administrator was notified */
+            /** @description Время, когда был уведомлён администратор */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4586,7 +5325,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Token and header name for the current BFF session */
+            /** @description Токен и имя заголовка для текущей сессии BFF */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4618,7 +5357,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Organizations visible within the current server-side business scope, filtered and counted on the server */
+            /** @description Организации, видимые в текущей серверной бизнес-области, отфильтрованные и подсчитанные на сервере */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4704,7 +5443,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Organization visible within the current server-side business scope */
+            /** @description Организация, видимая в текущей серверной бизнес-области */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4803,7 +5542,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Contacts belonging to the visible organization */
+            /** @description Контакты, принадлежащие видимой организации */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4838,7 +5577,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Contact created in the visible organization */
+            /** @description Контакт создан в видимой организации */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -4875,7 +5614,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Contact after the change */
+            /** @description Контакт после изменения */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4904,7 +5643,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Contact changes with author, time and previous and new values, oldest first */
+            /** @description Изменения контакта с автором, временем, прежними и новыми значениями, сначала старые */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4931,7 +5670,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Active USER profiles of the visible organization's team and the requesting LEADER himself; available only to a LEADER of that team */
+            /** @description Активные профили USER команды видимой организации и сам запрашивающий LEADER; доступно только LEADER этой команды */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4958,7 +5697,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Immutable owner assignment history of the visible organization with the handover note and the reason of an automatic deassignment; available to the team LEADER and to the USER who currently owns the organization */
+            /** @description Неизменяемая история назначений ответственного видимой организации с примечанием передачи и причиной автоматического снятия; доступно LEADER команды и USER, который сейчас является ответственным за организацию */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4993,7 +5732,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Updated organization and its immutable owner assignment event */
+            /** @description Обновлённая организация и её неизменяемое событие назначения ответственного */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5027,7 +5766,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Changed organizations with their assignment events */
+            /** @description Изменённые организации с их событиями назначения */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5055,7 +5794,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deputy periods of the visible organization, newest first, available only to its LEADER */
+            /** @description Периоды замещения видимой организации, сначала новые, доступно только её LEADER */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5090,7 +5829,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created deputy period */
+            /** @description Созданный период замещения */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -5123,7 +5862,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Ended deputy period */
+            /** @description Завершённый период замещения */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5152,7 +5891,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Indicators per active team manager and for organizations requiring assignment */
+            /** @description Показатели по каждому активному менеджеру команды и по организациям, требующим назначения */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5178,7 +5917,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Summary per team and total */
+            /** @description Сводка по командам и итог */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5202,7 +5941,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Reminder digest of the current profile */
+            /** @description Дайджест напоминаний текущего профиля */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5232,7 +5971,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Saved setting */
+            /** @description Сохранённая настройка */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5261,7 +6000,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Programs of the business catalog scope; archived ones only with state ARCHIVED or ALL */
+            /** @description Программы бизнес-области каталога; архивные — только при state ARCHIVED или ALL */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5290,7 +6029,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Products of the business catalog scope; archived ones only with state ARCHIVED or ALL */
+            /** @description Продукты бизнес-области каталога; архивные — только при state ARCHIVED или ALL */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5319,7 +6058,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description IT directions for report filters; archived ones only with state ARCHIVED or ALL; empty for profiles without a business scope */
+            /** @description ИТ-направления для фильтров отчётов; архивные — только при state ARCHIVED или ALL; пусто для профилей без бизнес-области */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5351,7 +6090,7 @@ export interface operations {
                 status?: "ACTIVE" | "PAUSED" | "COMPLETED" | "ALL";
                 /** @description WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — отмечена проблема; RISK — отмечен риск любого уровня */
                 flag?: components["schemas"]["InteractionFlag"];
-                /** @description Only interactions with a product whose license expiry year is less than or equal to this year */
+                /** @description Только взаимодействия с продуктом, у которого год окончания лицензии меньше или равен этому году */
                 licenseExpiresBy?: number;
                 /** @description Ответственный КАМ вуза (идентификатор профиля) или UNASSIGNED — вузы, требующие назначения */
                 responsible?: string;
@@ -5364,7 +6103,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Interactions of all visible organizations, or of one visible organization when organizationId is given; filters, total and pages are computed on the server */
+            /** @description Взаимодействия всех видимых организаций либо одной видимой организации при указании organizationId; фильтры, итог и страницы вычисляются на сервере */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5397,7 +6136,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Interaction created with a private 13-stage workflow snapshot */
+            /** @description Взаимодействие создано с собственным снимком workflow из 13 этапов */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -5425,7 +6164,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Interaction visible through its current organization scope */
+            /** @description Взаимодействие, видимое через текущую область его организации */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5460,7 +6199,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Interaction after the plan update */
+            /** @description Взаимодействие после обновления плана */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5488,7 +6227,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Immutable interaction history ordered by version, occurredAt and id */
+            /** @description Неизменяемая история взаимодействия, упорядоченная по version, occurredAt и id */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5515,7 +6254,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Snapshots ordered by course and group; empty when nothing is mapped to the interaction program */
+            /** @description Снимки, упорядоченные по курсу и группе; пусто, если ничего не сопоставлено программе взаимодействия */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5545,7 +6284,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Finished scoped run and the refreshed snapshots of the interaction */
+            /** @description Завершённый запуск в рамках области и обновлённые снимки взаимодействия */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5558,7 +6297,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["ContactInteractionMutationForbidden"];
             404: components["responses"]["NotFound"];
-            /** @description LMS_NOT_MAPPED when the interaction has no program or no allowed Moodle course or group is mapped to its organization and program; SOURCE_NOT_CONFIGURED; SYNC_ALREADY_RUNNING */
+            /** @description LMS_NOT_MAPPED, если у взаимодействия нет программы или ни один разрешённый курс или группа Moodle не сопоставлены его организации и программе; SOURCE_NOT_CONFIGURED; SYNC_ALREADY_RUNNING */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5568,7 +6307,7 @@ export interface operations {
                 };
             };
             500: components["responses"]["InternalError"];
-            /** @description LMS_SYNC_FAILED, Moodle was unavailable or rejected the request; stored snapshots are unchanged */
+            /** @description LMS_SYNC_FAILED — Moodle был недоступен или отклонил запрос; сохранённые снимки не изменились */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -5590,7 +6329,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Source state of the card */
+            /** @description Состояние источников карточки */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5620,7 +6359,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Outcome per source, the new source state and the snapshots of the card */
+            /** @description Результат по каждому источнику, новое состояние источников и снимки карточки */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5647,7 +6386,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Manual records of teacher training, newest first; counts only, no names */
+            /** @description Ручные записи об обучении преподавателей, сначала новые; только счётчики, без имён */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5682,7 +6421,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Saved record and the interaction after the history event */
+            /** @description Сохранённая запись и взаимодействие после события истории */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -5710,7 +6449,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Start of this cycle and links to the previous and the next cycle, if any */
+            /** @description Начало текущего цикла и ссылки на предыдущий и следующий цикл, если есть */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5745,7 +6484,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The new interaction of the next cycle */
+            /** @description Новое взаимодействие следующего цикла */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -5771,7 +6510,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Up to 200 records, newest submission first */
+            /** @description До 200 записей, сначала новые по времени подачи */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5803,7 +6542,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Record after the new attempt and the number of other records applied thanks to the mapping */
+            /** @description Запись после новой попытки и число других записей, применённых благодаря сопоставлению */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5838,7 +6577,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created organization and the record after the new attempt */
+            /** @description Созданная организация и запись после новой попытки */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -5874,7 +6613,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Interaction after a validated workflow transition */
+            /** @description Взаимодействие после проверенного перехода workflow */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5910,7 +6649,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Updated interaction and the immutable comment event */
+            /** @description Обновлённое взаимодействие и неизменяемое событие комментария */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5946,7 +6685,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Updated interaction */
+            /** @description Обновлённое взаимодействие */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5982,7 +6721,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Interaction after the status change */
+            /** @description Взаимодействие после изменения статуса */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6018,7 +6757,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Interaction after the flags update */
+            /** @description Взаимодействие после обновления флагов */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6054,7 +6793,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Interaction after a validated local workflow snapshot edit. Structural edits rebuild only the transitions around the added, moved or deleted stage and write one STAGES_EDITED history event */
+            /** @description Взаимодействие после проверенного локального редактирования снимка workflow. Структурные правки перестраивают только переходы вокруг добавленного, перемещённого или удалённого этапа и записывают одно событие истории STAGES_EDITED */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6090,7 +6829,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Interaction with the stage marked completed; the current stage is unchanged. Any stage except the current one can be marked; a repeated mark replaces the date and comment. Writes one STAGE_COMPLETED history event and binds the selected clean files uploaded to that stage to the event */
+            /** @description Взаимодействие с этапом, отмеченным завершённым; текущий этап не меняется. Отметить можно любой этап, кроме текущего; повторная отметка заменяет дату и комментарий. Записывает одно событие истории STAGE_COMPLETED и связывает с ним выбранные проверенные файлы, загруженные для этого этапа */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6125,7 +6864,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Interaction without the completion mark; writes one STAGE_COMPLETION_CLEARED history event */
+            /** @description Взаимодействие без отметки завершения; записывает одно событие истории STAGE_COMPLETION_CLEARED */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6160,7 +6899,7 @@ export interface operations {
                 "multipart/form-data": {
                     /**
                      * Format: binary
-                     * @description PNG, JPEG, HEIC/HEIF, PDF, ZIP, GZIP, RAR, DOC, DOCX, XLS or XLSX up to 20 MB; the extension must match the file signature
+                     * @description PNG, JPEG, HEIC/HEIF, PDF, ZIP, GZIP, RAR, DOC, DOCX, XLS или XLSX до 20 МБ; расширение должно соответствовать сигнатуре файла
                      */
                     file: string;
                     /** Format: uuid */
@@ -6168,14 +6907,14 @@ export interface operations {
                     kind?: components["schemas"]["AttachmentKind"];
                     /**
                      * Format: uuid
-                     * @description Uploads a new version of this live attachment of the same interaction; the new version gets revision + 1 and inherits the kind unless kind is given. 409 VERSION_CONFLICT when the attachment already has a live newer version
+                     * @description Загружает новую версию этого действующего вложения того же взаимодействия; новая версия получает revision + 1 и наследует kind, если kind не указан. 409 VERSION_CONFLICT, если у вложения уже есть более новая действующая версия
                      */
                     replacesId?: string;
                 };
             };
         };
         responses: {
-            /** @description Attachment stored in quarantine and scanned before any possible download */
+            /** @description Вложение сохранено в карантине и проверено до возможной загрузки */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -6213,7 +6952,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Interaction card after the deletion with the incremented version */
+            /** @description Карточка взаимодействия после удаления с увеличенной version */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6250,7 +6989,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Interaction card with the updated product agreement */
+            /** @description Карточка взаимодействия с обновлённым соглашением по продукту */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6278,7 +7017,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Safe metadata for an attachment visible through its parent interaction scope */
+            /** @description Безопасные метаданные вложения, видимого через область его родительского взаимодействия */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6312,7 +7051,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Attachment with the new kind and incremented version */
+            /** @description Вложение с новым kind и увеличенной version */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6340,7 +7079,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Raw file bytes for inline display */
+            /** @description Необработанные байты файла для отображения inline */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6369,7 +7108,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Raw file bytes for a CLEAN attachment only; the download is written to the security journal */
+            /** @description Необработанные байты файла только для вложения со статусом CLEAN; скачивание записывается в журнал безопасности */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6396,7 +7135,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Activity kinds ordered by sort order; archived kinds only with includeArchived=true */
+            /** @description Виды мероприятий, упорядоченные по sort order; архивные виды — только при includeArchived=true */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6427,7 +7166,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Activity kind created at the end of the list */
+            /** @description Вид мероприятия создан в конце списка */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -6462,7 +7201,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Activity kind updated */
+            /** @description Вид мероприятия обновлён */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6490,7 +7229,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Agreements of the visible organization, newest conclusion date first */
+            /** @description Соглашения видимой организации, сначала с более поздней датой заключения */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6525,7 +7264,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Agreement created */
+            /** @description Соглашение создано */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -6553,7 +7292,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Works and CLEAN documents of the organization and active USER or LEADER profiles of its team */
+            /** @description Работы и документы CLEAN организации, а также активные профили USER или LEADER её команды */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6580,7 +7319,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Agreement of a visible organization with activities, linked works and confirmations */
+            /** @description Соглашение видимой организации с мероприятиями, связанными работами и подтверждениями */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6615,7 +7354,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Agreement updated; version is required */
+            /** @description Соглашение обновлено; version обязательна */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6651,7 +7390,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Activity created with its links */
+            /** @description Мероприятие создано вместе со своими связями */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -6685,7 +7424,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Activity deleted; a repeat with the same key returns 204 again */
+            /** @description Мероприятие удалено; повтор с тем же ключом снова возвращает 204 */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -6719,7 +7458,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Activity updated */
+            /** @description Мероприятие обновлено */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6739,7 +7478,7 @@ export interface operations {
     listAgreementConfirmations: {
         parameters: {
             query?: {
-                /** @description Visible organization; a hidden one returns 404 */
+                /** @description Видимая организация; скрытая возвращает 404 */
                 organizationId?: components["parameters"]["AgreementConfirmationOrganization"];
                 agreementId?: components["parameters"]["AgreementConfirmationAgreement"];
                 kindId?: components["parameters"]["AgreementConfirmationKind"];
@@ -6752,7 +7491,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Confirmation documents of the selection */
+            /** @description Подтверждающие документы выборки */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6772,7 +7511,7 @@ export interface operations {
     downloadAgreementConfirmations: {
         parameters: {
             query?: {
-                /** @description Visible organization; a hidden one returns 404 */
+                /** @description Видимая организация; скрытая возвращает 404 */
                 organizationId?: components["parameters"]["AgreementConfirmationOrganization"];
                 agreementId?: components["parameters"]["AgreementConfirmationAgreement"];
                 kindId?: components["parameters"]["AgreementConfirmationKind"];
@@ -6785,7 +7524,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ZIP archive */
+            /** @description Архив ZIP */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6813,7 +7552,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Terminal catalog import job, visible to an ADMIN CRM profile */
+            /** @description Терминальное задание импорта каталога, видимое профилю CRM с ролью ADMIN */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6845,7 +7584,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Report job accepted */
+            /** @description Задание отчёта принято */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -6881,7 +7620,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Report rows page with total row count and explanatory notes */
+            /** @description Страница строк отчёта с общим количеством строк и пояснительными примечаниями */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6912,7 +7651,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Grouped counts, total and unknown count */
+            /** @description Сгруппированные счётчики, итог и количество неизвестных */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6936,7 +7675,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Up to 20 latest report jobs of the current profile that are still valid for its current access revision */
+            /** @description До 20 последних заданий отчётов текущего профиля, ещё действительных для его текущей ревизии доступа */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6961,7 +7700,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Report job state for its owner */
+            /** @description Состояние задания отчёта для его владельца */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6989,7 +7728,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Report file; Content-Disposition carries a UTF-8 filename*; the download is written to the security journal */
+            /** @description Файл отчёта; Content-Disposition содержит имя файла в UTF-8 (filename*); скачивание записывается в журнал безопасности */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7005,7 +7744,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["CrmProfileRequired"];
             404: components["responses"]["NotFound"];
-            /** @description REPORT_NOT_READY, the job has not succeeded */
+            /** @description REPORT_NOT_READY — задание не завершилось успешно */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -7027,7 +7766,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description USER receives only itself; LEADER receives USER profiles of its team and current owners of visible organizations */
+            /** @description USER получает только себя; LEADER получает профили USER своей команды и текущих ответственных видимых организаций */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7050,7 +7789,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description All vendors of the catalog, active first, by name */
+            /** @description Все поставщики каталога, сначала активные, по имени */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7073,7 +7812,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Distinct stage names of visible interactions in workflow order */
+            /** @description Уникальные названия этапов видимых взаимодействий в порядке workflow */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7096,7 +7835,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Named report definitions of the current profile ordered by name; other profiles never see them */
+            /** @description Именованные определения отчётов текущего профиля, упорядоченные по имени; другим профилям они не видны */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7127,7 +7866,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Saved report created */
+            /** @description Сохранённый отчёт создан */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -7160,7 +7899,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Saved report deleted */
+            /** @description Сохранённый отчёт удалён */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -7194,7 +7933,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Saved report updated */
+            /** @description Сохранённый отчёт обновлён */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7224,7 +7963,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Workflow templates available within the current server-side scope */
+            /** @description Шаблоны workflow, доступные в текущей серверной области */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7250,7 +7989,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Workflow templates managed by the current administrator (global) or leader (own team). A leader also receives the default template as read-only source for a team copy */
+            /** @description Шаблоны workflow, которыми управляет текущий администратор (глобальные) или руководитель (своей команды). Руководитель также получает шаблон по умолчанию как источник только для чтения для копии команды */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7281,7 +8020,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Workflow template created */
+            /** @description Шаблон workflow создан */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -7308,7 +8047,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Workflow template managed by the current administrator (global) or leader (own team). A leader also reads the default template as read-only source for a team copy */
+            /** @description Шаблон workflow, которым управляет текущий администратор (глобальный) или руководитель (своей команды). Руководитель также читает шаблон по умолчанию как источник только для чтения для копии команды */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7340,7 +8079,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Workflow template deleted */
+            /** @description Шаблон workflow удалён */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -7374,7 +8113,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Workflow template updated */
+            /** @description Шаблон workflow обновлён */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7433,9 +8172,9 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["PageSize"];
                 sort?: components["parameters"]["CrmProfileSort"];
-                /** @description Only profiles created at the first login and waiting for activation */
+                /** @description Только профили, созданные при первом входе и ожидающие активации */
                 pending?: boolean;
-                /** @description Case-insensitive part of the display name or Keycloak login */
+                /** @description Часть отображаемого имени или логина Keycloak без учёта регистра */
                 q?: string;
             };
             header?: never;
@@ -7444,7 +8183,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description CRM profiles managed by an administrator; pendingTotal counts all profiles waiting for activation */
+            /** @description Профили CRM, которыми управляет администратор; pendingTotal считает все профили, ожидающие активации */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7477,7 +8216,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description CRM profile updated; a role, team or activity change increments accessRevision, and every change is written to the profile journal. Closing or opening access also disables or enables the Keycloak account through the Admin API; when Keycloak is unavailable or the connection is not configured the CRM change is kept, accountSyncRequired is true and accountSyncError explains why the account was not synchronized. */
+            /** @description Профиль CRM обновлён; изменение роли, команды или активности увеличивает accessRevision, каждое изменение записывается в журнал профиля. Закрытие или открытие доступа также отключает или включает учётную запись Keycloak через Admin API; если Keycloak недоступен или подключение не настроено, изменение CRM сохраняется, accountSyncRequired равно true, а accountSyncError объясняет, почему учётная запись не была синхронизирована. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7505,7 +8244,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Immutable profile changes, newest first */
+            /** @description Неизменяемые изменения профиля, сначала новые */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7535,7 +8274,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Profile with the current synchronization state */
+            /** @description Профиль с текущим состоянием синхронизации */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7549,7 +8288,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
-            /** @description ACCOUNT_SYNC_FAILED, Keycloak is unavailable, rejected the request or the service client is not configured */
+            /** @description ACCOUNT_SYNC_FAILED — Keycloak недоступен, отклонил запрос либо сервисный клиент не настроен */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -7600,7 +8339,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Team created; a duplicate name, compared case-insensitively, is a validation error on name */
+            /** @description Команда создана; дублирующееся название, при сравнении без учёта регистра, — ошибка валидации поля name */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -7635,7 +8374,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Team renamed */
+            /** @description Команда переименована */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7704,7 +8443,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Organizations ordered by name with team and responsible manager names */
+            /** @description Организации, упорядоченные по имени, с названием команды и именем ответственного менеджера */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7843,7 +8582,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Organization moved to the team */
+            /** @description Организация перемещена в команду */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7963,6 +8702,106 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    listVendorContacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vendorId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Контакты вендора с продуктами, за которые они отвечают (архивные — в конце), и все продукты вендора */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VendorContactList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createVendorContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                vendorId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VendorContactChange"];
+            };
+        };
+        responses: {
+            /** @description Контакт создан */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VendorContact"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateVendorContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                vendorId: string;
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VendorContactChange"];
+            };
+        };
+        responses: {
+            /** @description Контакт изменён */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VendorContact"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listCatalogChangeEvents: {
         parameters: {
             query?: {
@@ -8000,7 +8839,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Sources with configuration flag, last run with counters, last success and number of records to review */
+            /** @description Источники с флагом настройки, последним запуском со счётчиками, последним успехом и числом записей на проверку */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8028,7 +8867,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Sync run accepted */
+            /** @description Запуск синхронизации принят */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -8040,7 +8879,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description SOURCE_NOT_CONFIGURED when SITE_BASE_URL is empty, or MOODLE_BASE_URL, MOODLE_TOKEN or MOODLE_COURSE_IDS is empty; SYNC_ALREADY_RUNNING */
+            /** @description SOURCE_NOT_CONFIGURED, если SITE_BASE_URL пуст, либо MOODLE_BASE_URL, MOODLE_TOKEN или MOODLE_COURSE_IDS пусты; SYNC_ALREADY_RUNNING */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8050,7 +8889,7 @@ export interface operations {
                 };
             };
             500: components["responses"]["InternalError"];
-            /** @description SYNC_CAPACITY_EXCEEDED, the sync executor and its queue are busy; nothing was stored */
+            /** @description SYNC_CAPACITY_EXCEEDED — исполнитель синхронизации и его очередь заняты; ничего не сохранено */
             503: {
                 headers: {
                     "Retry-After"?: number;
@@ -8071,7 +8910,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Records that need an organization or program mapping, or failed to apply */
+            /** @description Записи, которым нужно сопоставление организации или программы, либо не применившиеся */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8094,7 +8933,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description All organizations and active programs an administrator can map an external reference to */
+            /** @description Все организации и активные программы, которым администратор может сопоставить внешнюю ссылку */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8126,7 +8965,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Record after the new attempt and the number of other records applied thanks to the mapping */
+            /** @description Запись после новой попытки и число других записей, применённых благодаря сопоставлению */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8145,13 +8984,13 @@ export interface operations {
     listAuditEvents: {
         parameters: {
             query?: {
-                /** @description First day of the period, Moscow time */
+                /** @description Первый день периода, московское время */
                 from?: string;
-                /** @description Last day of the period inclusive, Moscow time */
+                /** @description Последний день периода включительно, московское время */
                 to?: string;
-                /** @description Part of the author name */
+                /** @description Часть имени автора */
                 actor?: string;
-                /** @description Part of the object name or details */
+                /** @description Часть имени объекта или деталей */
                 object?: string;
                 category?: components["schemas"]["AuditCategory"];
                 page?: components["parameters"]["Page"];
@@ -8163,7 +9002,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Journal page */
+            /** @description Страница журнала */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8182,13 +9021,13 @@ export interface operations {
         parameters: {
             query?: {
                 format?: "XLSX" | "CSV";
-                /** @description First day of the period, Moscow time */
+                /** @description Первый день периода, московское время */
                 from?: string;
-                /** @description Last day of the period inclusive, Moscow time */
+                /** @description Последний день периода включительно, московское время */
                 to?: string;
-                /** @description Part of the author name */
+                /** @description Часть имени автора */
                 actor?: string;
-                /** @description Part of the object name or details */
+                /** @description Часть имени объекта или деталей */
                 object?: string;
                 category?: components["schemas"]["AuditCategory"];
             };
@@ -8198,7 +9037,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Journal file; Content-Disposition carries a UTF-8 filename* */
+            /** @description Файл журнала; Content-Disposition содержит имя файла в UTF-8 (filename*) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8211,6 +9050,15 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description REPORT_ROW_LIMIT — строк по фильтрам больше app.reports.max-rows; сузьте период или фильтры */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
             500: components["responses"]["InternalError"];
         };
     };
@@ -8230,7 +9078,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Everything found for the subject */
+            /** @description Всё найденное по субъекту */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8263,7 +9111,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Subject report; Content-Disposition carries a UTF-8 filename* */
+            /** @description Отчёт по субъекту; Content-Disposition содержит имя файла в UTF-8 (filename*) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8298,7 +9146,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Updated contact */
+            /** @description Обновлённый контакт */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8311,7 +9159,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description VERSION_CONFLICT, IDEMPOTENCY_CONFLICT or PERSONAL_DATA_ANONYMIZED */
+            /** @description VERSION_CONFLICT, IDEMPOTENCY_CONFLICT или PERSONAL_DATA_ANONYMIZED */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8342,7 +9190,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Contact with the new processing status */
+            /** @description Контакт с новым статусом обработки */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8355,7 +9203,51 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description VERSION_CONFLICT, IDEMPOTENCY_CONFLICT or PERSONAL_DATA_ANONYMIZED */
+            /** @description VERSION_CONFLICT, IDEMPOTENCY_CONFLICT или PERSONAL_DATA_ANONYMIZED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    restrictPersonalDataLearner: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactRestriction"];
+            };
+        };
+        responses: {
+            /** @description Обучающийся с новым статусом обработки */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubjectLearner"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description VERSION_CONFLICT, IDEMPOTENCY_CONFLICT или PERSONAL_DATA_ANONYMIZED */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8384,7 +9276,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Counts of changed records */
+            /** @description Счётчики изменённых записей */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8397,7 +9289,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description IDEMPOTENCY_CONFLICT or PROFILE_ACTIVE when a chosen profile still has access */
+            /** @description IDEMPOTENCY_CONFLICT или PROFILE_ACTIVE, если у выбранного профиля ещё есть доступ */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8418,7 +9310,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Configured retention periods, schedule and the last run */
+            /** @description Настроенные сроки хранения, расписание и последний запуск */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8444,7 +9336,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Counts of deleted and anonymized records */
+            /** @description Счётчики удалённых и обезличенных записей */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8455,7 +9347,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description RETENTION_RUNNING, the previous run has not finished */
+            /** @description RETENTION_RUNNING — предыдущий запуск ещё не завершился */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8486,7 +9378,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Workbook sheets and headers after signature and scanner checks */
+            /** @description Листы и заголовки книги после проверки сигнатуры и сканера */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8524,7 +9416,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Persisted terminal preview job and import plan */
+            /** @description Сохранённое терминальное задание предпросмотра и план импорта */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -8551,7 +9443,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Persisted import preview and row protocol */
+            /** @description Сохранённый предпросмотр импорта и протокол по строкам */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8585,7 +9477,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Persisted terminal apply job */
+            /** @description Сохранённое терминальное задание применения */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -8613,7 +9505,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Runs, newest first */
+            /** @description Запуски, сначала новые */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8637,7 +9529,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description All mappings */
+            /** @description Все сопоставления */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8669,7 +9561,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The mapping after the change */
+            /** @description Сопоставление после изменения */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8702,7 +9594,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Mapping removed */
+            /** @description Сопоставление удалено */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -8765,7 +9657,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Snapshot deleted */
+            /** @description Снимок удалён */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -8797,7 +9689,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created organization and the record after the new attempt */
+            /** @description Созданная организация и запись после новой попытки */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -8811,6 +9703,495 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    uploadPaidOrders: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Протокол запуска без персональных данных */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaidOrderUpload"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listEnrolmentStreams: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Потоки, упорядоченные по курсу и номеру */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrolmentStreams"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateEnrolmentStream: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnrolmentStreamUpdate"];
+            };
+        };
+        responses: {
+            /** @description Поток с новой датой окончания */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrolmentStream"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listEnrolmentStreamLearners: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Слушатели потока */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrolmentStreamLearners"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    previewQuestionnaireImport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Предпросмотр по строкам с ошибками по ячейкам */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionnaireImport"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    applyQuestionnaireImport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                    fingerprint: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Итог применения; applied = true */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionnaireImport"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    exportLmsRoster: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LmsRosterRequest"];
+            };
+        };
+        responses: {
+            /** @description Файл для LMS */
+            200: {
+                headers: {
+                    "X-Roster-Export-Id"?: string;
+                    "X-Roster-Rows"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    markRosterExportTransferred: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Число отмеченных зачислений */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RosterExportMarked"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    searchLearners: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LearnerSearch"];
+            };
+        };
+        responses: {
+            /** @description Найденные слушатели с масками */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerSummary"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getLearner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Анкета */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerCard"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateLearner: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LearnerUpdate"];
+            };
+        };
+        responses: {
+            /** @description Анкета после правки */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerCard"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description VERSION_CONFLICT, IDEMPOTENCY_CONFLICT, PERSONAL_DATA_RESTRICTED или PERSONAL_DATA_ANONYMIZED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    revealLearnerFields: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LearnerReveal"];
+            };
+        };
+        responses: {
+            /** @description Значения полей выбранных групп */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerRevealed"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description PERSONAL_DATA_RESTRICTED или PERSONAL_DATA_ANONYMIZED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    moveLearnerEnrolments: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LearnerMove"];
+            };
+        };
+        responses: {
+            /** @description Итог переноса */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerMoveResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description VERSION_CONFLICT, IDEMPOTENCY_CONFLICT, PERSONAL_DATA_RESTRICTED или PERSONAL_DATA_ANONYMIZED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getLearnerHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description События без значений персональных данных */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearnerHistoryEntry"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
     };

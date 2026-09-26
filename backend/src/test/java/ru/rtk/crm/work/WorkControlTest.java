@@ -348,12 +348,22 @@ class WorkControlTest {
         insertLearning(UNIVERSITY_B, 7L, 4, 1, LocalDate.of(2026, 9, 1));
         insertLearning(UNIVERSITY_A, null, 100, 50, null);
         insertLearning(UNIVERSITY_C, 8L, 30, 3, null);
+        insertLearning(UNIVERSITY_B, 9L, 4, 0, LocalDate.of(2026, 9, 1), "TEACHERS");
+        UUID openTeam = UUID.randomUUID();
+        UUID archivedTeam = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO teams (id, name, archived) VALUES (?, 'Открытый набор', FALSE), (?, 'Архивная команда', TRUE)",
+                openTeam, archivedTeam);
+        jdbcTemplate.update("""
+                INSERT INTO organizations (id, name, type, team_id, owner_manager_id, version, updated_at)
+                VALUES (?, 'Открытый набор (физлица)', 'OPEN_ENROLLMENT', ?, NULL, 0, CURRENT_TIMESTAMP)
+                """, UUID.randomUUID(), openTeam);
 
         WorkModels.TeamsSummary summary = workService.teamsSummary(management, null);
 
         assertThat(summary.teams()).containsExactly(
                 new WorkModels.TeamSummary(TEAM_A, "Команда А", 2, 1, 1, 1, 0, 1, 1, 6, 2),
-                new WorkModels.TeamSummary(TEAM_B, "Команда Б", 1, 0, 1, 0, 1, 0, 1, 4, 1)
+                new WorkModels.TeamSummary(TEAM_B, "Команда Б", 1, 0, 1, 0, 1, 0, 1, 4, 1),
+                new WorkModels.TeamSummary(openTeam, "Открытый набор", 0, 0, 0, 0, 0, 0, 0, 0, 0)
         );
         assertThat(summary.total()).isEqualTo(new WorkModels.TeamSummary(null, null, 3, 1, 2, 1, 1, 1, 2, 10, 3));
         assertThat(organizationRepository.findVisibleById(management, UNIVERSITY_B)).isPresent();
@@ -383,6 +393,7 @@ class WorkControlTest {
         assertThat(digest.expiringLicenses()).singleElement().satisfies(license -> {
             assertThat(license.interactionId()).isEqualTo(upcoming);
             assertThat(license.productName()).isEqualTo("Защищённая связь");
+            assertThat(license.contractNumber()).isEqualTo("Д-" + license.licenseExpiryYear() + "/017");
         });
         assertThat(digest.trainingCycles()).singleElement().satisfies(training -> {
             assertThat(training.interactionId()).isEqualTo(overdue);
@@ -515,8 +526,9 @@ class WorkControlTest {
 
     private void insertAgreement(UUID interactionId, UUID productId, int licenseExpiryYear) {
         jdbcTemplate.update(
-                "INSERT INTO product_agreements (id, interaction_id, product_id, license_expiry_year) VALUES (?, ?, ?, ?)",
-                UUID.randomUUID(), interactionId, productId, licenseExpiryYear
+                "INSERT INTO product_agreements (id, interaction_id, product_id, contract_number, license_expiry_year) "
+                        + "VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(), interactionId, productId, "Д-" + licenseExpiryYear + "/017", licenseExpiryYear
         );
     }
 
@@ -528,12 +540,23 @@ class WorkControlTest {
     }
 
     private void insertLearning(UUID organizationId, Long groupId, int participants, int teachers, LocalDate runStartsOn) {
+        insertLearning(organizationId, groupId, participants, teachers, runStartsOn, "STUDENTS");
+    }
+
+    private void insertLearning(
+            UUID organizationId,
+            Long groupId,
+            int participants,
+            int teachers,
+            LocalDate runStartsOn,
+            String runKind
+    ) {
         UUID recordId = UUID.randomUUID();
         String externalId = "course:" + recordId;
         jdbcTemplate.update("INSERT INTO source_records (id, source, external_id) VALUES (?, 'MOODLE', ?)", recordId, externalId);
         jdbcTemplate.update(
-                "INSERT INTO source_mappings (id, source, kind, external_key, run_starts_on) VALUES (?, 'MOODLE', ?, ?, ?)",
-                UUID.randomUUID(), groupId == null ? "COURSE" : "GROUP", externalId, runStartsOn
+                "INSERT INTO source_mappings (id, source, kind, external_key, run_starts_on, run_kind) VALUES (?, 'MOODLE', ?, ?, ?, ?)",
+                UUID.randomUUID(), groupId == null ? "COURSE" : "GROUP", externalId, runStartsOn, runKind
         );
         jdbcTemplate.update("""
                 INSERT INTO learning_snapshots (source_record_id, organization_id, group_id, participants_count, teachers_count)
@@ -565,9 +588,9 @@ class WorkControlTest {
 
     private void createSchema() {
         List.of(
-                "CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL)",
+                "CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL)",
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL, access_revision INTEGER NOT NULL DEFAULT 0,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -628,10 +651,21 @@ class WorkControlTest {
                 )
                 """,
                 "CREATE TABLE IF NOT EXISTS vendors (id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL)",
-                "CREATE TABLE IF NOT EXISTS products (id UUID PRIMARY KEY, vendor_id UUID, name VARCHAR(200) NOT NULL)",
+                "CREATE TABLE IF NOT EXISTS products (id UUID PRIMARY KEY, vendor_contact_id UUID, vendor_id UUID, name VARCHAR(200) NOT NULL)",
+                """
+                CREATE TABLE IF NOT EXISTS vendor_contacts (
+                    id UUID PRIMARY KEY, vendor_id UUID NOT NULL, name VARCHAR(200) NOT NULL, phone VARCHAR(16),
+                    email VARCHAR(320), prefers_email BOOLEAN DEFAULT FALSE NOT NULL,
+                    prefers_telegram BOOLEAN DEFAULT FALSE NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL,
+                    personal_data_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, external_key VARCHAR(200) UNIQUE,
+                    version INTEGER DEFAULT 0 NOT NULL, created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """,
                 """
                 CREATE TABLE IF NOT EXISTS product_agreements (
-                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, product_id UUID NOT NULL, license_expiry_year INTEGER
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, product_id UUID NOT NULL, license_expiry_year INTEGER,
+                    contract_number VARCHAR(200)
                 )
                 """,
                 """
@@ -641,14 +675,14 @@ class WorkControlTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS source_records (
+                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), 
                     id UUID PRIMARY KEY, source VARCHAR(16) NOT NULL, external_id VARCHAR(200) NOT NULL
                 )
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS source_mappings (
                     id UUID PRIMARY KEY, source VARCHAR(16) NOT NULL, kind VARCHAR(16) NOT NULL,
-                    external_key VARCHAR(310) NOT NULL, run_starts_on DATE
+                    external_key VARCHAR(310) NOT NULL, run_starts_on DATE, run_kind VARCHAR(16) DEFAULT 'STUDENTS' NOT NULL
                 )
                 """,
                 """

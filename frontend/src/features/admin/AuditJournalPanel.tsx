@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
+  ApiError,
   apiClient,
   type AuditCategory,
   type AuditEventListParams,
@@ -8,6 +9,7 @@ import {
 import { Pagination } from '../../shared/ui/Pagination'
 import { formatDateTime, handledSessionError, requestIdOf, type SessionHandlers } from './adminShared'
 import { saveFile, today } from './saveFile'
+import { historyDetails } from '../enrolment/enrolmentShared'
 import './security.css'
 
 type JournalState =
@@ -26,7 +28,7 @@ type Filters = {
 type ExportState =
   | { kind: 'idle' }
   | { kind: 'exporting' }
-  | { kind: 'failed'; requestId?: string }
+  | { kind: 'failed'; requestId?: string; message?: string }
 
 const pageSize = 50
 
@@ -39,7 +41,8 @@ const categoryLabels: Record<AuditCategory, string> = {
   DOWNLOAD: 'Скачивания',
   PERSONAL_DATA: 'Действия с ПДн',
   RETENTION: 'Сроки хранения',
-  ACCOUNT: 'Учётные записи Keycloak'
+  ACCOUNT: 'Учётные записи Keycloak',
+  LEARNER: 'Слушатели'
 }
 
 const emptyFilters: Filters = { from: '', to: '', actor: '', object: '', category: '' }
@@ -108,7 +111,11 @@ export const AuditJournalPanel = ({ onSessionExpired, onProfileUnavailable }: Se
       void load(filters, pageIndex)
     } catch (error) {
       if (!handleError(error)) {
-        setExportState({ kind: 'failed', requestId: requestIdOf(error) })
+        setExportState({
+          kind: 'failed',
+          requestId: requestIdOf(error),
+          message: error instanceof ApiError && error.code === 'REPORT_ROW_LIMIT' ? error.message : undefined
+        })
       }
     }
   }
@@ -193,7 +200,7 @@ export const AuditJournalPanel = ({ onSessionExpired, onProfileUnavailable }: Se
       </div>
       {exportState.kind === 'failed' && (
         <div className="organizations-message organizations-message--error" role="alert">
-          <p>Не удалось выгрузить журнал. Повторите попытку.</p>
+          <p>{exportState.message ?? 'Не удалось выгрузить журнал. Повторите попытку.'}</p>
           {exportState.requestId && <p className="request-id">Request ID: {exportState.requestId}</p>}
         </div>
       )}
@@ -233,7 +240,7 @@ export const AuditJournalPanel = ({ onSessionExpired, onProfileUnavailable }: Se
                   {entry.details && (
                     <div>
                       <dt>Подробности</dt>
-                      <dd>{entry.details}</dd>
+                      <dd>{historyDetails(entry.details)}</dd>
                     </div>
                   )}
                 </dl>

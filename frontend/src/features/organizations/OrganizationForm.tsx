@@ -11,11 +11,16 @@ import {
 
 export type OrganizationType = Organization['type']
 
+type EditableOrganizationType = OrganizationDetails['type']
+
 export const organizationTypeLabels: Record<OrganizationType, string> = {
   UNIVERSITY: 'Университет',
   COLLEGE: 'Колледж (СПО)',
-  SCHOOL: 'Школа'
+  SCHOOL: 'Школа',
+  OPEN_ENROLLMENT: 'Открытый набор (физлица)'
 }
+
+const editableTypes: EditableOrganizationType[] = ['UNIVERSITY', 'COLLEGE', 'SCHOOL']
 
 export const organizationStatusLabels: Record<OrganizationStatus, string> = {
   ACTIVE: 'Действует',
@@ -25,7 +30,7 @@ export const organizationStatusLabels: Record<OrganizationStatus, string> = {
 
 export type OrganizationFormValues = {
   name: string
-  type: OrganizationType
+  type: EditableOrganizationType
   city: string
   website: string
   inn: string
@@ -183,7 +188,7 @@ export const OrganizationForm = ({
       <label>
         Тип организации *
         <select value={values.type} disabled={saving} onChange={(event) => change('type', event.target.value)}>
-          {(Object.keys(organizationTypeLabels) as OrganizationType[]).map((type) => (
+          {editableTypes.map((type) => (
             <option key={type} value={type}>{organizationTypeLabels[type]}</option>
           ))}
         </select>

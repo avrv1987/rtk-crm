@@ -45,7 +45,7 @@ final class ReportTestData {
 
     static void createSchema(JdbcTemplate jdbc) {
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -104,10 +104,20 @@ final class ReportTestData {
                 """);
         jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS products (
-                    id UUID PRIMARY KEY,
+                    id UUID PRIMARY KEY, vendor_contact_id UUID,
                     vendor_id UUID NOT NULL,
                     name VARCHAR(200) NOT NULL,
                     archived BOOLEAN NOT NULL DEFAULT FALSE
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS vendor_contacts (
+                    id UUID PRIMARY KEY, vendor_id UUID NOT NULL, name VARCHAR(200) NOT NULL, phone VARCHAR(16),
+                    email VARCHAR(320), prefers_email BOOLEAN DEFAULT FALSE NOT NULL,
+                    prefers_telegram BOOLEAN DEFAULT FALSE NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL,
+                    personal_data_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, external_key VARCHAR(200) UNIQUE,
+                    version INTEGER DEFAULT 0 NOT NULL, created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """);
         jdbc.execute("""
@@ -265,7 +275,7 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS source_records (
+                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), 
                     id UUID PRIMARY KEY,
                     source VARCHAR(16) NOT NULL,
                     record_type VARCHAR(64) NOT NULL,

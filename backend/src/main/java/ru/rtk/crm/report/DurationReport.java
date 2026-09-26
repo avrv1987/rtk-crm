@@ -127,6 +127,8 @@ final class DurationReport {
                 List.of(),
                 duration,
                 null,
+                null,
+                null,
                 null
         );
     }

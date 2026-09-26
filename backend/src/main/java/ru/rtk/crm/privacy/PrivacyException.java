@@ -45,6 +45,22 @@ public class PrivacyException extends RuntimeException {
         );
     }
 
+    static PrivacyException learnerNotFound() {
+        return new PrivacyException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Слушатель не найден", null);
+    }
+
+    static PrivacyException learnerVersion(int currentVersion) {
+        return new PrivacyException(
+                HttpStatus.CONFLICT, "VERSION_CONFLICT", "Анкету слушателя уже изменили; повторите поиск", currentVersion
+        );
+    }
+
+    static PrivacyException learnerAnonymized() {
+        return new PrivacyException(
+                HttpStatus.CONFLICT, "PERSONAL_DATA_ANONYMIZED", "Анкета слушателя обезличена; её данные больше не изменяются", null
+        );
+    }
+
     static PrivacyException retentionRunning() {
         return new PrivacyException(
                 HttpStatus.CONFLICT, "RETENTION_RUNNING", "Сроки хранения уже применяются; дождитесь завершения", null

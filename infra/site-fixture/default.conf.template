@@ -14,6 +14,13 @@ server {
         try_files /records-page-$arg_page.json =404;
     }
 
+    location = /orders/api/crm/records {
+        if ($http_authorization != "Bearer ${SITE_TOKEN}") {
+            return 401 '{"message":"unauthorized"}';
+        }
+        try_files /orders-v1.json =404;
+    }
+
     location / {
         return 404 '{"message":"not found"}';
     }

@@ -17,9 +17,9 @@ public enum ReportColumn {
     LICENSE_EXPIRY_YEAR("Срок лицензии", null, true, 14, ReportRow::licenseExpiryYears),
     TRANSFER_STATUS("Статус передачи", null, true, 22, ReportRow::transferStatuses),
     MATERIALS_TRANSFERRED_ON("Передача материалов", null, true, 18, ReportRow::materialsTransferredOn),
-    STAGE("Статус работы", "Этап", false, 22, ReportRow::stageName),
+    STAGE("Этап", null, false, 22, ReportRow::stageName),
     DAYS_ON_STAGE("Дней на этапе", null, false, 12, ReportRow::daysOnStage),
-    WORK_STATUS("Состояние работы", null, false, 18, ReportRow::workStatus),
+    WORK_STATUS("Статус работы", null, false, 18, ReportRow::workStatus),
     WAITING("Ожидание", null, false, 26, ReportRow::waiting),
     PROBLEM("Проблема", null, false, 30, ReportRow::problem),
     RISK("Риск", null, false, 30, ReportRow::risk),
@@ -34,6 +34,8 @@ public enum ReportColumn {
     COMMENT("Комментарий", null, false, 38, ReportRow::comment),
     AUTHOR("Автор", null, false, 22, ReportRow::authorName),
     APPLICATIONS("Заявки (сайт)", 14, ReportRow::applications),
+    PAID_ORDERS("Оплаченные заявки (сайт)", 14, ReportRow::paidOrders),
+    PAID_STREAMS("Потоки с оплатами (сайт)", 14, ReportRow::paidStreams),
     PARTICIPANTS("Обучающиеся (Moodle)", 14, ReportRow::participants),
     LEARNERS_COMPLETED("Завершили (Moodle)", 14, ReportRow::completed),
     PARALLEL_RUNS("Параллельные потоки (Moodle)", 14, ReportRow::parallelRuns),
@@ -93,8 +95,7 @@ public enum ReportColumn {
                 case LAST_EVENT_AT -> "Последнее событие до даты";
                 default -> title;
             };
-            case DURATION -> this == STAGE ? "Этап" : title;
-            case PORTFOLIO, DEMAND, AGREEMENTS -> title;
+            case PORTFOLIO, DURATION, DEMAND, AGREEMENTS -> title;
         };
     }
 

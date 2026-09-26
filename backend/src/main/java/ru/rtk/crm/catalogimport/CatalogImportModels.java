@@ -7,7 +7,8 @@ import java.util.UUID;
 
 enum CatalogImportProfile {
     AGREEMENT,
-    DIRECTION_PROGRAM
+    DIRECTION_PROGRAM,
+    VENDOR_CONTACTS
 }
 
 enum CatalogImportStatus {

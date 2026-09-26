@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -25,8 +26,14 @@ import ru.rtk.crm.access.ContactInteractionMutationAuthorization;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
+import ru.rtk.crm.enrolment.LearnerIntake;
+import ru.rtk.crm.enrolment.PaidOrder;
+import ru.rtk.crm.enrolment.PaidOrderBatch;
+import ru.rtk.crm.enrolment.PaidOrderEnrolment;
+import ru.rtk.crm.enrolment.PaidOrderUpload;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.source.SiteApiClient.SiteResponse;
 import ru.rtk.crm.source.SourceRepository.MappedTarget;
 import ru.rtk.crm.source.SourceRepository.RunDates;
 import ru.rtk.crm.source.SourceRepository.StoredRecord;
@@ -43,6 +50,7 @@ public class SourceSyncService {
 
     private final SourceRepository repository;
     private final SiteRecordApplier applier;
+    private final PaidOrderEnrolment paidOrderEnrolment;
     private final SiteApiClient siteApiClient;
     private final MoodleSnapshotApplier moodleApplier;
     private final MoodleClient moodleClient;
@@ -54,6 +62,7 @@ public class SourceSyncService {
     public SourceSyncService(
             SourceRepository repository,
             SiteRecordApplier applier,
+            PaidOrderEnrolment paidOrderEnrolment,
             SiteApiClient siteApiClient,
             MoodleSnapshotApplier moodleApplier,
             MoodleClient moodleClient,
@@ -63,6 +72,7 @@ public class SourceSyncService {
     ) {
         this.repository = repository;
         this.applier = applier;
+        this.paidOrderEnrolment = paidOrderEnrolment;
         this.siteApiClient = siteApiClient;
         this.moodleApplier = moodleApplier;
         this.moodleClient = moodleClient;
@@ -190,6 +200,26 @@ public class SourceSyncService {
         return runId;
     }
 
+    public PaidOrderUpload uploadPaidOrders(UUID actorProfileId, PaidOrderBatch batch) {
+        UUID runId = insertRun(SourceCode.WEBSITE, actorProfileId, SyncTrigger.UPLOAD, null);
+        if (!repository.claimRun(runId, null, OffsetDateTime.now())) {
+            throw new IllegalStateException("Paid order upload run was claimed by another worker");
+        }
+        PaidOrdersApplied applied;
+        try {
+            applied = applyPaidOrders(batch, runId, actorProfileId, actorProfileId);
+            repository.completeRun(runId, applied.totals(), paidOrdersMessage(batch), OffsetDateTime.now());
+        } catch (RuntimeException exception) {
+            log.error("Paid order upload run {} failed", runId, exception);
+            repository.failRun(runId, "SYNC_FAILED", "Загрузка оплат завершилась ошибкой; подробности в журнале сервера",
+                    OffsetDateTime.now());
+            throw exception;
+        }
+        SyncRunView run = repository.findRun(runId).map(StoredRun::run).orElseThrow(SourceException::recordNotFound);
+        return PaidOrderUpload.of(run.id(), run.createdCount(), run.updatedCount(), run.skippedCount(), run.needsMappingCount(),
+                run.failedCount(), run.errorMessage(), batch, applied.intake());
+    }
+
     public List<SourceRecordView> problemRecords(CrmProfile profile) {
         requireAdmin(profile);
         return repository.findProblemRecords(PROBLEM_RECORDS_LIMIT).stream().map(this::recordView).toList();
@@ -252,6 +282,10 @@ public class SourceSyncService {
     private void saveSiteMappings(CrmProfile profile, StoredRecord stored, SourceRecordApplyRequest request, OffsetDateTime now) {
         SiteRecord item = SiteRecord.parseStored(objectMapper, stored.payload());
         if (request != null && request.organizationId() != null) {
+            if (item.paidOrder()) {
+                throw new InteractionValidationException("organizationId",
+                        "Оплаты относятся к служебной организации «" + SiteRecord.OPEN_ENROLMENT_NAME + "»; выберите только программу");
+            }
             if (item.organizationKey() == null) {
                 throw new InteractionValidationException("organizationId", "В записи нет организации для сопоставления");
             }
@@ -361,7 +395,22 @@ public class SourceSyncService {
 
     private void runWebsite(UUID runId, SourceCode source, OffsetDateTime updatedSince, UUID actorProfileId,
                             UUID organizationId) {
-        List<SiteRecord> fetched = siteApiClient.fetch(updatedSince);
+        SiteResponse response = siteApiClient.fetch(updatedSince);
+        if (response.paidOrders() != null) {
+            PaidOrderBatch batch = response.paidOrders();
+            if (organizationId == null) {
+                PaidOrdersApplied applied = applyPaidOrders(batch, runId, actorProfileId, null);
+                repository.completeRun(runId, applied.totals(), paidOrdersMessage(batch), OffsetDateTime.now());
+                if (paidOrderEnrolment.enabled() && !batch.orders().isEmpty()) {
+                    paidOrderEnrolment.journalSync(runId, applied.intake());
+                }
+            } else {
+                repository.completeRun(runId, totals(0, new int[SyncOutcome.values().length]),
+                        "Сайт вернул оплаты физлиц; заявок этой организации в ответе нет", OffsetDateTime.now());
+            }
+            return;
+        }
+        List<SiteRecord> fetched = response.records();
         List<SiteRecord> items = organizationId == null
                 ? fetched
                 : fetched.stream()
@@ -413,6 +462,45 @@ public class SourceSyncService {
             counts[outcome.ordinal()]++;
         }
         return totals(items.size(), counts);
+    }
+
+    private PaidOrdersApplied applyPaidOrders(PaidOrderBatch batch, UUID runId, UUID actorProfileId, UUID learnerActorId) {
+        OffsetDateTime receivedAt = OffsetDateTime.now();
+        int[] counts = new int[SyncOutcome.values().length];
+        LearnerIntake intake = LearnerIntake.NONE;
+        for (PaidOrder order : batch.orders()) {
+            SiteRecord item = SiteRecord.paidOrder(order.orderNumber(), order.course(), order.streamNumber(), order.version(), receivedAt);
+            PaidOrderApplied applied = applyPaidOrder(item, order, runId, actorProfileId, learnerActorId);
+            counts[applied.outcome().ordinal()]++;
+            intake = intake.plus(applied.intake());
+        }
+        counts[SyncOutcome.SKIPPED.ordinal()] += batch.duplicates();
+        counts[SyncOutcome.FAILED.ordinal()] += batch.rejected();
+        return new PaidOrdersApplied(totals(batch.received(), counts), intake);
+    }
+
+    private PaidOrderApplied applyPaidOrder(SiteRecord item, PaidOrder order, UUID runId, UUID actorProfileId, UUID learnerActorId) {
+        try {
+            return applier.applyPaidOrder(item, order, runId, actorProfileId, learnerActorId);
+        } catch (RuntimeException exception) {
+            log.warn("Paid order record {} was not applied", item.externalId(), exception);
+            applier.recordFailure(item, runId, failureMessage(exception));
+            return new PaidOrderApplied(SyncOutcome.FAILED, LearnerIntake.NONE);
+        }
+    }
+
+    private static String paidOrdersMessage(PaidOrderBatch batch) {
+        List<String> parts = new ArrayList<>();
+        if (batch.emptyElements() > 0) {
+            parts.add("пустых элементов пропущено: " + batch.emptyElements());
+        }
+        if (batch.duplicates() > 0) {
+            parts.add("повторов заявки в файле пропущено: " + batch.duplicates());
+        }
+        if (batch.rejected() > 0) {
+            parts.add("записей не принято из-за ошибок в номере заявки, курсе или номере потока: " + batch.rejected());
+        }
+        return parts.isEmpty() ? null : "Оплаты в формате организатора: " + String.join("; ", parts);
     }
 
     private static SyncTotals totals(int fetched, int[] counts) {
@@ -485,6 +573,7 @@ public class SourceSyncService {
         String organizationExternalId = null;
         String organizationName;
         String programName = null;
+        Integer streamNo = null;
         if (stored.source() == SourceCode.MOODLE) {
             organizationName = LearningUnit.parseStored(objectMapper, stored.payload()).label();
         } else {
@@ -492,6 +581,7 @@ public class SourceSyncService {
             organizationExternalId = item.organizationExternalId();
             organizationName = item.organizationName();
             programName = item.programName();
+            streamNo = item.streamNo();
         }
         return new SourceRecordView(
                 stored.id(),
@@ -505,11 +595,15 @@ public class SourceSyncService {
                 organizationExternalId,
                 organizationName,
                 programName,
+                streamNo,
                 stored.organizationId(),
                 stored.programId(),
                 stored.interactionId(),
                 stored.updatedAt()
         );
+    }
+
+    private record PaidOrdersApplied(SyncTotals totals, LearnerIntake intake) {
     }
 
     private record LearningScope(UUID organizationId, UUID programId, List<Long> courseIds) {

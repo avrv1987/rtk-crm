@@ -143,7 +143,7 @@ public class AdminCatalogService {
                     if (!renamed && !archiveChanged) {
                         throw new InteractionValidationException("body", "Запись уже имеет указанные значения");
                     }
-                    if (renamed && !CatalogNames.normalized(name).equals(CatalogNames.normalized(current.name()))) {
+                    if (renamed && !CatalogNames.nameKey(kind, name).equals(CatalogNames.nameKey(kind, current.name()))) {
                         catalogChangeEventRepository.lockNames(kind.entityType());
                         requireNoDuplicate(kind, name, current.parentId(), id);
                     }
@@ -198,11 +198,11 @@ public class AdminCatalogService {
     }
 
     private void requireNoDuplicate(CatalogKind kind, String name, UUID parentId, UUID exceptId) {
-        String normalized = CatalogNames.normalized(name);
+        String normalized = CatalogNames.nameKey(kind, name);
         adminCatalogRepository.findAll(kind).stream()
                 .filter(entry -> !entry.id().equals(exceptId))
                 .filter(entry -> Objects.equals(entry.parentId(), parentId))
-                .filter(entry -> CatalogNames.normalized(entry.name()).equals(normalized))
+                .filter(entry -> CatalogNames.nameKey(kind, entry.name()).equals(normalized))
                 .findFirst()
                 .ifPresent(entry -> {
                     throw duplicate(entry.name(), entry.archived());

@@ -2,8 +2,11 @@ package ru.rtk.crm.enrolment;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -12,6 +15,30 @@ final class LearnerRules {
     static final int MAX_EMAIL_LENGTH = 254;
     static final LocalDate EARLIEST_BIRTH_DATE = LocalDate.of(1900, 1, 1);
     static final long LAST_UNCHECKED_SNILS = 1_001_998L;
+    static final int ADULT_AGE = 18;
+    static final int PASSPORT_AGE = 14;
+    static final List<LearnerField> REQUIRED =
+            List.of(LearnerField.LAST_NAME, LearnerField.FIRST_NAME, LearnerField.PHONE, LearnerField.EMAIL);
+    static final List<LearnerField> PASSPORT = List.of(
+            LearnerField.PASSPORT_SERIES, LearnerField.PASSPORT_NUMBER, LearnerField.PASSPORT_ISSUED_BY,
+            LearnerField.PASSPORT_ISSUE_DATE, LearnerField.PASSPORT_DIVISION_CODE
+    );
+    static final Set<LearnerField> OPTIONAL = EnumSet.of(LearnerField.MIDDLE_NAME, LearnerField.APARTMENT);
+    static final int MAX_NAME_LENGTH = 100;
+    static final int MAX_DIPLOMA_CODE_LENGTH = 50;
+    private static final Set<LearnerField> NAMES = EnumSet.of(
+            LearnerField.LAST_NAME, LearnerField.FIRST_NAME, LearnerField.MIDDLE_NAME, LearnerField.FIRST_NAME_DATIVE,
+            LearnerField.LAST_NAME_DATIVE, LearnerField.MIDDLE_NAME_DATIVE, LearnerField.DIPLOMA_LAST_NAME
+    );
+    private static final Map<LearnerField, Integer> ADDRESS_LENGTHS = Map.of(
+            LearnerField.REGION, 200, LearnerField.LOCALITY, 200, LearnerField.STREET, 200,
+            LearnerField.HOUSE, 20, LearnerField.APARTMENT, 20
+    );
+    private static final Set<LearnerField> DIPLOMA_CODES = EnumSet.of(
+            LearnerField.DIPLOMA_NUMBER, LearnerField.DIPLOMA_SERIES, LearnerField.DIPLOMA_REGISTRATION_NUMBER
+    );
+    private static final Pattern NAME = Pattern.compile("[\\p{L} .'’\\-]{1," + MAX_NAME_LENGTH + "}");
+    private static final Pattern DIPLOMA_CODE = Pattern.compile("[\\p{L}\\p{Nd} \\-]{1," + MAX_DIPLOMA_CODE_LENGTH + "}");
 
     private static final Pattern SPACES = Pattern.compile("(?U)\\s+");
     private static final Pattern PHONE_INPUT = Pattern.compile("(?U)\\+?[0-9()\\-\\s]+");
@@ -65,6 +92,10 @@ final class LearnerRules {
         return value.length() <= MAX_EMAIL_LENGTH && EMAIL.matcher(value).matches();
     }
 
+    static String nameKey(String value) {
+        return collapseSpaces(value).toLowerCase(Locale.ROOT).replace('ё', 'е');
+    }
+
     static String emailKey(String email) {
         return email.strip().toLowerCase(Locale.ROOT);
     }
@@ -84,13 +115,19 @@ final class LearnerRules {
     static List<LearnerFieldError> check(LearnerProfile profile, LocalDate today) {
         List<LearnerFieldError> errors = new ArrayList<>();
         for (LearnerField field : LearnerField.values()) {
-            if (profile.value(field) instanceof String text && text.length() > MAX_TEXT_LENGTH) {
-                errors.add(new LearnerFieldError(field, "Значение длиннее " + MAX_TEXT_LENGTH + " символов"));
-            }
-        }
-        for (LearnerField field : List.of(LearnerField.LAST_NAME, LearnerField.FIRST_NAME, LearnerField.PHONE, LearnerField.EMAIL)) {
-            if (profile.value(field) == null) {
-                errors.add(new LearnerFieldError(field, "Не заполнено обязательное поле «" + field.label() + "»"));
+            if (profile.value(field) instanceof String text) {
+                if (text.length() > MAX_TEXT_LENGTH) {
+                    errors.add(new LearnerFieldError(field, "Значение длиннее " + MAX_TEXT_LENGTH + " символов"));
+                } else if (NAMES.contains(field) && !NAME.matcher(text).matches()) {
+                    errors.add(new LearnerFieldError(field, "«" + field.label() + "»: до " + MAX_NAME_LENGTH
+                            + " символов — буквы, пробел, дефис, апостроф, точка"));
+                } else if (ADDRESS_LENGTHS.containsKey(field) && text.length() > ADDRESS_LENGTHS.get(field)) {
+                    errors.add(new LearnerFieldError(field, "«" + field.label() + "»: не длиннее " + ADDRESS_LENGTHS.get(field)
+                            + " символов"));
+                } else if (DIPLOMA_CODES.contains(field) && !DIPLOMA_CODE.matcher(text).matches()) {
+                    errors.add(new LearnerFieldError(field, "«" + field.label() + "»: до " + MAX_DIPLOMA_CODE_LENGTH
+                            + " символов — буквы, цифры, пробел, дефис"));
+                }
             }
         }
         matches(errors, LearnerField.PHONE, profile.phone(), PHONE,
@@ -117,11 +154,48 @@ final class LearnerRules {
                 errors.add(new LearnerFieldError(LearnerField.BIRTH_DATE, "Дата рождения не может быть в будущем"));
             } else if (profile.birthDate().isBefore(EARLIEST_BIRTH_DATE)) {
                 errors.add(new LearnerFieldError(LearnerField.BIRTH_DATE, "Дата рождения не может быть раньше 01.01.1900"));
+            } else if (profile.birthDate().plusYears(ADULT_AGE).isAfter(today)) {
+                errors.add(new LearnerFieldError(LearnerField.BIRTH_DATE,
+                        "Слушатель младше 18 лет: обработка данных несовершеннолетних не предусмотрена"));
             }
         }
-        issueDate(errors, LearnerField.PASSPORT_ISSUE_DATE, profile.passportIssueDate(), profile.birthDate(), today);
+        passportIssueDate(errors, profile.passportIssueDate(), profile.birthDate(), today);
         issueDate(errors, LearnerField.DIPLOMA_ISSUE_DATE, profile.diplomaIssueDate(), profile.birthDate(), today);
+        if (PASSPORT.stream().anyMatch(field -> profile.value(field) != null)) {
+            PASSPORT.stream().filter(field -> profile.value(field) == null).forEach(field -> errors.add(new LearnerFieldError(
+                    field, "Паспорт заполняется целиком: заполните поле «" + field.label() + "»"
+            )));
+        }
         return List.copyOf(errors);
+    }
+
+    static List<LearnerFieldError> clearedRequired(LearnerProfile profile, Set<LearnerField> changed) {
+        return REQUIRED.stream()
+                .filter(field -> changed.contains(field) && profile.value(field) == null)
+                .map(field -> new LearnerFieldError(field, "Не заполнено обязательное поле «" + field.label() + "»"))
+                .toList();
+    }
+
+    static boolean samePerson(LearnerProfile profile, String lastName, String firstName, String middleName) {
+        return profile != null && profile.lastName() != null && profile.firstName() != null && lastName != null && firstName != null
+                && nameKey(profile.lastName()).equals(nameKey(lastName))
+                && nameKey(profile.firstName()).equals(nameKey(firstName))
+                && (middleName == null || profile.middleName() == null || nameKey(profile.middleName()).equals(nameKey(middleName)));
+    }
+
+    static LearnerCompleteness completeness(Set<LearnerField> missing) {
+        Set<LearnerField> counted = EnumSet.complementOf(EnumSet.copyOf(OPTIONAL));
+        if (missing.contains(LearnerField.MIDDLE_NAME)) {
+            counted.remove(LearnerField.MIDDLE_NAME_DATIVE);
+        }
+        int filled = (int) counted.stream().filter(field -> !missing.contains(field)).count();
+        return new LearnerCompleteness(filled, counted.size());
+    }
+
+    static Set<LearnerField> missingForLms(Set<LearnerField> missing) {
+        Set<LearnerField> fields = EnumSet.noneOf(LearnerField.class);
+        REQUIRED.stream().filter(missing::contains).forEach(fields::add);
+        return fields;
     }
 
     private static void matches(
@@ -129,6 +203,17 @@ final class LearnerRules {
     ) {
         if (value != null && !pattern.matcher(value).matches()) {
             errors.add(new LearnerFieldError(field, message));
+        }
+    }
+
+    private static void passportIssueDate(List<LearnerFieldError> errors, LocalDate date, LocalDate birthDate, LocalDate today) {
+        if (date == null) {
+            return;
+        }
+        if (date.isAfter(today)) {
+            errors.add(new LearnerFieldError(LearnerField.PASSPORT_ISSUE_DATE, "Дата выдачи паспорта не может быть в будущем"));
+        } else if (birthDate != null && date.isBefore(birthDate.plusYears(PASSPORT_AGE))) {
+            errors.add(new LearnerFieldError(LearnerField.PASSPORT_ISSUE_DATE, "Дата выдачи паспорта раньше 14-летия"));
         }
     }
 

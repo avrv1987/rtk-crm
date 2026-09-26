@@ -76,10 +76,13 @@ public class AdminCrmProfileService {
                 request.role(),
                 request.teamIdPresent(),
                 request.teamId(),
-                request.active()
+                request.active(),
+                request.enrolmentOperator()
         );
         if (!command.changesAnything()) {
-            throw new InteractionValidationException("body", "Укажите хотя бы одно изменение: имя, роль, команду или активность");
+            throw new InteractionValidationException(
+                    "body", "Укажите хотя бы одно изменение: имя, роль, команду, активность или флаг «Оператор зачисления»"
+            );
         }
         if (actor.id().equals(profileId) && command.changesAccess()) {
             throw new InteractionValidationException(
@@ -113,6 +116,11 @@ public class AdminCrmProfileService {
         }
         ProfileState previous = ProfileState.of(target);
         ProfileState next = command.applyTo(previous);
+        if (Boolean.TRUE.equals(command.enrolmentOperator()) && !next.enrolmentOperator()) {
+            throw new InteractionValidationException(
+                    "enrolmentOperator", "Флаг «Оператор зачисления» доступен только КАМ и руководителю"
+            );
+        }
         if (next.equals(previous)) {
             throw new InteractionValidationException("body", "Профиль уже имеет указанные значения");
         }
@@ -130,7 +138,8 @@ public class AdminCrmProfileService {
         }
         boolean accessChanged = previous.role() != next.role()
                 || !Objects.equals(previous.teamId(), next.teamId())
-                || previous.active() != next.active();
+                || previous.active() != next.active()
+                || previous.enrolmentOperator() != next.enrolmentOperator();
         if (!adminCrmProfileRepository.update(profileId, expectedVersion, next, accessChanged, now)) {
             int currentVersion = adminCrmProfileRepository.findById(profileId)
                     .map(AdminCrmProfile::version)
@@ -274,22 +283,26 @@ public class AdminCrmProfileService {
             UserRole role,
             boolean teamIdPresent,
             UUID teamId,
-            Boolean active
+            Boolean active,
+            Boolean enrolmentOperator
     ) {
         boolean changesAccess() {
             return role != null || teamIdPresent || active != null;
         }
 
         boolean changesAnything() {
-            return displayName != null || changesAccess();
+            return displayName != null || changesAccess() || enrolmentOperator != null;
         }
 
         ProfileState applyTo(ProfileState current) {
+            UserRole nextRole = role == null ? current.role() : role;
+            boolean operatorAllowed = nextRole == UserRole.USER || nextRole == UserRole.LEADER;
             return new ProfileState(
                     displayName == null ? current.displayName() : displayName,
-                    role == null ? current.role() : role,
+                    nextRole,
                     teamIdPresent ? teamId : current.teamId(),
-                    active == null ? current.active() : active
+                    active == null ? current.active() : active,
+                    operatorAllowed && (enrolmentOperator == null ? current.enrolmentOperator() : enrolmentOperator)
             );
         }
     }

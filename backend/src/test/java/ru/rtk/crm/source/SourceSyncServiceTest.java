@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -18,6 +19,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -47,16 +49,33 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.unit.DataSize;
 import ru.rtk.crm.access.CrmProfile;
+import ru.rtk.crm.access.UserProfileRepository;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.attachment.AttachmentRepository;
+import ru.rtk.crm.audit.AuditJournalRepository;
+import ru.rtk.crm.catalog.CatalogChangeEventRepository;
 import ru.rtk.crm.catalog.CatalogRepository;
 import ru.rtk.crm.catalog.ContactRepository;
 import ru.rtk.crm.catalog.OrganizationNotFoundException;
 import ru.rtk.crm.catalog.OrganizationRepository;
+import ru.rtk.crm.enrolment.EnrolmentAccess;
+import ru.rtk.crm.enrolment.EnrolmentAccessDeniedException;
+import ru.rtk.crm.enrolment.EnrolmentDisabledException;
+import ru.rtk.crm.enrolment.EnrolmentProperties;
+import ru.rtk.crm.enrolment.EnrolmentRepository;
+import ru.rtk.crm.enrolment.LearnerDataCipher;
+import ru.rtk.crm.enrolment.LearnerIntake;
+import ru.rtk.crm.enrolment.LearnerRepository;
+import ru.rtk.crm.enrolment.LearnerService;
+import ru.rtk.crm.enrolment.PaidOrderEnrolment;
+import ru.rtk.crm.enrolment.PaidOrderParser;
+import ru.rtk.crm.enrolment.PaidOrderUpload;
+import ru.rtk.crm.enrolment.PaidOrderUploadService;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
 import ru.rtk.crm.interaction.Interaction;
 import ru.rtk.crm.interaction.InteractionConflictException;
@@ -66,6 +85,9 @@ import ru.rtk.crm.interaction.InteractionRepository;
 import ru.rtk.crm.interaction.InteractionService;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.interaction.WorkflowTemplateRepository;
+import ru.rtk.crm.report.ReportAgreementFilters;
+import ru.rtk.crm.report.ReportColumn;
+import ru.rtk.crm.report.ReportColumnView;
 import ru.rtk.crm.report.ReportFilters;
 import ru.rtk.crm.report.ReportKind;
 import ru.rtk.crm.report.ReportProperties;
@@ -98,12 +120,23 @@ import ru.rtk.crm.training.TrainingService;
         SourceRepository.class,
         SiteRecordApplier.class,
         SiteApiClient.class,
+        PaidOrderParser.class,
+        EnrolmentAccess.class,
+        PaidOrderUploadService.class,
+        PaidOrderEnrolment.class,
+        LearnerService.class,
+        LearnerRepository.class,
+        EnrolmentRepository.class,
+        LearnerDataCipher.class,
+        AuditJournalRepository.class,
+        UserProfileRepository.class,
         MoodleSnapshotApplier.class,
         MoodleClient.class,
         SourceSyncService.class,
         CardSourcesService.class,
         SourceMappingService.class,
         SourceReviewService.class,
+        CatalogChangeEventRepository.class,
         TrainingService.class,
         TrainingRepository.class,
         ReportRepository.class,
@@ -112,6 +145,8 @@ import ru.rtk.crm.training.TrainingService;
 })
 class SourceSyncServiceTest {
     private static final String TOKEN = "test-token";
+    private static final String ENROLMENT_KEY = Base64.getEncoder().encodeToString(new byte[32]);
+    private static final String ENROLMENT_FINGERPRINT_KEY = Base64.getEncoder().encodeToString("f".repeat(32).getBytes(StandardCharsets.UTF_8));
     private static final Map<Integer, String> PAGES = new ConcurrentHashMap<>();
     private static final Map<Integer, Integer> FAILING_PAGES = new ConcurrentHashMap<>();
     private static final List<String> QUERIES = new CopyOnWriteArrayList<>();
@@ -171,6 +206,25 @@ class SourceSyncServiceTest {
             {"externalId":"la-3","type":"learning_application","updatedAt":"2026-09-23T10:00:00+03:00","status":"withdrawn",
              "organization":{"name":"Университет Б"},"program":{"name":"Java-разработчик"}}
             """;
+    private static final String PAID_ORDERS = """
+            [null,
+             {"Номер заявки": "ORD-20260901000001-DEMO01", "Курс": "Промпт-инжиниринг", "Фамилия": "Первова", "Имя": "Анна",
+              "Отчество": "Демовна", "Телефон": "7 (900) 000-00-01", "Email": "anna.pervova@example.test", "Номер потока": 3},
+             {"Номер заявки": "ORD-20260901000002-DEMO02", "Курс": "Промпт-инжиниринг", "Фамилия": "Второв", "Имя": "Борис",
+              "Телефон": "7 (900) 000-00-02", "Email": "BORIS.VTOROV@EXAMPLE.TEST", "Номер потока": 3},
+             {"Номер заявки": "ORD-202609010000003-DEMO03", "Курс": "Инженер-тестировщик", "Фамилия": "Третьякова",
+              "Имя": "Вера", "Отчество": "Тестовна", "Телефон": "7 (900) 000-00-03", "Email": "vera.t@example.test",
+              "Номер потока": 1},
+             {"Номер заявки": "ORD-20261701000004-DEMO04", "Курс": "Инженер-тестировщик", "Фамилия": "Первова", "Имя": "Анна",
+              "Отчество": "Демовна", "Телефон": "7 (900) 000-00-01", "Email": "anna.pervova@example.test", "Номер потока": 1},
+             {"Номер заявки": "ORD-20260901000005-DEMO05",
+              "Курс": "Управление ИТ-проектами на базе программного продукта ПАО «Ростелеком»", "Фамилия": "Четвертов",
+              "Имя": "Глеб", "Отчество": "Демович", "Телефон": "7 (900) 000-00-05", "Email": "gleb.ch@example.test",
+              "Номер потока": 2},
+             {"Номер заявки": "ORD-20260901000006-DEMO06", "Курс": "Промпт-инжиниринг", "Фамилия": "Пятакова", "Имя": "Дарья",
+              "Отчество": "Демовна", "Телефон": "7 (900) 000-00-06", "Email": "daria.p@example.test", "Номер потока": 3}]
+            """;
+    private static final String LONG_COURSE = "Управление ИТ-проектами на базе программного продукта ПАО «Ростелеком»";
     private static final String WITHOUT_EXTERNAL_ID = """
             {"type":"learning_application","updatedAt":"2026-09-23T10:00:00+03:00"}
             """;
@@ -224,6 +278,24 @@ class SourceSyncServiceTest {
     @Autowired
     private TrainingService trainingService;
 
+    @Autowired
+    private PaidOrderUploadService paidOrderUploadService;
+
+    @Autowired
+    private PaidOrderParser paidOrderParser;
+
+    @Autowired
+    private EnrolmentAccess enrolmentAccess;
+
+    @Autowired
+    private UserProfileRepository userProfileRepository;
+
+    @Autowired
+    private CommandIdempotencyRepository commandIdempotencyRepository;
+
+    @Autowired
+    private PaidOrderEnrolment paidOrderEnrolment;
+
     private UUID existingInteractionA;
 
     @AfterAll
@@ -235,6 +307,7 @@ class SourceSyncServiceTest {
     void setUp() {
         createSchema();
         for (String table : List.of(
+                "catalog_change_events", "learner_enrolments", "learners", "enrolment_streams", "audit_events",
                 "teacher_trainings", "attachments", "interaction_cycles", "learning_snapshots", "source_mappings", "source_records", "sync_runs", "sources",
                 "interaction_events",
                 "command_idempotency_records", "interaction_contacts", "product_agreements", "interaction_stage_transitions",
@@ -1083,6 +1156,199 @@ class SourceSyncServiceTest {
     }
 
     @Test
+    void operatorUploadsPaidOrdersIntoOpenEnrolmentWithoutPersonalDataAndRepeatsWithoutDuplicates() {
+        UUID openEnrolment = insertOpenEnrolment();
+        UUID prompt = insertProgram("Промпт-инжиниринг");
+        UUID tester = insertProgram("Инженер-тестировщик");
+        UUID operator = UUID.fromString("00000000-0000-0000-0000-000000000031");
+        insertProfile(operator, "Оператор зачисления Демо", "USER", TEAM_A);
+        CrmProfile operatorProfile = new CrmProfile(operator, UserRole.USER, TEAM_A, 0);
+        assertThatThrownBy(() -> paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-1", "rq"))
+                .isInstanceOf(EnrolmentAccessDeniedException.class);
+        assertThatThrownBy(() -> paidOrderUploadService.upload(admin, paidOrdersFile(PAID_ORDERS), "upload-1", "rq"))
+                .isInstanceOf(EnrolmentAccessDeniedException.class);
+        jdbcTemplate.update("UPDATE crm_user_profiles SET enrolment_operator = TRUE WHERE id = ?", operator);
+        EnrolmentAccess moduleOff = new EnrolmentAccess(new EnrolmentProperties(false, null, null, null), userProfileRepository);
+        assertThat(moduleOff.isOperator(operator)).isFalse();
+        assertThat(enrolmentAccess.isOperator(operator)).isTrue();
+        assertThatThrownBy(() -> new PaidOrderUploadService(moduleOff, paidOrderParser, service, commandIdempotencyRepository,
+                paidOrderEnrolment, objectMapper).upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-off", "rq"))
+                .isInstanceOf(EnrolmentDisabledException.class);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_records WHERE record_type = 'paid_order'", Integer.class))
+                .isZero();
+
+        PaidOrderUpload first = paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-1", "rq-upload-1");
+
+        assertThat(paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-1", "rq-upload-1")).isEqualTo(first);
+        assertThat(List.of(first.received(), first.emptyElements(), first.created(), first.updated(), first.skipped(),
+                first.needsMapping(), first.failed())).containsExactly(6, 1, 5, 0, 0, 1, 0);
+        assertThat(first.streams())
+                .extracting(PaidOrderUpload.Stream::course, PaidOrderUpload.Stream::streamNo, PaidOrderUpload.Stream::orders)
+                .containsExactly(tuple("Инженер-тестировщик", 1, 2), tuple("Промпт-инжиниринг", 3, 3), tuple(LONG_COURSE, 2, 1));
+        assertThat(first.issues()).extracting(issue -> issue.position()).containsExactly(1);
+        assertThat(jdbcTemplate.queryForList("SELECT payload FROM source_records WHERE record_type = 'paid_order'", String.class))
+                .hasSize(6)
+                .noneMatch(payload -> payload.contains("Первова") || payload.contains("Анна") || payload.contains("example.test")
+                        || payload.contains("EXAMPLE.TEST") || payload.contains("+7900") || payload.contains("(900)"));
+        assertThat(jdbcTemplate.queryForMap("""
+                SELECT organization_id, program_id, stream_no, status FROM source_records
+                WHERE external_id = 'ORD-20261701000004-DEMO04'
+                """))
+                .containsEntry("ORGANIZATION_ID", openEnrolment)
+                .containsEntry("PROGRAM_ID", tester)
+                .containsEntry("STREAM_NO", 1)
+                .containsEntry("STATUS", "APPLIED");
+        assertThat(jdbcTemplate.queryForObject("SELECT program_id FROM source_records WHERE external_id = 'ORD-20260901000002-DEMO02'",
+                UUID.class)).isEqualTo(prompt);
+        SyncRunView run = service.runs(admin, SourceCode.WEBSITE).getFirst();
+        assertThat(run.trigger()).isEqualTo(SyncTrigger.UPLOAD);
+        assertThat(run.startedByName()).isEqualTo("Оператор зачисления Демо");
+        assertThat(run.errorMessage()).contains("пустых элементов пропущено: 1");
+        assertThat(service.sources(admin)).filteredOn(source -> source.source() == SourceCode.WEBSITE).singleElement()
+                .satisfies(source -> {
+                    assertThat(source.lastSuccessAt()).isNull();
+                    assertThat(source.lastRun()).isNull();
+                });
+        assertThat(watermark()).isNull();
+
+        UUID course = problemId("ORD-20260901000005-DEMO05");
+        assertThat(service.problemRecords(admin)).filteredOn(record -> record.id().equals(course)).singleElement()
+                .satisfies(record -> {
+                    assertThat(record.recordType()).isEqualTo("paid_order");
+                    assertThat(record.organizationName()).isEqualTo("Открытый набор (физлица)");
+                    assertThat(record.programName()).isEqualTo(LONG_COURSE);
+                    assertThat(record.streamNo()).isEqualTo(2);
+                    assertThat(record.error()).contains("не сопоставлен с программой");
+                });
+        assertThat(reviewService.pending(leader())).extracting(PendingSourceRecordView::recordType).doesNotContain("paid_order");
+        assertThatThrownBy(() -> service.apply(admin, course, new SourceRecordApplyRequest(ORGANIZATION_A, null, null, null)))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                        assertThat(exception.field()).isEqualTo("organizationId"));
+        service.apply(admin, course, new SourceRecordApplyRequest(null, PROGRAM_DATA, null, null));
+        assertThat(recordStatus("ORD-20260901000005-DEMO05")).isEqualTo("APPLIED");
+        assertThat(demandApplications(kamA)).isZero();
+
+        PaidOrderUpload repeat = paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-2", "rq-upload-2");
+
+        assertThat(List.of(repeat.created(), repeat.updated(), repeat.skipped(), repeat.needsMapping(), repeat.failed()))
+                .containsExactly(0, 0, 6, 0, 0);
+        OffsetDateTime received = jdbcTemplate.queryForObject(
+                "SELECT submitted_at FROM source_records WHERE external_id = 'ORD-20260901000002-DEMO02'", OffsetDateTime.class);
+        PaidOrderUpload moved = paidOrderUploadService.upload(operatorProfile, paidOrdersFile("""
+                [{"Номер заявки": "ORD-20260901000002-DEMO02", "Курс": "Промпт-инжиниринг", "Фамилия": "Второв", "Имя": "Борис",
+                  "Телефон": "7 (900) 000-00-02", "Email": "boris@example.test", "Номер потока": 4}]
+                """), "upload-3", "rq-upload-3");
+        assertThat(moved.updated()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForMap("""
+                SELECT stream_no, submitted_at FROM source_records WHERE external_id = 'ORD-20260901000002-DEMO02'
+                """)).containsEntry("STREAM_NO", 4);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT submitted_at FROM source_records WHERE external_id = 'ORD-20260901000002-DEMO02'", OffsetDateTime.class))
+                .isEqualTo(received);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_records WHERE record_type = 'paid_order'", Integer.class))
+                .isEqualTo(6);
+    }
+
+    @Test
+    void paidOrdersFormSeparateDemandColumnsForEveryKamWithoutPeriod() {
+        insertOpenEnrolment();
+        insertProgram("Промпт-инжиниринг");
+        insertProgram("Инженер-тестировщик");
+        service.uploadPaidOrders(KAM_A, paidOrderParser.parse(new ByteArrayInputStream(PAID_ORDERS.getBytes(StandardCharsets.UTF_8))));
+        ReportRequest all = new ReportRequest(ReportKind.DEMAND, null, null, null, ReportFilters.none(), null, null, null, null);
+        ReportRequest oldPeriod = new ReportRequest(ReportKind.DEMAND, TODAY.minusYears(2), TODAY.minusYears(1), null,
+                ReportFilters.none(), null, null, null, ReportColumn.PAID_ORDERS);
+        ReportFilters universityOnly = new ReportFilters(List.of(ORGANIZATION_A), List.of(), false, List.of(), false, List.of(),
+                false, List.of(), false, List.of(), null, List.of(), List.of(), ReportAgreementFilters.none(), List.of(), null);
+
+        assertThat(reportService.document(kamB, all).rows())
+                .extracting(ReportRow::programName, ReportRow::applications, ReportRow::paidOrders, ReportRow::paidStreams)
+                .containsExactlyInAnyOrder(tuple("Промпт-инжиниринг", null, 3L, 1L), tuple("Инженер-тестировщик", null, 2L, 1L));
+        assertThat(reportService.document(kamA, oldPeriod).rows())
+                .extracting(ReportRow::programName, ReportRow::paidOrders)
+                .containsExactly(tuple("Промпт-инжиниринг", 3L), tuple("Инженер-тестировщик", 2L));
+        assertThat(reportService.document(kamA, new ReportRequest(ReportKind.DEMAND, null, null, null, universityOnly, null, null,
+                null, null)).rows()).isEmpty();
+        assertThat(reportService.preview(kamA, all, 0, 50).columns()).extracting(ReportColumnView::title)
+                .contains("Оплаченные заявки (сайт, за всё время: период не применяется)",
+                        "Потоки с оплатами (сайт, за всё время: период не применяется)");
+        assertThat(demandApplications(kamA)).isZero();
+    }
+
+    @Test
+    void uploadedOrdersEnterLearnersInTheRecordTransactionEvenBeforeTheCourseIsMappedAndRepeatOnlyCompletes() {
+        insertOpenEnrolment();
+        insertProgram("Промпт-инжиниринг");
+        insertProgram("Инженер-тестировщик");
+        UUID operator = UUID.fromString("00000000-0000-0000-0000-000000000031");
+        insertProfile(operator, "Оператор зачисления Демо", "USER", TEAM_A);
+        jdbcTemplate.update("UPDATE crm_user_profiles SET enrolment_operator = TRUE WHERE id = ?", operator);
+        CrmProfile operatorProfile = new CrmProfile(operator, UserRole.USER, TEAM_A, 0);
+
+        PaidOrderUpload first = paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "learners-1", "rq-learners-1");
+
+        assertThat(first.learners()).isEqualTo(new LearnerIntake(5, 1, 6, 0, 0, 0, 0));
+        assertThat(first.needsMapping()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM learner_enrolments e JOIN source_records r ON r.id = e.source_record_id
+                WHERE r.status = 'NEEDS_MAPPING'
+                """, Integer.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForList("SELECT course_name || ' / ' || stream_no FROM enrolment_streams ORDER BY course_name",
+                String.class)).containsExactly("Инженер-тестировщик / 1", "Промпт-инжиниринг / 3", LONG_COURSE + " / 2");
+        assertThat(jdbcTemplate.queryForList("SELECT DISTINCT created_by FROM learners", UUID.class)).containsExactly(operator);
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT CAST(actor_profile_id AS VARCHAR(36)) || '|' || object_type || '|' || request_id || '|' || details
+                FROM audit_events WHERE action = 'PAID_ORDERS_UPLOADED'
+                """, String.class)).containsExactly(operator + "|SYNC_RUN|rq-learners-1|получено: 6, пустых элементов: 1; "
+                + "новых слушателей: 5, найдено: 1, зачислений: 6, повторных заявок в потоке: 0, перенесено в другой поток: 0 "
+                + "(после выгрузки в LMS: 0), контакты отличаются от анкеты: 0");
+        StringBuilder dump = new StringBuilder();
+        for (String table : List.of("learners", "learner_enrolments", "source_records", "audit_events", "sync_runs",
+                "command_idempotency_records")) {
+            jdbcTemplate.queryForList("SELECT * FROM " + table).forEach(row -> dump.append(row.values()));
+        }
+        assertThat(dump.toString()).doesNotContain("Первова", "Анна", "anna.pervova", "BORIS", "(900)", "9000000001");
+
+        service.apply(admin, problemId("ORD-20260901000005-DEMO05"), new SourceRecordApplyRequest(null, PROGRAM_DATA, null, null));
+        PaidOrderUpload repeat = paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "learners-2", "rq-learners-2");
+
+        assertThat(repeat.skipped()).isEqualTo(6);
+        assertThat(repeat.learners()).isEqualTo(new LearnerIntake(0, 6, 0, 0, 0, 0, 0));
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learners", Integer.class)).isEqualTo(5);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learner_enrolments", Integer.class)).isEqualTo(6);
+    }
+
+    @Test
+    void siteArrayResponseIsParsedAsPaidOrdersWithoutMovingTheWatermark() {
+        insertOpenEnrolment();
+        PAGES.put(1, PAID_ORDERS);
+        PAGES.remove(2);
+
+        SyncRunView run = sync();
+
+        assertThat(run.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(counters(run)).containsExactly(6, 0, 0, 0, 6, 0);
+        assertThat(run.errorMessage()).contains("пустых элементов пропущено: 1");
+        assertThat(watermark()).isNull();
+        assertThat(jdbcTemplate.queryForList("SELECT DISTINCT record_type FROM source_records", String.class))
+                .containsExactly("paid_order");
+        assertThat(jdbcTemplate.queryForList("SELECT payload FROM source_records", String.class))
+                .noneMatch(payload -> payload.contains("Четвертов") || payload.contains("example.test"));
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learner_enrolments", Integer.class)).isEqualTo(6);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learners WHERE created_by IS NULL", Integer.class)).isEqualTo(5);
+        assertThat(jdbcTemplate.queryForMap("""
+                SELECT actor_profile_id, actor_display_name, object_id, details FROM audit_events WHERE action = 'LEARNERS_SYNCED'
+                """))
+                .containsEntry("ACTOR_PROFILE_ID", null)
+                .containsEntry("ACTOR_DISPLAY_NAME", "Система")
+                .containsEntry("OBJECT_ID", run.id())
+                .hasEntrySatisfying("DETAILS", details -> assertThat((String) details)
+                        .startsWith("запуск: " + run.id() + "; новых слушателей: 5, найдено: 1, зачислений: 6"));
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM audit_events WHERE action = 'PAID_ORDERS_UPLOADED'", Integer.class))
+                .isZero();
+    }
+
+    @Test
     void leaderMapsUnknownUniversityOfPendingApplicationToOwnTeamOnly() {
         CrmProfile leaderA = leader();
         UUID organizationC = UUID.randomUUID();
@@ -1133,20 +1399,20 @@ class SourceSyncServiceTest {
         sync();
         UUID application = problemId("la-2");
         assertThatThrownBy(() -> reviewService.createOrganization(kamA, application,
-                new SourceOrganizationCreateRequest(null, "UNIVERSITY", null)))
+                new SourceOrganizationCreateRequest(null, "UNIVERSITY", null), "source-request"))
                 .isInstanceOfSatisfying(SourceException.class, exception -> assertThat(exception.code()).isEqualTo("NOT_FOUND"));
         assertThatThrownBy(() -> reviewService.createOrganization(leaderA, application,
-                new SourceOrganizationCreateRequest("Университет А", "UNIVERSITY", null)))
+                new SourceOrganizationCreateRequest("Университет А", "UNIVERSITY", null), "source-request"))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("name"));
         assertThatThrownBy(() -> reviewService.createOrganization(admin, application,
-                new SourceOrganizationCreateRequest(null, "UNIVERSITY", null)))
+                new SourceOrganizationCreateRequest(null, "UNIVERSITY", null), "source-request"))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("teamId"));
         assertThatThrownBy(() -> reviewService.createOrganization(leaderA, application,
-                new SourceOrganizationCreateRequest(null, "FACTORY", null)))
+                new SourceOrganizationCreateRequest(null, "FACTORY", null), "source-request"))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("type"));
 
         SourceOrganizationCreated created = reviewService.createOrganization(leaderA, application,
-                new SourceOrganizationCreateRequest(null, "SCHOOL", null));
+                new SourceOrganizationCreateRequest(null, "SCHOOL", null), "source-request");
 
         assertThat(created.organizationName()).isEqualTo("Университет Икс");
         assertThat(created.result().record().status()).isEqualTo(SourceRecordStatus.APPLIED);
@@ -1155,9 +1421,15 @@ class SourceSyncServiceTest {
                 created.organizationId()))
                 .containsEntry("type", "SCHOOL").containsEntry("team_id", TEAM_A).containsEntry("owner_manager_id", null);
         assertThat(interactionIds(created.organizationId())).hasSize(1);
+        assertThat(jdbcTemplate.queryForMap(
+                "SELECT entity_type, action, entity_name, changes, request_id FROM catalog_change_events WHERE entity_id = ?",
+                created.organizationId()))
+                .containsEntry("entity_type", "ORGANIZATION").containsEntry("action", "CREATE")
+                .containsEntry("entity_name", "Университет Икс").containsEntry("changes", "Тип: Школа; из заявки сайта")
+                .containsEntry("request_id", "source-request");
         assertThat(reviewService.pending(leaderA)).isEmpty();
         assertThatThrownBy(() -> reviewService.createOrganization(leaderA, application,
-                new SourceOrganizationCreateRequest("Другое название", "UNIVERSITY", null)))
+                new SourceOrganizationCreateRequest("Другое название", "UNIVERSITY", null), "source-request"))
                 .isInstanceOfSatisfying(SourceException.class, exception -> assertThat(exception.code()).isEqualTo("CONFLICT"));
     }
 
@@ -1192,12 +1464,12 @@ class SourceSyncServiceTest {
         assertThatThrownBy(() -> reviewService.resolve(leaderB, application, new SourceRecordResolveRequest(ORGANIZATION_B)))
                 .isInstanceOfSatisfying(SourceException.class, exception -> assertThat(exception.code()).isEqualTo("NOT_FOUND"));
         assertThatThrownBy(() -> reviewService.createOrganization(leaderB, application,
-                new SourceOrganizationCreateRequest("Университет Икс Б", "UNIVERSITY", null)))
+                new SourceOrganizationCreateRequest("Университет Икс Б", "UNIVERSITY", null), "source-request"))
                 .isInstanceOfSatisfying(SourceException.class, exception -> assertThat(exception.code()).isEqualTo("NOT_FOUND"));
         assertThatThrownBy(() -> reviewService.resolve(leaderA, application, new SourceRecordResolveRequest(ORGANIZATION_A)))
                 .isInstanceOfSatisfying(SourceException.class, exception -> assertThat(exception.code()).isEqualTo("CONFLICT"));
         assertThatThrownBy(() -> reviewService.createOrganization(admin, application,
-                new SourceOrganizationCreateRequest("Университет Икс Б", "UNIVERSITY", TEAM_B)))
+                new SourceOrganizationCreateRequest("Университет Икс Б", "UNIVERSITY", TEAM_B), "source-request"))
                 .isInstanceOfSatisfying(SourceException.class, exception -> assertThat(exception.code()).isEqualTo("CONFLICT"));
         assertThat(mappingService.mappings(admin)).filteredOn(view -> view.kind().equals("ORGANIZATION")).singleElement()
                 .satisfies(view -> {
@@ -1354,6 +1626,27 @@ class SourceSyncServiceTest {
         assertThatThrownBy(() -> trainingService.trainings(kamB, existingInteractionA)).isInstanceOf(InteractionNotFoundException.class);
     }
 
+    private UUID insertOpenEnrolment() {
+        UUID id = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO organizations (id, external_key, name, type, team_id, owner_manager_id, version, updated_at)
+                VALUES (?, 'open-enrolment', 'Открытый набор (физлица)', 'OPEN_ENROLLMENT', ?, NULL, 0, CURRENT_TIMESTAMP)
+                """, id, UUID.randomUUID());
+        return id;
+    }
+
+    private UUID insertProgram(String name) {
+        UUID id = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO programs (id, direction_id, name, archived, version) VALUES (?, ?, ?, FALSE, 0)",
+                id, DIRECTION, name);
+        return id;
+    }
+
+    private static MockMultipartFile paidOrdersFile(String json) {
+        return new MockMultipartFile("file", "orders.json", "application/json",
+                json.getBytes(StandardCharsets.UTF_8));
+    }
+
     private CrmProfile leader() {
         UUID leaderId = UUID.fromString("00000000-0000-0000-0000-000000000021");
         insertProfile(leaderId, "Галина Лебедева", "LEADER", TEAM_A);
@@ -1392,7 +1685,7 @@ class SourceSyncServiceTest {
         SourceProperties properties = new SourceProperties(1, 1, "-", Duration.ofHours(26), null, new SourceProperties.Moodle(
                 System.getenv("MOODLE_TEST_URL"), token, courses, List.of("student"), List.of("editingteacher", "teacher"),
                 Duration.ofSeconds(5), Duration.ofSeconds(20), DataSize.ofMegabytes(5)));
-        return new SourceSyncService(repository, siteRecordApplier, siteApiClient, moodleSnapshotApplier,
+        return new SourceSyncService(repository, siteRecordApplier, paidOrderEnrolment, siteApiClient, moodleSnapshotApplier,
                 new MoodleClient(properties, objectMapper), sourceSyncExecutor, properties, objectMapper);
     }
 
@@ -1611,6 +1904,14 @@ class SourceSyncServiceTest {
     private void createSchema() {
         List.of(
                 """
+                CREATE TABLE IF NOT EXISTS catalog_change_events (
+                    id UUID PRIMARY KEY, entity_type VARCHAR(16) NOT NULL, entity_id UUID NOT NULL,
+                    action VARCHAR(16) NOT NULL, entity_name VARCHAR(300) NOT NULL, changes VARCHAR(2000),
+                    actor_profile_id UUID NOT NULL, actor_display_name VARCHAR(200) NOT NULL,
+                    request_id VARCHAR(64) NOT NULL, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS teams (
                     id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL UNIQUE, version INTEGER NOT NULL DEFAULT 0,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1618,7 +1919,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, login VARCHAR(200), idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     activation_requested_at TIMESTAMP WITH TIME ZONE, anonymized_at TIMESTAMP WITH TIME ZONE, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL, access_revision INTEGER NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -1669,8 +1970,18 @@ class SourceSyncServiceTest {
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS products (
-                    id UUID PRIMARY KEY, vendor_id UUID NOT NULL, name VARCHAR(200) NOT NULL, archived BOOLEAN NOT NULL,
+                    id UUID PRIMARY KEY, vendor_contact_id UUID, vendor_id UUID NOT NULL, name VARCHAR(200) NOT NULL, archived BOOLEAN NOT NULL,
                     version INTEGER NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS vendor_contacts (
+                    id UUID PRIMARY KEY, vendor_id UUID NOT NULL, name VARCHAR(200) NOT NULL, phone VARCHAR(16),
+                    email VARCHAR(320), prefers_email BOOLEAN DEFAULT FALSE NOT NULL,
+                    prefers_telegram BOOLEAN DEFAULT FALSE NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL,
+                    personal_data_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, external_key VARCHAR(200) UNIQUE,
+                    version INTEGER DEFAULT 0 NOT NULL, created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
                 """
@@ -1808,7 +2119,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS source_records (
+                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), 
                     id UUID PRIMARY KEY, source VARCHAR(16) NOT NULL, record_type VARCHAR(64) NOT NULL,
                     external_id VARCHAR(200) NOT NULL, external_updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     submitted_at TIMESTAMP WITH TIME ZONE NOT NULL, external_status VARCHAR(64), payload VARCHAR(100000) NOT NULL,
@@ -1847,6 +2158,39 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id UUID PRIMARY KEY, category VARCHAR(32) NOT NULL, action VARCHAR(64) NOT NULL, actor_profile_id UUID,
+                    actor_display_name VARCHAR(200) NOT NULL, object_type VARCHAR(32), object_id UUID,
+                    object_name VARCHAR(500), details VARCHAR(2000), request_id VARCHAR(64),
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS enrolment_streams (
+                    id UUID PRIMARY KEY, course_key VARCHAR(310) NOT NULL, course_name VARCHAR(1333) NOT NULL,
+                    stream_no INTEGER NOT NULL, ends_on DATE, version INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    UNIQUE (course_key, stream_no)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS learners (
+                    id UUID PRIMARY KEY, key_version VARCHAR(16), fields TEXT, email_hmac CHAR(64), phone_hmac CHAR(64),
+                    snils_hmac CHAR(64) UNIQUE, name_hmac CHAR(64), last_name_hmac CHAR(64),
+                    missing_fields VARCHAR(600) NOT NULL DEFAULT '', personal_data_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+                    anonymized_at TIMESTAMP WITH TIME ZONE, version INTEGER NOT NULL DEFAULT 0, created_by UUID,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS learner_enrolments (
+                    id UUID PRIMARY KEY, learner_id UUID NOT NULL, stream_id UUID NOT NULL, source_record_id UUID NOT NULL UNIQUE,
+                    lms_export_id UUID, lms_exported_at TIMESTAMP WITH TIME ZONE, lms_transferred_at TIMESTAMP WITH TIME ZONE,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    UNIQUE (learner_id, stream_id)
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS interaction_cycles (
                     interaction_id UUID PRIMARY KEY, previous_interaction_id UUID NOT NULL UNIQUE, starts_on DATE NOT NULL,
                     created_by UUID NOT NULL, created_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -1879,6 +2223,11 @@ class SourceSyncServiceTest {
                             List.of("editingteacher", "teacher"), Duration.ofSeconds(2), Duration.ofSeconds(5),
                             DataSize.ofMegabytes(1))
             );
+        }
+
+        @Bean
+        EnrolmentProperties enrolmentProperties() {
+            return new EnrolmentProperties(true, "v1", Map.of("v1", ENROLMENT_KEY), ENROLMENT_FINGERPRINT_KEY);
         }
 
         @Bean

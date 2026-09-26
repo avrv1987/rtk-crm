@@ -34,6 +34,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.CurrentProfileService;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.audit.AuditAction;
+import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.interaction.ProductAgreementService;
 import ru.rtk.crm.interaction.ProductAgreementUpdateRequest;
 import ru.rtk.crm.interaction.ProductTransferKind;
@@ -74,6 +76,9 @@ class DocumentsHttpTest {
     @MockitoBean
     private ProductAgreementService productAgreementService;
 
+    @MockitoBean
+    private AuditJournalRepository auditJournalRepository;
+
     @BeforeEach
     void setUp() {
         when(currentProfileService.requireActiveProfile(any())).thenReturn(PROFILE);
@@ -96,6 +101,8 @@ class DocumentsHttpTest {
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
                 .andExpect(header().string("Content-Security-Policy", containsString("default-src 'none'")))
                 .andExpect(header().string("Cache-Control", containsString("no-store")));
+        verify(auditJournalRepository)
+                .recordAttachmentAccess(eq(AuditAction.ATTACHMENT_PREVIEWED), eq(PROFILE.id()), eq(ATTACHMENT_ID), any());
     }
 
     @Test

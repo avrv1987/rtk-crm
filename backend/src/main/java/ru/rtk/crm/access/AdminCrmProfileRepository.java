@@ -15,7 +15,7 @@ import ru.rtk.crm.catalog.SearchPattern;
 public class AdminCrmProfileRepository {
     private static final String PROFILE_COLUMNS = """
             profile.id, profile.display_name, profile.role, profile.team_id, team.name AS team_name,
-            profile.active, profile.pending_activation, profile.access_revision, profile.version,
+            profile.active, profile.enrolment_operator, profile.pending_activation, profile.access_revision, profile.version,
             profile.login, profile.activation_requested_at, profile.idp_enabled
             """;
 
@@ -98,6 +98,7 @@ public class AdminCrmProfileRepository {
                     role = :role,
                     team_id = :teamId,
                     active = :active,
+                    enrolment_operator = :enrolmentOperator,
                     pending_activation = CASE WHEN :active THEN FALSE ELSE pending_activation END,
                     access_revision = access_revision + :revisionIncrement,
                     version = version + 1,
@@ -110,6 +111,7 @@ public class AdminCrmProfileRepository {
                 .param("role", state.role().name())
                 .param("teamId", state.teamId())
                 .param("active", state.active())
+                .param("enrolmentOperator", state.enrolmentOperator())
                 .param("revisionIncrement", accessChanged ? 1 : 0)
                 .param("updatedAt", updatedAt)
                 .update() == 1;
@@ -138,11 +140,11 @@ public class AdminCrmProfileRepository {
                 INSERT INTO crm_profile_events (
                     id, profile_id, command_id, actor_profile_id, actor_display_name,
                     previous_display_name, display_name, previous_role, role, previous_team_id, team_id,
-                    previous_active, active, request_id, version, occurred_at
+                    previous_active, active, previous_enrolment_operator, enrolment_operator, request_id, version, occurred_at
                 ) VALUES (
                     :id, :profileId, :commandId, :actorProfileId, :actorDisplayName,
                     :previousDisplayName, :displayName, :previousRole, :role, :previousTeamId, :teamId,
-                    :previousActive, :active, :requestId, :version, :occurredAt
+                    :previousActive, :active, :previousEnrolmentOperator, :enrolmentOperator, :requestId, :version, :occurredAt
                 )
                 """)
                 .param("id", eventId)
@@ -158,6 +160,8 @@ public class AdminCrmProfileRepository {
                 .param("teamId", current.teamId())
                 .param("previousActive", previous.active())
                 .param("active", current.active())
+                .param("previousEnrolmentOperator", previous.enrolmentOperator())
+                .param("enrolmentOperator", current.enrolmentOperator())
                 .param("requestId", requestId)
                 .param("version", version)
                 .param("occurredAt", occurredAt)
@@ -170,12 +174,13 @@ public class AdminCrmProfileRepository {
                        event.previous_display_name, event.display_name, event.previous_role, event.role,
                        event.previous_team_id, previous_team.name AS previous_team_name,
                        event.team_id, team.name AS team_name,
-                       event.previous_active, event.active, event.request_id, event.version, event.occurred_at
+                       event.previous_active, event.active, event.previous_enrolment_operator, event.enrolment_operator,
+                       event.request_id, event.version, event.occurred_at
                 FROM crm_profile_events event
                 LEFT JOIN teams previous_team ON previous_team.id = event.previous_team_id
                 LEFT JOIN teams team ON team.id = event.team_id
                 WHERE event.profile_id = :profileId
-                ORDER BY event.occurred_at DESC, event.id DESC
+                ORDER BY event.occurred_at DESC, event.version DESC, event.id DESC
                 """)
                 .param("profileId", profileId)
                 .query(this::mapEvent)
@@ -192,6 +197,7 @@ public class AdminCrmProfileRepository {
                 resultSet.getObject("team_id", UUID.class),
                 resultSet.getString("team_name"),
                 active,
+                resultSet.getBoolean("enrolment_operator"),
                 pendingActivation,
                 resultSet.getInt("access_revision"),
                 resultSet.getInt("version"),
@@ -219,15 +225,19 @@ public class AdminCrmProfileRepository {
                 resultSet.getString("team_name"),
                 resultSet.getBoolean("previous_active"),
                 resultSet.getBoolean("active"),
+                resultSet.getBoolean("previous_enrolment_operator"),
+                resultSet.getBoolean("enrolment_operator"),
                 resultSet.getString("request_id"),
                 resultSet.getInt("version"),
                 resultSet.getObject("occurred_at", OffsetDateTime.class)
         );
     }
 
-    public record ProfileState(String displayName, UserRole role, UUID teamId, boolean active) {
+    public record ProfileState(String displayName, UserRole role, UUID teamId, boolean active, boolean enrolmentOperator) {
         static ProfileState of(AdminCrmProfile profile) {
-            return new ProfileState(profile.displayName(), profile.role(), profile.teamId(), profile.active());
+            return new ProfileState(
+                    profile.displayName(), profile.role(), profile.teamId(), profile.active(), profile.enrolmentOperator()
+            );
         }
     }
 }

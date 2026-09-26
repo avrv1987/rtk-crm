@@ -31,11 +31,16 @@ import ru.rtk.crm.catalog.OrganizationNotFoundException;
 import ru.rtk.crm.catalogimport.CatalogImportAccessDeniedException;
 import ru.rtk.crm.catalogimport.CatalogImportJobNotFoundException;
 import ru.rtk.crm.catalogimport.CatalogImportNotFoundException;
+import ru.rtk.crm.enrolment.EnrolmentAccessDeniedException;
+import ru.rtk.crm.enrolment.EnrolmentDisabledException;
+import ru.rtk.crm.enrolment.EnrolmentNotFoundException;
+import ru.rtk.crm.enrolment.LearnerValidationException;
 import ru.rtk.crm.attachment.AttachmentBindingException;
 import ru.rtk.crm.attachment.AttachmentDeletionForbiddenException;
 import ru.rtk.crm.attachment.AttachmentNotFoundException;
 import ru.rtk.crm.attachment.AttachmentTooLargeException;
 import ru.rtk.crm.attachment.AttachmentValidationException;
+import ru.rtk.crm.enrolment.LearnerNotFoundException;
 import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionValidationException;
@@ -98,6 +103,12 @@ public class ApiExceptionHandler {
                 .body(ApiError.of("NOT_FOUND", "Контакт не найден или недоступен", RequestId.from(request)));
     }
 
+    @ExceptionHandler(LearnerNotFoundException.class)
+    public ResponseEntity<ApiError> learnerNotFound(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of("NOT_FOUND", "Слушатель не найден", RequestId.from(request)));
+    }
+
     @ExceptionHandler(OrganizationAssignmentAccessDeniedException.class)
     public ResponseEntity<ApiError> organizationAssignmentAccessDenied(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
@@ -150,6 +161,31 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiError> catalogImportAccessDenied(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiError.of("FORBIDDEN", "Доступ запрещён", RequestId.from(request)));
+    }
+
+    @ExceptionHandler(EnrolmentDisabledException.class)
+    public ResponseEntity<ApiError> enrolmentDisabled(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiError.of(
+                "NOT_FOUND", "Раздел «Зачисление» недоступен: модуль «Слушатели» выключен", RequestId.from(request)
+        ));
+    }
+
+    @ExceptionHandler(EnrolmentAccessDeniedException.class)
+    public ResponseEntity<ApiError> enrolmentAccessDenied(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiError.of(
+                "FORBIDDEN", "Загрузка оплат и раздел «Зачисление» доступны только оператору зачисления", RequestId.from(request)
+        ));
+    }
+
+    @ExceptionHandler(EnrolmentNotFoundException.class)
+    public ResponseEntity<ApiError> enrolmentObjectNotFound(EnrolmentNotFoundException exception, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of("NOT_FOUND", exception.getMessage(), RequestId.from(request)));
+    }
+
+    @ExceptionHandler(LearnerValidationException.class)
+    public ResponseEntity<ApiError> invalidLearnerProfile(LearnerValidationException exception, HttpServletRequest request) {
+        return validationError(request, exception.fieldErrors());
     }
 
     @ExceptionHandler(ContactInteractionMutationAccessDeniedException.class)

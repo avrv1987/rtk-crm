@@ -9,6 +9,7 @@ import java.util.Locale;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 record SiteRecord(
@@ -27,11 +28,16 @@ record SiteRecord(
         String contactPosition,
         Integer applicationsCount,
         String message,
+        Integer streamNo,
+        String payloadHash,
         String payload,
         String problem
 ) {
     static final String PARTNERSHIP_REQUEST = "partnership_request";
     static final String LEARNING_APPLICATION = "learning_application";
+    static final String PAID_ORDER = "paid_order";
+    static final String OPEN_ENROLMENT_KEY = "open-enrolment";
+    static final String OPEN_ENROLMENT_NAME = "Открытый набор (физлица)";
     static final String WITHDRAWN = "withdrawn";
     static final int MAX_APPLICATIONS_COUNT = 100_000;
 
@@ -39,7 +45,7 @@ record SiteRecord(
         List<String> problems = new ArrayList<>();
         if (item == null || !item.isObject()) {
             return new SiteRecord(null, null, null, null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, "элемент items не является объектом");
+                    null, null, null, null, null, "элемент items не является объектом");
         }
         JsonNode organization = item.path("organization");
         JsonNode contact = item.path("contact");
@@ -56,7 +62,7 @@ record SiteRecord(
                 text(item, "status", 64, problems),
                 text(organization, "externalId", 200, problems),
                 text(organization, "name", 300, problems),
-                text(item.path("program"), "name", 200, problems),
+                text(item.path("program"), "name", 300, problems),
                 text(item.path("product"), "name", 200, problems),
                 text(contact, "name", 200, problems),
                 text(contact, "email", 320, problems),
@@ -64,9 +70,22 @@ record SiteRecord(
                 text(contact, "position", 200, problems),
                 applicationsCount(item, problems),
                 text(item, "message", 4_000, problems),
+                streamNo(item, problems),
+                text(item, "payloadHash", 64, problems),
                 stored.toString(),
                 problems.isEmpty() ? null : String.join("; ", problems)
         );
+    }
+
+    static SiteRecord paidOrder(String orderNumber, String course, int streamNo, String payloadHash, OffsetDateTime receivedAt) {
+        ObjectNode item = JsonNodeFactory.instance.objectNode()
+                .put("externalId", orderNumber)
+                .put("type", PAID_ORDER)
+                .put("updatedAt", receivedAt.toString());
+        item.putObject("organization").put("externalId", OPEN_ENROLMENT_KEY).put("name", OPEN_ENROLMENT_NAME);
+        item.putObject("program").put("name", course);
+        item.put("streamNo", streamNo).put("payloadHash", payloadHash);
+        return parse(item);
     }
 
     static SiteRecord parseStored(ObjectMapper objectMapper, String payload) {
@@ -96,8 +115,12 @@ record SiteRecord(
         return createdAt == null ? updatedAt : createdAt;
     }
 
+    boolean paidOrder() {
+        return PAID_ORDER.equals(type);
+    }
+
     SourceRepository.RecordVersion version() {
-        return new SourceRepository.RecordVersion(type, externalId, updatedAt, submittedAt(), status, payload);
+        return new SourceRepository.RecordVersion(type, externalId, updatedAt, submittedAt(), status, payload, streamNo, payloadHash);
     }
 
     private static String normalized(String value) {
@@ -132,6 +155,18 @@ record SiteRecord(
             problems.add("поле " + field + " должно быть датой ISO 8601 со смещением");
             return null;
         }
+    }
+
+    private static Integer streamNo(JsonNode item, List<String> problems) {
+        JsonNode value = item.path("streamNo");
+        if (value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        if (!value.isIntegralNumber() || !value.canConvertToInt() || value.intValue() < 1) {
+            problems.add("поле streamNo должно быть целым больше 0");
+            return null;
+        }
+        return value.intValue();
     }
 
     private static Integer applicationsCount(JsonNode item, List<String> problems) {

@@ -210,11 +210,12 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
               {state.digest.expiringLicenses.length === 0 ? <p>Истекающих лицензий нет.</p> : (
                 <ul className="reminder-center__list">
                   {state.digest.expiringLicenses.map((license) => (
-                    <li key={`${license.interactionId}:${license.productName}:${license.licenseExpiryYear}`}>
+                    <li key={`${license.interactionId}:${license.productName}:${license.contractNumber}:${license.licenseExpiryYear}`}>
                       <a href={cardLink(license.organizationId, license.interactionId)}>{license.title}</a>
                       <span>{license.organizationName}</span>
                       <span className="status status--missing">
-                        {license.productName}{license.vendorName === null ? '' : ` (${license.vendorName})`}: срок {license.licenseExpiryYear}
+                        {license.productName}{license.vendorName === null ? '' : ` (${license.vendorName})`}
+                        {license.contractNumber === null ? '' : `, договор ${license.contractNumber}`}: срок {license.licenseExpiryYear}
                       </span>
                     </li>
                   ))}

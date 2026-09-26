@@ -19,6 +19,8 @@ public record CrmProfileEvent(
         String teamName,
         boolean previousActive,
         boolean active,
+        boolean previousEnrolmentOperator,
+        boolean enrolmentOperator,
         String requestId,
         int version,
         OffsetDateTime occurredAt

@@ -1329,7 +1329,10 @@ public class InteractionService {
             throw new InteractionValidationException("contactIds", "Контакты не должны повторяться");
         }
         if (contactRepository.findIdsByOrganizationId(organizationId, contactIds).size() != contactIds.size()) {
-            throw new InteractionValidationException("contactIds", "Все контакты должны относиться к вузу взаимодействия");
+            boolean unavailable = contactRepository.findByIds(organizationId, contactIds).size() == contactIds.size();
+            throw new InteractionValidationException("contactIds", unavailable
+                    ? "Обработка данных контакта ограничена или контакт обезличен; выберите другой контакт"
+                    : "Все контакты должны относиться к вузу взаимодействия");
         }
         return List.copyOf(uniqueContactIds);
     }

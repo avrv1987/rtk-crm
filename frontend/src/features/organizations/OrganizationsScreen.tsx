@@ -46,7 +46,8 @@ const searchDelayMilliseconds = 300
 
 const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', {
   dateStyle: 'medium',
-  timeStyle: 'short'
+  timeStyle: 'short',
+  timeZone: 'Europe/Moscow'
 })
 
 const organizationTypeLabel = (type: Organization['type']) => organizationTypeLabels[type]
@@ -316,7 +317,7 @@ export const OrganizationsScreen = ({
             </p>
           </div>
 
-          {!creating && (
+          {role !== 'MANAGEMENT' && !creating && (
             <button
               type="button"
               className="organizations-create"
@@ -329,7 +330,7 @@ export const OrganizationsScreen = ({
             </button>
           )}
           {createdMessage !== null && <p className="notice" role="status">{createdMessage}</p>}
-          {creating && (
+          {role !== 'MANAGEMENT' && creating && (
             <OrganizationForm
               title="Новая организация"
               submitLabel={role === 'LEADER' ? 'Создать организацию' : 'Создать и отправить на подтверждение'}

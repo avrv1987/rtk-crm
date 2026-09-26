@@ -74,12 +74,6 @@ export const InteractionCycles = ({
   )
 
   useEffect(() => {
-    setOpen(false)
-    setStart({ kind: 'idle' })
-    startKey.current = null
-  }, [interaction.id])
-
-  useEffect(() => {
     let active = true
     apiClient.getInteractionCycle(interaction.id)
       .then((cycle) => {

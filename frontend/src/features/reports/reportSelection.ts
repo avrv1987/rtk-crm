@@ -19,7 +19,7 @@ import {
   type AgreementSelection
 } from './reportAgreement'
 
-export type DemandSort = 'APPLICATIONS' | 'PARTICIPANTS' | 'LEARNERS_COMPLETED' | 'PARALLEL_RUNS'
+export type DemandSort = 'APPLICATIONS' | 'PAID_ORDERS' | 'PAID_STREAMS' | 'PARTICIPANTS' | 'LEARNERS_COMPLETED' | 'PARALLEL_RUNS'
 
 export type OrganizationTypeFilter = '' | 'UNIVERSITY' | 'COLLEGE' | 'SCHOOL'
 
@@ -78,7 +78,9 @@ export type ReportSelection = {
 
 export const reportKinds: readonly ReportKind[] = ['PORTFOLIO', 'EVENTS', 'SNAPSHOT', 'DURATION', 'DEMAND', 'AGREEMENTS']
 
-export const demandSorts: readonly DemandSort[] = ['APPLICATIONS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'PARALLEL_RUNS']
+export const demandSorts: readonly DemandSort[] = [
+  'APPLICATIONS', 'PAID_ORDERS', 'PAID_STREAMS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'PARALLEL_RUNS'
+]
 
 export const reportFormats: readonly ReportFormat[] = ['XLSX', 'XLS', 'PDF', 'JSON']
 
@@ -139,7 +141,7 @@ export const reportColumns: Record<ReportKind, readonly ReportColumn[]> = {
     'EVENT_AT', 'ORGANIZATION', 'INTERACTION', 'EVENT_TYPE', 'FROM_STAGE', 'STAGE', 'COMMENT', 'AUTHOR',
     'MANAGER', 'DIRECTION', 'PROGRAM', 'PRODUCTS'
   ],
-  DEMAND: ['DIRECTION', 'PROGRAM', 'APPLICATIONS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'PARALLEL_RUNS'],
+  DEMAND: ['DIRECTION', 'PROGRAM', 'APPLICATIONS', 'PAID_ORDERS', 'PAID_STREAMS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'PARALLEL_RUNS'],
   SNAPSHOT: ['ORGANIZATION', 'INTERACTION', 'DIRECTION', 'PROGRAM', 'PRODUCTS', 'STAGE', 'MANAGER', 'CREATED_AT', 'LAST_EVENT_AT'],
   DURATION: ['TEAM', 'PROGRAM', 'STAGE', 'COMPLETED', 'AVG_DAYS', 'MAX_DAYS', 'CURRENT', 'CURRENT_MAX_DAYS'],
   AGREEMENTS: [
@@ -155,9 +157,9 @@ const columnTitles: Record<ReportColumn, string> = {
   DIRECTION: 'ИТ-направление',
   PROGRAM: 'ИТ-программа',
   PRODUCTS: 'ИТ-продукты',
-  STAGE: 'Статус работы',
+  STAGE: 'Этап',
   DAYS_ON_STAGE: 'Дней на этапе',
-  WORK_STATUS: 'Состояние работы',
+  WORK_STATUS: 'Статус работы',
   WAITING: 'Ожидание',
   PROBLEM: 'Проблема',
   RISK: 'Риск',
@@ -172,6 +174,8 @@ const columnTitles: Record<ReportColumn, string> = {
   COMMENT: 'Комментарий',
   AUTHOR: 'Автор',
   APPLICATIONS: 'Заявки (сайт)',
+  PAID_ORDERS: 'Оплаченные заявки (сайт)',
+  PAID_STREAMS: 'Потоки с оплатами (сайт)',
   PARTICIPANTS: 'Обучающиеся (Moodle)',
   LEARNERS_COMPLETED: 'Завершили (Moodle)',
   PARALLEL_RUNS: 'Параллельные потоки (Moodle)',
@@ -199,9 +203,8 @@ const columnTitles: Record<ReportColumn, string> = {
 }
 
 const kindColumnTitles: Partial<Record<ReportKind, Partial<Record<ReportColumn, string>>>> = {
-  EVENTS: { STAGE: 'Этап', MANAGER: 'Ответственный на момент события' },
-  SNAPSHOT: { STAGE: 'Этап на дату', MANAGER: 'Ответственный на дату', LAST_EVENT_AT: 'Последнее событие до даты' },
-  DURATION: { STAGE: 'Этап' }
+  EVENTS: { MANAGER: 'Ответственный на момент события' },
+  SNAPSHOT: { STAGE: 'Этап на дату', MANAGER: 'Ответственный на дату', LAST_EVENT_AT: 'Последнее событие до даты' }
 }
 
 export const columnTitle = (kind: ReportKind, column: ReportColumn) => (

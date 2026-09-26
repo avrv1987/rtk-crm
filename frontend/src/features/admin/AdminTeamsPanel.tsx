@@ -66,6 +66,7 @@ export const AdminTeamsPanel = ({
         idempotencyKey
       )
       setArchive(null)
+      setCreate((current) => (current.error === undefined ? current : { ...current, error: undefined }))
       onTeamsChanged()
     } catch (error) {
       if (handledSessionError(error, handlers)) {
@@ -104,6 +105,7 @@ export const AdminTeamsPanel = ({
     try {
       await apiClient.renameTeam(rename.team.id, { name: rename.name.trim(), version: rename.team.version }, idempotencyKey)
       setRename(null)
+      setCreate((current) => (current.error === undefined ? current : { ...current, error: undefined }))
       onTeamsChanged()
     } catch (error) {
       if (handledSessionError(error, handlers)) {

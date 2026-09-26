@@ -1,6 +1,6 @@
 import { ApiError } from '../../shared/api/client'
 
-const dateTime = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' })
+const dateTime = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Moscow' })
 const date = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeZone: 'UTC' })
 
 export const formatDateTime = (value: string | null | undefined) => {

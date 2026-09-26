@@ -35,6 +35,8 @@ import static ru.rtk.crm.report.ReportColumn.MAX_DAYS;
 import static ru.rtk.crm.report.ReportColumn.NEXT_ACTION;
 import static ru.rtk.crm.report.ReportColumn.NEXT_ACTION_AT;
 import static ru.rtk.crm.report.ReportColumn.ORGANIZATION;
+import static ru.rtk.crm.report.ReportColumn.PAID_ORDERS;
+import static ru.rtk.crm.report.ReportColumn.PAID_STREAMS;
 import static ru.rtk.crm.report.ReportColumn.PARALLEL_RUNS;
 import static ru.rtk.crm.report.ReportColumn.PARTICIPANTS;
 import static ru.rtk.crm.report.ReportColumn.PROBLEM;
@@ -79,7 +81,7 @@ public enum ReportKind {
             "востребованность",
             "заявки",
             "Число заявок",
-            List.of(DIRECTION, PROGRAM, APPLICATIONS, PARTICIPANTS, LEARNERS_COMPLETED, PARALLEL_RUNS),
+            List.of(DIRECTION, PROGRAM, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, PARALLEL_RUNS),
             List.of()
     ),
     SNAPSHOT(

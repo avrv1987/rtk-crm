@@ -15,6 +15,7 @@ import java.util.regex.Pattern;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import ru.rtk.crm.catalog.CatalogNames;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
 
 @Repository
@@ -34,7 +35,7 @@ public class SourceRepository {
 
     private static final String RECORD_SELECT = """
             SELECT id, source, record_type, external_id, external_updated_at, external_status, payload, status, error,
-                   organization_id, program_id, interaction_id, updated_at
+                   organization_id, program_id, interaction_id, updated_at, stream_no, payload_hash
             FROM source_records
             """;
 
@@ -172,7 +173,7 @@ public class SourceRepository {
 
     Optional<SyncRunView> findLatestFullRun(SourceCode source) {
         return jdbcClient.sql(RUN_SELECT + """
-                WHERE r.source = :source AND r.organization_id IS NULL
+                WHERE r.source = :source AND r.organization_id IS NULL AND r.run_trigger <> 'UPLOAD'
                 ORDER BY r.created_at DESC, r.id DESC
                 LIMIT 1
                 """)
@@ -191,7 +192,7 @@ public class SourceRepository {
 
     Optional<SyncRunView> findLatestFinishedRunFor(SourceCode source, UUID organizationId) {
         return jdbcClient.sql(RUN_SELECT + """
-                WHERE r.source = :source AND r.status IN ('SUCCEEDED', 'FAILED')
+                WHERE r.source = :source AND r.status IN ('SUCCEEDED', 'FAILED') AND r.run_trigger <> 'UPLOAD'
                   AND (r.organization_id IS NULL OR r.organization_id = :organizationId)
                 ORDER BY r.created_at DESC, r.id DESC
                 LIMIT 1
@@ -205,7 +206,7 @@ public class SourceRepository {
     Optional<OffsetDateTime> findLastSuccessAtFor(SourceCode source, UUID organizationId) {
         return jdbcClient.sql("""
                 SELECT MAX(finished_at) FROM sync_runs
-                WHERE source = :source AND status = 'SUCCEEDED'
+                WHERE source = :source AND status = 'SUCCEEDED' AND run_trigger <> 'UPLOAD'
                   AND (organization_id IS NULL OR organization_id = :organizationId)
                 """)
                 .param("source", source.name())
@@ -217,7 +218,7 @@ public class SourceRepository {
     Optional<OffsetDateTime> findLastFullSuccessStartedAt(SourceCode source) {
         return jdbcClient.sql("""
                 SELECT MAX(started_at) FROM sync_runs
-                WHERE source = :source AND status = 'SUCCEEDED' AND organization_id IS NULL
+                WHERE source = :source AND status = 'SUCCEEDED' AND organization_id IS NULL AND run_trigger <> 'UPLOAD'
                 """)
                 .param("source", source.name())
                 .query((resultSet, rowNumber) -> resultSet.getObject(1, OffsetDateTime.class))
@@ -227,7 +228,7 @@ public class SourceRepository {
     Optional<OffsetDateTime> findLastFullSuccessAt(SourceCode source) {
         return jdbcClient.sql("""
                 SELECT MAX(finished_at) FROM sync_runs
-                WHERE source = :source AND status = 'SUCCEEDED' AND organization_id IS NULL
+                WHERE source = :source AND status = 'SUCCEEDED' AND organization_id IS NULL AND run_trigger <> 'UPLOAD'
                 """)
                 .param("source", source.name())
                 .query((resultSet, rowNumber) -> resultSet.getObject(1, OffsetDateTime.class))
@@ -302,6 +303,7 @@ public class SourceRepository {
     List<StoredRecord> findPendingWebsiteRecords(VisibilityScope scope, boolean includeUnresolved, int limit) {
         return jdbcClient.sql(RECORD_SELECT + """
                 WHERE source = 'WEBSITE' AND status IN ('NEEDS_MAPPING', 'FAILED')
+                  AND record_type IN ('partnership_request', 'learning_application')
                   AND (organization_id IN (SELECT id FROM organizations WHERE %s)%s)
                 ORDER BY submitted_at DESC, id
                 LIMIT :limit
@@ -358,11 +360,11 @@ public class SourceRepository {
                 INSERT INTO source_records (
                     id, source, record_type, external_id, external_updated_at, submitted_at, external_status, payload,
                     status, error, organization_id, program_id, applications_count, interaction_id, sync_run_id,
-                    created_at, updated_at
+                    stream_no, payload_hash, created_at, updated_at
                 ) VALUES (
                     :id, :source, :recordType, :externalId, :externalUpdatedAt, :submittedAt, :externalStatus, :payload,
                     :status, :error, :organizationId, :programId, :applicationsCount, :interactionId, :runId,
-                    :now, :now
+                    :streamNo, :payloadHash, :now, :now
                 )
                 """)
                 .param("id", id)
@@ -373,6 +375,8 @@ public class SourceRepository {
                 .param("submittedAt", item.submittedAt())
                 .param("externalStatus", item.externalStatus())
                 .param("payload", item.payload())
+                .param("streamNo", item.streamNo())
+                .param("payloadHash", item.payloadHash())
                 .params(resultParameters(result))
                 .param("runId", runId)
                 .param("now", now)
@@ -382,9 +386,12 @@ public class SourceRepository {
     void updateRecord(UUID id, RecordVersion item, ApplyResult result, UUID runId, OffsetDateTime now) {
         jdbcClient.sql("""
                 UPDATE source_records
-                SET external_updated_at = :externalUpdatedAt, submitted_at = :submittedAt, external_status = :externalStatus,
+                SET external_updated_at = CASE WHEN record_type = 'paid_order' THEN external_updated_at ELSE :externalUpdatedAt END,
+                    submitted_at = CASE WHEN record_type = 'paid_order' THEN submitted_at ELSE :submittedAt END,
+                    external_status = :externalStatus,
                     payload = :payload, status = :status, error = :error, organization_id = :organizationId,
                     program_id = :programId, applications_count = :applicationsCount, interaction_id = :interactionId,
+                    stream_no = :streamNo, payload_hash = :payloadHash,
                     sync_run_id = COALESCE(:runId, sync_run_id), updated_at = :now
                 WHERE id = :id
                 """)
@@ -393,6 +400,8 @@ public class SourceRepository {
                 .param("submittedAt", item.submittedAt())
                 .param("externalStatus", item.externalStatus())
                 .param("payload", item.payload())
+                .param("streamNo", item.streamNo())
+                .param("payloadHash", item.payloadHash())
                 .params(resultParameters(result))
                 .param("runId", runId)
                 .param("now", now)
@@ -801,6 +810,19 @@ public class SourceRepository {
                 .optional();
     }
 
+    List<UUID> findActiveProgramIdsByNormalizedName(String name) {
+        String key = CatalogNames.normalized(name);
+        return jdbcClient.sql("SELECT id, name FROM programs WHERE archived = FALSE ORDER BY id")
+                .query((resultSet, rowNumber) -> new SourceMappingOption(
+                        resultSet.getObject("id", UUID.class), resultSet.getString("name")
+                ))
+                .list()
+                .stream()
+                .filter(program -> CatalogNames.normalized(program.name()).equals(key))
+                .map(SourceMappingOption::id)
+                .toList();
+    }
+
     List<UUID> findActiveProgramIdsByName(String name) {
         return jdbcClient.sql("SELECT id FROM programs WHERE name = :name AND archived = FALSE")
                 .param("name", name)
@@ -1068,7 +1090,9 @@ public class SourceRepository {
                 resultSet.getObject("organization_id", UUID.class),
                 resultSet.getObject("program_id", UUID.class),
                 resultSet.getObject("interaction_id", UUID.class),
-                resultSet.getObject("updated_at", OffsetDateTime.class)
+                resultSet.getObject("updated_at", OffsetDateTime.class),
+                resultSet.getObject("stream_no", Integer.class),
+                resultSet.getString("payload_hash")
         );
     }
 
@@ -1124,7 +1148,9 @@ public class SourceRepository {
             UUID organizationId,
             UUID programId,
             UUID interactionId,
-            OffsetDateTime updatedAt
+            OffsetDateTime updatedAt,
+            Integer streamNo,
+            String payloadHash
     ) {
     }
 
@@ -1137,7 +1163,9 @@ public class SourceRepository {
             OffsetDateTime updatedAt,
             OffsetDateTime submittedAt,
             String externalStatus,
-            String payload
+            String payload,
+            Integer streamNo,
+            String payloadHash
     ) {
     }
 

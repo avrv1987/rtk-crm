@@ -37,6 +37,8 @@ import ru.rtk.crm.agreement.AgreementRepository.AgreementRow;
 import ru.rtk.crm.agreement.AgreementRepository.AgreementValues;
 import ru.rtk.crm.agreement.AgreementRepository.ConfirmationRow;
 import ru.rtk.crm.attachment.AttachmentStatus;
+import ru.rtk.crm.audit.AuditAction;
+import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.catalog.Organization;
 import ru.rtk.crm.catalog.OrganizationNotFoundException;
 import ru.rtk.crm.catalog.OrganizationRepository;
@@ -55,19 +57,22 @@ public class AgreementService {
     private final CommandIdempotencyRepository commandIdempotencyRepository;
     private final ObjectMapper objectMapper;
     private final DataSize archiveMaxSize;
+    private final AuditJournalRepository auditJournalRepository;
 
     public AgreementService(
             OrganizationRepository organizationRepository,
             AgreementRepository repository,
             CommandIdempotencyRepository commandIdempotencyRepository,
             ObjectMapper objectMapper,
-            @Value("${app.agreements.archive-max-size}") DataSize archiveMaxSize
+            @Value("${app.agreements.archive-max-size}") DataSize archiveMaxSize,
+            AuditJournalRepository auditJournalRepository
     ) {
         this.organizationRepository = organizationRepository;
         this.repository = repository;
         this.commandIdempotencyRepository = commandIdempotencyRepository;
         this.objectMapper = objectMapper;
         this.archiveMaxSize = archiveMaxSize;
+        this.auditJournalRepository = auditJournalRepository;
     }
 
     @Transactional(readOnly = true)
@@ -271,17 +276,18 @@ public class AgreementService {
                 .orElse(List.of());
     }
 
-    @Transactional(readOnly = true)
-    public List<ConfirmationRow> archiveRows(CrmProfile profile, ConfirmationQuery query) {
+    @Transactional
+    public List<ConfirmationRow> archiveRows(CrmProfile profile, ConfirmationQuery query, String fileName, String requestId) {
         List<ConfirmationRow> rows = confirmationRows(profile, query);
-        long bytes = rows.stream()
+        List<Confirmation> clean = rows.stream()
                 .map(ConfirmationRow::confirmation)
                 .filter(confirmation -> AttachmentStatus.CLEAN.name().equals(confirmation.status()))
-                .mapToLong(Confirmation::sizeBytes)
-                .sum();
-        if (bytes > archiveMaxSize.toBytes()) {
+                .toList();
+        if (clean.stream().mapToLong(Confirmation::sizeBytes).sum() > archiveMaxSize.toBytes()) {
             throw AgreementException.archiveSize(archiveMaxSize);
         }
+        auditJournalRepository.record(AuditAction.CONFIRMATIONS_DOWNLOADED, profile.id(), "CONFIRMATIONS", query.agreementId(),
+                fileName, "файлов в архиве: " + clean.size() + ", строк описи: " + rows.size(), requestId);
         return rows;
     }
 

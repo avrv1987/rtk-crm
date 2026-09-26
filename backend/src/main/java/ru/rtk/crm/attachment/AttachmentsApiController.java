@@ -1,7 +1,6 @@
 package ru.rtk.crm.attachment;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
@@ -22,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.CurrentProfileService;
+import ru.rtk.crm.audit.AuditAction;
 import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.security.RequestId;
@@ -68,19 +68,9 @@ public class AttachmentsApiController {
     ) throws IOException {
         CrmProfile profile = currentProfileService.requireActiveProfile(user);
         UUID attachmentId = parseRequiredUuid(id);
-        AttachmentService.DownloadedAttachment downloaded = attachmentService.download(profile, attachmentId);
-        InputStream content = downloaded.content();
-        try {
-            auditJournalRepository.recordAttachmentDownload(profile.id(), attachmentId, RequestId.from(request));
-        } catch (RuntimeException exception) {
-            content.close();
-            throw exception;
-        }
-        StreamingResponseBody body = output -> {
-            try (InputStream input = content) {
-                input.transferTo(output);
-            }
-        };
+        AttachmentService.DownloadedAttachment downloaded = audited(
+                attachmentService.download(profile, attachmentId), AuditAction.ATTACHMENT_DOWNLOADED, profile, attachmentId, request
+        );
         return ResponseEntity.status(HttpStatus.OK)
                 .contentType(MediaType.parseMediaType(downloaded.attachment().mediaType()))
                 .contentLength(downloaded.attachment().sizeBytes())
@@ -93,10 +83,15 @@ public class AttachmentsApiController {
     }
 
     @GetMapping("/{id}/preview")
-    public ResponseEntity<StreamingResponseBody> preview(@AuthenticationPrincipal OidcUser user, @PathVariable String id) {
-        AttachmentService.DownloadedAttachment previewed = attachmentService.preview(
-                currentProfileService.requireActiveProfile(user),
-                parseRequiredUuid(id)
+    public ResponseEntity<StreamingResponseBody> preview(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            HttpServletRequest request
+    ) throws IOException {
+        CrmProfile profile = currentProfileService.requireActiveProfile(user);
+        UUID attachmentId = parseRequiredUuid(id);
+        AttachmentService.DownloadedAttachment previewed = audited(
+                attachmentService.preview(profile, attachmentId), AuditAction.ATTACHMENT_PREVIEWED, profile, attachmentId, request
         );
         return ResponseEntity.status(HttpStatus.OK)
                 .contentType(MediaType.parseMediaType(previewed.attachment().mediaType()))
@@ -110,6 +105,22 @@ public class AttachmentsApiController {
                 .header("Cross-Origin-Resource-Policy", "same-origin")
                 .header(HttpHeaders.CACHE_CONTROL, "private, no-store")
                 .body(body(previewed));
+    }
+
+    private AttachmentService.DownloadedAttachment audited(
+            AttachmentService.DownloadedAttachment file,
+            AuditAction action,
+            CrmProfile profile,
+            UUID attachmentId,
+            HttpServletRequest request
+    ) throws IOException {
+        try {
+            auditJournalRepository.recordAttachmentAccess(action, profile.id(), attachmentId, RequestId.from(request));
+        } catch (RuntimeException exception) {
+            file.content().close();
+            throw exception;
+        }
+        return file;
     }
 
     private StreamingResponseBody body(AttachmentService.DownloadedAttachment attachment) {

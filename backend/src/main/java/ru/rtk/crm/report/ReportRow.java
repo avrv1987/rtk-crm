@@ -42,7 +42,9 @@ public record ReportRow(
         List<Agreement> agreements,
         StageDuration duration,
         Long completed,
-        AgreementLine agreement
+        AgreementLine agreement,
+        Long paidOrders,
+        Long paidStreams
 ) {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
 
@@ -171,7 +173,9 @@ public record ReportRow(
                 List.copyOf(linkedAgreements),
                 duration,
                 completed,
-                agreement
+                agreement,
+                paidOrders,
+                paidStreams
         );
     }
 

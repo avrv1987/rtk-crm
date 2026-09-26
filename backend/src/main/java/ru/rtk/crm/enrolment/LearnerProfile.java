@@ -1,6 +1,8 @@
 package ru.rtk.crm.enrolment;
 
 import java.time.LocalDate;
+import java.util.EnumMap;
+import java.util.Map;
 
 record LearnerProfile(
         String lastName,
@@ -104,9 +106,76 @@ record LearnerProfile(
         };
     }
 
+    String stored(LearnerField field) {
+        return switch (value(field)) {
+            case null -> null;
+            case Enum<?> constant -> constant.name();
+            case Object value -> value.toString();
+        };
+    }
+
+    String display(LearnerField field) {
+        return switch (value(field)) {
+            case null -> null;
+            case Gender gender -> gender.title();
+            case Education education -> education.title();
+            case Object value -> value.toString();
+        };
+    }
+
+    LearnerProfile with(Map<LearnerField, String> changes) {
+        Map<LearnerField, String> values = new EnumMap<>(LearnerField.class);
+        for (LearnerField field : LearnerField.values()) {
+            String value = changes.containsKey(field) ? changes.get(field) : stored(field);
+            if (value != null) {
+                values.put(field, value);
+            }
+        }
+        return fromStored(values);
+    }
+
+    static LearnerProfile fromStored(Map<LearnerField, String> values) {
+        return new LearnerProfile(
+                values.get(LearnerField.LAST_NAME),
+                values.get(LearnerField.FIRST_NAME),
+                values.get(LearnerField.MIDDLE_NAME),
+                values.get(LearnerField.PHONE),
+                values.get(LearnerField.EMAIL),
+                values.get(LearnerField.SNILS),
+                values.get(LearnerField.PASSPORT_SERIES),
+                values.get(LearnerField.PASSPORT_NUMBER),
+                values.get(LearnerField.PASSPORT_ISSUED_BY),
+                date(values.get(LearnerField.PASSPORT_ISSUE_DATE)),
+                values.get(LearnerField.PASSPORT_DIVISION_CODE),
+                values.containsKey(LearnerField.GENDER) ? Gender.valueOf(values.get(LearnerField.GENDER)) : null,
+                date(values.get(LearnerField.BIRTH_DATE)),
+                values.get(LearnerField.REGION),
+                values.get(LearnerField.LOCALITY),
+                values.get(LearnerField.STREET),
+                values.get(LearnerField.HOUSE),
+                values.get(LearnerField.APARTMENT),
+                values.get(LearnerField.POSTAL_CODE),
+                values.get(LearnerField.FIRST_NAME_DATIVE),
+                values.get(LearnerField.LAST_NAME_DATIVE),
+                values.get(LearnerField.MIDDLE_NAME_DATIVE),
+                values.containsKey(LearnerField.EDUCATION) ? Education.valueOf(values.get(LearnerField.EDUCATION)) : null,
+                values.get(LearnerField.DIPLOMA_PROFESSION),
+                values.get(LearnerField.DIPLOMA_INSTITUTION),
+                values.get(LearnerField.DIPLOMA_LAST_NAME),
+                values.get(LearnerField.DIPLOMA_NUMBER),
+                values.get(LearnerField.DIPLOMA_SERIES),
+                values.get(LearnerField.DIPLOMA_REGISTRATION_NUMBER),
+                date(values.get(LearnerField.DIPLOMA_ISSUE_DATE))
+        );
+    }
+
     @Override
     public String toString() {
         return "LearnerProfile[masked]";
+    }
+
+    private static LocalDate date(String value) {
+        return value == null ? null : LocalDate.parse(value);
     }
 
     private static String text(String value) {

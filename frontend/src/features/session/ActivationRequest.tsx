@@ -10,7 +10,7 @@ type RequestState =
 
 const accountUrl = '/idp/realms/rtk-crm/account'
 
-const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' })
+const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Moscow' })
 
 export const PasswordLink = () => (
   <a className="password-link" href={accountUrl} target="_blank" rel="noopener noreferrer">Сменить пароль</a>

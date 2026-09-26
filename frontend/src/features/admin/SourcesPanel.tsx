@@ -18,6 +18,7 @@ import '../sources/sources.css'
 type SourcesPanelProps = {
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
+  onSynced?: () => void
 }
 
 type PanelState =
@@ -54,6 +55,7 @@ const runStatusLabels: Record<SyncRun['status'], string> = {
 const recordTypeLabels: Record<string, string> = {
   partnership_request: 'Заявка вуза на партнёрство',
   learning_application: 'Заявка на обучение',
+  paid_order: 'Оплаченная заявка (сайт)',
   moodle_course: 'Курс Moodle',
   moodle_group: 'Группа курса Moodle'
 }
@@ -65,7 +67,7 @@ const recordStatusLabels: Record<SourceRecord['status'], string> = {
   SKIPPED: 'Пропущена'
 }
 
-const dateTime = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' })
+const dateTime = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Moscow' })
 
 const formatDateTime = (value: string | null | undefined) => {
   if (value === null || value === undefined) {
@@ -105,7 +107,11 @@ const syncBlocker = (source: DataSource) => {
   return null
 }
 
-const needsOrganization = (record: SourceRecord) => record.status === 'NEEDS_MAPPING' && !record.organizationId
+const isPaidOrder = (record: SourceRecord) => record.recordType === 'paid_order'
+
+const needsOrganization = (record: SourceRecord) => (
+  record.status === 'NEEDS_MAPPING' && !record.organizationId && !isPaidOrder(record)
+)
 
 const isMoodle = (record: SourceRecord) => record.source === 'MOODLE'
 
@@ -155,7 +161,7 @@ const RunSummary = ({ run }: { run: SyncRun }) => (
   </div>
 )
 
-export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable }: SourcesPanelProps) => {
+export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable, onSynced }: SourcesPanelProps) => {
   const [state, setState] = useState<PanelState>({ kind: 'loading' })
   const [command, setCommand] = useState<CommandState>({ kind: 'idle' })
   const [mappings, setMappings] = useState<Record<string, Mapping>>({})
@@ -223,6 +229,7 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable }: Sources
       }
     }
     await load(false)
+    onSynced?.()
   }
 
   const mappingOf = (record: SourceRecord): Mapping => (
@@ -391,7 +398,8 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable }: Sources
                             <p>{recordTypeLabels[record.recordType] ?? record.recordType}</p>
                             <p>Внешний ID: {record.externalId}</p>
                             <p>
-                              {isMoodle(record) ? 'Наблюдение' : 'Изменена на сайте'}: {formatDateTime(record.externalUpdatedAt)}
+                              {isMoodle(record) ? 'Наблюдение' : isPaidOrder(record) ? 'Получена CRM' : 'Изменена на сайте'}:
+                              {' '}{formatDateTime(record.externalUpdatedAt)}
                             </p>
                           </td>
                           <td>
@@ -399,7 +407,8 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable }: Sources
                               {record.organizationName ?? 'Вуз не указан'}
                               {record.organizationExternalId ? ` (ID ${record.organizationExternalId})` : ''}
                             </p>
-                            {record.programName && <p>Программа: {record.programName}</p>}
+                            {record.programName && <p>{isPaidOrder(record) ? 'Курс' : 'Программа'}: {record.programName}</p>}
+                            {record.streamNo !== null && record.streamNo !== undefined && <p>Номер потока: {record.streamNo}</p>}
                           </td>
                           <td>
                             <p>{recordStatusLabels[record.status]}</p>

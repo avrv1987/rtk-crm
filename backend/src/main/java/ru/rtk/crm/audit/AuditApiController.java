@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -19,27 +20,31 @@ import org.springframework.web.bind.annotation.RestController;
 import ru.rtk.crm.access.AdminAuthorization;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.CurrentProfileService;
+import ru.rtk.crm.report.ReportException;
+import ru.rtk.crm.report.ReportProperties;
 import ru.rtk.crm.security.RequestId;
 
 @RestController
 @RequestMapping("/api/admin/audit-events")
 public class AuditApiController {
-    private static final int EXPORT_LIMIT = 10_000;
     private static final MediaType XLSX = MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     private static final MediaType CSV = MediaType.parseMediaType("text/csv;charset=UTF-8");
 
     private final CurrentProfileService currentProfileService;
     private final AuditJournalRepository auditJournalRepository;
     private final AuditExportWriter auditExportWriter;
+    private final ReportProperties reportProperties;
 
     public AuditApiController(
             CurrentProfileService currentProfileService,
             AuditJournalRepository auditJournalRepository,
-            AuditExportWriter auditExportWriter
+            AuditExportWriter auditExportWriter,
+            ReportProperties reportProperties
     ) {
         this.currentProfileService = currentProfileService;
         this.auditJournalRepository = auditJournalRepository;
         this.auditExportWriter = auditExportWriter;
+        this.reportProperties = reportProperties;
     }
 
     @GetMapping
@@ -70,8 +75,17 @@ public class AuditApiController {
     ) {
         CrmProfile profile = currentProfileService.requireActiveProfile(user);
         AdminAuthorization.requireAdmin(profile);
-        AuditQuery query = AuditQuery.of(from, to, actor, object, category, 0, 1).firstRows(EXPORT_LIMIT);
-        List<AuditEntry> entries = auditJournalRepository.findRows(query);
+        int maxRows = reportProperties.maxRows();
+        List<AuditEntry> entries = auditJournalRepository.findRows(
+                AuditQuery.of(from, to, actor, object, category, 0, 1).firstRows(maxRows + 1)
+        );
+        if (entries.size() > maxRows) {
+            throw new ReportException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "REPORT_ROW_LIMIT",
+                    "В выгрузку журнала попадает больше " + maxRows + " строк; сузьте период или фильтры"
+            );
+        }
         boolean csv = format == AuditExportFormat.CSV;
         byte[] content = csv ? auditExportWriter.csv(entries) : auditExportWriter.xlsx(entries);
         auditJournalRepository.record(

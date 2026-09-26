@@ -42,7 +42,7 @@ public class SubjectSearchRepository {
         boolean truncated = contacts.size() > LIMIT || profiles.size() > LIMIT || mentions.size() > LIMIT
                 || attachments.size() > LIMIT || sourceRecords.size() > LIMIT;
         return new SubjectSearchResult(
-                first(contacts), first(profiles), first(mentions), first(attachments), first(sourceRecords), truncated
+                first(contacts), first(profiles), first(mentions), first(attachments), first(sourceRecords), List.of(), truncated
         );
     }
 

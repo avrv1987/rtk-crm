@@ -100,6 +100,7 @@ function Ensure-CrmAdministrator {
             username = $username
             firstName = $values['CRM_ADMIN_DISPLAY_NAME']
             lastName = 'CRM'
+            email = $values['CRM_ADMIN_EMAIL']
             enabled = $true
             emailVerified = $true
             requiredActions = @()
@@ -109,6 +110,13 @@ function Ensure-CrmAdministrator {
     }
     if ($existing.Count -ne 1) {
         throw "Keycloak user $username is not unique"
+    }
+    if ([string]::IsNullOrWhiteSpace($existing[0].email)) {
+        @{ email = $values['CRM_ADMIN_EMAIL']; emailVerified = $true } | ConvertTo-Json -Compress |
+            & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh update "users/$($existing[0].id)" -r rtk-crm -f -
+        if ($LASTEXITCODE -ne 0) {
+            throw "Cannot update Keycloak user $username"
+        }
     }
     return $existing[0].id
 }
@@ -189,7 +197,6 @@ $defaults = [ordered]@{
     KEYCLOAK_ADMIN_USERNAME = 'bootstrap-admin'
     PUBLIC_ORIGIN = 'http://rtk.localhost:8081'
     SOURCES_SYNC_CRON = '0 0 * * * *'
-    ENROLMENT_ENABLED = 'false'
     ENROLMENT_ACTIVE_KEY_VERSION = 'v1'
 }
 $secrets = @(
@@ -205,6 +212,7 @@ $secrets = @(
 if ($values['DEMO_DATA'] -eq 'true') {
     $defaults['SITE_BASE_URL'] = $siteFixtureUrl
     $defaults['DEMO_LMS'] = 'true'
+    $defaults['ENROLMENT_ENABLED'] = 'true'
     $secrets += @('DEMO_USER_PASSWORD', 'SITE_TOKEN')
 }
 else {
@@ -215,8 +223,10 @@ else {
         $values['SITE_BASE_URL'] = ''
     }
     $defaults['DEMO_LMS'] = 'false'
+    $defaults['ENROLMENT_ENABLED'] = 'false'
     $defaults['CRM_ADMIN_USERNAME'] = 'admin'
     $defaults['CRM_ADMIN_DISPLAY_NAME'] = 'Администратор'
+    $defaults['CRM_ADMIN_EMAIL'] = 'admin@rtk-crm.local'
     $secrets += @('CRM_ADMIN_PASSWORD')
 }
 foreach ($pair in $defaults.GetEnumerator()) {
@@ -337,7 +347,7 @@ try {
     $issuer = "$($values['PUBLIC_ORIGIN'])/idp/realms/rtk-crm"
     $identityFile = Join-Path $projectRoot '.demo-identities.yml'
     $subjects = @{}
-    function ConvertTo-IdentityYaml([string]$Key, [string]$DisplayName, [string]$Role, [string]$TeamKey) {
+    function ConvertTo-IdentityYaml([string]$Key, [string]$DisplayName, [string]$Role, [string]$TeamKey, [bool]$EnrolmentOperator = $false) {
         $lines = @(
             "      - key: $(ConvertTo-YamlLiteral $Key)",
             "        issuer: $(ConvertTo-YamlLiteral $issuer)",
@@ -347,6 +357,9 @@ try {
         )
         if ($TeamKey) {
             $lines += "        team-key: $(ConvertTo-YamlLiteral $TeamKey)"
+        }
+        if ($EnrolmentOperator) {
+            $lines += "        enrolment-operator: true"
         }
         return $lines
     }
@@ -358,7 +371,8 @@ try {
             @('kam-d', 'КАМ Г', 'USER', 'team-a'),
             @('leader', 'Руководитель', 'LEADER', 'team-a'),
             @('leader-b', 'Руководитель Б', 'LEADER', 'team-b'),
-            @('admin', 'Администратор', 'ADMIN', 'team-a')
+            @('admin', 'Администратор', 'ADMIN', 'team-a'),
+            @('enrol', 'Оператор зачисления', 'USER', 'open-enrolment', $true)
         )
         $spareAccounts = @(
             @('unprofiled', 'Без профиля CRM'),
@@ -376,10 +390,12 @@ try {
             "        name: 'Команда А'",
             "      - key: 'team-b'",
             "        name: 'Команда Б'",
+            "      - key: 'open-enrolment'",
+            "        name: 'Открытый набор'",
             '    identities:'
         )
         foreach ($identity in $demoIdentities) {
-            $identityYaml += ConvertTo-IdentityYaml $identity[0] $identity[1] $identity[2] $identity[3]
+            $identityYaml += ConvertTo-IdentityYaml $identity[0] $identity[1] $identity[2] $identity[3] ($identity.Count -gt 4 -and $identity[4])
         }
         $identityYaml += @(
             '    organizations:',
