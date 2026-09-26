@@ -1,0 +1,126 @@
+{
+  "items": [
+    {
+      "externalId": "pr-demo-001",
+      "type": "partnership_request",
+      "createdAt": "2026-09-15T10:00:00+03:00",
+      "updatedAt": "2026-09-15T10:05:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-uni-a", "name": "Университет А", "type": "UNIVERSITY" },
+      "program": { "name": "Демо-программа: цифровой университет" },
+      "contact": {
+        "name": "Мария Демонстрационная",
+        "email": "maria.demo@example.test",
+        "phone": "+7 000 000-00-11",
+        "position": "Проректор по цифровизации"
+      },
+      "message": "Демо: просим подключить программу к весеннему набору"
+    },
+    {
+      "externalId": "pr-demo-002",
+      "type": "partnership_request",
+      "createdAt": "2026-09-16T11:00:00+03:00",
+      "updatedAt": "2026-09-16T11:00:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-uni-b", "name": "Университет Б", "type": "UNIVERSITY" },
+      "product": { "name": "Демо-продукт: облачная платформа" },
+      "contact": {
+        "name": "Олег Демонстрационный",
+        "email": "oleg.demo@example.test",
+        "position": "Руководитель ИТ-службы"
+      },
+      "message": "Демо: интересует облачная платформа для учебных лабораторий"
+    },
+    {
+      "externalId": "pr-demo-003",
+      "type": "partnership_request",
+      "createdAt": "2026-09-17T09:30:00+03:00",
+      "updatedAt": "2026-09-17T09:30:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-uni-c", "name": "Университет C — требует назначения", "type": "UNIVERSITY" },
+      "program": { "name": "Демо-программа: цифровой университет" },
+      "contact": { "name": "Ирина Демонстрационная", "email": "irina.demo@example.test" },
+      "message": "Демо: хотим обсудить партнёрство по программе"
+    },
+    {
+      "externalId": "pr-demo-004",
+      "type": "partnership_request",
+      "createdAt": "2026-09-18T14:00:00+03:00",
+      "updatedAt": "2026-09-18T14:00:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-uni-d", "name": "Университет Д (нет в CRM)", "type": "UNIVERSITY" },
+      "contact": { "name": "Павел Демонстрационный", "email": "pavel.demo@example.test" },
+      "message": "Демо: заявка от вуза, которого ещё нет в CRM"
+    },
+    {
+      "externalId": "la-demo-101",
+      "type": "learning_application",
+      "createdAt": "2026-09-01T12:00:00+03:00",
+      "updatedAt": "2026-09-01T12:00:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-uni-a", "name": "Университет А" },
+      "program": { "name": "Демо-программа: цифровой университет" },
+      "applicationsCount": 12
+    },
+    {
+      "externalId": "la-demo-102",
+      "type": "learning_application",
+      "createdAt": "2026-09-10T12:00:00+03:00",
+      "updatedAt": "2026-09-10T12:00:00+03:00",
+      "status": "accepted",
+      "organization": { "externalId": "site-uni-a", "name": "Университет А" },
+      "program": { "name": "Демо-программа: цифровой университет" },
+      "applicationsCount": 5
+    },
+    {
+      "externalId": "la-demo-103",
+      "type": "learning_application",
+      "createdAt": "2026-08-25T12:00:00+03:00",
+      "updatedAt": "2026-08-25T12:00:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-uni-b", "name": "Университет Б" },
+      "program": { "name": "Демо-программа: цифровой университет" },
+      "applicationsCount": 8
+    },
+    {
+      "externalId": "la-demo-104",
+      "type": "learning_application",
+      "createdAt": "2026-09-12T12:00:00+03:00",
+      "updatedAt": "2026-09-12T12:00:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-uni-b", "name": "Университет Б" },
+      "program": { "name": "Демо-программа: анализ данных" },
+      "applicationsCount": 4
+    },
+    {
+      "externalId": "la-demo-105",
+      "type": "learning_application",
+      "createdAt": "2026-09-13T12:00:00+03:00",
+      "updatedAt": "2026-09-13T12:00:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-uni-c", "name": "Университет C — требует назначения" },
+      "applicationsCount": 3
+    },
+    {
+      "externalId": "la-demo-106",
+      "type": "learning_application",
+      "createdAt": "2026-09-14T12:00:00+03:00",
+      "updatedAt": "2026-09-19T12:00:00+03:00",
+      "status": "withdrawn",
+      "organization": { "externalId": "site-uni-a", "name": "Университет А" },
+      "program": { "name": "Демо-программа: цифровой университет" },
+      "applicationsCount": 2
+    },
+    {
+      "externalId": "la-demo-107",
+      "type": "learning_application",
+      "createdAt": "2026-09-18T15:00:00+03:00",
+      "updatedAt": "2026-09-18T15:00:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-uni-d", "name": "Университет Д (нет в CRM)" },
+      "program": { "name": "Демо-программа: цифровой университет" },
+      "applicationsCount": 4
+    }
+  ],
+  "nextPage": 2
+}

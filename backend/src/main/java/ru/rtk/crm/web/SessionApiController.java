@@ -1,0 +1,34 @@
+package ru.rtk.crm.web;
+
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.core.oidc.user.OidcUser;
+import org.springframework.security.web.csrf.CsrfToken;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+import ru.rtk.crm.access.CurrentProfileService;
+import ru.rtk.crm.access.UserProfileRepository;
+
+@RestController
+public class SessionApiController {
+    private final CurrentProfileService currentProfileService;
+    private final UserProfileRepository userProfileRepository;
+
+    public SessionApiController(CurrentProfileService currentProfileService, UserProfileRepository userProfileRepository) {
+        this.currentProfileService = currentProfileService;
+        this.userProfileRepository = userProfileRepository;
+    }
+
+    @GetMapping("/api/me")
+    public MeResponse me(@AuthenticationPrincipal OidcUser user) {
+        var profile = currentProfileService.requireActiveProfile(user);
+        String teamName = profile.teamId() == null
+                ? null
+                : userProfileRepository.findTeamName(profile.teamId()).orElse(null);
+        return new MeResponse(profile.id(), profile.role(), profile.teamId(), teamName, profile.accessRevision());
+    }
+
+    @GetMapping("/api/csrf")
+    public CsrfResponse csrf(CsrfToken csrfToken) {
+        return new CsrfResponse(csrfToken.getHeaderName(), csrfToken.getToken());
+    }
+}

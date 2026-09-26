@@ -1,0 +1,57 @@
+name: rtk-crm-moodle
+
+services:
+  moodle-db:
+    restart: unless-stopped
+    image: mariadb:11.4.5
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MARIADB_DATABASE: ${MOODLE_DB_NAME:?MOODLE_DB_NAME is required}
+      MARIADB_USER: ${MOODLE_DB_USER:?MOODLE_DB_USER is required}
+      MARIADB_PASSWORD: ${MOODLE_DB_PASSWORD:?MOODLE_DB_PASSWORD is required}
+      MARIADB_ROOT_PASSWORD: ${MOODLE_DB_ROOT_PASSWORD:?MOODLE_DB_ROOT_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - moodle-db-data:/var/lib/mysql
+
+  moodle:
+    restart: unless-stopped
+    image: bitnamilegacy/moodle:4.5.4-debian-12-r0
+    environment:
+      MOODLE_DATABASE_TYPE: mariadb
+      MOODLE_DATABASE_HOST: moodle-db
+      MOODLE_DATABASE_PORT_NUMBER: 3306
+      MOODLE_DATABASE_NAME: ${MOODLE_DB_NAME:?MOODLE_DB_NAME is required}
+      MOODLE_DATABASE_USER: ${MOODLE_DB_USER:?MOODLE_DB_USER is required}
+      MOODLE_DATABASE_PASSWORD: ${MOODLE_DB_PASSWORD:?MOODLE_DB_PASSWORD is required}
+      MOODLE_USERNAME: ${MOODLE_ADMIN_USERNAME:?MOODLE_ADMIN_USERNAME is required}
+      MOODLE_PASSWORD: ${MOODLE_ADMIN_PASSWORD:?MOODLE_ADMIN_PASSWORD is required}
+      MOODLE_SITE_NAME: CRM Moodle Demo
+    depends_on:
+      moodle-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bash", "-c", ": </dev/tcp/127.0.0.1/8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20m
+    ports:
+      - "127.0.0.1:${MOODLE_HTTP_PORT:-8082}:8080"
+    volumes:
+      - moodle-data:/bitnami/moodle
+      - moodledata:/bitnami/moodledata
+      - ./apache-forwarded-proto.conf:/opt/bitnami/apache/conf/vhosts/00-forwarded-proto.conf:ro
+
+volumes:
+  moodle-db-data:
+  moodle-data:
+  moodledata:
+
+networks:
+  default:
+    name: rtk-crm-moodle

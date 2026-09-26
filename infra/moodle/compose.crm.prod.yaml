@@ -1,0 +1,9 @@
+services:
+  web:
+    environment:
+      MOODLE_PUBLIC_HOST: ${MOODLE_PUBLIC_HOST:?MOODLE_PUBLIC_HOST is required}
+    volumes:
+      - ./infra/web/moodle-tls.conf:/etc/nginx/templates/moodle.conf.template:ro
+    networks:
+      - rtk-crm
+      - moodle

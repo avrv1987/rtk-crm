@@ -1,0 +1,3805 @@
+openapi: 3.1.0
+info:
+  title: CRM ИТ Школы РТК — REST API
+  version: 0.2.0
+  description: |
+    API веб-клиента CRM и точка интеграции с корпоративными системами.
+
+    Аутентификация: вход через Keycloak (GET /api/auth/login) создаёт серверную сессию BFF, браузер получает HttpOnly cookie SESSION; токены OIDC клиенту не передаются. Выход (POST /api/auth/logout) завершает сессию CRM и возвращает адрес завершения сессии Keycloak.
+
+    Изменяющие запросы передают заголовок X-CSRF-TOKEN со значением token из GET /api/csrf. Команды передают Idempotency-Key; повтор с тем же ключом и телом возвращает прежний результат, с другим телом — 409 IDEMPOTENCY_CONFLICT. Устаревшая version даёт 409 VERSION_CONFLICT с currentVersion.
+
+    Ошибки возвращаются в формате ApiError {code, message, requestId}. requestId совпадает с заголовком X-Request-Id и записью в журнале сервера; stack trace и секреты в ответ не попадают.
+servers:
+  - url: /
+tags:
+  - name: Session
+  - name: Catalog
+  - name: Interaction
+  - name: Jobs
+  - name: Reports
+  - name: Administration
+paths:
+  /api/auth/login:
+    get:
+      tags: [Session]
+      summary: Начать вход через Keycloak
+      operationId: startLogin
+      security: []
+      responses:
+        '302':
+          description: Redirect to the BFF authorization endpoint, which redirects to the configured OIDC provider
+          headers:
+            Location:
+              description: Browser redirect target at the OIDC provider
+              required: true
+              schema:
+                type: string
+                format: uri-reference
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/auth/callback/{registrationId}:
+    get:
+      tags: [Session]
+      summary: Завершить вход через Keycloak
+      operationId: finishLogin
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationId'
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: BFF session is established and the browser is redirected to the SPA
+          headers:
+            Location:
+              description: Browser redirect target in the SPA
+              required: true
+              schema:
+                type: string
+                format: uri-reference
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/auth/logout:
+    post:
+      tags: [Session]
+      summary: Выйти из CRM и Keycloak
+      operationId: logout
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: BFF session and browser cookies are cleared; the browser opens logoutUrl to end the Keycloak session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/me:
+    get:
+      tags: [Session]
+      summary: Текущий профиль CRM
+      operationId: getCurrentProfile
+      responses:
+        '200':
+          description: Active CRM profile for the authenticated identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/csrf:
+    get:
+      tags: [Session]
+      summary: Получить CSRF-токен сессии
+      operationId: getCsrfToken
+      responses:
+        '200':
+          description: Token and header name for the current BFF session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CsrfToken'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations:
+    get:
+      tags: [Catalog]
+      summary: Список организаций
+      operationId: listOrganizations
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/OrganizationSort'
+        - name: q
+          in: query
+          required: false
+          description: Часть названия без учёта регистра
+          schema:
+            type: string
+            maxLength: 200
+        - name: requiresAssignment
+          in: query
+          required: false
+          description: Только вузы без ответственного или с ответственным, который не является активным КАМ команды вуза
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Organizations visible within the current server-side business scope, filtered and counted on the server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageOrganization'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}:
+    get:
+      tags: [Catalog]
+      summary: Карточка организации
+      operationId: getOrganization
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Organization visible within the current server-side business scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/contacts:
+    get:
+      tags: [Catalog]
+      summary: Контакты организации
+      operationId: listOrganizationContacts
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Contacts belonging to the visible organization
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Contact'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Catalog]
+      summary: Добавить контакт организации
+      operationId: createOrganizationContact
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactCreate'
+      responses:
+        '201':
+          description: Contact created in the visible organization
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/assignment-options:
+    get:
+      tags: [Catalog]
+      summary: Кандидаты в ответственные КАМ
+      operationId: listOrganizationAssignmentOptions
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Active USER profiles of the visible organization's team, available only to its LEADER
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrganizationAssignmentCandidate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/assignment-events:
+    get:
+      tags: [Catalog]
+      summary: История назначений ответственного
+      operationId: listOrganizationAssignmentEvents
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Immutable owner assignment history of the visible organization, available only to its LEADER
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrganizationAssignmentEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/assignment:
+    post:
+      tags: [Catalog]
+      summary: Назначить ответственного КАМ
+      operationId: assignOrganizationOwner
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationAssignment'
+      responses:
+        '200':
+          description: Updated organization and its immutable owner assignment event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationAssignmentResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/programs:
+    get:
+      tags: [Catalog]
+      summary: Справочник программ
+      operationId: listPrograms
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Active programs available in the current business catalog scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageCatalogLookup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/products:
+    get:
+      tags: [Catalog]
+      summary: Справочник продуктов
+      operationId: listProducts
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Active products available in the current business catalog scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageCatalogLookup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/directions:
+    get:
+      tags: [Catalog]
+      summary: Список ИТ-направлений
+      operationId: listDirections
+      x-implementation-stage: 5
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Active IT directions for report filters; empty for profiles without a business scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageCatalogLookup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions:
+    get:
+      tags: [Interaction]
+      summary: Взаимодействия видимых вузов
+      operationId: listInteractions
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/InteractionOrganizationId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/InteractionSort'
+        - name: q
+          in: query
+          required: false
+          description: Часть названия взаимодействия или вуза без учёта регистра
+          schema:
+            type: string
+            maxLength: 200
+        - name: due
+          in: query
+          required: false
+          description: OVERDUE — шаг и срок заданы, срок прошёл; THIS_WEEK — шаг и срок заданы, срок на текущей неделе по Москве (понедельник–воскресенье); NO_NEXT_STEP — нет текста шага или его срока, такие взаимодействия попадают только сюда
+          schema:
+            type: string
+            enum: [OVERDUE, THIS_WEEK, NO_NEXT_STEP]
+        - name: stage
+          in: query
+          required: false
+          description: Точное название текущего этапа
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        '200':
+          description: Interactions of all visible organizations, or of one visible organization when organizationId is given; filters, total and pages are computed on the server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageInteraction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Interaction]
+      summary: Создать взаимодействие
+      operationId: createInteraction
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionCreate'
+      responses:
+        '201':
+          description: Interaction created with a private 13-stage workflow snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}:
+    get:
+      tags: [Interaction]
+      summary: Карточка взаимодействия
+      operationId: getInteraction
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Interaction visible through its current organization scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [Interaction]
+      summary: Изменить план взаимодействия
+      operationId: updateInteractionPlan
+      x-implementation-stage: 3
+      description: >-
+        Changes the plan of the card: next step, its due date, program and products.
+        An absent property keeps the current value, an explicit null clears it.
+        Removing a product whose agreement already has contract data is rejected.
+        A change writes one PLAN_UPDATED history event; a request without effective changes returns the card unchanged.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionPlanUpdate'
+      responses:
+        '200':
+          description: Interaction after the plan update
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/events:
+    get:
+      tags: [Interaction]
+      summary: История взаимодействия
+      operationId: listInteractionEvents
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Immutable interaction history ordered by version, occurredAt and id
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InteractionEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/learning-snapshots:
+    get:
+      tags: [Interaction]
+      summary: Данные обучения из LMS для взаимодействия
+      operationId: listInteractionLearningSnapshots
+      x-implementation-stage: 4
+      description: >
+        Latest Moodle snapshots of the courses and groups an administrator mapped to the same organization and program
+        as the interaction. Counts only: no names, emails or grades of learners are stored. The interaction is checked
+        against the current organization scope in the same query; an invisible or unknown interaction gets 404.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Snapshots ordered by course and group; empty when nothing is mapped to the interaction program
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LearningSnapshot'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/learning-snapshots/sync:
+    post:
+      tags: [Interaction]
+      summary: Обновить данные LMS карточки
+      operationId: refreshInteractionLearningSnapshots
+      x-implementation-stage: 4
+      description: >
+        USER or LEADER of the interaction scope. Reads from Moodle only the allowed courses that an administrator already
+        mapped to the organization and program of the interaction and applies only the courses and groups mapped to that
+        pair, in the request thread and under the same one-active-run rule as the administrator sync. The Moodle token
+        stays on the server. A changed snapshot adds a «Данные LMS» event authored by the caller; unchanged counts only
+        get a new observation time. A Moodle error keeps the last full publication and returns 502 LMS_SYNC_FAILED.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Finished scoped run and the refreshed snapshots of the interaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LearningSnapshotsRefresh'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: >
+            LMS_NOT_MAPPED when the interaction has no program or no allowed Moodle course or group is mapped to its
+            organization and program; SOURCE_NOT_CONFIGURED; SYNC_ALREADY_RUNNING
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          description: LMS_SYNC_FAILED, Moodle was unavailable or rejected the request; stored snapshots are unchanged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+  /api/interactions/{id}/transitions:
+    post:
+      tags: [Interaction]
+      summary: Перевести взаимодействие на этап
+      operationId: transitionInteraction
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionTransition'
+      responses:
+        '200':
+          description: Interaction after a validated workflow transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/comments:
+    post:
+      tags: [Interaction]
+      summary: Добавить комментарий к взаимодействию
+      operationId: commentInteraction
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionComment'
+      responses:
+        '200':
+          description: Updated interaction and the immutable comment event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InteractionCommentResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/stage-edits:
+    post:
+      tags: [Interaction]
+      summary: Изменить этапы взаимодействия
+      operationId: editInteractionStages
+      x-implementation-stage: 3
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionStageEdit'
+      responses:
+        '200':
+          description: >-
+            Interaction after a validated local workflow snapshot edit. Structural edits rebuild only the
+            transitions around the added, moved or deleted stage and write one STAGES_EDITED history event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/attachments:
+    post:
+      tags: [Attachment]
+      summary: Загрузить вложение
+      operationId: uploadInteractionAttachment
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, stageId]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                stageId:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Attachment stored in quarantine and scanned before any possible download
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/attachments/{id}:
+    get:
+      tags: [Attachment]
+      summary: Сведения о вложении
+      operationId: getAttachment
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Safe metadata for an attachment visible through its parent interaction scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/attachments/{id}/download:
+    get:
+      tags: [Attachment]
+      summary: Скачать вложение
+      operationId: downloadAttachment
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Raw file bytes for a CLEAN attachment only
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/jobs/{id}:
+    get:
+      tags: [Jobs]
+      summary: Задание импорта каталогов
+      operationId: getCatalogImportJob
+      x-implementation-stage: 4
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Terminal catalog import job, visible to an ADMIN CRM profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogImportJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/reports:
+    post:
+      tags: [Reports]
+      summary: Заказать отчёт или диаграмму
+      operationId: createReportJob
+      x-implementation-stage: 5
+      description: >
+        Persists a PENDING report job and hands it to one of the bounded report slots. The same Idempotency-Key with
+        the same payload returns the same jobId; a different payload under the key returns 409 IDEMPOTENCY_CONFLICT.
+        503 REPORT_CAPACITY_EXCEEDED with Retry-After means all slots and the bounded queue are busy and no job was kept.
+        With groupBy the job renders a chart of POST /api/statistics for the same request as PNG or PDF (chart, basis
+        table, unit, period, filters and generation time) instead of the row report.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportRequest'
+      responses:
+        '202':
+          description: Report job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportJobCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ReportCapacityExceeded'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/reports/preview:
+    post:
+      tags: [Reports]
+      summary: Предпросмотр строк отчёта
+      operationId: previewReport
+      x-implementation-stage: 5
+      description: Synchronous page of the same rows that the report file contains, filtered by the current server-side scope
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/Page'
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportPreviewRequest'
+      responses:
+        '200':
+          description: Report rows page with total row count and explanatory notes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportPreview'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/statistics:
+    post:
+      tags: [Reports]
+      summary: Статистика для диаграмм
+      operationId: reportStatistics
+      x-implementation-stage: 5
+      description: >
+        Counts over exactly the same row set as the report with the same filters, aggregated by the database; rows are
+        not loaded into the API process and app.reports.max-rows does not apply. unknownCount holds rows without a
+        value for the grouping; groups present in items with count 0 are real zeros (MONTH is zero-filled over the period).
+        MONTH with kind PORTFOLIO and periodBasis ACTIVITY is rejected with 400 VALIDATION_ERROR (field groupBy).
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatisticsRequest'
+      responses:
+        '200':
+          description: Grouped counts, total and unknown count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatisticsResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/report-jobs:
+    get:
+      tags: [Reports]
+      summary: Последние заказанные отчёты
+      operationId: listRecentReportJobs
+      x-implementation-stage: 5
+      responses:
+        '200':
+          description: Up to 20 latest report jobs of the current profile that are still valid for its current access revision
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ReportJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/report-jobs/{id}:
+    get:
+      tags: [Reports]
+      summary: Состояние задания отчёта
+      operationId: getReportJob
+      x-implementation-stage: 5
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Report job state for its owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportJob'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/ReportGone'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/report-jobs/{id}/result:
+    get:
+      tags: [Reports]
+      summary: Скачать файл отчёта
+      operationId: downloadReportJobResult
+      x-implementation-stage: 5
+      description: File is served only to the owner whose role, team and access revision are unchanged since the order
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Report file; Content-Disposition carries a UTF-8 filename*
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            application/vnd.ms-excel:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: REPORT_NOT_READY, the job has not succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '410':
+          $ref: '#/components/responses/ReportGone'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/report-filters/managers:
+    get:
+      tags: [Reports]
+      summary: Ответственные для фильтра отчёта
+      operationId: listReportManagers
+      x-implementation-stage: 5
+      responses:
+        '200':
+          description: USER receives only itself; LEADER receives USER profiles of its team and current owners of visible organizations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ReportManagerOption'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/report-filters/stages:
+    get:
+      tags: [Reports]
+      summary: Этапы для фильтра отчёта
+      operationId: listReportStages
+      x-implementation-stage: 5
+      responses:
+        '200':
+          description: Distinct stage names of visible interactions in workflow order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/workflow-templates:
+    get:
+      tags: [Catalog]
+      summary: Доступные шаблоны процесса
+      operationId: listAvailableWorkflowTemplates
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/WorkflowTemplateSort'
+      responses:
+        '200':
+          description: Workflow templates available within the current server-side scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageWorkflowTemplate'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/workflow-templates:
+    get:
+      tags: [Administration]
+      summary: Шаблоны процесса для управления
+      operationId: listWorkflowTemplates
+      x-implementation-stage: 3
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/WorkflowTemplateSort'
+      responses:
+        '200':
+          description: >-
+            Workflow templates managed by the current administrator (global) or leader (own team).
+            A leader also receives the default template as read-only source for a team copy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageWorkflowTemplate'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Administration]
+      summary: Создать шаблон процесса
+      operationId: createWorkflowTemplate
+      x-implementation-stage: 3
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowTemplateCreate'
+      responses:
+        '201':
+          description: Workflow template created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowTemplate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/workflow-templates/{id}:
+    get:
+      tags: [Administration]
+      summary: Шаблон процесса
+      operationId: getWorkflowTemplate
+      x-implementation-stage: 3
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: >-
+            Workflow template managed by the current administrator (global) or leader (own team).
+            A leader also reads the default template as read-only source for a team copy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowTemplate'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [Administration]
+      summary: Изменить шаблон процесса
+      operationId: updateWorkflowTemplate
+      x-implementation-stage: 3
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowTemplateUpdate'
+      responses:
+        '200':
+          description: Workflow template updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowTemplate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Administration]
+      summary: Удалить шаблон процесса
+      operationId: deleteWorkflowTemplate
+      x-implementation-stage: 3
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: version
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '204':
+          description: Workflow template deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-profiles:
+    get:
+      tags: [Administration]
+      summary: Профили CRM
+      operationId: listCrmProfiles
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/CrmProfileSort'
+        - name: pending
+          in: query
+          required: false
+          description: Only profiles created at the first login and waiting for activation
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: CRM profiles managed by an administrator
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageCrmProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-profiles/{id}:
+    patch:
+      tags: [Administration]
+      summary: Изменить профиль CRM
+      operationId: updateCrmProfile
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrmProfileUpdate'
+      responses:
+        '200':
+          description: CRM profile updated; a role, team or activity change increments accessRevision, and every change is written to the profile journal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrmProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-profiles/{id}/events:
+    get:
+      tags: [Administration]
+      summary: Журнал изменений профиля CRM
+      operationId: listCrmProfileEvents
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Immutable profile changes, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CrmProfileEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/teams:
+    get:
+      tags: [Administration]
+      summary: Команды
+      operationId: listTeams
+      x-implementation-stage: 1
+      responses:
+        '200':
+          description: All teams ordered by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Team'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Administration]
+      summary: Создать команду
+      operationId: createTeam
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamCreate'
+      responses:
+        '201':
+          description: Team created; a duplicate name, compared case-insensitively, is a validation error on name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/teams/{id}:
+    patch:
+      tags: [Administration]
+      summary: Переименовать команду
+      operationId: renameTeam
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamUpdate'
+      responses:
+        '200':
+          description: Team renamed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/organizations:
+    get:
+      tags: [Administration]
+      summary: Вузы и команды
+      operationId: listAdminOrganizations
+      x-implementation-stage: 1
+      description: Service list for team transfer; contains no contacts, interactions or other business data
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Organizations ordered by name with team and responsible manager names
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageAdminOrganization'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/organizations/{id}/team:
+    patch:
+      tags: [Administration]
+      summary: Перенести вуз в другую команду
+      operationId: transferOrganizationTeam
+      x-implementation-stage: 1
+      description: A responsible manager outside the new team is removed with an assignment event; leaders of both teams and the removed manager get a new accessRevision
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationTeamTransfer'
+      responses:
+        '200':
+          description: Organization moved to the team
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOrganization'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/sources:
+    get:
+      tags: [Administration]
+      summary: Состояние источников данных
+      operationId: listDataSources
+      x-implementation-stage: 4
+      description: >
+        ADMIN only. WEBSITE is the adapter of the proposed site contract (docs/integrations/site-api.yaml), not a
+        confirmed API of the customer; MOODLE reads aggregated course and group data through a restricted Moodle web
+        service (docs/integrations.md). Base URL, token and the allowed course list come only from the deployment
+        configuration and are never returned.
+      responses:
+        '200':
+          description: Sources with configuration flag, last run with counters, last success and number of records to review
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DataSource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/sources/{source}/sync:
+    post:
+      tags: [Administration]
+      summary: Запустить синхронизацию источника
+      operationId: startSourceSync
+      x-implementation-stage: 4
+      description: >
+        ADMIN only. Persists a PENDING run and hands it to the bounded sync executor (not the HTTP thread); returns 202
+        with runId. Only one PENDING or RUNNING run per source exists: a second start gets 409 SYNC_ALREADY_RUNNING.
+        Repeating a sync is safe: a site record with the same source, type, externalId and updatedAt is skipped, and a
+        Moodle snapshot with unchanged counts only gets a new observation time. A source error fails the run and leaves
+        stored records, published Moodle snapshots, demand numbers and the updated_since watermark intact.
+        The same runs are started by the server schedule SOURCES_SYNC_CRON on behalf of the active administrator who
+        started the latest run of the source; a source nobody started yet is not scheduled.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/SourceCode'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '202':
+          description: Sync run accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncRunCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: >
+            SOURCE_NOT_CONFIGURED when SITE_BASE_URL is empty, or MOODLE_BASE_URL, MOODLE_TOKEN or MOODLE_COURSE_IDS is
+            empty; SYNC_ALREADY_RUNNING
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: SYNC_CAPACITY_EXCEEDED, the sync executor and its queue are busy; nothing was stored
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/source-records:
+    get:
+      tags: [Administration]
+      summary: Записи источников для разбора
+      operationId: listSourceProblemRecords
+      x-implementation-stage: 4
+      description: ADMIN only. Up to 200 latest records with status NEEDS_MAPPING or FAILED
+      responses:
+        '200':
+          description: Records that need an organization or program mapping, or failed to apply
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SourceRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/source-mapping-options:
+    get:
+      tags: [Administration]
+      summary: Вузы и программы для сопоставления
+      operationId: listSourceMappingOptions
+      x-implementation-stage: 4
+      responses:
+        '200':
+          description: All organizations and active programs an administrator can map an external reference to
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceMappingOptions'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/source-records/{id}/apply:
+    post:
+      tags: [Administration]
+      summary: Сопоставить и применить запись источника
+      operationId: applySourceRecord
+      x-implementation-stage: 4
+      description: >
+        ADMIN only. For a WEBSITE record saves the optional organization mapping (for the record's external
+        organization ID, or its name when the ID is absent) and program mapping (for the program name). For a MOODLE
+        NEEDS_MAPPING course or group record organizationId, programId, runStartsOn and runEndsOn are required: the
+        mapping confirms a training run [runStartsOn, runEndsOn); a FAILED MOODLE record without them is applied again
+        with its saved mapping. A run that ended before its first observation is SKIPPED without a snapshot, a run that
+        has ended keeps its last observation. A group cannot be mapped when its course is mapped as a whole and vice
+        versa (400). Then applies the stored record again and re-applies up to
+        500 other NEEDS_MAPPING records of the same source. Applying an APPLIED or SKIPPED record changes nothing, so
+        a repeated request is safe.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceRecordApply'
+      responses:
+        '200':
+          description: Record after the new attempt and the number of other records applied thanks to the mapping
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceRecordApplyResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/imports/inspect:
+    post:
+      tags: [Catalog]
+      summary: Прочитать листы и заголовки файла импорта
+      operationId: inspectCatalogImport
+      x-implementation-stage: 4
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Workbook sheets and headers after signature and scanner checks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogImportInspect'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/imports/preview:
+    post:
+      tags: [Catalog]
+      summary: Предпросмотр импорта каталогов
+      operationId: previewCatalogImport
+      x-implementation-stage: 4
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, profile, sheet, mapping]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                profile:
+                  $ref: '#/components/schemas/CatalogImportProfile'
+                sheet:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                mapping:
+                  $ref: '#/components/schemas/CatalogImportMapping'
+      responses:
+        '202':
+          description: Persisted terminal preview job and import plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogImportPreview'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/imports/{id}:
+    get:
+      tags: [Catalog]
+      summary: Протокол импорта каталогов
+      operationId: getCatalogImport
+      x-implementation-stage: 4
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Persisted import preview and row protocol
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogImport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/imports/{id}/apply:
+    post:
+      tags: [Catalog]
+      summary: Применить импорт каталогов
+      operationId: applyCatalogImport
+      x-implementation-stage: 4
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatalogImportApply'
+      responses:
+        '202':
+          description: Persisted terminal apply job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogImportApplyResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: SESSION
+      description: Серверная сессия BFF, созданная входом через GET /api/auth/login. Swagger UI на том же origin использует сессию браузера.
+  parameters:
+    UuidId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RegistrationId:
+      name: registrationId
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [keycloak]
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    PageSize:
+      name: size
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+    OrganizationSort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: ['name,asc', 'name,desc', 'updatedAt,asc', 'updatedAt,desc']
+        default: 'updatedAt,desc'
+    InteractionOrganizationId:
+      name: organizationId
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+    InteractionSort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: ['createdAt,asc', 'createdAt,desc', 'updatedAt,asc', 'updatedAt,desc', 'nextActionAt,asc']
+        default: 'updatedAt,desc'
+    WorkflowTemplateSort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: ['name,asc', 'name,desc', 'version,asc', 'version,desc']
+        default: 'name,asc'
+    CrmProfileSort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: ['displayName,asc', 'displayName,desc', 'role,asc', 'role,desc', 'accessRevision,asc', 'accessRevision,desc']
+        default: 'displayName,asc'
+    CsrfHeader:
+      name: X-CSRF-TOKEN
+      in: header
+      required: true
+      description: Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN.
+      schema:
+        type: string
+        minLength: 1
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+  responses:
+    BadRequest:
+      description: Validation or request format error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Unauthorized:
+      description: BFF session is absent or expired
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Forbidden:
+      description: Authenticated identity is not allowed to perform the action
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    CrmProfileRequired:
+      description: The OIDC identity has no active CRM profile (CRM_PROFILE_REQUIRED) or its profile created at first login waits for administrator activation (CRM_PROFILE_PENDING)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    ContactInteractionMutationForbidden:
+      description: A visible organization or interaction can be changed only by an active USER or LEADER of its scope; the scope is checked first, so a hidden object is 404. Also returned when the OIDC identity has no active CRM profile
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    NotFound:
+      description: Object does not exist or is outside the current server-side scope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Conflict:
+      description: Version or idempotency conflict; VERSION_CONFLICT includes currentVersion
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    PayloadTooLarge:
+      description: Uploaded payload exceeds the configured limit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    RateLimited:
+      description: Request rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    DependencyUnavailable:
+      description: Required dependency is unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    InternalError:
+      description: Unexpected server error; the stack trace is written only to the server log under the same requestId
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    ReportCapacityExceeded:
+      description: REPORT_CAPACITY_EXCEEDED, all report slots and the bounded queue are busy; nothing was stored
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    ReportGone:
+      description: REPORT_ACCESS_CHANGED after a role, team or access revision change, or REPORT_RESULT_UNAVAILABLE when the file is gone
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+  schemas:
+    Me:
+      type: object
+      required: [id, role, teamId, teamName, accessRevision]
+      properties:
+        id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [USER, LEADER, ADMIN]
+        teamId:
+          type: [string, 'null']
+          format: uuid
+        teamName:
+          type: [string, 'null']
+        accessRevision:
+          type: integer
+          minimum: 0
+    LogoutResult:
+      type: object
+      required: [logoutUrl]
+      properties:
+        logoutUrl:
+          type: string
+          format: uri
+          description: Keycloak end_session_endpoint with id_token_hint and post_logout_redirect_uri
+    CsrfToken:
+      type: object
+      required: [headerName, token]
+      properties:
+        headerName:
+          type: string
+          const: X-CSRF-TOKEN
+        token:
+          type: string
+          minLength: 1
+    ApiError:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code:
+          type: string
+          enum:
+            - VALIDATION_ERROR
+            - BAD_REQUEST
+            - UNAUTHENTICATED
+            - FORBIDDEN
+            - CRM_PROFILE_REQUIRED
+            - CRM_PROFILE_PENDING
+            - LAST_ACTIVE_ADMIN
+            - NOT_FOUND
+            - METHOD_NOT_ALLOWED
+            - CONFLICT
+            - VERSION_CONFLICT
+            - IDEMPOTENCY_CONFLICT
+            - PAYLOAD_TOO_LARGE
+            - UNSUPPORTED_MEDIA_TYPE
+            - RATE_LIMITED
+            - INTERNAL_ERROR
+            - DEPENDENCY_UNAVAILABLE
+            - REPORT_NOT_READY
+            - REPORT_ACCESS_CHANGED
+            - REPORT_RESULT_UNAVAILABLE
+            - REPORT_CAPACITY_EXCEEDED
+            - SOURCE_NOT_CONFIGURED
+            - SYNC_ALREADY_RUNNING
+            - SYNC_CAPACITY_EXCEEDED
+            - LMS_NOT_MAPPED
+            - LMS_SYNC_FAILED
+        message:
+          type: string
+        requestId:
+          type: string
+          format: uuid
+        fieldErrors:
+          type: object
+          additionalProperties:
+            type: string
+        currentVersion:
+          type: integer
+          minimum: 0
+    Job:
+      type: object
+      required: [id, status, resultReady]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCEEDED, FAILED, CANCELLED]
+        progress:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 100
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/ApiError'
+            - type: 'null'
+        resultReady:
+          type: boolean
+    PageMeta:
+      type: object
+      required: [page, size, total]
+      properties:
+        page:
+          type: integer
+          minimum: 0
+        size:
+          type: integer
+          minimum: 1
+          maximum: 100
+        total:
+          type: integer
+          minimum: 0
+    Organization:
+      type: object
+      required: [id, name, type, teamId, version, updatedAt, ownerManagerName, teamName, requiresAssignment]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+          enum: [UNIVERSITY, SCHOOL]
+        teamId:
+          type: string
+          format: uuid
+        ownerManagerId:
+          type: [string, 'null']
+          format: uuid
+        version:
+          type: integer
+          minimum: 0
+        updatedAt:
+          type: string
+          format: date-time
+        ownerManagerName:
+          type: [string, 'null']
+        teamName:
+          type: [string, 'null']
+        requiresAssignment:
+          type: boolean
+          description: true, если ответственного нет или он не является активным КАМ команды вуза
+    PageOrganization:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Organization'
+    OrganizationAssignmentCandidate:
+      type: object
+      required: [id, displayName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+    OrganizationAssignment:
+      type: object
+      required: [version, ownerManagerId]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        ownerManagerId:
+          description: An active USER of the organization team, or null to explicitly remove the owner
+          type: [string, 'null']
+          format: uuid
+    OrganizationAssignmentEvent:
+      type: object
+      required: [id, organizationId, commandId, actorProfileId, actorDisplayName, requestId, version, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        commandId:
+          type: string
+          format: uuid
+        previousOwnerManagerId:
+          type: [string, 'null']
+          format: uuid
+        previousOwnerManagerDisplayName:
+          type: [string, 'null']
+        ownerManagerId:
+          type: [string, 'null']
+          format: uuid
+        newOwnerManagerDisplayName:
+          type: [string, 'null']
+        actorProfileId:
+          type: string
+          format: uuid
+        actorDisplayName:
+          type: string
+        requestId:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 0
+        occurredAt:
+          type: string
+          format: date-time
+    OrganizationAssignmentResult:
+      type: object
+      required: [organization, event]
+      properties:
+        organization:
+          $ref: '#/components/schemas/Organization'
+        event:
+          $ref: '#/components/schemas/OrganizationAssignmentEvent'
+    Contact:
+      type: object
+      required: [id, organizationId, name, version, createdBy, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        position:
+          type: [string, 'null']
+        email:
+          type: [string, 'null']
+          format: email
+        phone:
+          type: [string, 'null']
+        version:
+          type: integer
+          minimum: 0
+        createdBy:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ContactCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        position:
+          type: [string, 'null']
+          maxLength: 200
+        email:
+          type: [string, 'null']
+          format: email
+          maxLength: 320
+        phone:
+          type: [string, 'null']
+          maxLength: 50
+    CatalogLookup:
+      type: object
+      required: [id, name, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        version:
+          type: integer
+          minimum: 0
+    CatalogReference:
+      type: object
+      required: [id, name, archived, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        archived:
+          type: boolean
+        version:
+          type: integer
+          minimum: 0
+    PageCatalogLookup:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/CatalogLookup'
+    ProductAgreement:
+      type: object
+      required: [id, productId, productName, productArchived, contractNumber, licenseSigned, licenseExpiryYear, transferStatus]
+      properties:
+        id:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        productName:
+          type: string
+        productArchived:
+          type: boolean
+        contractNumber:
+          type: [string, 'null']
+        licenseSigned:
+          type: [boolean, 'null']
+        licenseExpiryYear:
+          type: [integer, 'null']
+        transferStatus:
+          type: [string, 'null']
+    InteractionStage:
+      type: object
+      required: [id, name, order, optional]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        order:
+          type: integer
+          minimum: 0
+        optional:
+          type: boolean
+    InteractionTransitionOption:
+      type: object
+      required: [stageId, stageName, commentRequired]
+      properties:
+        stageId:
+          type: string
+          format: uuid
+        stageName:
+          type: string
+        commentRequired:
+          type: boolean
+    InteractionStageTransition:
+      type: object
+      required: [fromStageId, toStageId, commentRequired]
+      properties:
+        fromStageId:
+          type: string
+          format: uuid
+        toStageId:
+          type: string
+          format: uuid
+        commentRequired:
+          type: boolean
+    InteractionSummary:
+      type: object
+      required: [id, organizationId, title, currentStageId, currentStageName, nextAction, nextActionAt, contactIds, programId, productIds, lastContactAt, version, createdBy, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        currentStageId:
+          type: string
+          format: uuid
+        currentStageName:
+          type: string
+        nextAction:
+          type: [string, 'null']
+        nextActionAt:
+          type: [string, 'null']
+          format: date-time
+        contactIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        programId:
+          type: [string, 'null']
+          format: uuid
+        productIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        lastContactAt:
+          type: [string, 'null']
+          format: date-time
+        version:
+          type: integer
+          minimum: 0
+        createdBy:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    Interaction:
+      allOf:
+        - $ref: '#/components/schemas/InteractionSummary'
+        - type: object
+          required: [stages, transitions, allowedTransitions, program, productAgreements, attachments]
+          properties:
+            stages:
+              type: array
+              minItems: 1
+              items:
+                $ref: '#/components/schemas/InteractionStage'
+            transitions:
+              type: array
+              items:
+                $ref: '#/components/schemas/InteractionStageTransition'
+            allowedTransitions:
+              type: array
+              items:
+                $ref: '#/components/schemas/InteractionTransitionOption'
+            program:
+              anyOf:
+                - $ref: '#/components/schemas/CatalogReference'
+                - type: 'null'
+            productAgreements:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProductAgreement'
+            attachments:
+              type: array
+              items:
+                $ref: '#/components/schemas/Attachment'
+    PageInteraction:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/InteractionListItem'
+    InteractionListItem:
+      allOf:
+        - $ref: '#/components/schemas/InteractionSummary'
+        - type: object
+          required: [organizationName, programName, ownerManagerName]
+          properties:
+            organizationName:
+              type: string
+            programName:
+              type: [string, 'null']
+            ownerManagerName:
+              type: [string, 'null']
+    InteractionCreate:
+      type: object
+      required: [organizationId, title]
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        nextAction:
+          type: [string, 'null']
+          maxLength: 500
+        nextActionAt:
+          type: [string, 'null']
+          format: date-time
+        contactIds:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        programId:
+          type: [string, 'null']
+          format: uuid
+        productIds:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        lastContactAt:
+          type: [string, 'null']
+          format: date-time
+        templateId:
+          type: [string, 'null']
+          format: uuid
+    InteractionTransition:
+      type: object
+      required: [version, toStageId]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        toStageId:
+          type: string
+          format: uuid
+        comment:
+          type: [string, 'null']
+          maxLength: 4000
+        attachmentIds:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        nextStep:
+          description: When present, replaces both the next step and its due date in the same command
+          anyOf:
+            - $ref: '#/components/schemas/InteractionNextStep'
+            - type: 'null'
+    InteractionComment:
+      type: object
+      required: [version, stageId, text]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        stageId:
+          type: string
+          format: uuid
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        attachmentIds:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        nextStep:
+          description: When present, replaces both the next step and its due date in the same command
+          anyOf:
+            - $ref: '#/components/schemas/InteractionNextStep'
+            - type: 'null'
+    InteractionNextStep:
+      type: object
+      required: [nextAction, nextActionAt]
+      properties:
+        nextAction:
+          type: [string, 'null']
+          maxLength: 500
+        nextActionAt:
+          type: [string, 'null']
+          format: date-time
+    InteractionPlanUpdate:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        nextAction:
+          type: [string, 'null']
+          maxLength: 500
+        nextActionAt:
+          type: [string, 'null']
+          format: date-time
+        programId:
+          type: [string, 'null']
+          format: uuid
+        productIds:
+          type: [array, 'null']
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    InteractionStageEdit:
+      type: object
+      required: [version, operations]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        operations:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/InteractionStageEditOperation'
+    InteractionStageEditOperation:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [RENAME, ADD_AFTER, MOVE_AFTER, DELETE]
+        id:
+          type: [string, 'null']
+          format: uuid
+        afterId:
+          type: [string, 'null']
+          format: uuid
+        name:
+          type: [string, 'null']
+          maxLength: 200
+        optional:
+          type: [boolean, 'null']
+    Attachment:
+      type: object
+      required: [id, interactionId, stageId, eventId, originalName, mediaType, sizeBytes, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        interactionId:
+          type: string
+          format: uuid
+        stageId:
+          type: string
+          format: uuid
+        eventId:
+          type: [string, 'null']
+          format: uuid
+        originalName:
+          type: string
+          maxLength: 255
+        mediaType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        status:
+          type: string
+          enum: [QUARANTINE, CLEAN, REJECTED, UNVERIFIABLE]
+        createdAt:
+          type: string
+          format: date-time
+    InteractionCommentResult:
+      type: object
+      required: [interaction, event]
+      properties:
+        interaction:
+          $ref: '#/components/schemas/Interaction'
+        event:
+          $ref: '#/components/schemas/InteractionEvent'
+    InteractionEvent:
+      type: object
+      required: [id, type, stageId, stageNameSnapshot, nextStep, actorProfileId, actorDisplayName, version, commandId, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [CREATED, TRANSITIONED, COMMENTED, STAGES_EDITED, PLAN_UPDATED]
+        stageId:
+          type: string
+          format: uuid
+        stageNameSnapshot:
+          type: string
+        fromStageId:
+          type: [string, 'null']
+          format: uuid
+        fromStageNameSnapshot:
+          type: [string, 'null']
+        toStageId:
+          type: [string, 'null']
+          format: uuid
+        toStageNameSnapshot:
+          type: [string, 'null']
+        comment:
+          type: [string, 'null']
+        nextStep:
+          description: Next step and due date set by this event; null when the event did not change them
+          anyOf:
+            - $ref: '#/components/schemas/InteractionNextStep'
+            - type: 'null'
+        actorProfileId:
+          type: string
+          format: uuid
+        actorDisplayName:
+          type: string
+        ownerManagerIdSnapshot:
+          type: [string, 'null']
+          format: uuid
+        version:
+          type: integer
+          minimum: 0
+        commandId:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+    WorkflowStageInput:
+      type: object
+      required: [name, order, optional]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        order:
+          type: integer
+          minimum: 0
+        optional:
+          type: boolean
+    WorkflowTransitionInput:
+      type: object
+      required: [fromOrder, toOrder, commentRequired]
+      properties:
+        fromOrder:
+          type: integer
+          minimum: 0
+        toOrder:
+          type: integer
+          minimum: 0
+        commentRequired:
+          type: boolean
+    WorkflowTemplateCreate:
+      type: object
+      required: [name, stages, transitions]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        stages:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/WorkflowStageInput'
+        transitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowTransitionInput'
+    WorkflowTemplateUpdate:
+      type: object
+      required: [version]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        stages:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/WorkflowStageInput'
+        transitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowTransitionInput'
+        version:
+          type: integer
+          minimum: 0
+    WorkflowStage:
+      allOf:
+        - $ref: '#/components/schemas/WorkflowStageInput'
+        - type: object
+          required: [id]
+          properties:
+            id:
+              type: string
+              format: uuid
+    WorkflowTemplateTransition:
+      type: object
+      required: [fromStageId, toStageId, commentRequired]
+      properties:
+        fromStageId:
+          type: string
+          format: uuid
+        toStageId:
+          type: string
+          format: uuid
+        commentRequired:
+          type: boolean
+    WorkflowTemplate:
+      type: object
+      required: [id, teamId, name, stages, transitions, defaultTemplate, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        teamId:
+          type: [string, 'null']
+          format: uuid
+        name:
+          type: string
+        stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowStage'
+        transitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowTemplateTransition'
+        defaultTemplate:
+          type: boolean
+        version:
+          type: integer
+          minimum: 0
+    PageWorkflowTemplate:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/WorkflowTemplate'
+    CrmProfile:
+      type: object
+      required: [id, displayName, role, teamId, teamName, active, pendingActivation, accessRevision, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+        role:
+          type: string
+          enum: [USER, LEADER, ADMIN]
+        teamId:
+          type: [string, 'null']
+          format: uuid
+        teamName:
+          type: [string, 'null']
+        active:
+          type: boolean
+        pendingActivation:
+          type: boolean
+          description: Profile created at the first OIDC login and never activated by an administrator
+        accessRevision:
+          type: integer
+          minimum: 0
+        version:
+          type: integer
+          minimum: 0
+    CrmProfileUpdate:
+      type: object
+      additionalProperties: false
+      required: [version]
+      minProperties: 2
+      description: Changes only the listed fields. An administrator cannot change own role, team or activity; an active USER or LEADER needs a team; the last active ADMIN cannot be demoted or blocked (409 LAST_ACTIVE_ADMIN)
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        role:
+          type: string
+          enum: [USER, LEADER, ADMIN]
+        teamId:
+          type: [string, 'null']
+          format: uuid
+        active:
+          type: boolean
+    CrmProfileEvent:
+      type: object
+      required: [id, profileId, commandId, actorProfileId, actorDisplayName, previousDisplayName, displayName, previousRole, role, previousTeamId, previousTeamName, teamId, teamName, previousActive, active, requestId, version, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        profileId:
+          type: string
+          format: uuid
+        commandId:
+          type: string
+          format: uuid
+        actorProfileId:
+          type: string
+          format: uuid
+        actorDisplayName:
+          type: string
+        previousDisplayName:
+          type: string
+        displayName:
+          type: string
+        previousRole:
+          type: string
+          enum: [USER, LEADER, ADMIN]
+        role:
+          type: string
+          enum: [USER, LEADER, ADMIN]
+        previousTeamId:
+          type: [string, 'null']
+          format: uuid
+        previousTeamName:
+          type: [string, 'null']
+        teamId:
+          type: [string, 'null']
+          format: uuid
+        teamName:
+          type: [string, 'null']
+        previousActive:
+          type: boolean
+        active:
+          type: boolean
+        requestId:
+          type: string
+        version:
+          type: integer
+          minimum: 0
+        occurredAt:
+          type: string
+          format: date-time
+    Team:
+      type: object
+      required: [id, name, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        version:
+          type: integer
+          minimum: 0
+    TeamCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+    TeamUpdate:
+      type: object
+      required: [name, version]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        version:
+          type: integer
+          minimum: 0
+    AdminOrganization:
+      type: object
+      required: [id, name, type, teamId, teamName, ownerManagerId, ownerManagerName, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+          enum: [UNIVERSITY, SCHOOL]
+        teamId:
+          type: string
+          format: uuid
+        teamName:
+          type: string
+        ownerManagerId:
+          type: [string, 'null']
+          format: uuid
+        ownerManagerName:
+          type: [string, 'null']
+        version:
+          type: integer
+          minimum: 0
+    PageAdminOrganization:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminOrganization'
+    OrganizationTeamTransfer:
+      type: object
+      required: [teamId, version]
+      properties:
+        teamId:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 0
+    PageCrmProfile:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/CrmProfile'
+    CatalogImportProfile:
+      type: string
+      enum: [AGREEMENT, DIRECTION_PROGRAM]
+      description: >-
+        AGREEMENT loads the ten TZ catalog fields; DIRECTION_PROGRAM loads directions and programs by stable keys.
+        Matching rules are described in docs/import.md.
+    CatalogImportRowTarget:
+      type: object
+      description: >-
+        Optional explicit record choice for one workbook row. An explicit id takes precedence over external keys
+        and names in both preview and apply.
+      properties:
+        organizationId:
+          type: [string, 'null']
+          format: uuid
+        managerProfileId:
+          type: [string, 'null']
+          format: uuid
+          description: Active USER profile with a team; resolves a manager name shared by several profiles.
+        interactionId:
+          type: [string, 'null']
+          format: uuid
+        productAgreementId:
+          type: [string, 'null']
+          format: uuid
+    CatalogImportMapping:
+      type: object
+      required: [columns]
+      properties:
+        columns:
+          type: object
+          description: >-
+            Import field to workbook header. AGREEMENT requires organizationName, vendorName and productName and
+            accepts contractNumber, licenseSigned, licenseExpiryYear, transferStatus, managerName, contactName,
+            comment, organizationType, organizationExternalKey, vendorExternalKey, productExternalKey,
+            agreementExternalKey, contactExternalKey, contactPosition, contactEmail, contactPhone and interactionId.
+            Missing external keys are derived from normalized names. DIRECTION_PROGRAM requires
+            directionExternalKey and directionName and accepts programExternalKey, programName and
+            programDirectionRef.
+          additionalProperties:
+            type: string
+            minLength: 1
+            maxLength: 255
+        rowTargets:
+          type: object
+          description: Workbook row number (2 or greater) to explicit record ids.
+          additionalProperties:
+            $ref: '#/components/schemas/CatalogImportRowTarget'
+        transferStatuses:
+          type: object
+          description: >-
+            Optional dictionary from a workbook transfer status to the stored value. Without a dictionary the
+            normalized workbook value is stored as is.
+          additionalProperties:
+            type: string
+            minLength: 1
+            maxLength: 160
+    CatalogImportSheet:
+      type: object
+      required: [name, headers]
+      properties:
+        name:
+          type: string
+        headers:
+          type: array
+          items:
+            type: string
+    CatalogImportInspect:
+      type: object
+      required: [sheets]
+      properties:
+        sheets:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogImportSheet'
+    CatalogImportPreview:
+      type: object
+      required: [jobId, importId]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        importId:
+          type: string
+          format: uuid
+    CatalogImportRow:
+      type: object
+      required: [id, sheetName, rowNumber, status, fieldErrors, oldValues, newValues, applied]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sheetName:
+          type: string
+        rowNumber:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [CREATE, UPDATE, UNCHANGED, CONFLICT, INVALID]
+        fieldErrors:
+          type: object
+          additionalProperties:
+            type: string
+        oldValues:
+          type: object
+          additionalProperties:
+            type: string
+        newValues:
+          type: object
+          additionalProperties:
+            type: string
+        applied:
+          type: boolean
+    CatalogImport:
+      type: object
+      required: [id, profile, status, version, rows, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        profile:
+          $ref: '#/components/schemas/CatalogImportProfile'
+        status:
+          type: string
+          enum: [PREVIEWED, APPLIED]
+        version:
+          type: integer
+          minimum: 0
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogImportRow'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CatalogImportApply:
+      type: object
+      required: [version, confirmedRowIds]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        confirmedRowIds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+    CatalogImportApplyResult:
+      type: object
+      required: [jobId, importId]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        importId:
+          type: string
+          format: uuid
+    CatalogImportJob:
+      type: object
+      required: [id, importId, action, status, result, createdAt, completedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        importId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [PREVIEW, APPLY]
+        status:
+          type: string
+          enum: [SUCCEEDED, FAILED]
+        result:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+    ReportKind:
+      type: string
+      description: >
+        DEMAND ranks programs by separate sortable measures: applications from the site (learning_application records
+        applied from the proposed contract, withdrawn ones excluded), participants from the latest Moodle snapshots of
+        training runs (courses and groups mapped with run dates; the period does not apply to them) and parallel runs,
+        the number of those training runs whose [runStartsOn, runEndsOn) contains the last day of the period, or the
+        report date when the period has no end; a measure without source data is null («нет данных»), not 0; no combined index
+        is computed
+      enum: [PORTFOLIO, EVENTS, DEMAND]
+    ReportFormat:
+      type: string
+      description: PNG is allowed only for a chart (groupBy set); a chart is exported as PNG or PDF
+      enum: [XLSX, XLS, PDF, JSON, PNG]
+    PeriodBasis:
+      type: string
+      description: PORTFOLIO only. CREATED selects interactions created in the period, ACTIVITY those with at least one event in it
+      enum: [CREATED, ACTIVITY]
+    ReportColumn:
+      type: string
+      description: >
+        PORTFOLIO allows ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT,
+        LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT. EVENTS allows EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE,
+        FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND allows DIRECTION, PROGRAM,
+        APPLICATIONS, PARTICIPANTS, PARALLEL_RUNS.
+      enum: [ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT,
+             NEXT_ACTION, NEXT_ACTION_AT, EVENT_AT, EVENT_TYPE, FROM_STAGE, COMMENT, AUTHOR, APPLICATIONS, PARTICIPANTS,
+             PARALLEL_RUNS]
+    ReportFilters:
+      type: object
+      description: >
+        An empty list with the include flag false leaves the dimension unfiltered, including rows without a value.
+        includeNo* adds rows without the value to the selected ids. managerIds and includeNoManager use the current
+        organization owner in PORTFOLIO and DEMAND and the owner snapshot of the event in EVENTS. DEMAND rejects
+        productIds, includeNoProduct and stages with 400 VALIDATION_ERROR.
+      properties:
+        organizationIds:
+          type: array
+          maxItems: 500
+          items:
+            type: string
+            format: uuid
+        directionIds:
+          type: array
+          maxItems: 500
+          items:
+            type: string
+            format: uuid
+        includeNoDirection:
+          type: boolean
+        programIds:
+          type: array
+          maxItems: 500
+          items:
+            type: string
+            format: uuid
+        includeNoProgram:
+          type: boolean
+        productIds:
+          type: array
+          maxItems: 500
+          items:
+            type: string
+            format: uuid
+        includeNoProduct:
+          type: boolean
+        managerIds:
+          type: array
+          maxItems: 500
+          items:
+            type: string
+            format: uuid
+        includeNoManager:
+          type: boolean
+        stages:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 200
+        organizationType:
+          type: [string, 'null']
+          enum: [UNIVERSITY, SCHOOL, null]
+    ReportPreviewRequest:
+      type: object
+      required: [kind]
+      description: from and to are inclusive dates converted to [from 00:00, to+1 00:00) in Europe/Moscow
+      properties:
+        kind:
+          $ref: '#/components/schemas/ReportKind'
+        from:
+          type: [string, 'null']
+          format: date
+        to:
+          type: [string, 'null']
+          format: date
+        periodBasis:
+          oneOf:
+            - $ref: '#/components/schemas/PeriodBasis'
+            - type: 'null'
+        filters:
+          $ref: '#/components/schemas/ReportFilters'
+        columns:
+          type: array
+          description: Omitted or empty means all columns of the kind in the default order
+          items:
+            $ref: '#/components/schemas/ReportColumn'
+        sortBy:
+          description: >
+            DEMAND only, APPLICATIONS (default), PARTICIPANTS or PARALLEL_RUNS; rows are sorted by that measure
+            descending with «нет данных» last, then by program name. Other kinds reject it with 400 VALIDATION_ERROR.
+          oneOf:
+            - $ref: '#/components/schemas/ReportColumn'
+            - type: 'null'
+    ReportRequest:
+      allOf:
+        - $ref: '#/components/schemas/ReportPreviewRequest'
+        - type: object
+          required: [format]
+          properties:
+            format:
+              $ref: '#/components/schemas/ReportFormat'
+            groupBy:
+              description: >
+                Set to order a chart of the statistics grouped this way instead of the row report; columns are ignored
+                and format must be PNG or PDF
+              oneOf:
+                - $ref: '#/components/schemas/StatisticsGroupBy'
+                - type: 'null'
+    ReportJobCreated:
+      type: object
+      required: [jobId]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+    ReportJob:
+      type: object
+      required: [id, kind, format, status, progress, resultReady, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/ReportKind'
+        format:
+          $ref: '#/components/schemas/ReportFormat'
+        groupBy:
+          description: Grouping of a chart job; null for a row report
+          oneOf:
+            - $ref: '#/components/schemas/StatisticsGroupBy'
+            - type: 'null'
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        resultReady:
+          type: boolean
+        rowCount:
+          type: [integer, 'null']
+          minimum: 0
+        fileName:
+          type: [string, 'null']
+        error:
+          type: object
+          required: [code, message]
+          description: Present for FAILED jobs, e.g. REPORT_ROW_LIMIT, REPORT_XLS_ROW_LIMIT, REPORT_PDF_ROW_LIMIT, REPORT_CHART_LIMIT, REPORT_ACCESS_CHANGED, REPORT_INTERRUPTED, REPORT_FAILED
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: [string, 'null']
+          format: date-time
+        finishedAt:
+          type: [string, 'null']
+          format: date-time
+    ReportColumnView:
+      type: object
+      required: [id, title, emptyText]
+      properties:
+        id:
+          $ref: '#/components/schemas/ReportColumn'
+        title:
+          type: string
+        emptyText:
+          type: string
+          description: >
+            Text shown for null values, «Не указано» for direction, program, products and manager, «нет данных» for
+            APPLICATIONS, PARTICIPANTS and PARALLEL_RUNS
+    ReportPreview:
+      type: object
+      required: [kind, generatedAt, notes, columns, items, page, size, total]
+      properties:
+        kind:
+          $ref: '#/components/schemas/ReportKind'
+        generatedAt:
+          type: string
+          format: date-time
+        notes:
+          type: array
+          description: The same generation time, period rule, manager semantics and filter lines as in the file header
+          items:
+            type: string
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportColumnView'
+        items:
+          type: array
+          description: Row objects keyed by column id; dates are ISO 8601 strings, DEMAND measures are integers, missing values are null
+          items:
+            type: object
+            additionalProperties:
+              type: [string, integer, 'null']
+        page:
+          type: integer
+          minimum: 0
+        size:
+          type: integer
+          minimum: 1
+          maximum: 200
+        total:
+          type: integer
+          minimum: 0
+    StatisticsGroupBy:
+      type: string
+      description: DEMAND sums applications and accepts ORGANIZATION, DIRECTION, PROGRAM, MANAGER and MONTH (month of submission)
+      enum: [STAGE, ORGANIZATION, DIRECTION, PROGRAM, PRODUCT, MANAGER, MONTH]
+    StatisticsRequest:
+      type: object
+      required: [kind, groupBy]
+      properties:
+        kind:
+          $ref: '#/components/schemas/ReportKind'
+        groupBy:
+          $ref: '#/components/schemas/StatisticsGroupBy'
+        from:
+          type: [string, 'null']
+          format: date
+        to:
+          type: [string, 'null']
+          format: date
+        periodBasis:
+          oneOf:
+            - $ref: '#/components/schemas/PeriodBasis'
+            - type: 'null'
+        filters:
+          $ref: '#/components/schemas/ReportFilters'
+    StatisticsItem:
+      type: object
+      required: [key, label, count]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        count:
+          type: integer
+          minimum: 0
+    StatisticsResult:
+      type: object
+      required: [kind, groupBy, unit, timezone, generatedAt, filters, notes, total, unknownCount, items, maxChartBars]
+      properties:
+        kind:
+          $ref: '#/components/schemas/ReportKind'
+        groupBy:
+          $ref: '#/components/schemas/StatisticsGroupBy'
+        unit:
+          type: string
+        from:
+          type: [string, 'null']
+          format: date
+        to:
+          type: [string, 'null']
+          format: date
+        periodBasis:
+          oneOf:
+            - $ref: '#/components/schemas/PeriodBasis'
+            - type: 'null'
+        timezone:
+          type: string
+        generatedAt:
+          type: string
+          format: date-time
+        filters:
+          $ref: '#/components/schemas/ReportFilters'
+        notes:
+          type: array
+          items:
+            type: string
+        total:
+          type: integer
+          minimum: 0
+          description: >
+            Number of report rows; for DEMAND the number of applications. PRODUCT counts may add up to more because one
+            interaction can have several products
+        unknownCount:
+          type: integer
+          minimum: 0
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatisticsItem'
+        maxChartBars:
+          type: integer
+          minimum: 1
+          description: >
+            Largest number of bars a PNG/PDF chart file can hold, counting the «Не указано» bar of DIRECTION, PROGRAM,
+            PRODUCT and MANAGER; a larger chart job fails with REPORT_CHART_LIMIT
+    ReportManagerOption:
+      type: object
+      required: [id, displayName, active]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+        active:
+          type: boolean
+    SourceCode:
+      type: string
+      enum: [WEBSITE, MOODLE]
+    SyncRun:
+      type: object
+      required: [id, source, status, fetchedCount, createdCount, updatedCount, skippedCount, needsMappingCount, failedCount,
+                 createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        source:
+          $ref: '#/components/schemas/SourceCode'
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
+        updatedSince:
+          type: [string, 'null']
+          format: date-time
+          description: Watermark sent to the source as updated_since
+        fetchedCount:
+          type: integer
+          minimum: 0
+        createdCount:
+          type: integer
+          minimum: 0
+          description: New external records applied; for MOODLE, snapshots published for the first time
+        updatedCount:
+          type: integer
+          minimum: 0
+          description: >
+            Known external records applied again because the source sent a newer updatedAt; for MOODLE, snapshots whose
+            counts changed
+        skippedCount:
+          type: integer
+          minimum: 0
+          description: >
+            Repeats of an already stored version, Moodle snapshots with unchanged counts and records that are not
+            applied by design (withdrawn, unknown type, a group of a course mapped as a whole)
+        needsMappingCount:
+          type: integer
+          minimum: 0
+        failedCount:
+          type: integer
+          minimum: 0
+        errorCode:
+          type: [string, 'null']
+          description: >
+            For FAILED runs SOURCE_UNAVAILABLE, SOURCE_UNAUTHORIZED, SOURCE_INVALID_RESPONSE, SYNC_INTERRUPTED or
+            SYNC_FAILED
+        errorMessage:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: [string, 'null']
+          format: date-time
+        finishedAt:
+          type: [string, 'null']
+          format: date-time
+    SyncRunCreated:
+      type: object
+      required: [runId]
+      properties:
+        runId:
+          type: string
+          format: uuid
+    DataSource:
+      type: object
+      required: [source, title, adapterAvailable, configured, proposedContract, problemCount]
+      properties:
+        source:
+          $ref: '#/components/schemas/SourceCode'
+        title:
+          type: string
+        adapterAvailable:
+          type: boolean
+        configured:
+          type: boolean
+          description: The deployment configuration sets the base URL of the source (for MOODLE also the token and the allowed courses)
+        proposedContract:
+          type: boolean
+          description: The adapter follows the proposed contract, not a contract confirmed by the customer
+        updatedSince:
+          type: [string, 'null']
+          format: date-time
+        lastSuccessAt:
+          type: [string, 'null']
+          format: date-time
+        problemCount:
+          type: integer
+          minimum: 0
+          description: Records with status NEEDS_MAPPING or FAILED
+        lastRun:
+          oneOf:
+            - $ref: '#/components/schemas/SyncRun'
+            - type: 'null'
+    SourceRecord:
+      type: object
+      required: [id, source, recordType, externalId, externalUpdatedAt, status, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        source:
+          $ref: '#/components/schemas/SourceCode'
+        recordType:
+          type: string
+          description: >
+            partnership_request or learning_application in the proposed site contract; moodle_course or moodle_group
+            (externalId courseId or courseId:groupId) for Moodle
+        externalId:
+          type: string
+        externalUpdatedAt:
+          type: string
+          format: date-time
+        externalStatus:
+          type: [string, 'null']
+        status:
+          type: string
+          enum: [APPLIED, NEEDS_MAPPING, FAILED, SKIPPED]
+        error:
+          type: [string, 'null']
+        organizationExternalId:
+          type: [string, 'null']
+        organizationName:
+          type: [string, 'null']
+          description: Organization name on the site; for Moodle records the course or group label
+        programName:
+          type: [string, 'null']
+        organizationId:
+          type: [string, 'null']
+          format: uuid
+        programId:
+          type: [string, 'null']
+          format: uuid
+        interactionId:
+          type: [string, 'null']
+          format: uuid
+        updatedAt:
+          type: string
+          format: date-time
+    SourceRecordApply:
+      type: object
+      properties:
+        organizationId:
+          type: [string, 'null']
+          format: uuid
+        programId:
+          type: [string, 'null']
+          format: uuid
+        runStartsOn:
+          type: [string, 'null']
+          format: date
+          description: First day of the Moodle training run; required for a MOODLE NEEDS_MAPPING record
+        runEndsOn:
+          type: [string, 'null']
+          format: date
+          description: Day after the last day of the run (exclusive end); later than runStartsOn
+    SourceRecordApplyResult:
+      type: object
+      required: [record, reappliedCount]
+      properties:
+        record:
+          $ref: '#/components/schemas/SourceRecord'
+        reappliedCount:
+          type: integer
+          minimum: 0
+    LearningSnapshotsRefresh:
+      type: object
+      required: [run, snapshots]
+      properties:
+        run:
+          $ref: '#/components/schemas/SyncRun'
+        snapshots:
+          type: array
+          items:
+            $ref: '#/components/schemas/LearningSnapshot'
+    LearningSnapshot:
+      type: object
+      required: [courseId, courseName, participants, teachers, unknown, groupsCount, observedAt, changedAt]
+      properties:
+        courseId:
+          type: integer
+          format: int64
+        courseName:
+          type: string
+        groupId:
+          type: [integer, 'null']
+          format: int64
+          description: Set when a group of a mixed course is mapped on its own
+        groupName:
+          type: [string, 'null']
+        participants:
+          type: integer
+          minimum: 0
+          description: Active enrolments with a learner role (participations, not unique people across courses)
+        teachers:
+          type: integer
+          minimum: 0
+        completed:
+          type: [integer, 'null']
+          minimum: 0
+          description: null when course completion is not tracked in Moodle; never replaced by 0
+        notCompleted:
+          type: [integer, 'null']
+          minimum: 0
+        unknown:
+          type: integer
+          minimum: 0
+          description: Participants whose completion status Moodle did not report
+        groupsCount:
+          type: integer
+          minimum: 0
+          description: Groups of the course that have learners; 0 for a group snapshot
+        runStartsOn:
+          type: [string, 'null']
+          format: date
+          description: First day of the confirmed training run; null for a mapping saved without run dates
+        runEndsOn:
+          type: [string, 'null']
+          format: date
+          description: Exclusive end of the training run; the snapshot is not updated from this day on
+        observedAt:
+          type: string
+          format: date-time
+          description: Time of the last successful observation, not a completion date
+        changedAt:
+          type: string
+          format: date-time
+          description: Observation that last changed the counts
+    SourceMappingOption:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    SourceMappingOptions:
+      type: object
+      required: [organizations, programs]
+      properties:
+        organizations:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceMappingOption'
+        programs:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceMappingOption'
+security:
+  - cookieAuth: []

@@ -1,0 +1,59 @@
+{
+  "items": [
+    {
+      "externalId": "pr-demo-001",
+      "type": "partnership_request",
+      "createdAt": "2026-09-15T10:00:00+03:00",
+      "updatedAt": "2026-09-15T10:05:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-uni-a", "name": "Университет А", "type": "UNIVERSITY" },
+      "program": { "name": "Демо-программа: цифровой университет" },
+      "contact": {
+        "name": "Мария Демонстрационная",
+        "email": "maria.demo@example.test",
+        "phone": "+7 000 000-00-11",
+        "position": "Проректор по цифровизации"
+      },
+      "message": "Демо: просим подключить программу к весеннему набору"
+    },
+    {
+      "externalId": "pr-demo-005",
+      "type": "partnership_request",
+      "createdAt": "2026-09-20T10:00:00+03:00",
+      "updatedAt": "2026-09-20T10:00:00+03:00",
+      "status": "in_progress",
+      "organization": { "externalId": "site-uni-a", "name": "Университет А" },
+      "product": { "name": "Демо-продукт: защищённая связь" },
+      "message": "Демо: уточнить сроки передачи лицензии на защищённую связь"
+    },
+    {
+      "externalId": "pr-demo-006",
+      "type": "partnership_request",
+      "createdAt": "2026-09-22T09:00:00+03:00",
+      "updatedAt": "2026-09-22T09:00:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-uni-e", "name": "Университет Е (нет в CRM)", "type": "UNIVERSITY" },
+      "message": "Демо: просим рассказать о программах для преподавателей"
+    },
+    {
+      "externalId": "la-demo-108",
+      "type": "learning_application",
+      "createdAt": "2026-09-21T12:00:00+03:00",
+      "updatedAt": "2026-09-21T12:00:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-uni-a", "name": "Университет А" },
+      "applicationsCount": 2
+    },
+    {
+      "externalId": "la-demo-109",
+      "type": "learning_application",
+      "createdAt": "2026-07-15T12:00:00+03:00",
+      "updatedAt": "2026-07-15T12:00:00+03:00",
+      "status": "accepted",
+      "organization": { "externalId": "site-uni-b", "name": "Университет Б" },
+      "program": { "name": "Демо-программа: цифровой университет" },
+      "applicationsCount": 6
+    }
+  ],
+  "nextPage": null
+}

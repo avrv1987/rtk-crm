@@ -1,0 +1,20 @@
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/site-fixture;
+    default_type application/json;
+
+    location = /api/crm/records {
+        if ($http_authorization != "Bearer ${SITE_TOKEN}") {
+            return 401 '{"message":"unauthorized"}';
+        }
+        if ($arg_page !~ "^[0-9]+$") {
+            return 400 '{"message":"page is required"}';
+        }
+        try_files /records-page-$arg_page.json =404;
+    }
+
+    location / {
+        return 404 '{"message":"not found"}';
+    }
+}

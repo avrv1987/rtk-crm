@@ -1,0 +1,15 @@
+services:
+  backend:
+    networks:
+      - rtk-crm
+      - moodle
+
+  backend-bootstrap:
+    networks:
+      - rtk-crm
+      - moodle
+
+networks:
+  moodle:
+    external: true
+    name: rtk-crm-moodle

@@ -1,0 +1,178 @@
+name: rtk-crm
+
+services:
+  web:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    environment:
+      TRUSTED_PROXY_CIDR: ${TRUSTED_PROXY_CIDR:-127.0.0.1/32}
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./infra/web/default.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./infra/web/crm-site.conf:/etc/nginx/crm-site.conf:ro
+    networks:
+      - rtk-crm
+
+  backend:
+    restart: unless-stopped
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      SPRING_PROFILES_ACTIVE: oidc
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${CRM_DB_NAME:?CRM_DB_NAME is required}
+      SPRING_DATASOURCE_USERNAME: ${CRM_DB_USER:?CRM_DB_USER is required}
+      SPRING_DATASOURCE_PASSWORD: ${CRM_DB_PASSWORD:?CRM_DB_PASSWORD is required}
+      APP_OIDC_ISSUER_URI: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}/idp/realms/rtk-crm
+      APP_OIDC_PUBLIC_BASE_URL: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}
+      APP_OIDC_INTERNAL_BASE_URL: http://keycloak:8080
+      APP_OIDC_CLIENT_SECRET: ${CRM_OIDC_CLIENT_SECRET:?CRM_OIDC_CLIENT_SECRET is required}
+      APP_ATTACHMENTS_STORAGE_ROOT: /var/lib/rtk-crm/files
+      APP_ATTACHMENTS_SCANNER_HOST: clamav
+      APP_ATTACHMENTS_SCANNER_PORT: "3310"
+      APP_SOURCES_WEBSITE_BASE_URL: ${SITE_BASE_URL:-}
+      APP_SOURCES_WEBSITE_TOKEN: ${SITE_TOKEN:-}
+      APP_SOURCES_MOODLE_BASE_URL: ${MOODLE_BASE_URL:-}
+      APP_SOURCES_MOODLE_TOKEN: ${MOODLE_TOKEN:-}
+      APP_SOURCES_MOODLE_COURSE_IDS: ${MOODLE_COURSE_IDS:-}
+      APP_SOURCES_SYNC_CRON: ${SOURCES_SYNC_CRON:--}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - attachments-data:/var/lib/rtk-crm/files
+    networks:
+      - rtk-crm
+
+  backend-bootstrap:
+    profiles: [demo-bootstrap]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command:
+      - --spring.profiles.active=demo-bootstrap
+      - --spring.config.additional-location=file:/run/demo-identities.yml
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${CRM_DB_NAME:?CRM_DB_NAME is required}
+      SPRING_DATASOURCE_USERNAME: ${CRM_DB_USER:?CRM_DB_USER is required}
+      SPRING_DATASOURCE_PASSWORD: ${CRM_DB_PASSWORD:?CRM_DB_PASSWORD is required}
+      APP_SOURCES_WEBSITE_BASE_URL: ${SITE_BASE_URL:-}
+      APP_SOURCES_WEBSITE_TOKEN: ${SITE_TOKEN:-}
+      APP_SOURCES_MOODLE_BASE_URL: ${MOODLE_BASE_URL:-}
+      APP_SOURCES_MOODLE_TOKEN: ${MOODLE_TOKEN:-}
+      APP_SOURCES_MOODLE_COURSE_IDS: ${MOODLE_COURSE_IDS:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./.demo-identities.yml:/run/demo-identities.yml:ro
+    networks:
+      - rtk-crm
+
+  site-fixture:
+    restart: unless-stopped
+    profiles: [demo-sources]
+    image: nginx:1.29.2-alpine
+    environment:
+      SITE_TOKEN: ${SITE_TOKEN:-}
+    volumes:
+      - ./infra/site-fixture/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./infra/site-fixture/data:/usr/share/nginx/site-fixture:ro
+    networks:
+      - rtk-crm
+
+  postgres:
+    restart: unless-stopped
+    image: postgres:16.11-bookworm
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:?POSTGRES_SUPERUSER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?POSTGRES_SUPERUSER_PASSWORD is required}
+      CRM_DB_NAME: ${CRM_DB_NAME:?CRM_DB_NAME is required}
+      CRM_DB_USER: ${CRM_DB_USER:?CRM_DB_USER is required}
+      CRM_DB_PASSWORD: ${CRM_DB_PASSWORD:?CRM_DB_PASSWORD is required}
+      KEYCLOAK_DB_NAME: ${KEYCLOAK_DB_NAME:?KEYCLOAK_DB_NAME is required}
+      KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER:?KEYCLOAK_DB_USER is required}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=$$POSTGRES_USER --dbname=postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init/00-create-databases-and-roles.sh:/docker-entrypoint-initdb.d/00-create-databases-and-roles.sh:ro
+    networks:
+      - rtk-crm
+
+  keycloak:
+    restart: unless-stopped
+    image: quay.io/keycloak/keycloak:26.7.4
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${KEYCLOAK_DB_NAME:?KEYCLOAK_DB_NAME is required}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:?KEYCLOAK_DB_USER is required}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD is required}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:?KEYCLOAK_ADMIN_USERNAME is required}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD is required}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}/idp
+      KC_PROXY_HEADERS: xforwarded
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "{ printf 'HEAD /health/ready HTTP/1.0\\r\\n\\r\\n' >&0; grep 'HTTP/1.0 200'; } 0<>/dev/tcp/localhost/9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - ./infra/keycloak/rtk-crm-realm.json:/opt/keycloak/data/import/rtk-crm-realm.json:ro
+    networks:
+      - rtk-crm
+
+  clamav:
+    restart: unless-stopped
+    image: clamav/clamav:1.4.6-debian13-slim
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 15m
+    mem_limit: 2g
+    pids_limit: 256
+    volumes:
+      - ./infra/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+      - clamav-data:/var/lib/clamav
+    networks:
+      - rtk-crm
+
+volumes:
+  postgres-data:
+  clamav-data:
+  attachments-data:
+
+networks:
+  rtk-crm:
+    driver: bridge

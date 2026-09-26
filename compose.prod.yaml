@@ -1,0 +1,16 @@
+services:
+  web:
+    ports: !override
+      - "80:8080"
+      - "443:8443"
+    volumes:
+      - ./infra/web/tls.conf:/etc/nginx/templates/default.conf.template:ro
+      - ${TLS_CERTIFICATE_FILE:?TLS_CERTIFICATE_FILE is required}:/etc/nginx/tls/tls.crt:ro
+      - ${TLS_CERTIFICATE_KEY_FILE:?TLS_CERTIFICATE_KEY_FILE is required}:/etc/nginx/tls/tls.key:ro
+
+  backend:
+    environment:
+      SESSION_COOKIE_SECURE: "true"
+
+  keycloak:
+    command: start --import-realm
