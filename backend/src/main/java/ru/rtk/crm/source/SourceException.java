@@ -5,15 +5,40 @@ import org.springframework.http.HttpStatus;
 public class SourceException extends RuntimeException {
     private final HttpStatus status;
     private final String code;
+    private final Integer currentVersion;
 
     SourceException(HttpStatus status, String code, String message) {
+        this(status, code, message, null);
+    }
+
+    private SourceException(HttpStatus status, String code, String message, Integer currentVersion) {
         super(message);
         this.status = status;
         this.code = code;
+        this.currentVersion = currentVersion;
     }
 
     static SourceException adminRequired() {
         return new SourceException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Источники данных доступны только администратору");
+    }
+
+    static SourceException mappingNotFound() {
+        return new SourceException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Сопоставление источника не найдено");
+    }
+
+    static SourceException mappingVersion(int currentVersion) {
+        return new SourceException(HttpStatus.CONFLICT, "VERSION_CONFLICT",
+                "Сопоставление уже изменили; обновите список и повторите", currentVersion);
+    }
+
+    static SourceException recordResolved() {
+        return new SourceException(HttpStatus.CONFLICT, "CONFLICT",
+                "Запись уже сопоставлена с организацией; обновите список заявок");
+    }
+
+    static SourceException reviewForbidden() {
+        return new SourceException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                "Сопоставлять заявки и создавать организации из них может руководитель команды или администратор");
     }
 
     static SourceException recordNotFound() {
@@ -69,5 +94,9 @@ public class SourceException extends RuntimeException {
 
     String code() {
         return code;
+    }
+
+    Integer currentVersion() {
+        return currentVersion;
     }
 }

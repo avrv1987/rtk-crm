@@ -23,11 +23,13 @@ public class CatalogApiController {
     public CatalogPage listPrograms(
             @AuthenticationPrincipal OidcUser user,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "25") int size
+            @RequestParam(defaultValue = "25") int size,
+            @RequestParam(required = false) String state
     ) {
         return catalogLookupService.listPrograms(
                 currentProfileService.requireActiveProfile(user),
-                CatalogQuery.from(page, size)
+                CatalogQuery.from(page, size),
+                CatalogEntryState.parse(state)
         );
     }
 
@@ -35,11 +37,13 @@ public class CatalogApiController {
     public CatalogPage listProducts(
             @AuthenticationPrincipal OidcUser user,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "25") int size
+            @RequestParam(defaultValue = "25") int size,
+            @RequestParam(required = false) String state
     ) {
         return catalogLookupService.listProducts(
                 currentProfileService.requireActiveProfile(user),
-                CatalogQuery.from(page, size)
+                CatalogQuery.from(page, size),
+                CatalogEntryState.parse(state)
         );
     }
 
@@ -47,11 +51,13 @@ public class CatalogApiController {
     public CatalogPage listDirections(
             @AuthenticationPrincipal OidcUser user,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "25") int size
+            @RequestParam(defaultValue = "25") int size,
+            @RequestParam(required = false) String state
     ) {
         return catalogLookupService.listDirections(
                 currentProfileService.requireActiveProfile(user),
-                CatalogQuery.from(page, size)
+                CatalogQuery.from(page, size),
+                CatalogEntryState.parse(state)
         );
     }
 }

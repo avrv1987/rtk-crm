@@ -72,14 +72,19 @@ final class WorkflowGraph {
             if (!allowed(transition, positions)) {
                 throw new InteractionValidationException(
                         field,
-                        "Переход через этап или возврат назад требует обязательного комментария"
+                        "Переход «" + ordered.get(positions.get(transition.fromStageId())).name() + "» → «"
+                                + ordered.get(positions.get(transition.toStageId())).name()
+                                + "» пропускает этапы или ведёт назад и требует обязательного комментария: отметьте «Нужен комментарий» или удалите переход"
                 );
             }
             outgoing.computeIfAbsent(transition.fromStageId(), ignored -> new ArrayList<>()).add(transition.toStageId());
         }
         for (InteractionStage stage : ordered.subList(0, ordered.size() - 1)) {
             if (!outgoing.containsKey(stage.id())) {
-                throw new InteractionValidationException(field, "У каждого этапа, кроме последнего, должен быть исходящий переход");
+                throw new InteractionValidationException(
+                        field,
+                        "Этапу «" + stage.name() + "» нужен исходящий переход: добавьте переход из него в следующий этап"
+                );
             }
         }
         Set<UUID> reachable = new HashSet<>();
@@ -91,8 +96,14 @@ final class WorkflowGraph {
                 pending.addAll(outgoing.getOrDefault(stageId, List.of()));
             }
         }
-        if (!reachable.containsAll(positions.keySet())) {
-            throw new InteractionValidationException(field, "Каждый этап должен быть достижим из начального");
+        for (InteractionStage stage : ordered) {
+            if (!reachable.contains(stage.id())) {
+                throw new InteractionValidationException(
+                        field,
+                        "Этап «" + stage.name() + "» недостижим из начального этапа «" + ordered.getFirst().name()
+                                + "»: добавьте переход в него из предыдущего этапа"
+                );
+            }
         }
     }
 

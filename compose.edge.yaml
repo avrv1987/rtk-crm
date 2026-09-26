@@ -1,0 +1,42 @@
+services:
+  web:
+    ports: !reset []
+    environment:
+      TRUSTED_PROXY_CIDR: ${EDGE_PROXY_CIDR:-172.18.0.0/16}
+      MOODLE_EDGE_HOST: ${MOODLE_EDGE_HOST:?MOODLE_EDGE_HOST is required}
+    volumes:
+      - ./infra/web/moodle-edge.conf:/etc/nginx/templates/moodle-edge.conf.template:ro
+    networks:
+      - rtk-crm
+      - edge
+      - moodle
+    mem_limit: 128m
+
+  backend:
+    environment:
+      SESSION_COOKIE_SECURE: "true"
+    mem_limit: 1280m
+
+  backend-bootstrap:
+    mem_limit: 768m
+
+  keycloak:
+    command: start --import-realm
+    mem_limit: 1g
+
+  postgres:
+    mem_limit: 512m
+
+  clamav:
+    mem_limit: 2g
+
+  site-fixture:
+    mem_limit: 64m
+
+networks:
+  edge:
+    external: true
+    name: ${EDGE_NETWORK:-edge}
+  moodle:
+    external: true
+    name: rtk-crm-moodle

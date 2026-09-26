@@ -10,6 +10,12 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public class AttachmentRepository {
+    private static final String SELECT = """
+            SELECT id, interaction_id, stage_id, event_id, original_name, media_type, size_bytes,
+                   storage_key, checksum, status, kind, revision, replaces_id, created_by, version, created_at
+            FROM attachments
+            """;
+
     private final JdbcClient jdbcClient;
 
     public AttachmentRepository(JdbcClient jdbcClient) {
@@ -25,16 +31,19 @@ public class AttachmentRepository {
             long sizeBytes,
             UUID storageKey,
             String checksum,
+            AttachmentKind kind,
+            int revision,
+            UUID replacesId,
             UUID createdBy,
             OffsetDateTime createdAt
     ) {
         jdbcClient.sql("""
                 INSERT INTO attachments (
                     id, interaction_id, stage_id, event_id, original_name, media_type, size_bytes,
-                    storage_key, checksum, status, created_by, created_at, updated_at
+                    storage_key, checksum, status, kind, revision, replaces_id, created_by, created_at, updated_at
                 ) VALUES (
                     :id, :interactionId, :stageId, NULL, :originalName, :mediaType, :sizeBytes,
-                    :storageKey, :checksum, :status, :createdBy, :createdAt, :updatedAt
+                    :storageKey, :checksum, :status, :kind, :revision, :replacesId, :createdBy, :createdAt, :updatedAt
                 )
                 """)
                 .param("id", id)
@@ -46,6 +55,9 @@ public class AttachmentRepository {
                 .param("storageKey", storageKey)
                 .param("checksum", checksum)
                 .param("status", AttachmentStatus.QUARANTINE.name())
+                .param("kind", kind.name())
+                .param("revision", revision)
+                .param("replacesId", replacesId)
                 .param("createdBy", createdBy)
                 .param("createdAt", createdAt)
                 .param("updatedAt", createdAt)
@@ -53,23 +65,15 @@ public class AttachmentRepository {
     }
 
     public Optional<AttachmentRow> findById(UUID attachmentId) {
-        return jdbcClient.sql("""
-                SELECT id, interaction_id, stage_id, event_id, original_name, media_type, size_bytes,
-                       storage_key, checksum, status, created_at
-                FROM attachments
-                WHERE id = :attachmentId
-                """)
+        return jdbcClient.sql(SELECT + "WHERE id = :attachmentId AND deleted_at IS NULL")
                 .param("attachmentId", attachmentId)
                 .query(this::mapRow)
                 .optional();
     }
 
     public List<Attachment> findByInteractionId(UUID interactionId) {
-        return jdbcClient.sql("""
-                SELECT id, interaction_id, stage_id, event_id, original_name, media_type, size_bytes,
-                       storage_key, checksum, status, created_at
-                FROM attachments
-                WHERE interaction_id = :interactionId
+        return jdbcClient.sql(SELECT + """
+                WHERE interaction_id = :interactionId AND deleted_at IS NULL
                 ORDER BY created_at ASC, id ASC
                 """)
                 .param("interactionId", interactionId)
@@ -95,6 +99,61 @@ public class AttachmentRepository {
         }
     }
 
+    public boolean updateKind(UUID attachmentId, AttachmentKind kind, int expectedVersion, OffsetDateTime updatedAt) {
+        return jdbcClient.sql("""
+                UPDATE attachments
+                SET kind = :kind, version = version + 1, updated_at = :updatedAt
+                WHERE id = :attachmentId AND version = :expectedVersion AND deleted_at IS NULL
+                """)
+                .param("attachmentId", attachmentId)
+                .param("kind", kind.name())
+                .param("expectedVersion", expectedVersion)
+                .param("updatedAt", updatedAt)
+                .update() == 1;
+    }
+
+    public void markDeleted(UUID attachmentId, UUID deletedBy, OffsetDateTime deletedAt) {
+        int updated = jdbcClient.sql("""
+                UPDATE attachments
+                SET deleted_at = :deletedAt, deleted_by = :deletedBy, version = version + 1, updated_at = :deletedAt
+                WHERE id = :attachmentId AND deleted_at IS NULL
+                """)
+                .param("attachmentId", attachmentId)
+                .param("deletedBy", deletedBy)
+                .param("deletedAt", deletedAt)
+                .update();
+        if (updated != 1) {
+            throw new AttachmentNotFoundException();
+        }
+    }
+
+    public boolean hasLiveReplacement(UUID attachmentId) {
+        return jdbcClient.sql("""
+                SELECT COUNT(*)
+                FROM attachments
+                WHERE replaces_id = :attachmentId AND deleted_at IS NULL AND status IN ('QUARANTINE', 'CLEAN')
+                """)
+                .param("attachmentId", attachmentId)
+                .query(Long.class)
+                .single() > 0;
+    }
+
+    public Optional<String> findAgreementUsage(UUID attachmentId) {
+        return jdbcClient.sql("""
+                SELECT product.name
+                FROM product_agreements agreement
+                JOIN products product ON product.id = agreement.product_id
+                WHERE agreement.scan_attachment_id = :attachmentId
+                   OR agreement.id IN (SELECT agreement_id FROM product_transfers WHERE attachment_id = :attachmentId)
+                ORDER BY product.name
+                """)
+                .param("attachmentId", attachmentId)
+                .query(String.class)
+                .list()
+                .stream()
+                .findFirst();
+    }
+
     public void bindCleanUnbound(
             UUID interactionId,
             UUID stageId,
@@ -110,6 +169,7 @@ public class AttachmentRepository {
                       AND interaction_id = :interactionId
                       AND stage_id = :stageId
                       AND event_id IS NULL
+                      AND deleted_at IS NULL
                       AND status = :status
                     """)
                     .param("attachmentId", attachmentId)
@@ -137,11 +197,16 @@ public class AttachmentRepository {
                 resultSet.getObject("storage_key", UUID.class),
                 resultSet.getString("checksum"),
                 AttachmentStatus.valueOf(resultSet.getString("status")),
+                AttachmentKind.valueOf(resultSet.getString("kind")),
+                resultSet.getInt("revision"),
+                resultSet.getObject("replaces_id", UUID.class),
+                resultSet.getObject("created_by", UUID.class),
+                resultSet.getInt("version"),
                 resultSet.getObject("created_at", OffsetDateTime.class)
         );
     }
 
-    record AttachmentRow(
+    public record AttachmentRow(
             UUID id,
             UUID interactionId,
             UUID stageId,
@@ -152,9 +217,14 @@ public class AttachmentRepository {
             UUID storageKey,
             String checksum,
             AttachmentStatus status,
+            AttachmentKind kind,
+            int revision,
+            UUID replacesId,
+            UUID createdBy,
+            int version,
             OffsetDateTime createdAt
     ) {
-        Attachment attachment() {
+        public Attachment attachment() {
             return new Attachment(
                     id,
                     interactionId,
@@ -164,6 +234,11 @@ public class AttachmentRepository {
                     mediaType,
                     sizeBytes,
                     status,
+                    kind,
+                    revision,
+                    replacesId,
+                    createdBy,
+                    version,
                     createdAt
             );
         }

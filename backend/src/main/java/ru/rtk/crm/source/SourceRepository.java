@@ -9,7 +9,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
@@ -17,11 +20,16 @@ import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
 @Repository
 public class SourceRepository {
     private static final int MAX_ERROR_LENGTH = 500;
+    private static final ObjectMapper PAYLOADS = new ObjectMapper();
+    private static final Pattern INTERACTION_ID = Pattern.compile("\"interactionId\"\\s*:\\s*\"([0-9a-fA-F-]{36})\"");
     private static final String RUN_SELECT = """
-            SELECT id, source, status, updated_since, fetched_count, created_count, updated_count, skipped_count,
-                   needs_mapping_count, failed_count, error_code, error_message, created_at, started_at, finished_at,
-                   started_by
-            FROM sync_runs
+            SELECT r.id, r.source, r.status, r.updated_since, r.fetched_count, r.created_count, r.updated_count,
+                   r.skipped_count, r.needs_mapping_count, r.failed_count, r.error_code, r.error_message, r.created_at,
+                   r.started_at, r.finished_at, r.started_by, r.run_trigger, p.display_name AS started_by_name,
+                   o.name AS organization_name
+            FROM sync_runs r
+            LEFT JOIN crm_user_profiles p ON p.id = r.started_by
+            LEFT JOIN organizations o ON o.id = r.organization_id
             """;
 
     private static final String RECORD_SELECT = """
@@ -33,13 +41,35 @@ public class SourceRepository {
     private static final String ORGANIZATION_SELECT = "SELECT id, name, owner_manager_id FROM organizations ";
 
     private static final String SNAPSHOT_SELECT = """
-            SELECT s.source_record_id, s.organization_id, s.program_id, s.course_id, s.group_id, s.course_name, s.group_name,
-                   s.participants_count, s.teachers_count, s.completed_count, s.not_completed_count, s.unknown_count,
-                   s.groups_count, s.observed_at, s.changed_at, m.run_starts_on, m.run_ends_on
+            SELECT s.mapping_id, s.source_record_id, s.organization_id, s.program_id, s.course_id, s.group_id,
+                   s.course_name, s.group_name, s.participants_count, s.teachers_count, s.completed_count,
+                   s.not_completed_count, s.unknown_count, s.groups_count, s.observed_at, s.changed_at, s.interaction_id,
+                   m.run_starts_on, m.run_ends_on, m.run_kind
             FROM learning_snapshots s
-            JOIN source_records r ON r.id = s.source_record_id
-            LEFT JOIN source_mappings m ON m.source = r.source AND m.external_key = r.external_id
-                AND m.kind = CASE WHEN s.group_id IS NULL THEN 'COURSE' ELSE 'GROUP' END
+            JOIN source_mappings m ON m.id = s.mapping_id
+            """;
+
+    private static final String TARGET_SELECT = """
+            SELECT m.id AS mapping_id, o.id AS organization_id, o.owner_manager_id, p.id AS program_id, m.run_starts_on,
+                   m.run_ends_on, m.run_kind
+            FROM source_mappings m
+            JOIN organizations o ON o.id = m.organization_id
+            JOIN programs p ON p.id = m.program_id
+            """;
+
+    private static final String MAPPING_SELECT = """
+            SELECT id, source, kind, external_key, organization_id, program_id, run_starts_on, run_ends_on, run_kind, version
+            FROM source_mappings
+            """;
+
+    private static final String CYCLE_WINDOW = """
+            LEFT JOIN interaction_cycles cycle_start ON cycle_start.interaction_id = i.id
+            LEFT JOIN interaction_cycles cycle_next ON cycle_next.previous_interaction_id = i.id
+            """;
+
+    private static final String IN_CYCLE_WINDOW = """
+            (cycle_start.starts_on IS NULL OR (m.run_starts_on IS NOT NULL AND m.run_starts_on >= cycle_start.starts_on))
+            AND (cycle_next.starts_on IS NULL OR m.run_starts_on IS NULL OR m.run_starts_on < cycle_next.starts_on)
             """;
 
     private final JdbcClient jdbcClient;
@@ -48,14 +78,16 @@ public class SourceRepository {
         this.jdbcClient = jdbcClient;
     }
 
-    void insertRun(UUID id, SourceCode source, UUID startedBy, OffsetDateTime now) {
+    void insertRun(UUID id, SourceCode source, UUID startedBy, SyncTrigger trigger, UUID organizationId, OffsetDateTime now) {
         jdbcClient.sql("""
-                INSERT INTO sync_runs (id, source, status, started_by, created_at)
-                VALUES (:id, :source, 'PENDING', :startedBy, :createdAt)
+                INSERT INTO sync_runs (id, source, status, started_by, run_trigger, organization_id, created_at)
+                VALUES (:id, :source, 'PENDING', :startedBy, :trigger, :organizationId, :createdAt)
                 """)
                 .param("id", id)
                 .param("source", source.name())
                 .param("startedBy", startedBy)
+                .param("trigger", trigger.name())
+                .param("organizationId", organizationId)
                 .param("createdAt", now)
                 .update();
     }
@@ -132,21 +164,71 @@ public class SourceRepository {
     }
 
     Optional<StoredRun> findRun(UUID id) {
-        return jdbcClient.sql(RUN_SELECT + "WHERE id = :id")
+        return jdbcClient.sql(RUN_SELECT + "WHERE r.id = :id")
                 .param("id", id)
                 .query((resultSet, rowNumber) -> new StoredRun(mapRun(resultSet), resultSet.getObject("started_by", UUID.class)))
                 .optional();
     }
 
-    Optional<SyncRunView> findLatestRun(SourceCode source) {
-        return jdbcClient.sql(RUN_SELECT + "WHERE source = :source ORDER BY created_at DESC, id DESC LIMIT 1")
+    Optional<SyncRunView> findLatestFullRun(SourceCode source) {
+        return jdbcClient.sql(RUN_SELECT + """
+                WHERE r.source = :source AND r.organization_id IS NULL
+                ORDER BY r.created_at DESC, r.id DESC
+                LIMIT 1
+                """)
                 .param("source", source.name())
                 .query((resultSet, rowNumber) -> mapRun(resultSet))
                 .optional();
     }
 
-    Optional<OffsetDateTime> findLastSuccessAt(SourceCode source) {
-        return jdbcClient.sql("SELECT MAX(finished_at) FROM sync_runs WHERE source = :source AND status = 'SUCCEEDED'")
+    List<SyncRunView> findRuns(SourceCode source, int limit) {
+        return jdbcClient.sql(RUN_SELECT + "WHERE r.source = :source ORDER BY r.created_at DESC, r.id DESC LIMIT :limit")
+                .param("source", source.name())
+                .param("limit", limit)
+                .query((resultSet, rowNumber) -> mapRun(resultSet))
+                .list();
+    }
+
+    Optional<SyncRunView> findLatestFinishedRunFor(SourceCode source, UUID organizationId) {
+        return jdbcClient.sql(RUN_SELECT + """
+                WHERE r.source = :source AND r.status IN ('SUCCEEDED', 'FAILED')
+                  AND (r.organization_id IS NULL OR r.organization_id = :organizationId)
+                ORDER BY r.created_at DESC, r.id DESC
+                LIMIT 1
+                """)
+                .param("source", source.name())
+                .param("organizationId", organizationId)
+                .query((resultSet, rowNumber) -> mapRun(resultSet))
+                .optional();
+    }
+
+    Optional<OffsetDateTime> findLastSuccessAtFor(SourceCode source, UUID organizationId) {
+        return jdbcClient.sql("""
+                SELECT MAX(finished_at) FROM sync_runs
+                WHERE source = :source AND status = 'SUCCEEDED'
+                  AND (organization_id IS NULL OR organization_id = :organizationId)
+                """)
+                .param("source", source.name())
+                .param("organizationId", organizationId)
+                .query((resultSet, rowNumber) -> resultSet.getObject(1, OffsetDateTime.class))
+                .optional();
+    }
+
+    Optional<OffsetDateTime> findLastFullSuccessStartedAt(SourceCode source) {
+        return jdbcClient.sql("""
+                SELECT MAX(started_at) FROM sync_runs
+                WHERE source = :source AND status = 'SUCCEEDED' AND organization_id IS NULL
+                """)
+                .param("source", source.name())
+                .query((resultSet, rowNumber) -> resultSet.getObject(1, OffsetDateTime.class))
+                .optional();
+    }
+
+    Optional<OffsetDateTime> findLastFullSuccessAt(SourceCode source) {
+        return jdbcClient.sql("""
+                SELECT MAX(finished_at) FROM sync_runs
+                WHERE source = :source AND status = 'SUCCEEDED' AND organization_id IS NULL
+                """)
                 .param("source", source.name())
                 .query((resultSet, rowNumber) -> resultSet.getObject(1, OffsetDateTime.class))
                 .optional();
@@ -215,6 +297,47 @@ public class SourceRepository {
                 .param("source", source.name())
                 .query(Long.class)
                 .single();
+    }
+
+    List<StoredRecord> findPendingWebsiteRecords(VisibilityScope scope, boolean includeUnresolved, int limit) {
+        return jdbcClient.sql(RECORD_SELECT + """
+                WHERE source = 'WEBSITE' AND status IN ('NEEDS_MAPPING', 'FAILED')
+                  AND (organization_id IN (SELECT id FROM organizations WHERE %s)%s)
+                ORDER BY submitted_at DESC, id
+                LIMIT :limit
+                """.formatted(scope.condition(), includeUnresolved ? " OR organization_id IS NULL" : ""))
+                .params(scope.parameters())
+                .param("limit", limit)
+                .query(this::mapRecord)
+                .list();
+    }
+
+    List<StoredRecord> findWebsiteRecordsLinkedTo(String column, UUID targetId, int limit) {
+        return jdbcClient.sql(RECORD_SELECT + """
+                WHERE source = 'WEBSITE' AND (%s = :targetId OR status = 'NEEDS_MAPPING')
+                ORDER BY updated_at, id
+                LIMIT :limit
+                """.formatted(column.equals("program_id") ? "program_id" : "organization_id"))
+                .param("targetId", targetId)
+                .param("limit", limit)
+                .query(this::mapRecord)
+                .list();
+    }
+
+    List<StoredRecord> findMoodleRecordsOfCourse(String courseKey) {
+        return jdbcClient.sql(RECORD_SELECT + """
+                WHERE source = 'MOODLE' AND (external_id = :courseKey OR external_id LIKE :groups)
+                ORDER BY external_id
+                """)
+                .param("courseKey", courseKey)
+                .param("groups", courseKey + ":%")
+                .query(this::mapRecord)
+                .list();
+    }
+
+    Optional<StoredRecord> findMoodleRecordForUpdate(String kind, String externalKey) {
+        return findRecordForUpdate(SourceCode.MOODLE, kind.equals("GROUP") ? LearningUnit.GROUP_RECORD : LearningUnit.COURSE_RECORD,
+                externalKey);
     }
 
     List<UUID> findNeedsMappingIds(SourceCode source, int limit) {
@@ -302,25 +425,166 @@ public class SourceRepository {
                 .optional();
     }
 
-    Optional<MappedTarget> findMappedTarget(SourceCode source, String kind, String externalKey) {
-        return jdbcClient.sql("""
-                SELECT o.id AS organization_id, o.owner_manager_id, p.id AS program_id, m.run_starts_on, m.run_ends_on
-                FROM source_mappings m
-                JOIN organizations o ON o.id = m.organization_id
-                JOIN programs p ON p.id = m.program_id
+    List<MappedTarget> findLearningTargets(SourceCode source, String kind, String externalKey) {
+        return jdbcClient.sql(TARGET_SELECT + """
                 WHERE m.source = :source AND m.kind = :kind AND m.external_key = :externalKey AND p.archived = FALSE
+                ORDER BY m.run_starts_on NULLS FIRST, m.id
                 """)
                 .param("source", source.name())
                 .param("kind", kind)
                 .param("externalKey", externalKey)
-                .query((resultSet, rowNumber) -> new MappedTarget(
-                        resultSet.getObject("organization_id", UUID.class),
-                        resultSet.getObject("owner_manager_id", UUID.class),
-                        resultSet.getObject("program_id", UUID.class),
-                        resultSet.getObject("run_starts_on", LocalDate.class),
-                        resultSet.getObject("run_ends_on", LocalDate.class)
-                ))
+                .query(this::mapTarget)
+                .list();
+    }
+
+    List<StoredMapping> findMappings(SourceCode source, String kind, String externalKey) {
+        return jdbcClient.sql(MAPPING_SELECT + """
+                WHERE source = :source AND kind = :kind AND external_key = :externalKey
+                ORDER BY run_starts_on NULLS FIRST, id
+                """)
+                .param("source", source.name())
+                .param("kind", kind)
+                .param("externalKey", externalKey)
+                .query(this::mapMapping)
+                .list();
+    }
+
+    Optional<StoredMapping> findMapping(UUID id) {
+        return jdbcClient.sql(MAPPING_SELECT + "WHERE id = :id")
+                .param("id", id)
+                .query(this::mapMapping)
                 .optional();
+    }
+
+    UUID insertMapping(SourceCode source, String kind, String externalKey, UUID organizationId, UUID programId, RunDates run,
+                       RunKind runKind, UUID actorProfileId, OffsetDateTime now) {
+        UUID id = UUID.randomUUID();
+        Map<String, Object> parameters = mappingParameters(organizationId, programId, run, runKind, actorProfileId, now);
+        parameters.put("id", id);
+        parameters.put("source", source.name());
+        parameters.put("kind", kind);
+        parameters.put("externalKey", externalKey);
+        jdbcClient.sql("""
+                INSERT INTO source_mappings (
+                    id, source, kind, external_key, organization_id, program_id, run_starts_on, run_ends_on, run_kind,
+                    version, created_by, created_at, updated_at
+                ) VALUES (
+                    :id, :source, :kind, :externalKey, :organizationId, :programId, :runStartsOn, :runEndsOn, :runKind,
+                    0, :actorProfileId, :now, :now
+                )
+                """)
+                .params(parameters)
+                .update();
+        return id;
+    }
+
+    boolean updateMapping(UUID id, int expectedVersion, UUID organizationId, UUID programId, RunDates run, RunKind runKind,
+                          UUID actorProfileId, OffsetDateTime now) {
+        Map<String, Object> parameters = mappingParameters(organizationId, programId, run, runKind, actorProfileId, now);
+        parameters.put("id", id);
+        parameters.put("expectedVersion", expectedVersion);
+        return jdbcClient.sql("""
+                UPDATE source_mappings
+                SET organization_id = :organizationId, program_id = :programId, run_starts_on = :runStartsOn,
+                    run_ends_on = :runEndsOn, run_kind = :runKind, version = version + 1, created_by = :actorProfileId,
+                    updated_at = :now
+                WHERE id = :id AND version = :expectedVersion
+                """)
+                .params(parameters)
+                .update() == 1;
+    }
+
+    void deleteMapping(UUID id) {
+        jdbcClient.sql("DELETE FROM learning_snapshots WHERE mapping_id = :id").param("id", id).update();
+        jdbcClient.sql("DELETE FROM source_mappings WHERE id = :id").param("id", id).update();
+    }
+
+    List<SourceMappingView> findMappingViews(LocalDate today, OffsetDateTime lastFullSyncStartedAt) {
+        return jdbcClient.sql("""
+                SELECT m.id, m.source, m.kind, m.external_key, m.organization_id, o.name AS organization_name, m.program_id,
+                       p.name AS program_name, m.run_starts_on, m.run_ends_on, m.run_kind, m.version, a.display_name,
+                       m.updated_at, s.participants_count, s.observed_at,
+                       (SELECT r.payload FROM source_records r
+                        WHERE r.source = 'MOODLE' AND r.external_id = m.external_key
+                          AND r.record_type = CASE WHEN m.kind = 'GROUP' THEN 'moodle_group' ELSE 'moodle_course' END) AS payload
+                FROM source_mappings m
+                LEFT JOIN organizations o ON o.id = m.organization_id
+                LEFT JOIN programs p ON p.id = m.program_id
+                LEFT JOIN crm_user_profiles a ON a.id = m.created_by
+                LEFT JOIN learning_snapshots s ON s.mapping_id = m.id
+                ORDER BY m.source, m.kind, m.external_key, m.run_starts_on NULLS FIRST, m.id
+                """)
+                .query((resultSet, rowNumber) -> {
+                    LocalDate endsOn = resultSet.getObject("run_ends_on", LocalDate.class);
+                    OffsetDateTime observedAt = resultSet.getObject("observed_at", OffsetDateTime.class);
+                    boolean closed = endsOn != null && !today.isBefore(endsOn);
+                    return new SourceMappingView(
+                            resultSet.getObject("id", UUID.class),
+                            SourceCode.valueOf(resultSet.getString("source")),
+                            resultSet.getString("kind"),
+                            resultSet.getString("external_key"),
+                            mappingLabel(resultSet.getString("kind"), resultSet.getString("external_key"),
+                                    resultSet.getString("payload")),
+                            resultSet.getObject("organization_id", UUID.class),
+                            resultSet.getString("organization_name"),
+                            resultSet.getObject("program_id", UUID.class),
+                            resultSet.getString("program_name"),
+                            resultSet.getObject("run_starts_on", LocalDate.class),
+                            endsOn,
+                            RunKind.valueOf(resultSet.getString("run_kind")),
+                            resultSet.getInt("version"),
+                            resultSet.getString("display_name"),
+                            resultSet.getObject("updated_at", OffsetDateTime.class),
+                            resultSet.getObject("participants_count", Integer.class),
+                            observedAt,
+                            closed,
+                            observedAt != null && !closed && lastFullSyncStartedAt != null
+                                    && observedAt.isBefore(lastFullSyncStartedAt)
+                    );
+                })
+                .list();
+    }
+
+    Optional<UUID> findCycleInteraction(UUID organizationId, UUID programId, LocalDate runStartsOn) {
+        return jdbcClient.sql("""
+                SELECT i.id
+                FROM interactions i
+                LEFT JOIN interaction_cycles cycle_start ON cycle_start.interaction_id = i.id
+                LEFT JOIN interaction_cycles cycle_next ON cycle_next.previous_interaction_id = i.id
+                WHERE i.organization_id = :organizationId AND i.program_id = :programId
+                  AND (cycle_start.starts_on IS NULL OR :runStartsOn >= cycle_start.starts_on)
+                  AND (cycle_next.starts_on IS NULL OR :runStartsOn < cycle_next.starts_on)
+                ORDER BY CASE WHEN cycle_start.interaction_id IS NULL AND cycle_next.interaction_id IS NULL THEN 1 ELSE 0 END,
+                         i.updated_at DESC, i.id
+                LIMIT 1
+                """)
+                .param("organizationId", organizationId)
+                .param("programId", programId)
+                .param("runStartsOn", runStartsOn)
+                .query(UUID.class)
+                .optional();
+    }
+
+    Optional<UUID> findAppliedInteraction(List<String> keys, UUID organizationId) {
+        for (String key : keys) {
+            Optional<UUID> interactionId = jdbcClient.sql("""
+                    SELECT c.result_json
+                    FROM command_idempotency_records c
+                    WHERE c.operation = 'APPLY_SOURCE_RECORD' AND c.idempotency_key = :key AND c.result_json IS NOT NULL
+                    """)
+                    .param("key", key)
+                    .query(String.class)
+                    .list()
+                    .stream()
+                    .map(SourceRepository::interactionIdOf)
+                    .flatMap(Optional::stream)
+                    .filter(id -> interactionBelongsTo(id, organizationId))
+                    .findFirst();
+            if (interactionId.isPresent()) {
+                return interactionId;
+            }
+        }
+        return Optional.empty();
     }
 
     boolean hasMapping(SourceCode source, String kind, String externalKeyPattern) {
@@ -335,16 +599,42 @@ public class SourceRepository {
                 .single() > 0;
     }
 
-    Optional<StoredSnapshot> findSnapshot(UUID sourceRecordId) {
-        return jdbcClient.sql(SNAPSHOT_SELECT + "WHERE s.source_record_id = :id")
-                .param("id", sourceRecordId)
+    Optional<StoredSnapshot> findSnapshot(UUID mappingId) {
+        return jdbcClient.sql(SNAPSHOT_SELECT + "WHERE s.mapping_id = :mappingId")
+                .param("mappingId", mappingId)
                 .query(this::mapSnapshot)
                 .optional();
     }
 
+    boolean hasSnapshotForRecord(UUID sourceRecordId) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM learning_snapshots WHERE source_record_id = :id")
+                .param("id", sourceRecordId)
+                .query(Long.class)
+                .single() > 0;
+    }
+
+    int deleteSnapshot(UUID mappingId) {
+        return jdbcClient.sql("DELETE FROM learning_snapshots WHERE mapping_id = :mappingId")
+                .param("mappingId", mappingId)
+                .update();
+    }
+
+    void moveSnapshot(UUID mappingId, UUID organizationId, UUID programId) {
+        jdbcClient.sql("""
+                UPDATE learning_snapshots SET organization_id = :organizationId, program_id = :programId, interaction_id = NULL
+                WHERE mapping_id = :mappingId
+                """)
+                .param("mappingId", mappingId)
+                .param("organizationId", organizationId)
+                .param("programId", programId)
+                .update();
+    }
+
     void saveSnapshot(UUID sourceRecordId, LearningUnit unit, MappedTarget target, OffsetDateTime observedAt,
-                      OffsetDateTime changedAt, UUID runId) {
+                      OffsetDateTime changedAt, UUID runId, UUID interactionId) {
         Map<String, Object> parameters = new HashMap<>();
+        parameters.put("mappingId", target.mappingId());
+        parameters.put("interactionId", interactionId);
         parameters.put("id", sourceRecordId);
         parameters.put("organizationId", target.organizationId());
         parameters.put("programId", target.programId());
@@ -363,24 +653,26 @@ public class SourceRepository {
         parameters.put("runId", runId);
         int updated = jdbcClient.sql("""
                 UPDATE learning_snapshots
-                SET organization_id = :organizationId, program_id = :programId, course_id = :courseId, group_id = :groupId,
-                    course_name = :courseName, group_name = :groupName, participants_count = :participants,
+                SET source_record_id = :id, organization_id = :organizationId, program_id = :programId, course_id = :courseId,
+                    group_id = :groupId, course_name = :courseName, group_name = :groupName, participants_count = :participants,
                     teachers_count = :teachers, completed_count = :completed, not_completed_count = :notCompleted,
-                    unknown_count = :unknown, groups_count = :groupsCount, observed_at = :observedAt, changed_at = :changedAt, sync_run_id = COALESCE(:runId, sync_run_id)
-                WHERE source_record_id = :id
+                    unknown_count = :unknown, groups_count = :groupsCount, observed_at = :observedAt,
+                    changed_at = :changedAt, sync_run_id = COALESCE(:runId, sync_run_id),
+                    interaction_id = COALESCE(:interactionId, interaction_id)
+                WHERE mapping_id = :mappingId
                 """)
                 .params(parameters)
                 .update();
         if (updated == 0) {
             jdbcClient.sql("""
                     INSERT INTO learning_snapshots (
-                        source_record_id, organization_id, program_id, course_id, group_id, course_name, group_name,
-                        participants_count, teachers_count, completed_count, not_completed_count, unknown_count,
-                        groups_count, observed_at, changed_at, sync_run_id
+                        mapping_id, source_record_id, organization_id, program_id, course_id, group_id, course_name,
+                        group_name, participants_count, teachers_count, completed_count, not_completed_count, unknown_count,
+                        groups_count, observed_at, changed_at, sync_run_id, interaction_id
                     ) VALUES (
-                        :id, :organizationId, :programId, :courseId, :groupId, :courseName, :groupName,
-                        :participants, :teachers, :completed, :notCompleted, :unknown,
-                        :groupsCount, :observedAt, :changedAt, :runId
+                        :mappingId, :id, :organizationId, :programId, :courseId, :groupId, :courseName,
+                        :groupName, :participants, :teachers, :completed, :notCompleted, :unknown,
+                        :groupsCount, :observedAt, :changedAt, :runId, :interactionId
                     )
                     """)
                     .params(parameters)
@@ -402,13 +694,39 @@ public class SourceRepository {
     List<StoredSnapshot> findInteractionSnapshots(UUID interactionId, VisibilityScope scope) {
         return jdbcClient.sql(SNAPSHOT_SELECT + """
                 JOIN interactions i ON i.organization_id = s.organization_id AND i.program_id = s.program_id
+                %s
                 WHERE i.id = :interactionId AND i.organization_id IN (SELECT id FROM organizations WHERE %s)
-                ORDER BY s.course_name, s.course_id, s.group_id NULLS FIRST, s.group_name
-                """.formatted(scope.condition()))
+                  AND %s
+                ORDER BY m.run_kind, s.course_name, s.course_id, s.group_id NULLS FIRST, s.group_name, m.run_starts_on
+                """.formatted(CYCLE_WINDOW, scope.condition(), IN_CYCLE_WINDOW))
                 .param("interactionId", interactionId)
                 .params(scope.parameters())
                 .query(this::mapSnapshot)
                 .list();
+    }
+
+    LearningCoverage findLearningCoverage(UUID interactionId) {
+        return jdbcClient.sql("""
+                SELECT COUNT(m.id) AS mapped,
+                       COALESCE(SUM(CASE WHEN %s THEN 1 ELSE 0 END), 0) AS in_cycle,
+                       COALESCE(SUM(CASE WHEN m.run_starts_on IS NULL THEN 1 ELSE 0 END), 0) AS undated,
+                       MAX(CASE WHEN r.status = 'SKIPPED' AND r.error IS NOT NULL THEN r.error END) AS skipped_reason
+                FROM interactions i
+                %s
+                JOIN source_mappings m ON m.source = 'MOODLE' AND m.kind IN ('COURSE', 'GROUP')
+                    AND m.organization_id = i.organization_id AND m.program_id = i.program_id
+                LEFT JOIN source_records r ON r.source = 'MOODLE' AND r.external_id = m.external_key
+                    AND r.record_type = CASE WHEN m.kind = 'GROUP' THEN 'moodle_group' ELSE 'moodle_course' END
+                WHERE i.id = :interactionId
+                """.formatted(IN_CYCLE_WINDOW, CYCLE_WINDOW))
+                .param("interactionId", interactionId)
+                .query((resultSet, rowNumber) -> new LearningCoverage(
+                        resultSet.getInt("mapped"),
+                        resultSet.getInt("in_cycle"),
+                        resultSet.getInt("undated"),
+                        resultSet.getString("skipped_reason")
+                ))
+                .single();
     }
 
     void saveMapping(SourceCode source, String kind, String externalKey, UUID organizationId, UUID programId,
@@ -426,7 +744,7 @@ public class SourceRepository {
         int updated = jdbcClient.sql("""
                 UPDATE source_mappings
                 SET organization_id = :organizationId, program_id = :programId, run_starts_on = :runStartsOn,
-                    run_ends_on = :runEndsOn, created_by = :actorProfileId, updated_at = :now
+                    run_ends_on = :runEndsOn, version = version + 1, created_by = :actorProfileId, updated_at = :now
                 WHERE source = :source AND kind = :kind AND external_key = :externalKey
                 """)
                 .params(parameters)
@@ -550,13 +868,49 @@ public class SourceRepository {
                 """)
                 .param("interactionId", interactionId)
                 .query((resultSet, rowNumber) -> new MappedTarget(
+                        null,
                         resultSet.getObject("organization_id", UUID.class),
                         resultSet.getObject("owner_manager_id", UUID.class),
                         resultSet.getObject("program_id", UUID.class),
                         null,
-                        null
+                        null,
+                        RunKind.STUDENTS
                 ))
                 .optional();
+    }
+
+    Optional<UUID> findInteractionOrganizationId(UUID interactionId) {
+        return jdbcClient.sql("SELECT organization_id FROM interactions WHERE id = :id")
+                .param("id", interactionId)
+                .query(UUID.class)
+                .optional();
+    }
+
+    boolean teamExists(UUID teamId) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM teams WHERE id = :id")
+                .param("id", teamId)
+                .query(Long.class)
+                .single() > 0;
+    }
+
+    boolean organizationNameTaken(String name) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM organizations WHERE LOWER(name) = LOWER(:name)")
+                .param("name", name)
+                .query(Long.class)
+                .single() > 0;
+    }
+
+    void insertOrganization(UUID id, String name, String type, UUID teamId, OffsetDateTime now) {
+        jdbcClient.sql("""
+                INSERT INTO organizations (id, name, type, team_id, owner_manager_id, version, created_at, updated_at)
+                VALUES (:id, :name, :type, :teamId, NULL, 0, :now, :now)
+                """)
+                .param("id", id)
+                .param("name", name)
+                .param("type", type)
+                .param("teamId", teamId)
+                .param("now", now)
+                .update();
     }
 
     List<String> findLearningMappingKeys(UUID organizationId, UUID programId) {
@@ -604,6 +958,37 @@ public class SourceRepository {
                 .list();
     }
 
+    private static Map<String, Object> mappingParameters(UUID organizationId, UUID programId, RunDates run, RunKind runKind,
+                                                         UUID actorProfileId, OffsetDateTime now) {
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("organizationId", organizationId);
+        parameters.put("programId", programId);
+        parameters.put("runStartsOn", run == null ? null : run.startsOn());
+        parameters.put("runEndsOn", run == null ? null : run.endsOn());
+        parameters.put("runKind", (runKind == null ? RunKind.STUDENTS : runKind).name());
+        parameters.put("actorProfileId", actorProfileId);
+        parameters.put("now", now);
+        return parameters;
+    }
+
+    private static String mappingLabel(String kind, String externalKey, String payload) {
+        if (payload != null) {
+            return LearningUnit.parseStored(PAYLOADS, payload).label();
+        }
+        String value = externalKey.substring(externalKey.indexOf(':') + 1);
+        return switch (kind) {
+            case "ORGANIZATION" -> externalKey.startsWith("id:") ? "Вуз на сайте, внешний ID " + value : "Вуз на сайте «" + value + "»";
+            case "PROGRAM" -> "Программа на сайте «" + value + "»";
+            case "GROUP" -> "Группа Moodle " + externalKey;
+            default -> "Курс Moodle " + externalKey;
+        };
+    }
+
+    private static Optional<UUID> interactionIdOf(String resultJson) {
+        Matcher matcher = INTERACTION_ID.matcher(resultJson);
+        return matcher.find() ? Optional.of(UUID.fromString(matcher.group(1))) : Optional.empty();
+    }
+
     private static Map<String, Object> resultParameters(ApplyResult result) {
         Map<String, Object> parameters = new HashMap<>();
         parameters.put("status", result.status().name());
@@ -635,7 +1020,37 @@ public class SourceRepository {
                 resultSet.getString("error_message"),
                 resultSet.getObject("created_at", OffsetDateTime.class),
                 resultSet.getObject("started_at", OffsetDateTime.class),
-                resultSet.getObject("finished_at", OffsetDateTime.class)
+                resultSet.getObject("finished_at", OffsetDateTime.class),
+                SyncTrigger.valueOf(resultSet.getString("run_trigger")),
+                resultSet.getString("started_by_name"),
+                resultSet.getString("organization_name")
+        );
+    }
+
+    private MappedTarget mapTarget(ResultSet resultSet, int rowNumber) throws SQLException {
+        return new MappedTarget(
+                resultSet.getObject("mapping_id", UUID.class),
+                resultSet.getObject("organization_id", UUID.class),
+                resultSet.getObject("owner_manager_id", UUID.class),
+                resultSet.getObject("program_id", UUID.class),
+                resultSet.getObject("run_starts_on", LocalDate.class),
+                resultSet.getObject("run_ends_on", LocalDate.class),
+                RunKind.valueOf(resultSet.getString("run_kind"))
+        );
+    }
+
+    private StoredMapping mapMapping(ResultSet resultSet, int rowNumber) throws SQLException {
+        return new StoredMapping(
+                resultSet.getObject("id", UUID.class),
+                SourceCode.valueOf(resultSet.getString("source")),
+                resultSet.getString("kind"),
+                resultSet.getString("external_key"),
+                resultSet.getObject("organization_id", UUID.class),
+                resultSet.getObject("program_id", UUID.class),
+                resultSet.getObject("run_starts_on", LocalDate.class),
+                resultSet.getObject("run_ends_on", LocalDate.class),
+                RunKind.valueOf(resultSet.getString("run_kind")),
+                resultSet.getInt("version")
         );
     }
 
@@ -659,6 +1074,7 @@ public class SourceRepository {
 
     private StoredSnapshot mapSnapshot(ResultSet resultSet, int rowNumber) throws SQLException {
         return new StoredSnapshot(
+                resultSet.getObject("mapping_id", UUID.class),
                 resultSet.getObject("source_record_id", UUID.class),
                 resultSet.getObject("organization_id", UUID.class),
                 resultSet.getObject("program_id", UUID.class),
@@ -678,7 +1094,9 @@ public class SourceRepository {
                 resultSet.getObject("observed_at", OffsetDateTime.class),
                 resultSet.getObject("changed_at", OffsetDateTime.class),
                 resultSet.getObject("run_starts_on", LocalDate.class),
-                resultSet.getObject("run_ends_on", LocalDate.class)
+                resultSet.getObject("run_ends_on", LocalDate.class),
+                RunKind.valueOf(resultSet.getString("run_kind")),
+                resultSet.getObject("interaction_id", UUID.class)
         );
     }
 
@@ -723,13 +1141,46 @@ public class SourceRepository {
     ) {
     }
 
-    record MappedTarget(UUID organizationId, UUID ownerManagerId, UUID programId, LocalDate runStartsOn, LocalDate runEndsOn) {
+    record MappedTarget(
+            UUID mappingId,
+            UUID organizationId,
+            UUID ownerManagerId,
+            UUID programId,
+            LocalDate runStartsOn,
+            LocalDate runEndsOn,
+            RunKind runKind
+    ) {
+    }
+
+    record StoredMapping(
+            UUID id,
+            SourceCode source,
+            String kind,
+            String externalKey,
+            UUID organizationId,
+            UUID programId,
+            LocalDate runStartsOn,
+            LocalDate runEndsOn,
+            RunKind runKind,
+            int version
+    ) {
+        boolean learning() {
+            return kind.equals("COURSE") || kind.equals("GROUP");
+        }
+
+        RunDates run() {
+            return runStartsOn == null ? null : new RunDates(runStartsOn, runEndsOn);
+        }
     }
 
     record RunDates(LocalDate startsOn, LocalDate endsOn) {
+        boolean overlaps(RunDates other) {
+            return startsOn.isBefore(other.endsOn()) && other.startsOn().isBefore(endsOn);
+        }
     }
 
     record StoredSnapshot(
+            UUID mappingId,
             UUID sourceRecordId,
             UUID organizationId,
             UUID programId,
@@ -737,8 +1188,13 @@ public class SourceRepository {
             OffsetDateTime observedAt,
             OffsetDateTime changedAt,
             LocalDate runStartsOn,
-            LocalDate runEndsOn
+            LocalDate runEndsOn,
+            RunKind runKind,
+            UUID interactionId
     ) {
+    }
+
+    record LearningCoverage(int mapped, int inCycle, int undated, String skippedReason) {
     }
 
     record ApplyResult(

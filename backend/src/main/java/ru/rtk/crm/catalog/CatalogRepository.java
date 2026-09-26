@@ -18,16 +18,16 @@ public class CatalogRepository {
         this.jdbcClient = jdbcClient;
     }
 
-    public CatalogPage findActivePrograms(CatalogQuery query) {
-        return findActive("programs", query);
+    public CatalogPage findPrograms(CatalogQuery query, CatalogEntryState state) {
+        return findPage("programs", query, state);
     }
 
-    public CatalogPage findActiveProducts(CatalogQuery query) {
-        return findActive("products", query);
+    public CatalogPage findProducts(CatalogQuery query, CatalogEntryState state) {
+        return findPage("products", query, state);
     }
 
-    public CatalogPage findActiveDirections(CatalogQuery query) {
-        return findActive("directions", query);
+    public CatalogPage findDirections(CatalogQuery query, CatalogEntryState state) {
+        return findPage("directions", query, state);
     }
 
     public Optional<CatalogReference> findActiveProgramById(UUID programId) {
@@ -72,19 +72,19 @@ public class CatalogRepository {
                 .list());
     }
 
-    private CatalogPage findActive(String table, CatalogQuery query) {
+    private CatalogPage findPage(String table, CatalogQuery query, CatalogEntryState state) {
         List<CatalogLookup> items = jdbcClient.sql("""
-                SELECT id, name, version
-                FROM %s
-                WHERE archived = FALSE
-                ORDER BY name ASC, id ASC
+                SELECT entry.id, entry.name, entry.archived, entry.version
+                FROM %s entry
+                WHERE %s
+                ORDER BY entry.archived ASC, entry.name ASC, entry.id ASC
                 LIMIT :size OFFSET :offset
-                """.formatted(table))
+                """.formatted(table, state.condition()))
                 .param("size", query.size())
                 .param("offset", query.offset())
                 .query(this::mapLookup)
                 .list();
-        long total = jdbcClient.sql("SELECT COUNT(*) FROM " + table + " WHERE archived = FALSE")
+        long total = jdbcClient.sql("SELECT COUNT(*) FROM " + table + " entry WHERE " + state.condition())
                 .query(Long.class)
                 .single();
         return new CatalogPage(items, query.page(), query.size(), total);
@@ -94,6 +94,7 @@ public class CatalogRepository {
         return new CatalogLookup(
                 resultSet.getObject("id", UUID.class),
                 resultSet.getString("name"),
+                resultSet.getBoolean("archived"),
                 resultSet.getInt("version")
         );
     }

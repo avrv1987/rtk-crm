@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -36,7 +37,8 @@ public class WorkflowTemplateService {
     public WorkflowTemplatePage listAvailable(CrmProfile profile, WorkflowTemplateQuery query) {
         return profile.teamId() == null
                 ? workflowTemplateRepository.findGlobalPage(query)
-                : workflowTemplateRepository.findPageForTeam(profile.teamId(), query);
+                : workflowTemplateRepository.findPageForTeam(profile.teamId(), query)
+                        .withTeamDefault(workflowTemplateRepository.findTeamDefaultId(profile.teamId()).orElse(null));
     }
 
     @Transactional(readOnly = true)
@@ -44,7 +46,57 @@ public class WorkflowTemplateService {
         requireTemplateManager(profile);
         return profile.role() == UserRole.ADMIN
                 ? workflowTemplateRepository.findGlobalPage(query)
-                : workflowTemplateRepository.findTeamPageWithDefault(profile.teamId(), query);
+                : workflowTemplateRepository.findTeamPageWithDefault(profile.teamId(), query)
+                        .withTeamDefault(workflowTemplateRepository.findTeamDefaultId(profile.teamId()).orElse(null));
+    }
+
+    @Transactional
+    public WorkflowTemplate makeDefault(CrmProfile profile, UUID templateId, Integer version, String idempotencyKey) {
+        requireTemplateManager(profile);
+        int expectedVersion = requiredVersion(version);
+        String normalizedKey = requiredIdempotencyKey(idempotencyKey);
+        DefaultTemplateCommand command = new DefaultTemplateCommand(templateId, expectedVersion, profile.teamId());
+        String fingerprint = CommandFingerprint.of(objectMapper, command);
+        UUID commandId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
+        if (!commandIdempotencyRepository.reserve(
+                commandId,
+                profile.id(),
+                CommandOperation.SET_DEFAULT_WORKFLOW_TEMPLATE,
+                normalizedKey,
+                fingerprint,
+                now
+        )) {
+            return replay(profile.id(), CommandOperation.SET_DEFAULT_WORKFLOW_TEMPLATE, normalizedKey, fingerprint);
+        }
+        WorkflowTemplateRepository.WorkflowTemplateRow current = requireVisibleTemplate(profile, templateId, true);
+        if (current.version() != expectedVersion) {
+            throw InteractionConflictException.workflowTemplateVersion(current.version());
+        }
+        if (profile.role() == UserRole.ADMIN) {
+            if (current.teamId() != null) {
+                throw new WorkflowTemplateAccessDeniedException();
+            }
+            if (current.defaultTemplate()) {
+                throw new InteractionValidationException("id", "Этот шаблон уже используется по умолчанию");
+            }
+            WorkflowTemplate previous = workflowTemplateRepository.findDefaultForUpdate()
+                    .orElseThrow(() -> InteractionConflictException.workflowTemplateVersion(current.version()));
+            workflowTemplateRepository.replaceGlobalDefault(previous.id(), templateId, now);
+        } else {
+            if (current.teamId() == null && !current.defaultTemplate()) {
+                throw new WorkflowTemplateAccessDeniedException();
+            }
+            UUID teamDefaultId = current.defaultTemplate() ? null : templateId;
+            if (Objects.equals(workflowTemplateRepository.findTeamDefaultId(profile.teamId()).orElse(null), teamDefaultId)) {
+                throw new InteractionValidationException("id", "Этот шаблон уже используется в команде по умолчанию");
+            }
+            workflowTemplateRepository.updateTeamDefault(profile.teamId(), teamDefaultId);
+        }
+        WorkflowTemplate result = workflowTemplateRepository.findById(templateId)
+                .map(workflowTemplateRepository::toTemplate)
+                .orElseThrow(WorkflowTemplateNotFoundException::new);
+        return store(commandId, result);
     }
 
     @Transactional(readOnly = true)
@@ -426,5 +478,8 @@ public class WorkflowTemplateService {
     }
 
     private record DeleteTemplateCommand(UUID templateId, int version) {
+    }
+
+    private record DefaultTemplateCommand(UUID templateId, int version, UUID teamId) {
     }
 }

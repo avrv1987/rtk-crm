@@ -32,13 +32,34 @@ import {
   type InteractionStageEditType
 } from './drafts'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { InteractionDetailsForm } from './InteractionDetailsForm'
+import { InteractionFlagsForm } from './InteractionFlagsForm'
+import { InteractionMarkBadges } from './InteractionMarkBadges'
+import { InteractionStatusPanel } from './InteractionStatusPanel'
+import { StepCompletion } from '../work/StepCompletion'
 import { LearningSnapshots } from './LearningSnapshots'
+import { OrganizationContacts } from './OrganizationContacts'
+import { useUnsavedDraft } from './unsavedDrafts'
+import { contactRoleLabels, contactRoles } from './workMarks'
+import { AttachmentExtras } from '../documents/AttachmentExtras'
+import { ProductAgreementsSection } from '../documents/ProductAgreementsSection'
+import {
+  attachmentAccept,
+  attachmentFormats,
+  attachmentKindLabels,
+  attachmentKinds,
+  type AttachmentKind
+} from '../documents/documentsApi'
+import { InteractionCycles } from '../training/InteractionCycles'
+import { TeacherTrainings } from '../training/TeacherTrainings'
+import { StageCompletionPanel, formatCompletionDate } from './StageCompletionPanel'
 
 type InteractionsPanelProps = {
   organizationId: Organization['id']
   initialInteractionId?: Interaction['id']
   profileId: string
   role: Me['role']
+  onContactsChanged?: () => void
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
@@ -126,7 +147,13 @@ const eventLabel: Record<InteractionEvent['type'], string> = {
   TRANSITIONED: 'Этап изменён',
   COMMENTED: 'Добавлен комментарий',
   STAGES_EDITED: 'Изменены этапы карточки',
-  PLAN_UPDATED: 'Изменён план'
+  PLAN_UPDATED: 'Изменён план',
+  DETAILS_UPDATED: 'Изменены данные работы',
+  STATUS_CHANGED: 'Изменён статус работы',
+  AGREEMENT_UPDATED: 'Изменены договор и передача',
+  ATTACHMENT_DELETED: 'Удалён документ',
+  STAGE_COMPLETED: 'Этап отмечен выполненным',
+  STAGE_COMPLETION_CLEARED: 'Снята отметка выполнения этапа'
 }
 
 const dayMilliseconds = 24 * 60 * 60 * 1000
@@ -267,6 +294,12 @@ const planFieldLabels: Record<PlanField, string> = {
   programId: 'Программа'
 }
 
+const attachableIdsOf = (interaction: Interaction) => new Set(
+  interaction.attachments
+    .filter((attachment) => attachment.status === 'CLEAN' && attachment.eventId === null)
+    .map((attachment) => attachment.id)
+)
+
 const emptyPlanDraft = (): InteractionPlanDraft => ({ addedProductIds: [], removedProductIds: [] })
 
 const planFromInteraction = (interaction: Interaction): Record<PlanField, string> => ({
@@ -326,12 +359,13 @@ const planConflicts = (interaction: Interaction, plan: InteractionPlanDraft | nu
     .map((field) => ({ field, label: planFieldLabels[field], current: shown[field] }))
 }
 
-type StagePathStatus = 'passed' | 'current' | 'skipped' | 'future'
+type StagePathStatus = 'passed' | 'current' | 'completed' | 'skipped' | 'future'
 
 type StagePathItem = {
   stage: InteractionStage
   status: StagePathStatus
   enteredAt?: string
+  completedOn?: string
 }
 
 const stagePath = (interaction: Interaction, events: InteractionEvent[] | undefined): StagePathItem[] => {
@@ -341,11 +375,16 @@ const stagePath = (interaction: Interaction, events: InteractionEvent[] | undefi
       enteredAt.set(event.toStageId, event.occurredAt)
     }
   })
+  const completedOn = new Map(interaction.stageCompletions.map((completion) => [completion.stageId, completion.completedOn]))
   const currentOrder = interaction.stages.find((stage) => stage.id === interaction.currentStageId)?.order ?? 0
   return interaction.stages.map((stage) => {
     const entered = enteredAt.get(stage.id)
+    const completed = completedOn.get(stage.id)
     if (stage.id === interaction.currentStageId) {
-      return { stage, status: 'current', enteredAt: entered }
+      return { stage, status: 'current', enteredAt: entered, completedOn: completed }
+    }
+    if (completed !== undefined) {
+      return { stage, status: 'completed', enteredAt: entered, completedOn: completed }
     }
     if (entered !== undefined) {
       return { stage, status: 'passed', enteredAt: entered }
@@ -356,11 +395,15 @@ const stagePath = (interaction: Interaction, events: InteractionEvent[] | undefi
 
 const stagePathLabel = (item: StagePathItem) => {
   if (item.status === 'current') {
+    const completedNote = item.completedOn === undefined ? '' : `; отмечен выполненным ${formatCompletionDate(item.completedOn)}`
     if (item.enteredAt === undefined) {
-      return 'Текущий этап'
+      return `Текущий этап${completedNote}`
     }
     const days = Math.max(0, Math.floor((Date.now() - new Date(item.enteredAt).getTime()) / dayMilliseconds))
-    return `Текущий этап: ${daysLabel(days)} на этапе`
+    return `Текущий этап: ${daysLabel(days)} на этапе${completedNote}`
+  }
+  if (item.status === 'completed' && item.completedOn !== undefined) {
+    return `Выполнен ${formatCompletionDate(item.completedOn)}`
   }
   if (item.status === 'passed') {
     return item.enteredAt === undefined ? 'Пройден' : `Пройден; вход ${formatDateTime(item.enteredAt)}`
@@ -437,13 +480,6 @@ const lastContactLabel = (value: string | null) => (
   value === null ? 'Не указан' : formatDateTime(value)
 )
 
-const licenseSignedLabel = (value: boolean | null) => {
-  if (value === null) {
-    return 'Не указано'
-  }
-  return value ? 'Подписана' : 'Не подписана'
-}
-
 const attachmentStatusLabel: Record<Attachment['status'], string> = {
   QUARANTINE: 'В карантине: проверяется',
   CLEAN: 'Проверен: доступен',
@@ -497,6 +533,7 @@ export const InteractionsPanel = ({
   initialInteractionId,
   profileId,
   role,
+  onContactsChanged,
   onSessionExpired,
   onProfileUnavailable
 }: InteractionsPanelProps) => {
@@ -511,6 +548,8 @@ export const InteractionsPanel = ({
   const [templatesPageIndex, setTemplatesPageIndex] = useState(0)
   const [uploadStageId, setUploadStageId] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadKind, setUploadKind] = useState<AttachmentKind>('OTHER')
+  const [attachmentKindFilter, setAttachmentKindFilter] = useState<AttachmentKind | ''>('')
   const [uploadState, setUploadState] = useState<CommandState>({ kind: 'idle' })
   const [attachmentRefreshState, setAttachmentRefreshState] = useState<AttachmentRefreshState>({ kind: 'idle' })
   const [attachmentDownloadState, setAttachmentDownloadState] = useState<AttachmentDownloadState>({ kind: 'idle' })
@@ -519,6 +558,7 @@ export const InteractionsPanel = ({
   const [contactPosition, setContactPosition] = useState(restoredDraft.current.contactPosition)
   const [contactEmail, setContactEmail] = useState(restoredDraft.current.contactEmail)
   const [contactPhone, setContactPhone] = useState(restoredDraft.current.contactPhone)
+  const [contactRole, setContactRole] = useState(restoredDraft.current.contactRole)
   const [contactCreateState, setContactCreateState] = useState<CommandState>({ kind: 'idle' })
   const [createTitle, setCreateTitle] = useState(restoredDraft.current.createTitle)
   const [createNextAction, setCreateNextAction] = useState(restoredDraft.current.createNextAction)
@@ -580,7 +620,8 @@ export const InteractionsPanel = ({
         organizationId,
         page,
         size,
-        sort: interactionSort
+        sort: interactionSort,
+        status: 'ALL'
       })))
       if (requestVersion === listRequestVersion.current) {
         const items = [...new Map(results.flatMap((result) => result.items).map((item) => [item.id, item])).values()]
@@ -728,11 +769,7 @@ export const InteractionsPanel = ({
         commentKey.current = null
         transitionKey.current = null
         planKey.current = null
-        const attachableIds = new Set(
-          interaction.attachments
-            .filter((attachment) => attachment.status === 'CLEAN' && attachment.eventId === null)
-            .map((attachment) => attachment.id)
-        )
+        const attachableIds = attachableIdsOf(interaction)
         const stageIds = new Set(interaction.stages.map((stage) => stage.id))
         const allowedStageIds = new Set(interaction.allowedTransitions.map((option) => option.stageId))
         setCommentStageId((stageId) => stageIds.has(stageId) ? stageId : interaction.currentStageId)
@@ -817,7 +854,7 @@ export const InteractionsPanel = ({
   }, [loadContacts, loadInteractions])
 
   useEffect(() => {
-    if (role === 'ADMIN') {
+    if (role === 'ADMIN' || role === 'MANAGEMENT') {
       return
     }
     void loadCatalog()
@@ -862,6 +899,7 @@ export const InteractionsPanel = ({
       contactPosition,
       contactEmail,
       contactPhone,
+      contactRole,
       activeInteractionId
     })
   }, [
@@ -870,6 +908,7 @@ export const InteractionsPanel = ({
     contactName,
     contactPhone,
     contactPosition,
+    contactRole,
     createNextAction,
     createNextActionAt,
     createLastContactAt,
@@ -923,6 +962,18 @@ export const InteractionsPanel = ({
 
   const currentInteraction = detailState.kind === 'ready' ? detailState.interaction : undefined
   const currentInteractionId = currentInteraction?.id
+  const cardLabel = currentInteraction === undefined ? 'карточке взаимодействия' : `карточке «${currentInteraction.title}»`
+  const cardDraftKey = `card:${activeInteractionId ?? ''}`
+  useUnsavedDraft(`${cardDraftKey}:comment`, `комментарий в ${cardLabel}`,
+    activeInteractionId !== null && (commentDraft.trim().length > 0 || commentNextAction.trim().length > 0))
+  useUnsavedDraft(`${cardDraftKey}:transition`, `переход этапа в ${cardLabel}`,
+    activeInteractionId !== null && (transitionDraft.trim().length > 0 || transitionNextAction.trim().length > 0))
+  useUnsavedDraft(`${cardDraftKey}:plan`, `следующий шаг в ${cardLabel}`, activeInteractionId !== null && planDraft !== null)
+  useUnsavedDraft(`${cardDraftKey}:stages`, `правка этапов в ${cardLabel}`,
+    activeInteractionId !== null && stageEditName.trim().length > 0)
+  useUnsavedDraft(`organization:${organizationId}:create`, 'новое взаимодействие',
+    createTitle.trim().length > 0 || createNextAction.trim().length > 0)
+  useUnsavedDraft(`organization:${organizationId}:contact`, 'новый контакт', contactName.trim().length > 0)
 
   useEffect(() => {
     if (focusInitialInteraction.current && currentInteractionId !== undefined && currentInteractionId === initialInteractionId) {
@@ -1037,7 +1088,8 @@ export const InteractionsPanel = ({
       name,
       position: contactPosition.trim() || null,
       email: contactEmail.trim() || null,
-      phone: contactPhone.trim() || null
+      phone: contactPhone.trim() || null,
+      role: contactRoles.find((role) => role === contactRole) ?? null
     }
     setContactCreateState({ kind: 'saving' })
     try {
@@ -1051,6 +1103,7 @@ export const InteractionsPanel = ({
       setContactPosition('')
       setContactEmail('')
       setContactPhone('')
+      setContactRole('')
       setContactCreateState({ kind: 'idle' })
       setSelectedContactIds((ids) => ids.includes(contact.id) ? ids : [...ids, contact.id])
       void loadContacts()
@@ -1065,6 +1118,12 @@ export const InteractionsPanel = ({
       }
       setContactCreateState({ kind: 'failed', error })
     }
+  }
+
+  const applyUpdatedInteraction = (interaction: Interaction) => {
+    setDetailState({ kind: 'ready', interaction })
+    void loadEvents(interaction.id)
+    void loadInteractions(loadedPages)
   }
 
   const replaceAttachment = (attachment: Attachment) => {
@@ -1085,6 +1144,11 @@ export const InteractionsPanel = ({
     })
   }
 
+  const acceptInteraction = (interaction: Interaction) => {
+    setDetailState({ kind: 'ready', interaction })
+    void loadEvents(interaction.id)
+  }
+
   const submitUpload = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (currentInteraction === undefined || uploadFile === null || uploadStageId.length === 0) {
@@ -1094,7 +1158,7 @@ export const InteractionsPanel = ({
     try {
       const attachment = await apiClient.uploadInteractionAttachment(
         currentInteraction.id,
-        { file: uploadFile, stageId: uploadStageId },
+        { file: uploadFile, stageId: uploadStageId, kind: uploadKind },
         uploadKey.current ?? (uploadKey.current = createIdempotencyKey())
       )
       uploadKey.current = null
@@ -1577,7 +1641,9 @@ export const InteractionsPanel = ({
     .filter((agreement) => agreement.contractNumber !== null
       || agreement.licenseSigned !== null
       || agreement.licenseExpiryYear !== null
-      || agreement.transferStatus !== null)
+      || agreement.transferStatus !== null
+      || agreement.scanAttachmentId !== null
+      || agreement.transfers.length > 0)
     .map((agreement) => agreement.productId) ?? [])
   const planProductOptions = catalogState.kind === 'ready'
     ? catalogState.products.map((product) => ({ id: product.id, name: product.name }))
@@ -1652,6 +1718,20 @@ export const InteractionsPanel = ({
               : 'Контактов пока нет.'}
           </p>
         )}
+        {contactsState.kind === 'ready' && (
+          <OrganizationContacts
+            organizationId={organizationId}
+            contacts={contactsState.contacts}
+            profileId={profileId}
+            canEdit={canManageDailyWork}
+            onChanged={() => {
+              void loadContacts()
+              onContactsChanged?.()
+            }}
+            onSessionExpired={onSessionExpired}
+            onProfileUnavailable={onProfileUnavailable}
+          />
+        )}
         {canManageDailyWork && (
           <form className="interaction-contact-form" onSubmit={(event) => void submitContact(event)}>
             <h6>Добавить контакт</h6>
@@ -1699,6 +1779,13 @@ export const InteractionsPanel = ({
               />
               <FieldError id="contact-phone-error" message={fieldErrorOf(contactCreateState, 'phone')} />
             </label>
+            <label>
+              Роль во взаимодействии
+              <select value={contactRole} onChange={(event) => setContactRole(event.target.value)}>
+                <option value="">Не указана</option>
+                {contactRoles.map((role) => <option key={role} value={role}>{contactRoleLabels[role]}</option>)}
+              </select>
+            </label>
             <button type="submit" disabled={contactCreateState.kind === 'saving'}>
               {contactCreateState.kind === 'saving' ? 'Добавляем…' : 'Добавить контакт'}
             </button>
@@ -1734,7 +1821,13 @@ export const InteractionsPanel = ({
             disabled={templatesState.kind !== 'ready'}
             onChange={(event) => changeCreateTemplate(event.target.value)}
           >
-            <option value="">Шаблон по умолчанию</option>
+            <option value="">
+              {templatesState.kind === 'ready' && templatesState.page.teamDefaultTemplateId !== null
+                ? `Шаблон команды по умолчанию: ${templatesState.page.items.find((template) => (
+                  template.id === templatesState.page.teamDefaultTemplateId
+                ))?.name ?? 'выбран руководителем'}`
+                : 'Шаблон по умолчанию'}
+            </option>
             {createTemplateId.length > 0 && !currentTemplatePageHasSelection && (
               <option value={createTemplateId}>Сохранённый выбор: найдите шаблон на странице списка</option>
             )}
@@ -1793,11 +1886,12 @@ export const InteractionsPanel = ({
           {contactsState.kind === 'loading' && <p>Загружаем доступные контакты…</p>}
           {contactsState.kind === 'failed' && <p>Контакты пока недоступны. Их можно повторно загрузить выше.</p>}
           {contactsState.kind === 'ready' && (
-            contactsState.contacts.length === 0 ? (
-              <p>Сначала добавьте контакт организации.</p>
+            contactsState.contacts.every((contact) => contact.inactive && !selectedContactIds.includes(contact.id)) ? (
+              <p>Сначала добавьте действующий контакт организации.</p>
             ) : (
               <ul>
-                {contactsState.contacts.map((contact) => (
+                {contactsState.contacts.filter((contact) => (contact.personalDataStatus ?? 'ACTIVE') === 'ACTIVE'
+                  && (!contact.inactive || selectedContactIds.includes(contact.id))).map((contact) => (
                   <li key={contact.id}>
                     <label>
                       <input
@@ -1807,6 +1901,8 @@ export const InteractionsPanel = ({
                       />
                       <span>{contact.name}</span>
                       {contact.position && <small>{contact.position}</small>}
+                      {contact.role && <small>{contactRoleLabels[contact.role]}</small>}
+                      {contact.inactive && <small>Не актуален: снимите отметку</small>}
                     </label>
                   </li>
                 ))}
@@ -1950,6 +2046,7 @@ export const InteractionsPanel = ({
                     onClick={() => openInteraction(interaction.id)}
                   >
                     <span className="interaction-list-item__title">{interaction.title}</span>
+                    <InteractionMarkBadges marks={interaction.marks} />
                     <span className="interaction-list-item__stage">Этап: {interaction.currentStageName}</span>
                     <span className="interaction-list-item__action">{interaction.nextAction ?? 'Следующий шаг не задан'}</span>
                     <span className="interaction-list-item__catalog">Программа: {interaction.programName ?? 'не указана'}</span>
@@ -2021,6 +2118,40 @@ export const InteractionsPanel = ({
                 <dd>{lastContactLabel(currentInteraction.lastContactAt)}</dd>
               </div>
             </dl>
+            <InteractionMarkBadges marks={currentInteraction.marks} />
+
+            {canManageDailyWork && (
+              <>
+                <InteractionStatusPanel
+                  key={`status:${currentInteraction.id}`}
+                  interaction={currentInteraction}
+                  profileId={profileId}
+                  onChanged={applyUpdatedInteraction}
+                  onRefresh={() => openInteraction(currentInteraction.id)}
+                  onSessionExpired={onSessionExpired}
+                  onProfileUnavailable={onProfileUnavailable}
+                />
+                <InteractionFlagsForm
+                  key={`flags:${currentInteraction.id}`}
+                  interaction={currentInteraction}
+                  profileId={profileId}
+                  onChanged={applyUpdatedInteraction}
+                  onRefresh={() => openInteraction(currentInteraction.id)}
+                  onSessionExpired={onSessionExpired}
+                  onProfileUnavailable={onProfileUnavailable}
+                />
+                <InteractionDetailsForm
+                  key={`details:${currentInteraction.id}`}
+                  interaction={currentInteraction}
+                  contacts={contactsState.kind === 'ready' ? contactsState.contacts : null}
+                  profileId={profileId}
+                  onChanged={applyUpdatedInteraction}
+                  onRefresh={() => openInteraction(currentInteraction.id)}
+                  onSessionExpired={onSessionExpired}
+                  onProfileUnavailable={onProfileUnavailable}
+                />
+              </>
+            )}
 
             <section className="interaction-linked-contacts" aria-labelledby="interaction-linked-contacts-title">
               <h6 id="interaction-linked-contacts-title">Связанные контакты</h6>
@@ -2040,6 +2171,9 @@ export const InteractionsPanel = ({
                       ) : (
                         <>
                           <strong>{contact.name}</strong>
+                          {contact.primary && <span>Основной контакт</span>}
+                          {contact.role && <span>{contactRoleLabels[contact.role]}</span>}
+                          {contact.inactive && <span>Не актуален</span>}
                           {contact.position && <span>{contact.position}</span>}
                           {contact.email && <span>{contact.email}</span>}
                           {contact.phone && <span>{contact.phone}</span>}
@@ -2051,40 +2185,14 @@ export const InteractionsPanel = ({
               )}
             </section>
 
-            <section className="interaction-product-agreements" aria-labelledby="interaction-product-agreements-title">
-              <h6 id="interaction-product-agreements-title">Продукты и соглашения</h6>
-              {currentInteraction.productAgreements.length === 0 && <p>Продукты не указаны.</p>}
-              {currentInteraction.productAgreements.length > 0 && (
-                <ul>
-                  {currentInteraction.productAgreements.map((agreement) => (
-                    <li key={agreement.id}>
-                      <div className="interaction-product-agreement__header">
-                        <strong>{agreement.productName}</strong>
-                        {agreement.productArchived && <span className="interaction-archived">Архивирован</span>}
-                      </div>
-                      <dl>
-                        <div>
-                          <dt>Номер договора</dt>
-                          <dd>{agreement.contractNumber ?? 'Не указан'}</dd>
-                        </div>
-                        <div>
-                          <dt>Подписание лицензии</dt>
-                          <dd>{licenseSignedLabel(agreement.licenseSigned)}</dd>
-                        </div>
-                        <div>
-                          <dt>Срок лицензии</dt>
-                          <dd>{agreement.licenseExpiryYear ?? 'Не указан'}</dd>
-                        </div>
-                        <div>
-                          <dt>Статус передачи</dt>
-                          <dd>{agreement.transferStatus ?? 'Не указан'}</dd>
-                        </div>
-                      </dl>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+            <ProductAgreementsSection
+              interaction={currentInteraction}
+              canEdit={canManageDailyWork}
+              onInteraction={acceptInteraction}
+              onReload={() => openInteraction(currentInteraction.id)}
+              onSessionExpired={onSessionExpired}
+              onProfileUnavailable={onProfileUnavailable}
+            />
 
             <LearningSnapshots
               interactionId={currentInteraction.id}
@@ -2092,6 +2200,41 @@ export const InteractionsPanel = ({
               hasProgram={currentInteraction.program !== null}
               canRefresh={canManageDailyWork}
               onRefreshed={() => openInteraction(currentInteraction.id)}
+              onSessionExpired={onSessionExpired}
+              onProfileUnavailable={onProfileUnavailable}
+            />
+
+            {canManageDailyWork && (
+              <StepCompletion
+                key={currentInteraction.id}
+                interaction={currentInteraction}
+                onCompleted={(interaction) => {
+                  setDetailState({ kind: 'ready', interaction })
+                  void loadEvents(interaction.id)
+                  void loadInteractions(loadedPages)
+                }}
+                onReload={() => openInteraction(currentInteraction.id)}
+                onSessionExpired={onSessionExpired}
+                onProfileUnavailable={onProfileUnavailable}
+              />
+            )}
+
+            <TeacherTrainings
+              interaction={currentInteraction}
+              canEdit={canManageDailyWork}
+              onSaved={() => openInteraction(currentInteraction.id)}
+              onSessionExpired={onSessionExpired}
+              onProfileUnavailable={onProfileUnavailable}
+            />
+
+            <InteractionCycles
+              interaction={currentInteraction}
+              canEdit={canManageDailyWork}
+              onOpen={openInteraction}
+              onStarted={(id) => {
+                void loadInteractions(loadedPages)
+                openInteraction(id)
+              }}
               onSessionExpired={onSessionExpired}
               onProfileUnavailable={onProfileUnavailable}
             />
@@ -2223,6 +2366,23 @@ export const InteractionsPanel = ({
             </div>
 
             {canManageDailyWork && (
+              <StageCompletionPanel
+                interaction={currentInteraction}
+                onChanged={(interaction) => {
+                  const attachableIds = attachableIdsOf(interaction)
+                  setCommentAttachmentIds((ids) => ids.filter((attachmentId) => attachableIds.has(attachmentId)))
+                  setTransitionAttachmentIds((ids) => ids.filter((attachmentId) => attachableIds.has(attachmentId)))
+                  setDetailState({ kind: 'ready', interaction })
+                  void loadEvents(interaction.id)
+                  void loadInteractions(loadedPages)
+                }}
+                onReload={() => openInteraction(currentInteraction.id)}
+                onSessionExpired={onSessionExpired}
+                onProfileUnavailable={onProfileUnavailable}
+              />
+            )}
+
+            {canManageDailyWork && (
               <form className="interaction-stage-editor" onSubmit={(event) => void submitStageEdit(event)}>
                 <h6>Изменить локальный граф этапов</h6>
                 <p>Одна команда изменяет только снимок этого взаимодействия.</p>
@@ -2304,8 +2464,21 @@ export const InteractionsPanel = ({
                 <p>Документы к этому взаимодействию пока не загружены.</p>
               )}
               {currentInteraction.attachments.length > 0 && (
+                <label className="document-filter">
+                  Отбор по виду документа
+                  <select value={attachmentKindFilter} onChange={(event) => setAttachmentKindFilter(event.target.value as AttachmentKind | '')}>
+                    <option value="">Все виды</option>
+                    {attachmentKinds.map((kind) => <option key={kind} value={kind}>{attachmentKindLabels[kind]}</option>)}
+                  </select>
+                </label>
+              )}
+              {attachmentKindFilter !== '' && currentInteraction.attachments.length > 0
+                && !currentInteraction.attachments.some((attachment) => attachment.kind === attachmentKindFilter) && (
+                <p>Документов вида «{attachmentKindLabels[attachmentKindFilter]}» нет.</p>
+              )}
+              {currentInteraction.attachments.length > 0 && (
                 <ul>
-                  {currentInteraction.attachments.map((attachment) => {
+                  {currentInteraction.attachments.filter((attachment) => attachmentKindFilter === '' || attachment.kind === attachmentKindFilter).map((attachment) => {
                     const stageName = attachmentStageNames.get(attachment.stageId) ?? 'Этап недоступен'
                     const refreshing = attachmentRefreshState.kind === 'loading' && attachmentRefreshState.id === attachment.id
                     const downloading = attachmentDownloadState.kind === 'downloading' && attachmentDownloadState.id === attachment.id
@@ -2335,6 +2508,18 @@ export const InteractionsPanel = ({
                             <dd>{formatDateTime(attachment.createdAt)}</dd>
                           </div>
                         </dl>
+                        <AttachmentExtras
+                          interaction={currentInteraction}
+                          attachment={attachment}
+                          canEdit={canManageDailyWork}
+                          profileId={profileId}
+                          role={role}
+                          onAttachment={replaceAttachment}
+                          onInteraction={acceptInteraction}
+                          onReload={() => openInteraction(currentInteraction.id)}
+                          onSessionExpired={onSessionExpired}
+                          onProfileUnavailable={onProfileUnavailable}
+                        />
                         {attachment.status === 'CLEAN' && (
                           <button type="button" className="button--secondary" onClick={() => void downloadAttachment(attachment)} disabled={downloading}>
                             {downloading ? 'Готовим скачивание…' : 'Скачать файл'}
@@ -2378,18 +2563,24 @@ export const InteractionsPanel = ({
                     </select>
                   </label>
                   <label>
+                    Вид документа
+                    <select value={uploadKind} onChange={(event) => setUploadKind(event.target.value as AttachmentKind)}>
+                      {attachmentKinds.map((kind) => <option key={kind} value={kind}>{attachmentKindLabels[kind]}</option>)}
+                    </select>
+                  </label>
+                  <label>
                     Файл
                     <input
                       ref={uploadInput}
                       type="file"
                       required
-                      accept=".png,.jpg,.jpeg,.pdf,.zip,.gz,.gzip,.rar,.doc,.docx,.xls,.xlsx"
+                      accept={attachmentAccept}
                       onChange={(event) => changeUploadFile(event.target.files?.item(0) ?? null)}
                       aria-invalid={uploadFileError === undefined ? undefined : true}
                       aria-describedby={uploadFileError === undefined ? 'interaction-upload-hint' : 'interaction-upload-hint interaction-upload-error'}
                     />
                     <span id="interaction-upload-hint" className="interaction-field-hint">
-                      До {attachmentLimitMegabytes} МБ: PNG, JPEG, PDF, ZIP, GZIP, RAR, DOC, DOCX, XLS или XLSX.
+                      До {attachmentLimitMegabytes} МБ: {attachmentFormats}.
                     </span>
                     <FieldError id="interaction-upload-error" message={uploadFileError} />
                   </label>

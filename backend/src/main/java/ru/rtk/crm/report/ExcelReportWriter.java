@@ -68,7 +68,7 @@ public class ExcelReportWriter {
         Row header = sheet.createRow(headerRow);
         for (int column = 0; column < columns.size(); column++) {
             ReportColumn reportColumn = columns.get(column);
-            text(header.createCell(column), reportColumn.title(document.request().kind()), styles.header);
+            text(header.createCell(column), document.columnTitle(reportColumn), styles.header);
             sheet.setColumnWidth(column, Math.min(reportColumn.width(), 80) * 256);
         }
 
@@ -94,8 +94,8 @@ public class ExcelReportWriter {
             cell.setCellStyle(styles.dateTime);
             return;
         }
-        if (value instanceof Long number) {
-            cell.setCellValue(number);
+        if (value instanceof Number number) {
+            cell.setCellValue(number.doubleValue());
             cell.setCellStyle(styles.body);
             return;
         }
@@ -108,7 +108,7 @@ public class ExcelReportWriter {
         cell.setCellStyle(style);
     }
 
-    static boolean isFormulaLike(String value) {
+    public static boolean isFormulaLike(String value) {
         if (value.isEmpty()) {
             return false;
         }

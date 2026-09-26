@@ -26,6 +26,14 @@ public class InteractionConflictException extends RuntimeException {
         );
     }
 
+    public static InteractionConflictException contactVersion(int currentVersion) {
+        return new InteractionConflictException(
+                "VERSION_CONFLICT",
+                "Контакт уже изменили",
+                currentVersion
+        );
+    }
+
     public static InteractionConflictException crmProfileVersion(int currentVersion) {
         return new InteractionConflictException(
                 "VERSION_CONFLICT",
@@ -55,6 +63,30 @@ public class InteractionConflictException extends RuntimeException {
                 "VERSION_CONFLICT",
                 "Команду уже изменили",
                 currentVersion
+        );
+    }
+
+    public static InteractionConflictException catalogEntryVersion(int currentVersion) {
+        return new InteractionConflictException(
+                "VERSION_CONFLICT",
+                "Запись справочника уже изменили",
+                currentVersion
+        );
+    }
+
+    public static InteractionConflictException attachmentVersion(int currentVersion) {
+        return new InteractionConflictException(
+                "VERSION_CONFLICT",
+                "Сведения о документе уже изменили",
+                currentVersion
+        );
+    }
+
+    public static InteractionConflictException attachmentReplaced() {
+        return new InteractionConflictException(
+                "VERSION_CONFLICT",
+                "У документа уже есть новая версия; обновите карточку",
+                null
         );
     }
 

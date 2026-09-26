@@ -27,7 +27,7 @@ public enum StatisticsGroupBy {
         return this == MANAGER ? ReportColumn.MANAGER.title(kind) : header;
     }
 
-    public boolean mayBeUnspecified() {
-        return mayBeUnspecified;
+    public boolean mayBeUnspecified(ReportKind kind) {
+        return mayBeUnspecified || this == STAGE && kind == ReportKind.EVENTS;
     }
 }

@@ -18,10 +18,18 @@ public record StatisticsResult(
         long total,
         long unknownCount,
         List<Item> items,
-        int maxChartBars
+        int maxChartBars,
+        LocalDate asOf,
+        StatisticsGroupBy seriesBy,
+        List<Series> series,
+        int maxChartSeries
 ) {
     public static final int MAX_CHART_BARS = 100;
+    public static final int MAX_CHART_SERIES = 5;
 
     public record Item(String key, String label, long count) {
+    }
+
+    public record Series(String key, String label, boolean unspecified, List<Long> counts) {
     }
 }

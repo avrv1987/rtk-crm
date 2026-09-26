@@ -1,5 +1,6 @@
 package ru.rtk.crm.access;
 
+import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -38,16 +39,56 @@ public class UserProfileRepository {
                 .single() > 0;
     }
 
-    public boolean insertPendingIfAbsent(UUID id, String issuer, String subject, String displayName) {
+    public boolean insertPendingIfAbsent(UUID id, String issuer, String subject, String displayName, String login) {
         return jdbcClient.sql("""
-                INSERT INTO crm_user_profiles (id, issuer, subject, display_name, role, team_id, active, pending_activation)
-                VALUES (:id, :issuer, :subject, :displayName, 'USER', NULL, FALSE, TRUE)
+                INSERT INTO crm_user_profiles (id, issuer, subject, display_name, login, role, team_id, active, pending_activation)
+                VALUES (:id, :issuer, :subject, :displayName, :login, 'USER', NULL, FALSE, TRUE)
                 ON CONFLICT DO NOTHING
                 """)
                 .param("id", id)
                 .param("issuer", issuer)
                 .param("subject", subject)
                 .param("displayName", displayName)
+                .param("login", login)
+                .update() == 1;
+    }
+
+    public void updateLogin(String issuer, String subject, String login) {
+        jdbcClient.sql("""
+                UPDATE crm_user_profiles
+                SET login = :login
+                WHERE issuer = :issuer AND subject = :subject AND anonymized_at IS NULL
+                  AND (login IS NULL OR login <> :login)
+                """)
+                .param("issuer", issuer)
+                .param("subject", subject)
+                .param("login", login)
+                .update();
+    }
+
+    public Optional<PendingProfile> findPending(String issuer, String subject) {
+        return jdbcClient.sql("""
+                SELECT id, activation_requested_at
+                FROM crm_user_profiles
+                WHERE issuer = :issuer AND subject = :subject AND pending_activation = TRUE
+                """)
+                .param("issuer", issuer)
+                .param("subject", subject)
+                .query((resultSet, rowNumber) -> new PendingProfile(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getObject("activation_requested_at", OffsetDateTime.class)
+                ))
+                .optional();
+    }
+
+    public boolean markActivationRequested(UUID profileId, OffsetDateTime requestedAt) {
+        return jdbcClient.sql("""
+                UPDATE crm_user_profiles
+                SET activation_requested_at = :requestedAt
+                WHERE id = :profileId AND pending_activation = TRUE AND activation_requested_at IS NULL
+                """)
+                .param("profileId", profileId)
+                .param("requestedAt", requestedAt)
                 .update() == 1;
     }
 
@@ -77,5 +118,8 @@ public class UserProfileRepository {
                 .param("teamId", teamId)
                 .query(String.class)
                 .optional();
+    }
+
+    public record PendingProfile(UUID id, OffsetDateTime activationRequestedAt) {
     }
 }

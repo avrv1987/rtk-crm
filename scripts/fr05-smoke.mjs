@@ -583,6 +583,37 @@ try {
     200,
     'Signing after the correction failed'
   )
+  phase = 'stage-completion'
+  const teachersStage = stageAt(route, 8)
+  const markedFrom = route.currentStageId
+  const completionDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date())
+  const markTeachers = (key) => postJson(
+    kamA,
+    kamACsrf,
+    interactionPath(route.id, '/stage-completions'),
+    { version: route.version, stageId: teachersStage.id, completedOn: completionDay, comment: 'FR05 smoke parallel teachers ' + nonce },
+    key
+  )
+  route = requireStatus(await markTeachers('fr05-complete-teachers-' + nonce), 200, 'Marking a non-current stage completed failed')
+  assert(
+    route.currentStageId === markedFrom && route.stageCompletions?.some((completion) => completion.stageId === teachersStage.id && completion.completedOn === completionDay),
+    'Stage completion moved the current stage or was not saved'
+  )
+  const currentMark = await postJson(
+    kamA,
+    kamACsrf,
+    interactionPath(route.id, '/stage-completions'),
+    { version: route.version, stageId: route.currentStageId, completedOn: completionDay },
+    'fr05-complete-current-' + nonce
+  )
+  assert(currentMark.status === 400 && currentMark.body?.fieldErrors?.stageId !== undefined, 'Current stage was marked completed')
+  route = requireStatus(
+    await jsonRequest(kamA, kamACsrf, 'DELETE', interactionPath(route.id, '/stage-completions/' + teachersStage.id) + '?version=' + route.version, undefined, 'fr05-clear-teachers-' + nonce),
+    200,
+    'Clearing the stage completion failed'
+  )
+  assert(!route.stageCompletions.some((completion) => completion.stageId === teachersStage.id), 'Stage completion was not cleared')
+  route = requireStatus(await markTeachers('fr05-complete-teachers-again-' + nonce), 200, 'Marking the stage again failed')
   for (const order of [6, 7, 8, 9, 10, 11, 12]) {
     const target = stageAt(route, order)
     assert(route.allowedTransitions?.some((option) => option.stageId === target.id), 'Base route continuation is unavailable')
@@ -593,6 +624,7 @@ try {
     )
   }
   assert(route.currentStageId === stageAt(route, 12).id, 'Base route did not reach the final stage')
+  assert(route.stageCompletions.some((completion) => completion.stageId === teachersStage.id), 'Transition through the marked stage lost its completion')
 
   phase = 'tz-control'
   const controlAction = 'FR05 smoke control ' + nonce
@@ -616,6 +648,11 @@ try {
   assert(
     baseHistory.every((event) => event.actorProfileId === kamProfile.id && event.actorDisplayName && !Number.isNaN(Date.parse(event.occurredAt))),
     'History events lack the author or the time'
+  )
+  assert(
+    baseHistory.filter((event) => event.type === 'STAGE_COMPLETED' && event.stageId === teachersStage.id).length === 2
+      && baseHistory.some((event) => event.type === 'STAGE_COMPLETION_CLEARED' && event.stageId === teachersStage.id),
+    'Stage completion marks are absent from history'
   )
   const planEvent = baseHistory.find((event) => event.type === 'PLAN_UPDATED')
   assert(

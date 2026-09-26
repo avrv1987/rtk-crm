@@ -15,6 +15,7 @@ public final class OrganizationAssignmentRequest {
     private final Integer version;
     private UUID ownerManagerId;
     private boolean ownerManagerIdPresent;
+    private String handoverNote;
 
     public OrganizationAssignmentRequest(Integer version, UUID ownerManagerId) {
         this.version = version;
@@ -39,6 +40,15 @@ public final class OrganizationAssignmentRequest {
     public void setOwnerManagerId(UUID ownerManagerId) {
         this.ownerManagerId = ownerManagerId;
         this.ownerManagerIdPresent = true;
+    }
+
+    public String handoverNote() {
+        return handoverNote;
+    }
+
+    @JsonSetter("handoverNote")
+    public void setHandoverNote(String handoverNote) {
+        this.handoverNote = handoverNote;
     }
 
     @JsonIgnore

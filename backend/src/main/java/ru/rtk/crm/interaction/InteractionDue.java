@@ -11,7 +11,7 @@ enum InteractionDue {
     THIS_WEEK,
     NO_NEXT_STEP;
 
-    private static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
+    static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
 
     static InteractionDue from(String value) {
         if (value == null || value.isBlank()) {

@@ -7,7 +7,9 @@ import java.util.Objects;
 import java.util.UUID;
 
 import ru.rtk.crm.catalog.OrganizationType;
+import ru.rtk.crm.interaction.InteractionFlag;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.interaction.InteractionWorkStatus;
 
 public record ReportFilters(
         List<UUID> organizationIds,
@@ -20,15 +22,39 @@ public record ReportFilters(
         List<UUID> managerIds,
         boolean includeNoManager,
         List<String> stages,
-        OrganizationType organizationType
+        OrganizationType organizationType,
+        List<InteractionWorkStatus> workStatuses,
+        List<InteractionFlag> flags,
+        ReportAgreementFilters agreement,
+        List<ReportEventType> eventTypes,
+        Integer minDaysOnStage
 ) {
+    private static final int MAX_DAYS_ON_STAGE = 3650;
     private static final int MAX_IDS = 500;
     private static final int MAX_STAGES = 100;
     private static final int MAX_STAGE_LENGTH = 200;
 
+    public ReportFilters(
+            List<UUID> organizationIds,
+            List<UUID> directionIds,
+            boolean includeNoDirection,
+            List<UUID> programIds,
+            boolean includeNoProgram,
+            List<UUID> productIds,
+            boolean includeNoProduct,
+            List<UUID> managerIds,
+            boolean includeNoManager,
+            List<String> stages,
+            OrganizationType organizationType
+    ) {
+        this(organizationIds, directionIds, includeNoDirection, programIds, includeNoProgram, productIds, includeNoProduct,
+                managerIds, includeNoManager, stages, organizationType, List.of(), List.of(), ReportAgreementFilters.none(),
+                List.of(), null);
+    }
+
     public static ReportFilters none() {
         return new ReportFilters(List.of(), List.of(), false, List.of(), false, List.of(), false, List.of(), false,
-                List.of(), null);
+                List.of(), null, List.of(), List.of(), ReportAgreementFilters.none(), List.of(), null);
     }
 
     public ReportFilters normalized() {
@@ -43,11 +69,25 @@ public record ReportFilters(
                 ids(managerIds, "filters.managerIds"),
                 includeNoManager,
                 stageNames(),
-                organizationType
+                organizationType,
+                workStatuses == null ? List.of() : List.copyOf(new LinkedHashSet<>(workStatuses)),
+                flags == null ? List.of() : List.copyOf(new LinkedHashSet<>(flags)),
+                agreement == null ? ReportAgreementFilters.none() : agreement.normalized(),
+                eventTypeList(),
+                daysOnStage()
         );
     }
 
-    private static List<UUID> ids(List<UUID> values, String field) {
+    private Integer daysOnStage() {
+        if (minDaysOnStage != null && (minDaysOnStage < 1 || minDaysOnStage > MAX_DAYS_ON_STAGE)) {
+            throw new InteractionValidationException(
+                    "filters.minDaysOnStage", "Укажите целое число дней от 1 до " + MAX_DAYS_ON_STAGE
+            );
+        }
+        return minDaysOnStage;
+    }
+
+    static List<UUID> ids(List<UUID> values, String field) {
         if (values == null) {
             return List.of();
         }
@@ -59,6 +99,16 @@ public record ReportFilters(
             throw new InteractionValidationException(field, "Можно выбрать не более " + MAX_IDS + " значений");
         }
         return unique;
+    }
+
+    private List<ReportEventType> eventTypeList() {
+        if (eventTypes == null) {
+            return List.of();
+        }
+        if (eventTypes.stream().anyMatch(Objects::isNull)) {
+            throw new InteractionValidationException("filters.eventTypes", "Список не должен содержать пустых значений");
+        }
+        return List.copyOf(new LinkedHashSet<>(eventTypes));
     }
 
     private List<String> stageNames() {

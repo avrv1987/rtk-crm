@@ -16,13 +16,26 @@ export const SessionScreen = ({ title, children }: SessionScreenProps) => (
   </main>
 )
 
+const roleNames: Record<Me['role'], string> = {
+  USER: 'Менеджер',
+  LEADER: 'Руководитель команды',
+  ADMIN: 'Администратор',
+  MANAGEMENT: 'Руководство'
+}
+
 export const ProfileSummary = ({ profile }: { profile: Me }) => (
   <dl className="profile-summary">
     <div>
       <dt>Роль</dt>
-      <dd>{profile.role === 'ADMIN' ? 'Администратор' : profile.role === 'LEADER' ? 'Руководитель команды' : 'Менеджер'}</dd>
+      <dd>{roleNames[profile.role]}</dd>
     </div>
-    {(profile.teamName !== null || profile.role !== 'ADMIN') && (
+    {profile.role === 'MANAGEMENT' && (
+      <div>
+        <dt>Область</dt>
+        <dd>Все команды, только просмотр</dd>
+      </div>
+    )}
+    {profile.role !== 'MANAGEMENT' && (profile.teamName !== null || profile.role !== 'ADMIN') && (
       <div>
         <dt>Команда</dt>
         <dd>{profile.teamName ?? 'Не назначена, вузы недоступны'}</dd>

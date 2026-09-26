@@ -9,12 +9,14 @@ import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import ru.rtk.crm.catalog.SearchPattern;
 
 @Repository
 public class AdminCrmProfileRepository {
     private static final String PROFILE_COLUMNS = """
             profile.id, profile.display_name, profile.role, profile.team_id, team.name AS team_name,
-            profile.active, profile.pending_activation, profile.access_revision, profile.version
+            profile.active, profile.pending_activation, profile.access_revision, profile.version,
+            profile.login, profile.activation_requested_at, profile.idp_enabled
             """;
 
     private final JdbcClient jdbcClient;
@@ -24,8 +26,11 @@ public class AdminCrmProfileRepository {
     }
 
     public AdminCrmProfilePage findPage(AdminCrmProfileQuery query) {
-        String condition = query.pendingOnly() ? "profile.pending_activation = TRUE" : "TRUE";
-        List<AdminCrmProfile> items = jdbcClient.sql("""
+        String condition = (query.pendingOnly() ? "profile.pending_activation = TRUE" : "TRUE")
+                + (query.search() == null ? "" : " AND (LOWER(profile.display_name) LIKE :search " + SearchPattern.LIKE_ESCAPE
+                + " OR LOWER(COALESCE(profile.login, '')) LIKE :search " + SearchPattern.LIKE_ESCAPE + ")");
+        String search = query.search() == null ? null : SearchPattern.contains(query.search());
+        JdbcClient.StatementSpec itemsQuery = jdbcClient.sql("""
                 SELECT %s
                 FROM crm_user_profiles profile
                 LEFT JOIN teams team ON team.id = profile.team_id
@@ -34,13 +39,18 @@ public class AdminCrmProfileRepository {
                 LIMIT :size OFFSET :offset
                 """.formatted(PROFILE_COLUMNS, condition, query.sort().orderBy()))
                 .param("size", query.size())
-                .param("offset", query.offset())
-                .query(this::mapProfile)
-                .list();
-        long total = jdbcClient.sql("SELECT COUNT(*) FROM crm_user_profiles profile WHERE " + condition)
+                .param("offset", query.offset());
+        JdbcClient.StatementSpec totalQuery = jdbcClient.sql("SELECT COUNT(*) FROM crm_user_profiles profile WHERE " + condition);
+        if (search != null) {
+            itemsQuery.param("search", search);
+            totalQuery.param("search", search);
+        }
+        List<AdminCrmProfile> items = itemsQuery.query(this::mapProfile).list();
+        long total = totalQuery.query(Long.class).single();
+        long pendingTotal = jdbcClient.sql("SELECT COUNT(*) FROM crm_user_profiles WHERE pending_activation = TRUE")
                 .query(Long.class)
                 .single();
-        return new AdminCrmProfilePage(items, query.page(), query.size(), total);
+        return new AdminCrmProfilePage(items, query.page(), query.size(), total, pendingTotal);
     }
 
     public Optional<AdminCrmProfile> findByIdForUpdate(UUID profileId) {
@@ -173,16 +183,22 @@ public class AdminCrmProfileRepository {
     }
 
     private AdminCrmProfile mapProfile(ResultSet resultSet, int rowNumber) throws SQLException {
+        boolean active = resultSet.getBoolean("active");
+        boolean pendingActivation = resultSet.getBoolean("pending_activation");
         return new AdminCrmProfile(
                 resultSet.getObject("id", UUID.class),
                 resultSet.getString("display_name"),
                 UserRole.valueOf(resultSet.getString("role")),
                 resultSet.getObject("team_id", UUID.class),
                 resultSet.getString("team_name"),
-                resultSet.getBoolean("active"),
-                resultSet.getBoolean("pending_activation"),
+                active,
+                pendingActivation,
                 resultSet.getInt("access_revision"),
-                resultSet.getInt("version")
+                resultSet.getInt("version"),
+                resultSet.getString("login"),
+                resultSet.getObject("activation_requested_at", OffsetDateTime.class),
+                !pendingActivation && active != resultSet.getBoolean("idp_enabled"),
+                null
         );
     }
 

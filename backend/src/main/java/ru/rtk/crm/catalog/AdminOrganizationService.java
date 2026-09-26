@@ -87,8 +87,8 @@ public class AdminOrganizationService {
         if (organization.teamId().equals(command.teamId())) {
             throw new InteractionValidationException("teamId", "Вуз уже относится к этой команде");
         }
-        if (!adminOrganizationRepository.teamExists(command.teamId())) {
-            throw new InteractionValidationException("teamId", "Команда не найдена");
+        if (!adminOrganizationRepository.activeTeamExists(command.teamId())) {
+            throw new InteractionValidationException("teamId", "Команда не найдена или в архиве");
         }
         UUID previousOwnerId = organization.ownerManagerId();
         boolean clearOwner = previousOwnerId != null && !Objects.equals(
@@ -116,6 +116,8 @@ public class AdminOrganizationService {
                     actor.id(),
                     actorDisplayName,
                     auditRequestId,
+                    OrganizationAssignmentReason.ORGANIZATION_TEAM_CHANGED,
+                    null,
                     resultVersion,
                     now
             );

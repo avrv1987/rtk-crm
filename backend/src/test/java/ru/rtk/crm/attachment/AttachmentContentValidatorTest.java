@@ -52,6 +52,23 @@ class AttachmentContentValidatorTest {
     }
 
     @Test
+    void acceptsPhoneHeicPhotoOnlyWithHeifBrandSignature() {
+        byte[] heic = {0, 0, 0, 0x18, 'f', 't', 'y', 'p', 'h', 'e', 'i', 'c'};
+        byte[] genericHeif = {0, 0, 0, 0x18, 'f', 't', 'y', 'p', 'm', 'i', 'f', '1'};
+        byte[] avif = {0, 0, 0, 0x18, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f'};
+
+        assertThat(validator.inspect(new MockMultipartFile("file", "IMG_0001.HEIC", "image/heic", heic)).mediaType())
+                .isEqualTo("image/heic");
+        assertThat(validator.inspect(new MockMultipartFile("file", "photo.heif", "image/heif", genericHeif)).mediaType())
+                .isEqualTo("image/heif");
+        assertThatThrownBy(() -> validator.inspect(new MockMultipartFile("file", "photo.heic", "image/heic", avif)))
+                .isInstanceOf(AttachmentValidationException.class);
+        assertThatThrownBy(() -> validator.inspect(new MockMultipartFile(
+                "file", "photo.heic", "image/heic", new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff}
+        ))).isInstanceOf(AttachmentValidationException.class);
+    }
+
+    @Test
     void normalizesClientPath() {
         AttachmentUploadInspection inspection = validator.inspect(new MockMultipartFile(
                 "file",

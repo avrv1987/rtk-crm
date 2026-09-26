@@ -78,30 +78,45 @@ const payloadFromDraft = (draft: TemplateDraft): WorkflowTemplateCreate => ({
   transitions: draft.transitions
 })
 
-const isDraftValid = (draft: TemplateDraft) => {
-  if (draft.name.trim().length === 0 || draft.stages.length === 0 || draft.stages.some((stage) => stage.name.trim().length === 0)) {
-    return false
+const stageTitle = (draft: TemplateDraft, order: number) => `«${draft.stages[order]?.name.trim() || `этап ${order + 1}`}»`
+
+const draftProblem = (draft: TemplateDraft): string | null => {
+  if (draft.name.trim().length === 0) {
+    return 'Укажите название шаблона.'
+  }
+  if (draft.stages.length === 0) {
+    return 'Добавьте хотя бы один этап.'
+  }
+  const unnamed = draft.stages.findIndex((stage) => stage.name.trim().length === 0)
+  if (unnamed >= 0) {
+    return `Укажите название этапа ${unnamed + 1}.`
   }
   const edgeKeys = new Set<string>()
   const edges = new Map<number, number[]>()
   for (const transition of draft.transitions) {
+    const route = `${stageTitle(draft, transition.fromOrder)} → ${stageTitle(draft, transition.toOrder)}`
     if (
       transition.fromOrder < 0
       || transition.toOrder < 0
       || transition.fromOrder >= draft.stages.length
       || transition.toOrder >= draft.stages.length
       || transition.fromOrder === transition.toOrder
-      || (Math.abs(transition.fromOrder - transition.toOrder) !== 1 && !transition.commentRequired)
-      || !edgeKeys.add(`${transition.fromOrder}:${transition.toOrder}`)
     ) {
-      return false
+      return `Переход ${route} должен вести в другой существующий этап.`
+    }
+    if (Math.abs(transition.fromOrder - transition.toOrder) !== 1 && !transition.commentRequired) {
+      return `Переход ${route} пропускает этапы или ведёт назад: отметьте «Нужен комментарий» или удалите переход.`
+    }
+    if (!edgeKeys.add(`${transition.fromOrder}:${transition.toOrder}`)) {
+      return `Переход ${route} указан дважды.`
     }
     const next = edges.get(transition.fromOrder) ?? []
     next.push(transition.toOrder)
     edges.set(transition.fromOrder, next)
   }
-  if (draft.stages.some((_, order) => order < draft.stages.length - 1 && !edges.has(order))) {
-    return false
+  const deadEnd = draft.stages.findIndex((_, order) => order < draft.stages.length - 1 && !edges.has(order))
+  if (deadEnd >= 0) {
+    return `У этапа ${stageTitle(draft, deadEnd)} нет выхода: добавьте переход из него в следующий этап.`
   }
   const reachable = new Set<number>()
   const pending = [0]
@@ -112,7 +127,46 @@ const isDraftValid = (draft: TemplateDraft) => {
       pending.push(...(edges.get(order) ?? []))
     }
   }
-  return reachable.size === draft.stages.length
+  const unreachable = draft.stages.findIndex((_, order) => !reachable.has(order))
+  return unreachable >= 0
+    ? `Этап ${stageTitle(draft, unreachable)} недостижим из первого этапа ${stageTitle(draft, 0)}: добавьте переход в него из предыдущего этапа.`
+    : null
+}
+
+const withoutStage = (draft: TemplateDraft, index: number) => {
+  const reorder = (order: number) => (order > index ? order - 1 : order)
+  const kept = draft.transitions.filter((transition) => transition.fromOrder !== index && transition.toOrder !== index)
+  const keys = new Set(kept.map((transition) => `${transition.fromOrder}:${transition.toOrder}`))
+  const bridges: TransitionDraft[] = []
+  for (const incoming of draft.transitions.filter((transition) => transition.toOrder === index)) {
+    for (const outgoing of draft.transitions.filter((transition) => transition.fromOrder === index)) {
+      const key = `${incoming.fromOrder}:${outgoing.toOrder}`
+      if (incoming.fromOrder !== outgoing.toOrder && !keys.has(key)) {
+        keys.add(key)
+        const adjacent = Math.abs(reorder(incoming.fromOrder) - reorder(outgoing.toOrder)) === 1
+        bridges.push({
+          fromOrder: incoming.fromOrder,
+          toOrder: outgoing.toOrder,
+          commentRequired: !adjacent || (incoming.commentRequired && outgoing.commentRequired)
+        })
+      }
+    }
+  }
+  const names = bridges.map((bridge) => `${stageTitle(draft, bridge.fromOrder)} → ${stageTitle(draft, bridge.toOrder)}`)
+  return {
+    draft: {
+      ...draft,
+      stages: draft.stages.filter((_, stageIndex) => stageIndex !== index),
+      transitions: [...kept, ...bridges].map((transition) => ({
+        ...transition,
+        fromOrder: reorder(transition.fromOrder),
+        toOrder: reorder(transition.toOrder)
+      }))
+    },
+    notice: names.length === 0
+      ? `Этап ${stageTitle(draft, index)} удалён.`
+      : `Этап ${stageTitle(draft, index)} удалён; соседние этапы соединены: ${names.join(', ')}.`
+  }
 }
 
 const requestIdOf = (error: unknown) => (
@@ -134,6 +188,10 @@ const commandMessage = (error: unknown) => {
   if (error instanceof ApiError && error.status === 403) {
     return 'Операция недоступна в текущей роли или области команды.'
   }
+  const fieldMessages = error instanceof ApiError ? Object.values(error.fieldErrors ?? {}) : []
+  if (fieldMessages.length > 0) {
+    return fieldMessages.join(' ')
+  }
   if (error instanceof ApiError) {
     return 'Операция не выполнена. Проверьте структуру этапов и переходов, затем повторите попытку.'
   }
@@ -144,23 +202,19 @@ const StructuredApiError = ({ error }: { error: unknown }) => {
   if (!(error instanceof ApiError)) {
     return null
   }
-  const fieldErrors = Object.entries(error.fieldErrors ?? {})
   return (
     <div className="structured-api-error">
       <p>Код: {error.code}</p>
-      <p>{error.message}</p>
-      {fieldErrors.length > 0 && (
-        <ul>
-          {fieldErrors.map(([field, message]) => <li key={field}>{field}: {message}</li>)}
-        </ul>
-      )}
     </div>
   )
 }
 
-const templateScopeLabel = (template: WorkflowTemplate) => {
+const templateScopeLabel = (template: WorkflowTemplate, teamDefaultTemplateId: string | null) => {
+  if (template.id === teamDefaultTemplateId) {
+    return 'Шаблон команды по умолчанию: новые работы команды создаются по нему'
+  }
   if (template.defaultTemplate) {
-    return 'Шаблон по умолчанию'
+    return teamDefaultTemplateId === null ? 'Шаблон по умолчанию' : 'Общий шаблон по умолчанию (команда использует свой)'
   }
   return template.teamId === null ? 'Общий шаблон' : 'Шаблон команды'
 }
@@ -173,6 +227,9 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
   const [draft, setDraft] = useState<TemplateDraft>(emptyDraft)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const [commandState, setCommandState] = useState<CommandState>({ kind: 'idle' })
+  const [stageNotice, setStageNotice] = useState<string | null>(null)
+  const [defaultState, setDefaultState] = useState<{ templateId: string; saving: boolean; error?: unknown; key: string } | null>(null)
+  const [defaultMessage, setDefaultMessage] = useState<string | null>(null)
   const listRequestVersion = useRef(0)
   const saveKey = useRef<string | null>(null)
 
@@ -220,7 +277,37 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
   const updateDraft = (updater: (current: TemplateDraft) => TemplateDraft) => {
     saveKey.current = null
     setCommandState({ kind: 'idle' })
+    setStageNotice(null)
     setDraft(updater)
+  }
+
+  const makeDefault = async (template: WorkflowTemplate) => {
+    if (defaultState?.saving === true) {
+      return
+    }
+    const key = defaultState?.templateId === template.id ? defaultState.key : createIdempotencyKey()
+    setDefaultState({ templateId: template.id, saving: true, key })
+    setDefaultMessage(null)
+    try {
+      await apiClient.makeWorkflowTemplateDefault(template.id, template.version, key)
+      setDefaultState(null)
+      setDefaultMessage(role === 'ADMIN'
+        ? `«${template.name}» — общий шаблон по умолчанию для новых работ.`
+        : template.teamId === null
+          ? 'Новые работы команды снова создаются по общему шаблону по умолчанию.'
+          : `«${template.name}» — шаблон команды по умолчанию для новых работ.`)
+      await loadTemplates(pageIndex)
+    } catch (error) {
+      if (isUnauthenticated(error)) {
+        onSessionExpired()
+        return
+      }
+      if (isProfileUnavailable(error)) {
+        onProfileUnavailable(error.requestId)
+        return
+      }
+      setDefaultState({ templateId: template.id, saving: false, error, key })
+    }
   }
 
   const beginCreate = () => {
@@ -297,7 +384,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!isDraftValid(draft) || commandState.kind === 'saving') {
+    if (draftProblem(draft) !== null || commandState.kind === 'saving') {
       return
     }
     const payload = payloadFromDraft(draft)
@@ -386,17 +473,9 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     if (draft.stages.length <= 1) {
       return
     }
-    updateDraft((current) => ({
-      ...current,
-      stages: current.stages.filter((_, stageIndex) => stageIndex !== index),
-      transitions: current.transitions
-        .filter((transition) => transition.fromOrder !== index && transition.toOrder !== index)
-        .map((transition) => ({
-          ...transition,
-          fromOrder: transition.fromOrder > index ? transition.fromOrder - 1 : transition.fromOrder,
-          toOrder: transition.toOrder > index ? transition.toOrder - 1 : transition.toOrder
-        }))
-    }))
+    const result = withoutStage(draft, index)
+    updateDraft(() => result.draft)
+    setStageNotice(result.notice)
   }
 
   const moveStage = (from: number, to: number) => {
@@ -469,7 +548,18 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     return null
   }
 
-  const draftValid = isDraftValid(draft)
+  const problem = draftProblem(draft)
+  const draftValid = problem === null
+  const teamDefaultTemplateId = templatesState.kind === 'ready' ? templatesState.page.teamDefaultTemplateId : null
+  const defaultActionLabel = (template: WorkflowTemplate) => {
+    if (role === 'ADMIN') {
+      return template.defaultTemplate || template.teamId !== null ? null : 'Сделать шаблоном по умолчанию'
+    }
+    if (template.teamId === null) {
+      return template.defaultTemplate && teamDefaultTemplateId !== null ? 'Вернуть общий шаблон по умолчанию' : null
+    }
+    return template.id === teamDefaultTemplateId ? null : 'Сделать шаблоном команды по умолчанию'
+  }
   const commandError = commandState.kind === 'failed' ? commandState.error : undefined
   const hasConflict = commandError instanceof ApiError && commandError.status === 409
 
@@ -484,9 +574,10 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
       </div>
       <p className="workflow-templates__intro">
         {role === 'LEADER'
-          ? 'Доступны шаблоны вашей команды и базовый шаблон, который можно только скопировать в шаблон команды. Сервер дополнительно проверяет область каждой операции.'
-          : 'Доступны общие шаблоны. Сервер дополнительно проверяет область каждой операции.'}
+          ? 'Доступны шаблоны вашей команды и базовый шаблон, который можно только скопировать в шаблон команды. Шаблон команды по умолчанию подставляется в новые работы команды, если КАМ не выбрал другой.'
+          : 'Доступны общие шаблоны. Шаблон по умолчанию подставляется в новые работы всех команд, у которых нет своего шаблона по умолчанию.'}
       </p>
+      {defaultMessage !== null && <p className="notice" role="status">{defaultMessage}</p>}
 
       {templatesState.kind === 'loading' && (
         <p className="organizations-message" role="status">Загружаем шаблоны этапов…</p>
@@ -508,9 +599,25 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
                 <li key={template.id} className="workflow-templates__item">
                   <div>
                     <strong>{template.name}</strong>
-                    <p>{templateScopeLabel(template)}; этапов: {template.stages.length}; переходов: {template.transitions.length}; версия: {template.version}</p>
+                    <p>{templateScopeLabel(template, teamDefaultTemplateId)}; этапов: {template.stages.length}; переходов: {template.transitions.length}; версия: {template.version}</p>
+                    {defaultState?.templateId === template.id && defaultState.error !== undefined && (
+                      <div className="interaction-command-error" role="alert">
+                        <p>{commandMessage(defaultState.error)}</p>
+                        {defaultState.error instanceof ApiError && <p className="request-id">Request ID: {defaultState.error.requestId}</p>}
+                      </div>
+                    )}
                   </div>
                   <div className="workflow-templates__actions">
+                    {defaultActionLabel(template) !== null && (
+                      <button
+                        type="button"
+                        className="button--secondary"
+                        disabled={defaultState?.saving === true || commandState.kind === 'saving'}
+                        onClick={() => void makeDefault(template)}
+                      >
+                        {defaultState?.templateId === template.id && defaultState.saving ? 'Сохраняем…' : defaultActionLabel(template)}
+                      </button>
+                    )}
                     {role === 'LEADER' && template.teamId === null ? (
                       <button type="button" disabled={commandState.kind === 'saving'} onClick={() => beginCopy(template)}>
                         Создать на основе базового
@@ -610,6 +717,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
               </li>
             ))}
           </ol>
+          {stageNotice !== null && <p className="notice" role="status">{stageNotice}</p>}
         </section>
         <section className="workflow-template-editor__section" aria-labelledby="workflow-template-transitions-title">
           <div className="workflow-template-editor__section-header">
@@ -645,10 +753,8 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
             ))}
           </ol>
         </section>
-        {!draftValid && (
-          <p className="workflow-template-editor__validation" role="status">
-            Укажите название каждого этапа и явные переходы так, чтобы все этапы были достижимы из первого, у каждого этапа кроме последнего был выход, а переход через этап (пропуск или возврат) требовал комментарий.
-          </p>
+        {problem !== null && (
+          <p className="workflow-template-editor__validation" role="status">{problem}</p>
         )}
         <button type="submit" disabled={commandState.kind === 'saving' || !draftValid}>
           {commandState.kind === 'saving' && commandState.action !== 'delete'

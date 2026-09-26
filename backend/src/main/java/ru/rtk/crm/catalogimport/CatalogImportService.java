@@ -16,6 +16,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -45,6 +46,10 @@ import ru.rtk.crm.attachment.AttachmentScanner;
 import ru.rtk.crm.attachment.AttachmentTooLargeException;
 import ru.rtk.crm.attachment.AttachmentUploadInspection;
 import ru.rtk.crm.attachment.AttachmentValidationException;
+import ru.rtk.crm.catalog.CatalogChangeAction;
+import ru.rtk.crm.catalog.CatalogChangeEventRepository;
+import ru.rtk.crm.catalog.CatalogEntityType;
+import ru.rtk.crm.catalog.OrganizationAssignmentReason;
 import ru.rtk.crm.catalog.OrganizationAssignmentRepository;
 import ru.rtk.crm.interaction.CommandFingerprint;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
@@ -75,6 +80,7 @@ public class CatalogImportService {
             "directionExternalKey", "directionName", "programExternalKey", "programName", "programDirectionRef"
     );
     private static final CatalogImportRowTarget EMPTY_TARGET = new CatalogImportRowTarget(null, null, null, null);
+    private static final String CONTACT_ENTRY_SEPARATORS = "[;\\r\\n]+";
 
     private final CatalogImportRepository repository;
     private final OrganizationAssignmentRepository organizationAssignmentRepository;
@@ -83,6 +89,7 @@ public class CatalogImportService {
     private final AttachmentContentValidator attachmentContentValidator;
     private final AttachmentScanner attachmentScanner;
     private final CommandIdempotencyRepository commandIdempotencyRepository;
+    private final CatalogChangeEventRepository catalogChangeEventRepository;
     private final ObjectMapper objectMapper;
 
     public CatalogImportService(
@@ -93,9 +100,11 @@ public class CatalogImportService {
             CommandIdempotencyRepository commandIdempotencyRepository,
             ObjectMapper objectMapper,
             OrganizationAssignmentRepository organizationAssignmentRepository,
-            InteractionService interactionService
+            InteractionService interactionService,
+            CatalogChangeEventRepository catalogChangeEventRepository
     ) {
         this.repository = repository;
+        this.catalogChangeEventRepository = catalogChangeEventRepository;
         this.organizationAssignmentRepository = organizationAssignmentRepository;
         this.interactionService = interactionService;
         this.workbookReader = workbookReader;
@@ -127,6 +136,9 @@ public class CatalogImportService {
         CatalogImportMapping normalizedMapping = normalizedMapping(mapping);
         CatalogImportWorkbookSheet sheet = workbookReader.read(file, requiredText(sheetName, "sheet", 255));
         validateMapping(profileType, normalizedMapping, sheet.headers());
+        if (normalizedMapping.unassignedTeamId() != null && !repository.activeTeamExists(normalizedMapping.unassignedTeamId())) {
+            throw new InteractionValidationException("unassignedTeamId", "Команда не найдена или в архиве");
+        }
         List<PlannedRow> plans = sheet.rows().stream()
                 .map(row -> new PlannedRow(row, sheet.name(), normalizedMapping))
                 .toList();
@@ -142,7 +154,7 @@ public class CatalogImportService {
             plans.stream()
                     .sorted(Comparator.comparing((PlannedRow plan) -> !agreementRequested(plan)))
                     .forEach(plan -> planAgreement(plan, catalogs, planning));
-            inheritManagers(plans, planning);
+            inheritManagers(plans, planning, normalizedMapping.unassignedTeamId());
         }
         resolveRowConflicts(plans);
         List<CatalogImportStoredRow> rows = plans.stream().map(PlannedRow::stored).toList();
@@ -200,6 +212,18 @@ public class CatalogImportService {
         }
         Map<UUID, CatalogImportStoredRow> rowsById = stored.rows().stream()
                 .collect(Collectors.toMap(CatalogImportStoredRow::id, row -> row));
+        Map<UUID, ImportAgreementLink> missingLinks = missingLinks(stored).stream()
+                .collect(Collectors.toMap(ImportAgreementLink::agreementId, link -> link));
+        List<ImportAgreementLink> archivedLinks = new ArrayList<>();
+        for (UUID agreementId : normalizedRequest.archiveAgreementIds()) {
+            ImportAgreementLink link = missingLinks.get(agreementId);
+            if (link == null) {
+                throw new InteractionValidationException(
+                        "archiveAgreementIds", "Запись уже есть в реестре или изменилась; постройте предпросмотр заново"
+                );
+            }
+            archivedLinks.add(link);
+        }
         List<CatalogImportStoredRow> selectedRows = new ArrayList<>();
         for (UUID rowId : normalizedRequest.confirmedRowIds()) {
             CatalogImportStoredRow row = rowsById.get(rowId);
@@ -219,6 +243,19 @@ public class CatalogImportService {
                 } else {
                     applyAgreement(row.plan(), profile.id(), commandId, now);
                 }
+            }
+            for (ImportAgreementLink link : archivedLinks) {
+                repository.changeAgreementArchived(link.agreementId(), true, now);
+                catalogChangeEventRepository.insert(
+                        CatalogEntityType.AGREEMENT,
+                        link.agreementId(),
+                        CatalogChangeAction.ARCHIVE,
+                        link.organizationName() + " — " + link.productName(),
+                        "Нет в загруженном реестре" + (link.contractNumber() == null ? "" : "; договор № " + link.contractNumber()),
+                        profile.id(),
+                        "catalog-import:" + commandId,
+                        now
+                );
             }
             if (!repository.markApplied(stored.id(), stored.version(), now)) {
                 throw InteractionConflictException.catalogImportVersion(stored.version() + 1);
@@ -356,8 +393,9 @@ public class CatalogImportService {
             return Optional.empty();
         }
         if (candidates.size() > 1) {
+            row.managerCandidateIds = candidates.stream().map(ImportProfile::id).toList();
             row.conflict("managerName", "Найдено " + candidates.size() + " активных КАМ с ФИО «" + managerName
-                    + "»; укажите UUID КАМ для строки в разделе «Дополнительно»");
+                    + "»; выберите нужного КАМ в строке протокола");
             return Optional.empty();
         }
         return Optional.of(candidates.getFirst());
@@ -376,6 +414,10 @@ public class CatalogImportService {
                 catalogs.organizations().byNaturalKey(normalized(organizationName)), true
         );
         Optional<ImportOrganization> existing = organization.found();
+        if (existing.filter(ImportOrganization::archived).isPresent()) {
+            row.conflict("organizationName", "Организация «" + existing.get().name()
+                    + "» в архиве; восстановите её в блоке «Организации и команды», чтобы загружать по ней данные");
+        }
         String type = organizationType(row, existing);
         row.values.put("organizationType", type);
         row.values.put("managerProfileId", manager.map(value -> value.id().toString()).orElse(""));
@@ -402,10 +444,68 @@ public class CatalogImportService {
     }
 
     private void planContact(PlannedRow row, AgreementCatalogs catalogs, Resolved<ImportOrganization> organization) {
-        String contactName = optional(row, "contactName", 200);
-        if (contactName.isEmpty()) {
+        List<String> names = contactNames(row.values.get("contactName"));
+        if (names.size() <= 1) {
+            row.values.put("contactName", names.isEmpty() ? "" : names.getFirst());
+            if (!names.isEmpty()) {
+                planSingleContact(row, catalogs, organization);
+            }
             return;
         }
+        if (!optional(row, "contactExternalKey", MAX_KEY_LENGTH).isEmpty()) {
+            row.error("contactExternalKey", "Ключ ответственного можно указать, только если в ячейке одно ФИО");
+            return;
+        }
+        List<String> positions = contactDetails(row, "contactPosition", names.size(), 200);
+        List<String> emails = contactDetails(row, "contactEmail", names.size(), 320);
+        List<String> phones = contactDetails(row, "contactPhone", names.size(), 50);
+        row.values.put("contactName", String.join("; ", names));
+        row.values.put("contactCount", String.valueOf(names.size()));
+        List<String> previousNames = new ArrayList<>();
+        List<String> previousDetails = new ArrayList<>();
+        List<String> nextDetails = new ArrayList<>();
+        boolean allExist = true;
+        for (int index = 0; index < names.size(); index++) {
+            String name = names.get(index);
+            if (name.length() > 200) {
+                row.error("contactName", "ФИО ответственного длиннее 200 символов");
+                return;
+            }
+            String entity = "contact" + (index + 1);
+            Resolved<ImportContact> contact = resolve(
+                    row, entity, "contactName", catalogs.contacts(), null,
+                    derivedKey("contact", organization.key(), name),
+                    organization.found().map(value -> catalogs.contacts().byNaturalKey(naturalKey(value.id(), name))).orElse(List.of()),
+                    false
+            );
+            Optional<ContactValues> existing = contact.found().map(ImportContact::values);
+            ContactValues next = new ContactValues(
+                    name,
+                    row.mapped("contactPosition") ? positions.get(index) : existing.map(ContactValues::position).orElse(null),
+                    row.mapped("contactEmail") ? emails.get(index) : existing.map(ContactValues::email).orElse(null),
+                    row.mapped("contactPhone") ? phones.get(index) : existing.map(ContactValues::phone).orElse(null)
+            );
+            row.values.put(entity + "Name", name);
+            row.values.put(entity + "Position", valueOf(next.position()));
+            row.values.put(entity + "Email", valueOf(next.email()));
+            row.values.put(entity + "Phone", valueOf(next.phone()));
+            allExist &= contact.exists();
+            existing.ifPresent(value -> previousNames.add(value.name()));
+            if (existing.isPresent() && !existing.get().equals(next)) {
+                previousDetails.add(name + ": " + contactDetails(existing.get()));
+                nextDetails.add(name + ": " + contactDetails(next));
+            }
+            row.claim("contact", contact.identity(), "contactName", contactDetails(next) + "\n" + name,
+                    "другие данные ответственного");
+        }
+        row.compare(allExist, "contactName", String.join("; ", previousNames), String.join("; ", names));
+        if (!previousDetails.isEmpty()) {
+            row.compare(true, "contactDetails", String.join("; ", previousDetails), String.join("; ", nextDetails));
+        }
+    }
+
+    private void planSingleContact(PlannedRow row, AgreementCatalogs catalogs, Resolved<ImportOrganization> organization) {
+        String contactName = optional(row, "contactName", 200);
         Resolved<ImportContact> contact = resolve(
                 row, "contact", "contactName", catalogs.contacts(), null,
                 keyChoice(row, "contactExternalKey", "contact", organization.key(), contactName),
@@ -428,6 +528,9 @@ public class CatalogImportService {
         row.compare(contact.exists(), "contactName", existing.map(ContactValues::name).orElse(""), contactName);
         if (existing.isPresent() && !existing.get().equals(next)) {
             row.compare(true, "contactDetails", contactDetails(existing.get()), contactDetails(next));
+            if (!contact.found().get().personalDataActive()) {
+                row.conflict("contactName", "Контакт обезличен или его обработка ограничена; уточнение — через «Субъект ПДн»");
+            }
         }
         row.claim("contact", contact.identity(), "contactName", contactDetails(next) + "\n" + contactName,
                 "другие данные ответственного");
@@ -459,6 +562,9 @@ public class CatalogImportService {
                 agreementKey, naturalAgreements(linked, contractNumber), false
         );
         Optional<ImportAgreement> existing = agreement.found();
+        if (existing.isPresent() && existing.get().archived()) {
+            row.compare(true, "agreementArchived", "да", "нет");
+        }
         if (existing.isPresent() && organization.found().map(value -> !value.id().equals(existing.get().organizationId())).orElse(true)) {
             row.conflict("contractNumber", "Договор с этим ключом относится к другому вузу");
         }
@@ -640,14 +746,21 @@ public class CatalogImportService {
                 || AGREEMENT_VALUE_FIELDS.stream().anyMatch(field -> !clean(row.values.get(field)).isEmpty());
     }
 
-    private static void inheritManagers(List<PlannedRow> rows, AgreementPlanning planning) {
+    private static void inheritManagers(List<PlannedRow> rows, AgreementPlanning planning, UUID unassignedTeamId) {
         for (PlannedRow row : rows) {
             if (row.managerPendingFor == null) {
                 continue;
             }
             Set<ImportProfile> managers = planning.managers().getOrDefault(row.managerPendingFor, Set.of());
+            if (managers.isEmpty() && unassignedTeamId != null) {
+                row.values.put("organizationTeamId", unassignedTeamId.toString());
+                row.compare(false, "managerName", "", "Требует назначения");
+                continue;
+            }
             if (managers.size() != 1) {
-                row.error("managerName", "Для нового вуза укажите ФИО менеджера");
+                row.error("managerName", managers.isEmpty()
+                        ? "Для нового вуза укажите ФИО менеджера или выберите команду для вузов без менеджера"
+                        : "Для нового вуза укажите ФИО менеджера");
                 continue;
             }
             ImportProfile manager = managers.iterator().next();
@@ -691,8 +804,8 @@ public class CatalogImportService {
         UUID organizationId = ensureOrganization(plan, actorProfileId, commandId, now);
         UUID vendorId = ensureCatalogEntry(VENDORS, "vendor", "vendorName", plan, now);
         UUID productId = ensureChildEntry(PRODUCTS, "product", "productName", vendorId, plan, now);
-        if (!plan.values().getOrDefault("contactName", "").isEmpty()) {
-            ensureContact(plan, organizationId, actorProfileId, now);
+        for (String entity : contactEntities(plan.values())) {
+            ensureContact(plan, entity, organizationId, actorProfileId, now);
         }
         if (!plan.values().getOrDefault("agreementExternalKey", "").isEmpty()) {
             ensureProductAgreement(plan, organizationId, productId, actorProfileId, commandId, now);
@@ -765,15 +878,21 @@ public class CatalogImportService {
                 : repository.findOrganizationById(id);
         if (existing.isEmpty()) {
             requireCreatable(id);
-            if (manager == null) {
+            UUID teamId = manager == null ? uuid(values.get("organizationTeamId")) : manager.teamId();
+            if (teamId == null || (manager == null && !repository.activeTeamExists(teamId))) {
                 throw InteractionConflictException.catalogImportVersion(0);
             }
             UUID createdId = UUID.randomUUID();
-            repository.insertOrganization(createdId, key, name, type, manager.teamId(), manager.id(), now);
-            organizationAssignmentRepository.incrementAccessRevisions(null, manager.id());
+            repository.insertOrganization(createdId, key, name, type, teamId, manager == null ? null : manager.id(), now);
+            if (manager != null) {
+                organizationAssignmentRepository.incrementAccessRevisions(null, manager.id());
+            }
             return createdId;
         }
         ImportOrganization organization = existing.get();
+        if (organization.archived()) {
+            throw InteractionConflictException.catalogImportVersion(organization.version());
+        }
         boolean detailsChanged = !organization.name().equals(name) || !organization.type().equals(type)
                 || organization.externalKey() == null;
         boolean ownerChanged = manager != null && !Objects.equals(organization.ownerManagerId(), manager.id());
@@ -805,7 +924,7 @@ public class CatalogImportService {
             UUID commandId,
             OffsetDateTime now
     ) {
-        if (!organizationAssignmentRepository.updateOwner(organization.id(), organization.teamId(), version, manager.id(), now)) {
+        if (!organizationAssignmentRepository.updateOwner(organization.id(), organization.teamId(), version, manager.id(), null, now)) {
             throw InteractionConflictException.catalogImportVersion(version + 1);
         }
         organizationAssignmentRepository.incrementAccessRevisions(organization.ownerManagerId(), manager.id());
@@ -820,6 +939,8 @@ public class CatalogImportService {
                 actorProfileId,
                 displayName(actorProfileId),
                 "catalog-import:" + commandId,
+                OrganizationAssignmentReason.IMPORT,
+                null,
                 version + 1,
                 now
         );
@@ -830,15 +951,33 @@ public class CatalogImportService {
                 .orElseThrow(() -> new IllegalStateException("CRM profile is unavailable for catalog import audit"));
     }
 
-    private void ensureContact(CatalogImportPlan plan, UUID organizationId, UUID actorProfileId, OffsetDateTime now) {
+    private static List<String> contactEntities(Map<String, String> values) {
+        String count = values.getOrDefault("contactCount", "");
+        if (!count.isEmpty()) {
+            List<String> entities = new ArrayList<>();
+            for (int index = 1; index <= Integer.parseInt(count); index++) {
+                entities.add("contact" + index);
+            }
+            return entities;
+        }
+        return values.getOrDefault("contactName", "").isEmpty() ? List.of() : List.of("contact");
+    }
+
+    private void ensureContact(
+            CatalogImportPlan plan,
+            String entity,
+            UUID organizationId,
+            UUID actorProfileId,
+            OffsetDateTime now
+    ) {
         Map<String, String> values = plan.values();
-        String key = values.get("contactExternalKey");
-        UUID id = uuid(values.get("contactId"));
+        String key = values.get(entity + "ExternalKey");
+        UUID id = uuid(values.get(entity + "Id"));
         ContactValues next = new ContactValues(
-                values.get("contactName"),
-                nullable(values.get("contactPosition")),
-                nullable(values.get("contactEmail")),
-                nullable(values.get("contactPhone"))
+                values.get(entity + "Name"),
+                nullable(values.get(entity + "Position")),
+                nullable(values.get(entity + "Email")),
+                nullable(values.get(entity + "Phone"))
         );
         Optional<ImportContact> existing = repository.findContact(id, key);
         if (existing.isEmpty()) {
@@ -850,10 +989,10 @@ public class CatalogImportService {
         if (!contact.organizationId().equals(organizationId)) {
             throw InteractionConflictException.catalogImportVersion(contact.version());
         }
-        if (contact.values().equals(next) && contact.externalKey() != null) {
+        if (contact.values().equals(next) && (contact.externalKey() != null || !contact.personalDataActive())) {
             return;
         }
-        requireExpectedVersion(plan, "contact", contact.version());
+        requireExpectedVersion(plan, entity, contact.version());
         if (!repository.updateContact(contact.id(), key, next, contact.version(), now)) {
             throw InteractionConflictException.catalogImportVersion(contact.version() + 1);
         }
@@ -888,11 +1027,26 @@ public class CatalogImportService {
             if (!agreement.organizationId().equals(organizationId)) {
                 throw InteractionConflictException.catalogImportVersion(agreement.version());
             }
-            if (!agreement.productId().equals(productId) || !agreement.values().equals(next) || agreement.externalKey() == null) {
+            boolean changed = !agreement.productId().equals(productId) || !agreement.values().equals(next)
+                    || agreement.externalKey() == null;
+            if (changed || agreement.archived()) {
                 requireExpectedVersion(plan, "agreement", agreement.version());
-                if (!repository.updateAgreement(agreement.id(), key, productId, next, agreement.version(), now)) {
-                    throw InteractionConflictException.catalogImportVersion(agreement.version() + 1);
-                }
+            }
+            if (changed && !repository.updateAgreement(agreement.id(), key, productId, next, agreement.version(), now)) {
+                throw InteractionConflictException.catalogImportVersion(agreement.version() + 1);
+            }
+            if (agreement.archived()) {
+                repository.changeAgreementArchived(agreement.id(), false, now);
+                catalogChangeEventRepository.insert(
+                        CatalogEntityType.AGREEMENT,
+                        agreement.id(),
+                        CatalogChangeAction.RESTORE,
+                        values.get("organizationName") + " — " + values.get("productName"),
+                        "Снова есть в загруженном реестре",
+                        actorProfileId,
+                        "catalog-import:" + commandId,
+                        now
+                );
             }
         }
         String comment = values.getOrDefault("comment", "");
@@ -969,7 +1123,9 @@ public class CatalogImportService {
                     requiredText(source, "transferStatuses", 160), requiredText(target, "transferStatuses", 160)
             ));
         }
-        return new CatalogImportMapping(Map.copyOf(columns), Map.copyOf(targets), Map.copyOf(transferStatuses));
+        return new CatalogImportMapping(
+                Map.copyOf(columns), Map.copyOf(targets), Map.copyOf(transferStatuses), mapping.unassignedTeamId()
+        );
     }
 
     private void validateMapping(CatalogImportProfile profile, CatalogImportMapping mapping, List<String> headers) {
@@ -1023,16 +1179,22 @@ public class CatalogImportService {
     }
 
     private CatalogImportApplyRequest normalizedApplyRequest(CatalogImportApplyRequest request) {
-        if (request == null || request.version() == null || request.version() < 0
-                || request.confirmedRowIds() == null || request.confirmedRowIds().isEmpty()) {
-            throw new InteractionValidationException("body", "Укажите версию предпросмотра и выбранные строки");
+        List<UUID> rowIds = request == null || request.confirmedRowIds() == null
+                ? new ArrayList<>() : new ArrayList<>(request.confirmedRowIds());
+        List<UUID> archiveIds = request == null || request.archiveAgreementIds() == null
+                ? new ArrayList<>() : new ArrayList<>(request.archiveAgreementIds());
+        if (request == null || request.version() == null || request.version() < 0 || (rowIds.isEmpty() && archiveIds.isEmpty())) {
+            throw new InteractionValidationException("body", "Укажите версию предпросмотра и выбранные строки или записи для архивирования");
         }
-        List<UUID> rowIds = new ArrayList<>(request.confirmedRowIds());
         if (rowIds.stream().anyMatch(Objects::isNull) || new LinkedHashSet<>(rowIds).size() != rowIds.size()) {
             throw new InteractionValidationException("confirmedRowIds", "Строки не должны повторяться");
         }
+        if (archiveIds.stream().anyMatch(Objects::isNull) || new LinkedHashSet<>(archiveIds).size() != archiveIds.size()) {
+            throw new InteractionValidationException("archiveAgreementIds", "Записи для архивирования не должны повторяться");
+        }
         rowIds.sort(Comparator.naturalOrder());
-        return new CatalogImportApplyRequest(request.version(), List.copyOf(rowIds));
+        archiveIds.sort(Comparator.naturalOrder());
+        return new CatalogImportApplyRequest(request.version(), List.copyOf(rowIds), List.copyOf(archiveIds));
     }
 
     private void requireAdmin(CrmProfile profile) {
@@ -1064,9 +1226,10 @@ public class CatalogImportService {
 
     private KeyChoice keyChoice(PlannedRow row, String field, String prefix, String... parts) {
         String explicit = optional(row, field, MAX_KEY_LENGTH);
-        if (!explicit.isEmpty()) {
-            return new KeyChoice(explicit, false);
-        }
+        return explicit.isEmpty() ? derivedKey(prefix, parts) : new KeyChoice(explicit, false);
+    }
+
+    private KeyChoice derivedKey(String prefix, String... parts) {
         String joined = Arrays.stream(parts).map(CatalogImportIndex::normalized).collect(Collectors.joining("|"));
         String key = prefix + ":" + joined;
         return new KeyChoice(key.length() <= MAX_KEY_LENGTH ? key : prefix + ":" + CommandFingerprint.of(objectMapper, joined), true);
@@ -1078,15 +1241,20 @@ public class CatalogImportService {
             case "" -> fallback;
             case "university", "вуз" -> "UNIVERSITY";
             case "school", "школа" -> "SCHOOL";
+            case "college", "колледж", "спо", "колледж (спо)" -> "COLLEGE";
             default -> {
-                row.error("organizationType", "Укажите «вуз» или «школа»");
+                row.error("organizationType", "Укажите «вуз», «колледж» или «школа»");
                 yield fallback;
             }
         };
     }
 
     private static String typeLabel(String type) {
-        return "SCHOOL".equals(type) ? "школа" : "вуз";
+        return switch (type) {
+            case "SCHOOL" -> "школа";
+            case "COLLEGE" -> "колледж";
+            default -> "вуз";
+        };
     }
 
     private static Boolean licenseSigned(PlannedRow row) {
@@ -1156,6 +1324,41 @@ public class CatalogImportService {
         }
         row.values.put("comment", value);
         return value;
+    }
+
+    private static List<String> split(String value, String separators) {
+        return value == null ? List.of() : Arrays.stream(value.split(separators))
+                .map(CatalogImportIndex::clean)
+                .filter(part -> !part.isEmpty())
+                .toList();
+    }
+
+    private static List<String> contactNames(String value) {
+        List<String> names = new ArrayList<>();
+        for (String entry : split(value, CONTACT_ENTRY_SEPARATORS)) {
+            List<String> parts = split(entry, ",");
+            if (parts.size() > 1 && parts.stream().allMatch(part -> Character.isUpperCase(part.codePointAt(0)))) {
+                names.addAll(parts);
+            } else {
+                names.add(entry);
+            }
+        }
+        return names;
+    }
+
+    private static List<String> contactDetails(PlannedRow row, String field, int count, int maxLength) {
+        List<String> values = split(row.values.get(field), CONTACT_ENTRY_SEPARATORS);
+        if (values.isEmpty()) {
+            return Collections.nCopies(count, null);
+        }
+        if (values.size() != count) {
+            row.error(field, "Укажите по одному значению на каждого ответственного через «;» (ответственных: " + count + ")");
+            return Collections.nCopies(count, null);
+        }
+        if (values.stream().anyMatch(value -> value.length() > maxLength)) {
+            row.error(field, "Значение длиннее " + maxLength + " символов");
+        }
+        return values;
     }
 
     private static String mappedOrExisting(PlannedRow row, String field, int maxLength, Optional<String> existing) {
@@ -1237,8 +1440,21 @@ public class CatalogImportService {
                 row.fieldErrors(),
                 row.plan().oldValues(),
                 row.plan().newValues(),
-                row.applied()
+                row.applied(),
+                row.plan().managerCandidateIds() == null || row.applied()
+                        ? List.of()
+                        : repository.findManagerCandidates(row.plan().managerCandidateIds())
         )).toList();
+        List<CatalogImportMissingRecord> missingRecords = stored.status() == CatalogImportStatus.PREVIEWED
+                ? missingLinks(stored).stream().map(link -> new CatalogImportMissingRecord(
+                        link.agreementId(),
+                        link.organizationName(),
+                        link.vendorName(),
+                        link.productName(),
+                        link.contractNumber(),
+                        link.interactionTitle()
+                )).toList()
+                : List.of();
         return new CatalogImportView(
                 stored.id(),
                 stored.profile(),
@@ -1246,8 +1462,31 @@ public class CatalogImportService {
                 stored.version(),
                 rows,
                 stored.createdAt(),
-                stored.updatedAt()
+                stored.updatedAt(),
+                missingRecords
         );
+    }
+
+    private List<ImportAgreementLink> missingLinks(CatalogImportStored stored) {
+        if (stored.profile() != CatalogImportProfile.AGREEMENT) {
+            return List.of();
+        }
+        Set<UUID> organizationIds = new HashSet<>();
+        Set<String> presentPairs = new HashSet<>();
+        for (CatalogImportStoredRow row : stored.rows()) {
+            UUID organizationId = uuid(row.plan().values().get("organizationId"));
+            if (organizationId == null) {
+                continue;
+            }
+            organizationIds.add(organizationId);
+            UUID productId = uuid(row.plan().values().get("productId"));
+            if (productId != null) {
+                presentPairs.add(organizationId + "|" + productId);
+            }
+        }
+        return repository.findCurrentAgreementLinks(organizationIds).stream()
+                .filter(link -> !presentPairs.contains(link.organizationId() + "|" + link.productId()))
+                .toList();
     }
 
     private static final class PlannedRow {
@@ -1263,6 +1502,7 @@ public class CatalogImportService {
         private final Map<String, Integer> expectedVersions = new LinkedHashMap<>();
         private final Map<String, Claim> claims = new LinkedHashMap<>();
         private String managerPendingFor;
+        private List<UUID> managerCandidateIds = List.of();
         private boolean created;
         private boolean updated;
         private boolean conflicted;
@@ -1333,7 +1573,8 @@ public class CatalogImportService {
                     target,
                     Map.copyOf(expectedVersions),
                     Map.copyOf(oldValues),
-                    Map.copyOf(newValues)
+                    Map.copyOf(newValues),
+                    managerCandidateIds.isEmpty() ? null : managerCandidateIds
             );
             return new CatalogImportStoredRow(id, sheetName, rowNumber, status(), plan, Map.copyOf(errors), false);
         }

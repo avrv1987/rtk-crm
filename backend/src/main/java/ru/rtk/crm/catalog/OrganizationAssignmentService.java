@@ -1,6 +1,7 @@
 package ru.rtk.crm.catalog;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -43,13 +44,12 @@ public class OrganizationAssignmentService {
     public List<OrganizationAssignmentCandidate> options(CrmProfile profile, UUID organizationId) {
         Organization organization = requireVisibleOrganization(profile, organizationId);
         requireLeader(profile);
-        return organizationAssignmentRepository.findActiveUsersByTeamId(organization.teamId());
+        return organizationAssignmentRepository.findCandidates(organization.teamId(), profile.id());
     }
 
     @Transactional(readOnly = true)
     public List<OrganizationAssignmentEvent> events(CrmProfile profile, UUID organizationId) {
         requireVisibleOrganization(profile, organizationId);
-        requireLeader(profile);
         return organizationAssignmentRepository.findEventsByOrganizationId(organizationId);
     }
 
@@ -67,7 +67,13 @@ public class OrganizationAssignmentService {
         requireOwnerManagerId(request);
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
         String auditRequestId = requiredRequestId(requestId);
-        AssignmentCommand command = new AssignmentCommand(organizationId, expectedVersion, request.ownerManagerId());
+        String handoverNote = optionalHandoverNote(request.handoverNote());
+        AssignmentCommand command = new AssignmentCommand(
+                organizationId,
+                expectedVersion,
+                request.ownerManagerId(),
+                handoverNote
+        );
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
         OffsetDateTime now = OffsetDateTime.now();
@@ -84,53 +90,174 @@ public class OrganizationAssignmentService {
         if (Objects.equals(organization.ownerManagerId(), request.ownerManagerId())) {
             throw new InteractionValidationException("ownerManagerId", "Этот менеджер уже назначен ответственным");
         }
-        Map<UUID, OrganizationAssignmentProfile> lockedProfiles = lockAssignmentProfiles(
-                organization.ownerManagerId(),
-                request.ownerManagerId()
-        );
-        OrganizationAssignmentCandidate newOwner = validatedOwner(
-                lockedProfiles.get(request.ownerManagerId()),
-                organization.teamId()
-        );
-        String previousOwnerDisplayName = lockedDisplayName(lockedProfiles, organization.ownerManagerId());
-        String actorDisplayName = displayName(profile.id());
-        if (!organizationAssignmentRepository.updateOwner(
-                organizationId,
-                organization.teamId(),
+        OrganizationAssignmentResult result = applyAssignment(
+                profile,
+                organization,
                 expectedVersion,
                 request.ownerManagerId(),
+                handoverNote,
+                commandId,
+                displayName(profile.id()),
+                auditRequestId,
+                now
+        );
+        return store(commandId, result);
+    }
+
+    @Transactional
+    public OrganizationBulkAssignmentResult bulkAssign(
+            CrmProfile profile,
+            OrganizationBulkAssignmentRequest request,
+            String idempotencyKey,
+            String requestId
+    ) {
+        requireLeader(profile);
+        List<OrganizationBulkAssignmentRequest.Item> items = validatedItems(request);
+        String normalizedKey = requiredIdempotencyKey(idempotencyKey);
+        String auditRequestId = requiredRequestId(requestId);
+        String fingerprint = CommandFingerprint.of(objectMapper, items);
+        UUID commandId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
+        if (!commandIdempotencyRepository.reserve(
+                commandId,
+                profile.id(),
+                CommandOperation.BULK_ASSIGN_ORGANIZATIONS,
+                normalizedKey,
+                fingerprint,
                 now
         )) {
-            if (request.ownerManagerId() != null
-                    && organizationAssignmentRepository.findActiveUserInTeam(request.ownerManagerId(), organization.teamId()).isEmpty()) {
+            return replayBulk(profile.id(), normalizedKey, fingerprint);
+        }
+        String actorDisplayName = displayName(profile.id());
+        List<OrganizationAssignmentResult> assigned = new ArrayList<>();
+        List<UUID> unchanged = new ArrayList<>();
+        List<OrganizationBulkAssignmentRequest.Item> lockOrder = items.stream()
+                .sorted(Comparator.comparing(item -> item.organizationId().toString()))
+                .toList();
+        Map<UUID, Organization> organizations = new HashMap<>();
+        for (OrganizationBulkAssignmentRequest.Item item : lockOrder) {
+            organizations.put(item.organizationId(), requireVisibleOrganization(profile, item.organizationId()));
+        }
+        java.util.stream.Stream.concat(
+                        organizations.values().stream().map(Organization::ownerManagerId),
+                        items.stream().map(OrganizationBulkAssignmentRequest.Item::ownerManagerId)
+                )
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted(Comparator.comparing(UUID::toString))
+                .forEach(organizationAssignmentRepository::lockProfileForUpdate);
+        for (OrganizationBulkAssignmentRequest.Item item : lockOrder) {
+            Organization organization = organizations.get(item.organizationId());
+            if (Objects.equals(organization.ownerManagerId(), item.ownerManagerId()) && !organization.requiresAssignment()) {
+                unchanged.add(organization.id());
+                continue;
+            }
+            if (Objects.equals(organization.ownerManagerId(), item.ownerManagerId())) {
                 throw new InteractionValidationException(
                         "ownerManagerId",
                         "Назначить можно только активного менеджера команды этого вуза"
                 );
             }
-            throw versionConflict(profile, organizationId);
+            assigned.add(applyAssignment(
+                    profile,
+                    organization,
+                    item.version(),
+                    item.ownerManagerId(),
+                    null,
+                    commandId,
+                    actorDisplayName,
+                    auditRequestId,
+                    now
+            ));
+        }
+        String resultJson = write(new OrganizationBulkAssignmentResult(assigned, unchanged));
+        commandIdempotencyRepository.complete(commandId, resultJson);
+        return readBulk(resultJson);
+    }
+
+    private OrganizationAssignmentResult applyAssignment(
+            CrmProfile profile,
+            Organization organization,
+            int expectedVersion,
+            UUID ownerManagerId,
+            String handoverNote,
+            UUID commandId,
+            String actorDisplayName,
+            String auditRequestId,
+            OffsetDateTime now
+    ) {
+        Map<UUID, OrganizationAssignmentProfile> lockedProfiles = lockAssignmentProfiles(
+                organization.ownerManagerId(),
+                ownerManagerId
+        );
+        OrganizationAssignmentCandidate newOwner = validatedOwner(
+                lockedProfiles.get(ownerManagerId),
+                organization.teamId(),
+                profile.id()
+        );
+        String previousOwnerDisplayName = lockedDisplayName(lockedProfiles, organization.ownerManagerId());
+        if (!organizationAssignmentRepository.updateOwner(
+                organization.id(),
+                organization.teamId(),
+                expectedVersion,
+                ownerManagerId,
+                profile.id(),
+                now
+        )) {
+            if (ownerManagerId != null
+                    && organizationAssignmentRepository.findCandidate(ownerManagerId, organization.teamId(), profile.id()).isEmpty()) {
+                throw new InteractionValidationException(
+                        "ownerManagerId",
+                        "Назначить можно только активного менеджера команды этого вуза"
+                );
+            }
+            throw versionConflict(profile, organization.id());
         }
         organizationAssignmentRepository.incrementAccessRevisions(
                 organization.ownerManagerId(),
-                request.ownerManagerId()
+                ownerManagerId
         );
-        int resultVersion = expectedVersion + 1;
+        organizationAssignmentRepository.endOpenDeputy(organization.id(), now, profile.id(), actorDisplayName)
+                .ifPresent(deputyProfileId -> organizationAssignmentRepository.incrementAccessRevisions(deputyProfileId, null));
         OrganizationAssignmentEvent event = organizationAssignmentRepository.insertEvent(
                 UUID.randomUUID(),
-                organizationId,
+                organization.id(),
                 commandId,
                 organization.ownerManagerId(),
                 previousOwnerDisplayName,
-                request.ownerManagerId(),
+                ownerManagerId,
                 newOwner == null ? null : newOwner.displayName(),
                 profile.id(),
                 actorDisplayName,
                 auditRequestId,
-                resultVersion,
+                null,
+                handoverNote,
+                expectedVersion + 1,
                 now
         );
-        Organization updated = requireVisibleOrganization(profile, organizationId);
-        return store(commandId, new OrganizationAssignmentResult(updated, event));
+        return new OrganizationAssignmentResult(requireVisibleOrganization(profile, organization.id()), event);
+    }
+
+    private List<OrganizationBulkAssignmentRequest.Item> validatedItems(OrganizationBulkAssignmentRequest request) {
+        List<OrganizationBulkAssignmentRequest.Item> items = request == null || request.items() == null
+                ? List.of()
+                : request.items();
+        if (items.isEmpty() || items.size() > 100) {
+            throw new InteractionValidationException("items", "Выберите от 1 до 100 вузов");
+        }
+        if (items.stream().anyMatch(item -> item == null || item.organizationId() == null)) {
+            throw new InteractionValidationException("items", "Укажите вуз в каждой строке");
+        }
+        if (items.stream().anyMatch(item -> item.ownerManagerId() == null)) {
+            throw new InteractionValidationException("ownerManagerId", "Выберите нового ответственного для каждого вуза");
+        }
+        if (items.stream().anyMatch(item -> item.version() == null || item.version() < 0)) {
+            throw new InteractionValidationException("version", "Некорректная версия записи; обновите страницу");
+        }
+        if (items.stream().map(OrganizationBulkAssignmentRequest.Item::organizationId).distinct().count() != items.size()) {
+            throw new InteractionValidationException("items", "Вузы в списке не должны повторяться");
+        }
+        return List.copyOf(items);
     }
 
     private Organization requireVisibleOrganization(CrmProfile profile, UUID organizationId) {
@@ -149,12 +276,15 @@ public class OrganizationAssignmentService {
 
     private OrganizationAssignmentCandidate validatedOwner(
             OrganizationAssignmentProfile profile,
-            UUID teamId
+            UUID teamId,
+            UUID leaderId
     ) {
         if (profile == null) {
             return null;
         }
-        if (!profile.active() || profile.role() != UserRole.USER || !teamId.equals(profile.teamId())) {
+        boolean assignableRole = profile.role() == UserRole.USER
+                || (profile.role() == UserRole.LEADER && profile.id().equals(leaderId));
+        if (!profile.active() || !assignableRole || !teamId.equals(profile.teamId())) {
             throw new InteractionValidationException(
                     "ownerManagerId",
                     "Назначить можно только активного менеджера команды этого вуза"
@@ -167,7 +297,7 @@ public class OrganizationAssignmentService {
         if (!request.ownerManagerIdPresent()) {
             throw new InteractionValidationException(
                     "ownerManagerId",
-                    "ownerManagerId is required and may be null only for explicit deassignment"
+                    "Выберите нового ответственного или явно снимите назначение"
             );
         }
     }
@@ -233,6 +363,17 @@ public class OrganizationAssignmentService {
         return value;
     }
 
+    private String optionalHandoverNote(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.strip();
+        if (normalized.length() > 2_000) {
+            throw new InteractionValidationException("handoverNote", "Комментарий к передаче длиннее 2000 символов");
+        }
+        return normalized;
+    }
+
     private String requiredRequestId(String value) {
         if (value == null || value.isBlank()) {
             throw new IllegalStateException("Request id is unavailable for organization assignment audit");
@@ -263,6 +404,27 @@ public class OrganizationAssignmentService {
         return read(command.resultJson());
     }
 
+    private OrganizationBulkAssignmentResult replayBulk(UUID actorProfileId, String idempotencyKey, String fingerprint) {
+        CommandIdempotencyRepository.CommandRecord command = commandIdempotencyRepository
+                .find(actorProfileId, CommandOperation.BULK_ASSIGN_ORGANIZATIONS, idempotencyKey)
+                .orElseThrow(() -> new IllegalStateException("Reserved bulk organization assignment command is unavailable"));
+        if (!fingerprint.equals(command.requestFingerprint())) {
+            throw InteractionConflictException.idempotency();
+        }
+        if (command.resultJson() == null) {
+            throw new IllegalStateException("Reserved bulk organization assignment command has no result");
+        }
+        return readBulk(command.resultJson());
+    }
+
+    private OrganizationBulkAssignmentResult readBulk(String resultJson) {
+        try {
+            return objectMapper.readValue(resultJson, OrganizationBulkAssignmentResult.class);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Stored bulk organization assignment result cannot be read", exception);
+        }
+    }
+
     private OrganizationAssignmentResult store(UUID commandId, OrganizationAssignmentResult result) {
         String resultJson = write(result);
         commandIdempotencyRepository.complete(commandId, resultJson);
@@ -277,7 +439,7 @@ public class OrganizationAssignmentService {
         }
     }
 
-    private String write(OrganizationAssignmentResult result) {
+    private String write(Object result) {
         try {
             return objectMapper.writeValueAsString(result);
         } catch (JsonProcessingException exception) {
@@ -285,6 +447,6 @@ public class OrganizationAssignmentService {
         }
     }
 
-    private record AssignmentCommand(UUID organizationId, int version, UUID ownerManagerId) {
+    private record AssignmentCommand(UUID organizationId, int version, UUID ownerManagerId, String handoverNote) {
     }
 }

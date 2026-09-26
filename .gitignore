@@ -20,3 +20,5 @@ graphify-out/cost.json
 graphify-out/graph.html
 .pytest_cache/
 backups/
+.demo-accounts.*
+.load-test/

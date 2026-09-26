@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.catalog.Contact;
 import ru.rtk.crm.catalog.ContactRepository;
+import ru.rtk.crm.catalog.PersonalDataStatus;
 import ru.rtk.crm.interaction.CommandFingerprint;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
 import ru.rtk.crm.interaction.CommandOperation;
@@ -35,6 +36,8 @@ public class SiteRecordApplier {
     private static final int MAX_TITLE_LENGTH = 200;
     private static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
     private static final DateTimeFormatter MOSCOW_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
+    private static final String RESTRICTED_CONTACT =
+            "Контакт заявки не привязан: обработка его персональных данных ограничена";
 
     private final SourceRepository repository;
     private final ContactRepository contactRepository;
@@ -83,9 +86,10 @@ public class SiteRecordApplier {
         OffsetDateTime now = OffsetDateTime.now();
         Optional<StoredRecord> existing = repository.findRecordForUpdate(SOURCE, item.type(), item.externalId());
         if (existing.isEmpty()) {
-            repository.insertRecord(UUID.randomUUID(), SOURCE, item.version(), failed(error, null), runId, now);
+            repository.insertRecord(UUID.randomUUID(), SOURCE, item.version(), failedFor(item, error, null), runId, now);
         } else if (replaces(existing.get(), item)) {
-            repository.updateRecord(existing.get().id(), item.version(), failed(error, existing.get().interactionId()), runId, now);
+            repository.updateRecord(existing.get().id(), item.version(), failedFor(item, error, existing.get().interactionId()),
+                    runId, now);
         }
     }
 
@@ -103,14 +107,31 @@ public class SiteRecordApplier {
     }
 
     @Transactional
+    public SourceRecordStatus reresolve(UUID recordId, UUID actorProfileId) {
+        StoredRecord stored = repository.findRecordForUpdate(recordId).orElseThrow(SourceException::recordNotFound);
+        SiteRecord item = SiteRecord.parseStored(objectMapper, stored.payload());
+        OffsetDateTime now = OffsetDateTime.now();
+        ApplyResult result = resolve(stored.id(), item, stored.interactionId(), actorProfileId, now);
+        repository.updateRecord(stored.id(), item.version(), result, null, now);
+        return result.status();
+    }
+
+    Optional<UUID> resolvedOrganizationId(SiteRecord item) {
+        return item.organizationKey() == null ? Optional.empty() : organization(item).map(SourceOrganization::id);
+    }
+
+    @Transactional
     public void markFailed(UUID recordId, String error) {
-        repository.findRecordForUpdate(recordId).ifPresent(stored -> repository.updateRecord(
-                stored.id(),
-                SiteRecord.parseStored(objectMapper, stored.payload()).version(),
-                failed(error, stored.interactionId()),
-                null,
-                OffsetDateTime.now()
-        ));
+        repository.findRecordForUpdate(recordId).ifPresent(stored -> {
+            SiteRecord item = SiteRecord.parseStored(objectMapper, stored.payload());
+            repository.updateRecord(stored.id(), item.version(), failedFor(item, error, stored.interactionId()), null,
+                    OffsetDateTime.now());
+        });
+    }
+
+    private ApplyResult failedFor(SiteRecord item, String error, UUID interactionId) {
+        return new ApplyResult(SourceRecordStatus.FAILED, truncate(error, 500), resolvedOrganizationId(item).orElse(null), null,
+                1, interactionId);
     }
 
     private static boolean replaces(StoredRecord existing, SiteRecord item) {
@@ -163,13 +184,10 @@ public class SiteRecordApplier {
             }
             return new ApplyResult(SourceRecordStatus.APPLIED, null, organizationId, programId, applications, null);
         }
-        UUID interactionId = applyPartnership(
-                recordId, item, organization.get(), programId, previousInteractionId, actorProfileId, now
-        );
-        return new ApplyResult(SourceRecordStatus.APPLIED, null, organizationId, programId, 1, interactionId);
+        return applyPartnership(recordId, item, organization.get(), programId, previousInteractionId, actorProfileId, now);
     }
 
-    private UUID applyPartnership(
+    private ApplyResult applyPartnership(
             UUID recordId,
             SiteRecord item,
             SourceOrganization organization,
@@ -178,8 +196,13 @@ public class SiteRecordApplier {
             UUID actorProfileId,
             OffsetDateTime now
     ) {
+        String legacyKey = "source:" + SOURCE + ":" + recordId + ":" + item.updatedAt().toInstant();
+        String key = legacyKey + ":" + organization.id();
+        Optional<UUID> applied = repository.findAppliedInteraction(List.of(key, legacyKey), organization.id());
+        if (applied.isPresent()) {
+            return new ApplyResult(SourceRecordStatus.APPLIED, null, organization.id(), programId, 1, applied.get());
+        }
         UUID commandId = UUID.randomUUID();
-        String key = "source:" + SOURCE + ":" + recordId + ":" + item.updatedAt().toInstant();
         if (!commandIdempotencyRepository.reserve(
                 commandId,
                 actorProfileId,
@@ -191,7 +214,9 @@ public class SiteRecordApplier {
             throw new IllegalStateException("Source record version was already applied by this profile");
         }
         UUID productId = uniqueOrNull(item.productName() == null ? List.of() : repository.findActiveProductIdsByName(item.productName()));
-        List<UUID> contactIds = contact(organization.id(), item, actorProfileId, now).map(List::of).orElse(List.of());
+        List<Contact> matches = matchingContacts(organization.id(), item);
+        boolean restricted = matches.stream().anyMatch(contact -> contact.personalDataStatus() == PersonalDataStatus.RESTRICTED);
+        List<UUID> contactIds = restricted ? List.of() : contact(organization.id(), item, matches, actorProfileId, now);
         UUID interactionId = previousInteractionId != null && repository.interactionBelongsTo(previousInteractionId, organization.id())
                 ? previousInteractionId
                 : repository.findLatestInteraction(organization.id(), programId, productId).orElse(null);
@@ -210,7 +235,7 @@ public class SiteRecordApplier {
         }
         interactionService.appendSourceComment(
                 interactionId,
-                comment(item, previousInteractionId != null),
+                comment(item, previousInteractionId != null, restricted),
                 contactIds,
                 organization.ownerManagerId(),
                 actorProfileId,
@@ -218,7 +243,9 @@ public class SiteRecordApplier {
                 now
         );
         commandIdempotencyRepository.complete(commandId, write(Map.of("recordId", recordId, "interactionId", interactionId)));
-        return interactionId;
+        return new ApplyResult(
+                SourceRecordStatus.APPLIED, restricted ? RESTRICTED_CONTACT : null, organization.id(), programId, 1, interactionId
+        );
     }
 
     private Optional<SourceOrganization> organization(SiteRecord item) {
@@ -236,19 +263,26 @@ public class SiteRecordApplier {
                 .or(() -> Optional.ofNullable(uniqueOrNull(repository.findActiveProgramIdsByName(programName))));
     }
 
-    private Optional<UUID> contact(UUID organizationId, SiteRecord item, UUID actorProfileId, OffsetDateTime now) {
+    private List<Contact> matchingContacts(UUID organizationId, SiteRecord item) {
         if (item.contactName() == null && item.contactEmail() == null) {
-            return Optional.empty();
+            return List.of();
         }
-        Optional<Contact> known = contactRepository.findByOrganizationId(organizationId).stream()
+        return contactRepository.findByOrganizationId(organizationId).stream()
+                .filter(contact -> contact.personalDataStatus() != PersonalDataStatus.ANONYMIZED)
                 .filter(contact -> item.contactEmail() != null
                         ? item.contactEmail().equalsIgnoreCase(contact.email())
                         : item.contactName().equals(contact.name()))
-                .findFirst();
-        if (known.isPresent()) {
-            return Optional.of(known.get().id());
+                .toList();
+    }
+
+    private List<UUID> contact(UUID organizationId, SiteRecord item, List<Contact> matches, UUID actorProfileId, OffsetDateTime now) {
+        if (item.contactName() == null && item.contactEmail() == null) {
+            return List.of();
         }
-        return Optional.of(contactRepository.insert(
+        if (!matches.isEmpty()) {
+            return List.of(matches.getFirst().id());
+        }
+        return List.of(contactRepository.insert(
                 UUID.randomUUID(),
                 organizationId,
                 item.contactName() == null ? item.contactEmail() : item.contactName(),
@@ -273,7 +307,7 @@ public class SiteRecordApplier {
         return truncate("Заявка с сайта: " + subject, MAX_TITLE_LENGTH);
     }
 
-    private static String comment(SiteRecord item, boolean update) {
+    private static String comment(SiteRecord item, boolean update, boolean restricted) {
         StringBuilder text = new StringBuilder(update ? "Заявка с сайта обновлена: " : "Заявка с сайта: ")
                 .append(item.message() == null ? "текст заявки не передан" : item.message())
                 .append("\nВнешний ID: ").append(item.externalId())
@@ -286,7 +320,9 @@ public class SiteRecordApplier {
         if (item.productName() != null) {
             text.append("\nПродукт: ").append(item.productName());
         }
-        if (item.contactName() != null || item.contactEmail() != null || item.contactPhone() != null) {
+        if (restricted) {
+            text.append("\nКонтакт: обработка персональных данных ограничена, данные не перенесены");
+        } else if (item.contactName() != null || item.contactEmail() != null || item.contactPhone() != null) {
             text.append("\nКонтакт: ").append(String.join(", ", Stream.of(
                     item.contactName(), item.contactPosition(), item.contactEmail(), item.contactPhone()
             ).filter(Objects::nonNull).toList()));

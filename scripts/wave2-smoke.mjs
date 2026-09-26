@@ -240,6 +240,12 @@ const pressKey = async (page, key, code, keyCode) => {
   }
 }
 
+const closeReminderDigest = async (page) => {
+  await page.waitFor(() => page.evaluate("Boolean(document.querySelector('.reminder-center__counter')) && !document.querySelector('.reminder-center__counter').textContent.includes('…')"), 'Reminder counter did not load')
+  await page.evaluate("document.querySelector('dialog.reminder-center__dialog[open] .reminder-center__dialog-header button')?.click()")
+  await page.waitFor(() => page.evaluate("!document.querySelector('dialog.reminder-center__dialog[open]')"), 'Reminder digest did not close')
+}
+
 const setViewport = (page, viewport) => call('Emulation.setDeviceMetricsOverride', {
   width: viewport.width,
   height: viewport.height,
@@ -478,7 +484,7 @@ try {
   const demoEventsBefore = requireStatus(await eventsOf(kamA, demoInteraction.id), 200, 'Demo history is unavailable').length
   const website = await syncSource(admin, 'WEBSITE')
   const moodle = await syncSource(admin, 'MOODLE')
-  assert(website.status === 'SUCCEEDED' && website.fetchedCount === 16 && website.createdCount === 0 && website.updatedCount === 0 && website.failedCount === 0, 'Website repeat sync changed data')
+  assert(website.status === 'SUCCEEDED' && website.fetchedCount === 17 && website.createdCount === 0 && website.updatedCount === 0 && website.failedCount === 0, 'Website repeat sync changed data')
   assert(moodle.status === 'SUCCEEDED' && moodle.fetchedCount === 5 && moodle.createdCount === 0 && moodle.updatedCount === 0 && moodle.failedCount === 0, 'Moodle repeat sync changed data')
   const demoEventsAfter = requireStatus(await eventsOf(kamA, demoInteraction.id), 200, 'Demo history is unavailable').length
   assert(demoEventsAfter === demoEventsBefore, 'Repeat sync added events')
@@ -570,7 +576,16 @@ try {
     lastDay: await runsOn(shiftDay(runOf.runEndsOn, -1)),
     end: await runsOn(runOf.runEndsOn)
   }
-  assert(JSON.stringify(runsByDate) === JSON.stringify({ beforeStart: [6, 0], start: [6, 1], lastDay: [6, 1], end: [6, 0] }), 'Parallel runs do not follow [start, end) of the training run')
+  assert(JSON.stringify(runsByDate) === JSON.stringify({ beforeStart: [null, null], start: [6, 1], lastDay: [6, 1], end: [6, 0] }), 'Moodle runs do not follow the report period or [start, end) of the training run')
+  assert(digital.LEARNERS_COMPLETED === 3 && (analysis.LEARNERS_COMPLETED ?? null) === null, 'DEMAND completed column has wrong Moodle numbers')
+  const demandTitles = Object.fromEntries(demandA.columns.map((column) => [column.id, column.title]))
+  assert(
+    demandTitles.PARTICIPANTS?.startsWith('Обучающиеся (Moodle, снимок ') &&
+      demandTitles.LEARNERS_COMPLETED?.startsWith('Завершили (Moodle, снимок ') &&
+      demandTitles.PARALLEL_RUNS?.startsWith('Параллельные потоки (Moodle, на ') &&
+      demandTitles.APPLICATIONS?.startsWith('Заявки (сайт, '),
+    'DEMAND column titles do not name the Moodle snapshot and the period'
+  )
   const demandStatistics = requireStatus(
     await api(kamA, 'POST', '/api/statistics', { body: { ...demandRequest, groupBy: 'PROGRAM' } }),
     200,
@@ -587,14 +602,14 @@ try {
   assert(json.totals.participations === 6 && !JSON.stringify(json).includes('анализ данных'), 'DEMAND JSON totals or scope are wrong')
   const xlsxText = zipText(demandXlsx.buffer)
   assert(xlsxText.includes('Демо-программа: цифровой университет') && !xlsxText.includes('анализ данных'), 'DEMAND XLSX content or scope is wrong')
-  result.demand = { kamA: digital, kamB: analysis, run: [runOf.runStartsOn, runOf.runEndsOn], runsByDate, json: { rows: json.rows.length, totals: json.totals }, xlsx: demandXlsx.buffer.length }
+  result.demand = { kamA: digital, kamB: analysis, run: [runOf.runStartsOn, runOf.runEndsOn], runsByDate, titles: demandTitles, json: { rows: json.rows.length, totals: json.totals }, xlsx: demandXlsx.buffer.length }
 
   phase = 'role-change'
   const profiles = requireStatus(await api(admin, 'GET', '/api/admin/crm-profiles?page=0&size=100'), 200, 'CRM profiles are unavailable')
   const kamAProfile = profiles.items.find((item) => item.displayName === 'КАМ А')
   const teams = requireStatus(await api(admin, 'GET', '/api/admin/teams'), 200, 'Teams are unavailable')
-  const teamA = teams.find((item) => item.name === 'team-a')
-  const teamB = teams.find((item) => item.name === 'team-b')
+  const teamA = teams.find((item) => item.name === 'Команда А')
+  const teamB = teams.find((item) => item.name === 'Команда Б')
   assert(kamAProfile?.role === 'USER' && kamAProfile.teamId === teamA?.id && teamB, 'KAM A profile is not in its demo state')
   const ownedBefore = (await listAll(kamA, '/api/organizations', 'Organizations of KAM A are unavailable')).map((item) => item.id)
   const oldReport = await orderFile(kamA, { kind: 'PORTFOLIO', from: today, to: today, filters: {}, columns: [], format: 'JSON' }, 'kam-a-before-role')
@@ -658,6 +673,19 @@ try {
   const kamCDemoCard = await api(kamC, 'GET', '/api/interactions/' + demoInteraction.id)
   assert(kamAWithoutOwner.status === 404 && kamADemoCard.status === 404, 'Replaced KAM A still sees University A')
   assert(kamCWithOwner.status === 200 && kamCDemoCard.status === 200, 'KAM C does not see University A')
+  const leaderMe = requireStatus(await api(leader, 'GET', '/api/me'), 200, 'Leader profile is unavailable')
+  assert(optionsA.some((item) => item.id === leaderMe.id) && !optionsA.some((item) => item.displayName === 'КАМ Б'), 'Leader is not offered as the owner of University A')
+  await assign(leaderMe.id, 'leader-self')
+  const leaderOwned = requireStatus(await api(leader, 'GET', '/api/organizations/' + universityA.id), 200, 'University A is unavailable to the leader owner')
+  const kamCWithoutOwner = await api(kamC, 'GET', '/api/organizations/' + universityA.id)
+  const requiringWithLeader = await listAll(leader, '/api/organizations?requiresAssignment=true', 'Organizations requiring assignment are unavailable')
+  const leaderWork = await listAll(leader, '/api/interactions?organizationId=' + universityA.id, 'Leader work list is unavailable')
+  const leaderManagers = requireStatus(await api(leader, 'GET', '/api/report-filters/managers'), 200, 'Report managers are unavailable')
+  assert(leaderOwned.ownerManagerId === leaderMe.id && !leaderOwned.requiresAssignment && kamCWithoutOwner.status === 404, 'Leader did not become the owner of University A')
+  assert(!requiringWithLeader.some((item) => item.id === universityA.id), 'Leader-owned University A still requires assignment')
+  assert(leaderWork.length > 0 && leaderWork.every((item) => item.ownerManagerName === leaderOwned.ownerManagerName), 'Work list does not show the leader as the owner')
+  assert(leaderManagers.some((item) => item.id === leaderMe.id), 'Report manager filter does not offer the leader owner')
+  result.leaderOwner = { owner: leaderOwned.ownerManagerName, work: leaderWork.length, kamC: kamCWithoutOwner.status }
   await assign(candidateA.id, 'kam-a')
   const kamAAgain = await api(kamA, 'GET', '/api/organizations/' + universityA.id)
   const kamCAgain = await api(kamC, 'GET', '/api/organizations/' + universityA.id)
@@ -686,12 +714,12 @@ try {
   result.teamTransfer = { before: leaderBefore.status, after: leaderAfter.status, returned: leaderReturned.status }
 
   phase = 'viewports'
-  const cardReady = "document.body.innerText.includes('Обучение (LMS)') && document.body.innerText.includes('Демо: Java-разработчик') && document.body.innerText.includes('Поток обучения') && Boolean([...document.querySelectorAll('button')].find((button) => button.textContent.includes('Обновить данные LMS')))"
+  const cardReady = "document.body.innerText.includes('Обучение (LMS)') && document.body.innerText.includes('Демо: Java-разработчик') && document.body.innerText.includes('Поток обучения') && Boolean([...document.querySelectorAll('button')].find((button) => button.textContent.includes('Обновить данные источников')))"
   await call('Page.navigate', { url: origin + '/#/organizations/' + universityA.id + '/' + demoInteraction.id }, kamA.sessionId)
   await kamA.waitFor(() => kamA.evaluate(cardReady), 'LMS block is not shown in the card')
-  await kamA.evaluate("[...document.querySelectorAll('button')].find((button) => button.textContent.includes('Обновить данные LMS')).click()")
+  await kamA.evaluate("[...document.querySelectorAll('button')].find((button) => button.textContent.includes('Обновить данные источников')).click()")
   await kamA.waitFor(
-    () => kamA.evaluate("[...document.querySelectorAll('.interaction-learning [role=status]')].some((node) => node.textContent.includes('Данные Moodle'))"),
+    () => kamA.evaluate("[...document.querySelectorAll('.interaction-learning .source-outcomes')].some((node) => node.textContent.includes('Данные Moodle'))"),
     'LMS refresh button did not report the result'
   )
   await call('Page.navigate', { url: origin + '/#/work' }, leader.sessionId)
@@ -709,16 +737,17 @@ try {
   await setViewport(kamA, narrow)
   await call('Page.reload', {}, kamA.sessionId)
   await kamA.waitFor(() => kamA.evaluate(cardReady), 'LMS block is not shown at 360 px')
-  await kamA.evaluate("[...document.querySelectorAll('button')].find((button) => button.textContent.includes('Обновить данные LMS')).focus()")
-  assert(await kamA.evaluate("document.activeElement?.textContent.includes('Обновить данные LMS')"), 'LMS refresh button cannot take focus')
+  await kamA.evaluate("[...document.querySelectorAll('button')].find((button) => button.textContent.includes('Обновить данные источников')).focus()")
+  assert(await kamA.evaluate("document.activeElement?.textContent.includes('Обновить данные источников')"), 'LMS refresh button cannot take focus')
   await pressKey(kamA, 'Enter', 'Enter', 13)
   await kamA.waitFor(
-    () => kamA.evaluate("[...document.querySelectorAll('.interaction-learning [role=status]')].some((node) => node.textContent.includes('Данные Moodle'))"),
+    () => kamA.evaluate("[...document.querySelectorAll('.interaction-learning .source-outcomes')].some((node) => node.textContent.includes('Данные Moodle'))"),
     'LMS refresh by keyboard did not report the result at 360 px'
   )
   await setViewport(leader, narrow)
   await call('Page.navigate', { url: origin + '/#/work' }, leader.sessionId)
   await leader.waitFor(() => leader.evaluate("Boolean(document.querySelector('.work-filters input[type=search]'))"), 'Work filters are not shown at 360 px')
+  await closeReminderDigest(leader)
   await leader.evaluate("document.querySelector('.work-filters input[type=search]').focus()")
   await call('Input.insertText', { text: 'ПРОСРОЧЕНО ' + nonce.toUpperCase() }, leader.sessionId)
   await leader.evaluate("[...document.querySelectorAll('.work-filters input[type=radio]')].find((input) => input.value === 'OVERDUE').focus()")

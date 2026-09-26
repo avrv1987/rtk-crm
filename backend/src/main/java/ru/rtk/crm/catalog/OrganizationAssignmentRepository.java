@@ -18,14 +18,16 @@ public class OrganizationAssignmentRepository {
         this.jdbcClient = jdbcClient;
     }
 
-    public List<OrganizationAssignmentCandidate> findActiveUsersByTeamId(UUID teamId) {
+    public List<OrganizationAssignmentCandidate> findCandidates(UUID teamId, UUID leaderId) {
         return jdbcClient.sql("""
                 SELECT id, display_name
                 FROM crm_user_profiles
-                WHERE team_id = :teamId AND active = TRUE AND role = 'USER'
+                WHERE team_id = :teamId AND active = TRUE
+                  AND (role = 'USER' OR (role = 'LEADER' AND id = :leaderId))
                 ORDER BY display_name ASC, id ASC
                 """)
                 .param("teamId", teamId)
+                .param("leaderId", leaderId)
                 .query((resultSet, rowNumber) -> new OrganizationAssignmentCandidate(
                         resultSet.getObject("id", UUID.class),
                         resultSet.getString("display_name")
@@ -33,14 +35,16 @@ public class OrganizationAssignmentRepository {
                 .list();
     }
 
-    public Optional<OrganizationAssignmentCandidate> findActiveUserInTeam(UUID profileId, UUID teamId) {
+    public Optional<OrganizationAssignmentCandidate> findCandidate(UUID profileId, UUID teamId, UUID leaderId) {
         return jdbcClient.sql("""
                 SELECT id, display_name
                 FROM crm_user_profiles
-                WHERE id = :profileId AND team_id = :teamId AND active = TRUE AND role = 'USER'
+                WHERE id = :profileId AND team_id = :teamId AND active = TRUE
+                  AND (role = 'USER' OR (role = 'LEADER' AND id = :leaderId))
                 """)
                 .param("profileId", profileId)
                 .param("teamId", teamId)
+                .param("leaderId", leaderId)
                 .query((resultSet, rowNumber) -> new OrganizationAssignmentCandidate(
                         resultSet.getObject("id", UUID.class),
                         resultSet.getString("display_name")
@@ -78,6 +82,7 @@ public class OrganizationAssignmentRepository {
             UUID teamId,
             int expectedVersion,
             UUID ownerManagerId,
+            UUID leaderId,
             OffsetDateTime updatedAt
     ) {
         return jdbcClient.sql("""
@@ -91,7 +96,7 @@ public class OrganizationAssignmentRepository {
                           WHERE candidate.id = :ownerManagerId
                             AND candidate.team_id = organizations.team_id
                             AND candidate.active = TRUE
-                            AND candidate.role = 'USER'
+                            AND (candidate.role = 'USER' OR (candidate.role = 'LEADER' AND candidate.id = :leaderId))
                       )
                   )
                 """)
@@ -99,6 +104,7 @@ public class OrganizationAssignmentRepository {
                 .param("teamId", teamId)
                 .param("expectedVersion", expectedVersion)
                 .param("ownerManagerId", ownerManagerId)
+                .param("leaderId", leaderId)
                 .param("updatedAt", updatedAt)
                 .update() == 1;
     }
@@ -154,7 +160,7 @@ public class OrganizationAssignmentRepository {
         jdbcClient.sql("""
                 UPDATE crm_user_profiles
                 SET access_revision = access_revision + 1, updated_at = CURRENT_TIMESTAMP
-                WHERE id = :profileId
+                WHERE id = :profileId AND role = 'USER'
                 """)
                 .param("profileId", profileId)
                 .update();
@@ -165,6 +171,37 @@ public class OrganizationAssignmentRepository {
                 .param("organizationId", organizationId)
                 .query(Integer.class)
                 .optional();
+    }
+
+    public Optional<UUID> endOpenDeputy(
+            UUID organizationId,
+            OffsetDateTime endedAt,
+            UUID endedByProfileId,
+            String endedByDisplayName
+    ) {
+        Optional<UUID> deputyProfileId = jdbcClient.sql("""
+                SELECT deputy_profile_id
+                FROM organization_deputies
+                WHERE organization_id = :organizationId AND ended_at IS NULL AND ends_at > :endedAt
+                FOR UPDATE
+                """)
+                .param("organizationId", organizationId)
+                .param("endedAt", endedAt)
+                .query(UUID.class)
+                .optional();
+        if (deputyProfileId.isPresent()) {
+            jdbcClient.sql("""
+                    UPDATE organization_deputies
+                    SET ended_at = :endedAt, ended_by_profile_id = :endedByProfileId, ended_by_display_name = :endedByDisplayName
+                    WHERE organization_id = :organizationId AND ended_at IS NULL AND ends_at > :endedAt
+                    """)
+                    .param("organizationId", organizationId)
+                    .param("endedAt", endedAt)
+                    .param("endedByProfileId", endedByProfileId)
+                    .param("endedByDisplayName", endedByDisplayName)
+                    .update();
+        }
+        return deputyProfileId;
     }
 
     public OrganizationAssignmentEvent insertEvent(
@@ -178,6 +215,8 @@ public class OrganizationAssignmentRepository {
             UUID actorProfileId,
             String actorDisplayName,
             String requestId,
+            OrganizationAssignmentReason reason,
+            String handoverNote,
             int version,
             OffsetDateTime occurredAt
     ) {
@@ -185,11 +224,11 @@ public class OrganizationAssignmentRepository {
                 INSERT INTO organization_assignment_events (
                     id, organization_id, command_id, previous_owner_manager_id, previous_owner_manager_display_name,
                     owner_manager_id, new_owner_manager_display_name, actor_profile_id, actor_display_name,
-                    request_id, version, occurred_at
+                    request_id, reason, handover_note, version, occurred_at
                 ) VALUES (
                     :id, :organizationId, :commandId, :previousOwnerManagerId, :previousOwnerManagerDisplayName,
                     :ownerManagerId, :newOwnerManagerDisplayName, :actorProfileId, :actorDisplayName,
-                    :requestId, :version, :occurredAt
+                    :requestId, :reason, :handoverNote, :version, :occurredAt
                 )
                 """)
                 .param("id", eventId)
@@ -202,6 +241,8 @@ public class OrganizationAssignmentRepository {
                 .param("actorProfileId", actorProfileId)
                 .param("actorDisplayName", actorDisplayName)
                 .param("requestId", requestId)
+                .param("reason", reason == null ? null : reason.name())
+                .param("handoverNote", handoverNote)
                 .param("version", version)
                 .param("occurredAt", occurredAt)
                 .update();
@@ -216,6 +257,8 @@ public class OrganizationAssignmentRepository {
                 actorProfileId,
                 actorDisplayName,
                 requestId,
+                reason,
+                handoverNote,
                 version,
                 occurredAt
         );
@@ -225,7 +268,7 @@ public class OrganizationAssignmentRepository {
         return jdbcClient.sql("""
                 SELECT id, organization_id, command_id, previous_owner_manager_id, previous_owner_manager_display_name,
                        owner_manager_id, new_owner_manager_display_name, actor_profile_id, actor_display_name,
-                       request_id, version, occurred_at
+                       request_id, reason, handover_note, version, occurred_at
                 FROM organization_assignment_events
                 WHERE organization_id = :organizationId
                 ORDER BY occurred_at ASC, id ASC
@@ -236,6 +279,7 @@ public class OrganizationAssignmentRepository {
     }
 
     private OrganizationAssignmentEvent mapEvent(ResultSet resultSet, int rowNumber) throws SQLException {
+        String reason = resultSet.getString("reason");
         return new OrganizationAssignmentEvent(
                 resultSet.getObject("id", UUID.class),
                 resultSet.getObject("organization_id", UUID.class),
@@ -247,6 +291,8 @@ public class OrganizationAssignmentRepository {
                 resultSet.getObject("actor_profile_id", UUID.class),
                 resultSet.getString("actor_display_name"),
                 resultSet.getString("request_id"),
+                reason == null ? null : OrganizationAssignmentReason.valueOf(reason),
+                resultSet.getString("handover_note"),
                 resultSet.getInt("version"),
                 resultSet.getObject("occurred_at", OffsetDateTime.class)
         );

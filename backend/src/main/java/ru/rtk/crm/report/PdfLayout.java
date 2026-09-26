@@ -9,7 +9,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.fontbox.ttf.CmapLookup;
+import org.apache.fontbox.ttf.TTFParser;
+import org.apache.fontbox.ttf.TrueTypeFont;
 import org.apache.pdfbox.io.IOUtils;
+import org.apache.pdfbox.io.RandomAccessReadBuffer;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -18,10 +21,10 @@ import org.apache.pdfbox.pdmodel.font.PDCIDFontType2;
 import org.apache.pdfbox.pdmodel.font.PDType0Font;
 import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
 
-final class PdfLayout {
+public final class PdfLayout {
     static final String FONT_RESOURCE = "/org/apache/pdfbox/resources/ttf/LiberationSans-Regular.ttf";
-    static final float TITLE_SIZE = 12f;
-    static final float NOTE_SIZE = 8f;
+    public static final float TITLE_SIZE = 12f;
+    public static final float NOTE_SIZE = 8f;
 
     private static final PDRectangle PAGE_SIZE = new PDRectangle(PDRectangle.A4.getHeight(), PDRectangle.A4.getWidth());
     private static final float MARGIN = 28f;
@@ -47,7 +50,7 @@ final class PdfLayout {
     private int pageNumber;
     private int rowsOnPage;
 
-    interface Content {
+    public interface Content {
         void render(PdfLayout layout) throws IOException;
     }
 
@@ -61,19 +64,15 @@ final class PdfLayout {
         this.generatedAt = generatedAt;
     }
 
-    static void write(
+    public static void write(
             String title,
             OffsetDateTime generatedAt,
             List<String> notes,
             OutputStream output,
             Content content
     ) throws IOException {
-        try (PDDocument pdf = new PDDocument(IOUtils.createTempFileOnlyStreamCache());
-             InputStream fontData = PdfLayout.class.getResourceAsStream(FONT_RESOURCE)) {
-            if (fontData == null) {
-                throw new IOException("PDF font resource is unavailable");
-            }
-            PdfLayout layout = new PdfLayout(pdf, PDType0Font.load(pdf, fontData, true), title, notes, generatedAt);
+        try (PDDocument pdf = new PDDocument(IOUtils.createTempFileOnlyStreamCache())) {
+            PdfLayout layout = new PdfLayout(pdf, font(pdf), title, notes, generatedAt);
             try {
                 layout.newPage();
                 layout.paragraph(title, TITLE_SIZE);
@@ -91,6 +90,18 @@ final class PdfLayout {
         }
     }
 
+    static PDType0Font font(PDDocument pdf) throws IOException {
+        try (InputStream fontData = PdfLayout.class.getResourceAsStream(FONT_RESOURCE)) {
+            if (fontData == null) {
+                throw new IOException("PDF font resource is unavailable");
+            }
+            TrueTypeFont trueType = new TTFParser().parse(new RandomAccessReadBuffer(fontData));
+            pdf.registerTrueTypeFontForClosing(trueType);
+            trueType.setEnableGsub(false);
+            return PDType0Font.load(pdf, trueType, true);
+        }
+    }
+
     float contentWidth() {
         return contentWidth;
     }
@@ -99,7 +110,7 @@ final class PdfLayout {
         return y - bottom;
     }
 
-    void gap(float height) {
+    public void gap(float height) {
         y -= height;
     }
 
@@ -119,7 +130,7 @@ final class PdfLayout {
         }
     }
 
-    void paragraph(String value, float size) throws IOException {
+    public void paragraph(String value, float size) throws IOException {
         for (String line : wrap(value, size, contentWidth)) {
             if (y - leading(size) < bottom) {
                 newPage();
@@ -133,7 +144,7 @@ final class PdfLayout {
         y -= height;
     }
 
-    void table(List<String> headers, int[] weights) throws IOException {
+    public void table(List<String> headers, int[] weights) throws IOException {
         this.headers = headers;
         int totalWeight = 0;
         for (int weight : weights) {
@@ -146,7 +157,7 @@ final class PdfLayout {
         tableHeader();
     }
 
-    void row(List<String> values) throws IOException {
+    public void row(List<String> values) throws IOException {
         List<List<String>> cells = new ArrayList<>();
         for (int index = 0; index < values.size(); index++) {
             cells.add(wrap(values.get(index), CELL_SIZE, cellWidth(index)));

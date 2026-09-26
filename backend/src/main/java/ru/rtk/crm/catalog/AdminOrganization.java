@@ -10,6 +10,10 @@ public record AdminOrganization(
         String teamName,
         UUID ownerManagerId,
         String ownerManagerName,
-        int version
+        int version,
+        OrganizationStatus status,
+        String city,
+        String website,
+        String inn
 ) {
 }

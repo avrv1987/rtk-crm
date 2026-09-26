@@ -1,6 +1,7 @@
 package ru.rtk.crm.catalogimport;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -37,14 +38,17 @@ import ru.rtk.crm.attachment.AttachmentProperties;
 import ru.rtk.crm.attachment.AttachmentRepository;
 import ru.rtk.crm.attachment.AttachmentScanOutcome;
 import ru.rtk.crm.attachment.AttachmentScanner;
+import ru.rtk.crm.catalog.CatalogChangeEventRepository;
 import ru.rtk.crm.catalog.CatalogRepository;
 import ru.rtk.crm.catalog.ContactRepository;
 import ru.rtk.crm.catalog.OrganizationAssignmentRepository;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
+import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionCreateRequest;
 import ru.rtk.crm.interaction.InteractionRepository;
 import ru.rtk.crm.interaction.InteractionService;
+import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.interaction.WorkflowTemplateRepository;
 
 @JdbcTest(properties = {
@@ -54,6 +58,7 @@ import ru.rtk.crm.interaction.WorkflowTemplateRepository;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
         CatalogImportRepository.class,
+        CatalogChangeEventRepository.class,
         CatalogImportService.class,
         CatalogImportWorkbookReader.class,
         OrganizationAssignmentRepository.class,
@@ -98,11 +103,11 @@ class CatalogImportServiceTest {
     void setUp() {
         createSchema();
         for (String table : List.of(
-                "catalog_import_jobs", "catalog_import_rows", "catalog_imports", "organization_assignment_events",
+                "catalog_change_events", "catalog_import_jobs", "catalog_import_rows", "catalog_imports", "organization_assignment_events",
                 "interaction_events", "command_idempotency_records", "interaction_contacts", "product_agreements",
                 "interaction_stage_transitions", "interaction_stages", "interactions", "workflow_template_transitions",
                 "workflow_template_stages", "workflow_templates", "contacts", "products", "vendors", "programs",
-                "directions", "organizations", "crm_user_profiles"
+                "directions", "organizations", "crm_user_profiles", "teams"
         )) {
             jdbcTemplate.update("DELETE FROM " + table);
         }
@@ -183,6 +188,46 @@ class CatalogImportServiceTest {
     }
 
     @Test
+    void importDoesNotChangeContactWithRestrictedProcessing() throws IOException {
+        UUID organizationId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        insertOrganization(organizationId, null, "Университет Альфа", IVAN);
+        jdbcTemplate.update("""
+                INSERT INTO contacts (id, personal_data_status, organization_id, name, email, version, created_by, created_at, updated_at)
+                VALUES (?, 'RESTRICTED', ?, 'Ольга Кузнецова', 'old@example.test', 2, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, contactId, organizationId, ADMIN);
+        List<String> headers = new ArrayList<>(TZ_HEADERS);
+        headers.add("Почта ответственного");
+        Map<String, String> columns = new LinkedHashMap<>(tzColumns());
+        columns.put("contactEmail", "Почта ответственного");
+        byte[] changed = workbook(headers, List.of(List.of(
+                "Университет Альфа", "Вендор Один", "Платформа", "Д-001", "", "", "", "Иван Петров", "Ольга Кузнецова", "",
+                "new@example.test"
+        )));
+
+        CatalogImportView conflicting = preview(changed, columns, Map.of());
+
+        assertThat(row(conflicting, 2).status()).isEqualTo(CatalogImportRowStatus.CONFLICT);
+        assertThat(row(conflicting, 2).fieldErrors().get("contactName"))
+                .isEqualTo("Контакт обезличен или его обработка ограничена; уточнение — через «Субъект ПДн»");
+
+        byte[] same = workbook(TZ_HEADERS, List.of(List.of(
+                "Университет Альфа", "Вендор Один", "Платформа", "Д-001", "", "", "", "Иван Петров", "Ольга Кузнецова", ""
+        )));
+        CatalogImportView unchanged = preview(same, tzColumns(), Map.of());
+        assertThat(row(unchanged, 2).status()).isEqualTo(CatalogImportRowStatus.CREATE);
+        applyEligible(unchanged);
+
+        assertThat(count("product_agreements")).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForMap(
+                "SELECT email, external_key, version, personal_data_status FROM contacts WHERE id = ?", contactId
+        )).containsEntry("email", "old@example.test")
+                .containsEntry("external_key", null)
+                .containsEntry("version", 2)
+                .containsEntry("personal_data_status", "RESTRICTED");
+    }
+
+    @Test
     void importsTheTemplateFileIntoAnEmptyCrm() throws IOException {
         insertProfile(UUID.randomUUID(), "Иванова Анна (пример)", "USER", TEAM_A);
         insertProfile(UUID.randomUUID(), "Смирнов Олег (пример)", "USER", TEAM_A);
@@ -247,6 +292,22 @@ class CatalogImportServiceTest {
         assertThat(preview(file, tzColumns(), Map.of()).rows())
                 .extracting(CatalogImportRowView::status)
                 .containsExactly(CatalogImportRowStatus.UNCHANGED);
+    }
+
+    @Test
+    void archivedOrganizationIsAConflictAndArchivingAfterPreviewBlocksApply() throws IOException {
+        UUID organizationId = UUID.randomUUID();
+        insertOrganization(organizationId, "ORG-A", "Университет Альфа", IVAN);
+        CatalogImportView beforeArchive = preview(agreementRow("Д-001"), tzColumns(), Map.of());
+        assertThat(row(beforeArchive, 2).status()).isEqualTo(CatalogImportRowStatus.CREATE);
+
+        jdbcTemplate.update("UPDATE organizations SET status = 'ARCHIVED' WHERE id = ?", organizationId);
+
+        assertThatThrownBy(() -> applyEligible(beforeArchive)).isInstanceOf(InteractionConflictException.class);
+        assertThat(count("interactions")).isZero();
+        CatalogImportRowView archivedRow = row(preview(agreementRow("Д-001"), tzColumns(), Map.of()), 2);
+        assertThat(archivedRow.status()).isEqualTo(CatalogImportRowStatus.CONFLICT);
+        assertThat(archivedRow.fieldErrors().get("organizationName")).contains("в архиве");
     }
 
     @Test
@@ -400,15 +461,88 @@ class CatalogImportServiceTest {
                 .containsExactly(CatalogImportRowStatus.UNCHANGED);
     }
 
+    @Test
+    void conflictListsCandidatesContactsAreSplitAndUniversityWithoutManagerAwaitsAssignment() throws IOException {
+        jdbcTemplate.update("INSERT INTO teams (id, name) VALUES (?, 'team-a'), (?, 'team-b')", TEAM_A, TEAM_B);
+        byte[] file = workbook(TZ_HEADERS, List.of(
+                List.of("Университет Альфа", "Вендор Один", "Платформа", "Д-001", "", "", "", "Анна Смирнова", "", ""),
+                List.of("Колледж без менеджера", "Вендор Один", "Облако", "", "", "", "", "", "Смирнова Ольга", ""),
+                List.of("Университет Бета", "Вендор Один", "Платформа", "Д-002", "", "", "", "Иван Петров",
+                        "Сидорова Анна; Кузнецов Илья\nОрлова Мария", "")
+        ));
+
+        CatalogImportView withoutTeam = preview(file, tzColumns(), Map.of());
+
+        assertThat(row(withoutTeam, 2).status()).isEqualTo(CatalogImportRowStatus.CONFLICT);
+        assertThat(row(withoutTeam, 2).managerCandidates())
+                .extracting(CatalogImportManagerCandidate::profileId, CatalogImportManagerCandidate::teamName)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(ANNA_A, "team-a"),
+                        org.assertj.core.groups.Tuple.tuple(ANNA_B, "team-b")
+                );
+        assertThat(row(withoutTeam, 3).fieldErrors().get("managerName")).contains("выберите команду");
+        assertThat(row(withoutTeam, 4).newValues()).containsEntry("contactName", "Сидорова Анна; Кузнецов Илья; Орлова Мария");
+
+        CatalogImportPreviewResponse response = service.preview(admin, file(file), CatalogImportProfile.AGREEMENT, "Каталог",
+                new CatalogImportMapping(tzColumns(), Map.of(), Map.of(), TEAM_B));
+        CatalogImportView preview = service.get(admin, response.importId());
+
+        assertThat(row(preview, 3).status()).isEqualTo(CatalogImportRowStatus.CREATE);
+        assertThat(row(preview, 3).newValues()).containsEntry("managerName", "Требует назначения");
+        applyEligible(preview);
+
+        assertThat(jdbcTemplate.queryForMap("SELECT team_id, owner_manager_id FROM organizations WHERE name = 'Колледж без менеджера'"))
+                .containsEntry("TEAM_ID", TEAM_B)
+                .containsEntry("OWNER_MANAGER_ID", null);
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT contact.name FROM contacts contact
+                JOIN organizations organization ON organization.id = contact.organization_id
+                WHERE organization.name = 'Университет Бета' ORDER BY contact.name
+                """, String.class)).containsExactly("Кузнецов Илья", "Орлова Мария", "Сидорова Анна");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM organizations WHERE name = 'Университет Альфа'", Long.class))
+                .isZero();
+
+        byte[] shortRegistry = workbook(TZ_HEADERS, List.of(
+                List.of("Университет Бета", "Вендор Один", "Облако", "Д-009", "", "", "", "Иван Петров", "", "")
+        ));
+        CatalogImportView missing = preview(shortRegistry, tzColumns(), Map.of());
+        UUID agreementId = jdbcTemplate.queryForObject("SELECT id FROM product_agreements WHERE contract_number = 'Д-002'", UUID.class);
+
+        assertThat(missing.missingRecords()).singleElement().satisfies(record -> {
+            assertThat(record.agreementId()).isEqualTo(agreementId);
+            assertThat(record.organizationName()).isEqualTo("Университет Бета");
+            assertThat(record.productName()).isEqualTo("Платформа");
+        });
+        assertThatThrownBy(() -> service.apply(admin, missing.id(),
+                new CatalogImportApplyRequest(missing.version(), List.of(), List.of(UUID.randomUUID())), "archive-foreign"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                        assertThat(exception.field()).isEqualTo("archiveAgreementIds"));
+
+        service.apply(admin, missing.id(), new CatalogImportApplyRequest(missing.version(), List.of(), List.of(agreementId)),
+                "archive-missing");
+
+        assertThat(jdbcTemplate.queryForObject("SELECT archived_at FROM product_agreements WHERE id = ?", Object.class, agreementId))
+                .isNotNull();
+        assertThat(jdbcTemplate.queryForList("SELECT action FROM catalog_change_events WHERE entity_id = ?", String.class, agreementId))
+                .containsExactly("ARCHIVE");
+        assertThat(preview(shortRegistry, tzColumns(), Map.of()).missingRecords()).isEmpty();
+
+        CatalogImportView restored = preview(file, tzColumns(), Map.of());
+        assertThat(row(restored, 4).newValues()).containsEntry("agreementArchived", "нет");
+        applyEligible(restored);
+        assertThat(jdbcTemplate.queryForObject("SELECT archived_at FROM product_agreements WHERE id = ?", Object.class, agreementId))
+                .isNull();
+    }
+
     private CatalogImportView preview(byte[] file, Map<String, String> columns, Map<Integer, CatalogImportRowTarget> targets) {
         CatalogImportPreviewResponse response = service.preview(admin, file(file), CatalogImportProfile.AGREEMENT, "Каталог",
-                new CatalogImportMapping(columns, targets, Map.of()));
+                new CatalogImportMapping(columns, targets, Map.of(), null));
         return service.get(admin, response.importId());
     }
 
     private CatalogImportView previewDirections(byte[] file, Map<String, String> columns) {
         CatalogImportPreviewResponse response = service.preview(admin, file(file), CatalogImportProfile.DIRECTION_PROGRAM,
-                "Каталог", new CatalogImportMapping(columns, Map.of(), Map.of()));
+                "Каталог", new CatalogImportMapping(columns, Map.of(), Map.of(), null));
         return service.get(admin, response.importId());
     }
 
@@ -418,7 +552,7 @@ class CatalogImportServiceTest {
                         || row.status() == CatalogImportRowStatus.UNCHANGED)
                 .map(CatalogImportRowView::id)
                 .toList();
-        service.apply(admin, view.id(), new CatalogImportApplyRequest(view.version(), rowIds), UUID.randomUUID().toString());
+        service.apply(admin, view.id(), new CatalogImportApplyRequest(view.version(), rowIds, List.of()), UUID.randomUUID().toString());
     }
 
     private static CatalogImportRowView row(CatalogImportView view, int rowNumber) {
@@ -505,11 +639,20 @@ class CatalogImportServiceTest {
     private void createSchema() {
         List.of(
                 """
-                CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL)
+                CREATE TABLE IF NOT EXISTS catalog_change_events (
+                    id UUID PRIMARY KEY, entity_type VARCHAR(16) NOT NULL, entity_id UUID NOT NULL,
+                    action VARCHAR(16) NOT NULL, entity_name VARCHAR(300) NOT NULL, changes VARCHAR(2000),
+                    actor_profile_id UUID NOT NULL, actor_display_name VARCHAR(200) NOT NULL,
+                    request_id VARCHAR(64) NOT NULL, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL, default_workflow_template_id UUID)
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS crm_user_profiles (
-                    id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
+                    id UUID PRIMARY KEY, login VARCHAR(200), idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    activation_requested_at TIMESTAMP WITH TIME ZONE, anonymized_at TIMESTAMP WITH TIME ZONE, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL, access_revision INTEGER NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
@@ -517,12 +660,23 @@ class CatalogImportServiceTest {
                 CREATE TABLE IF NOT EXISTS organizations (
                     id UUID PRIMARY KEY, external_key VARCHAR(200) UNIQUE, name VARCHAR(300) NOT NULL UNIQUE,
                     type VARCHAR(16) NOT NULL, team_id UUID NOT NULL, owner_manager_id UUID, version INTEGER NOT NULL,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE NOT NULL, status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, city VARCHAR(200), website VARCHAR(300), inn VARCHAR(12)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS organization_deputies (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, deputy_profile_id UUID NOT NULL,
+                    deputy_display_name VARCHAR(200) NOT NULL, starts_on DATE NOT NULL, ends_on DATE NOT NULL,
+                    starts_at TIMESTAMP WITH TIME ZONE NOT NULL, ends_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    command_id UUID NOT NULL, actor_profile_id UUID NOT NULL, actor_display_name VARCHAR(200) NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, ended_at TIMESTAMP WITH TIME ZONE,
+                    ended_by_profile_id UUID, ended_by_display_name VARCHAR(200)
                 )
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS contacts (
-                    id UUID PRIMARY KEY, external_key VARCHAR(200) UNIQUE, organization_id UUID NOT NULL,
+                    decision_role VARCHAR(32), primary_contact BOOLEAN DEFAULT FALSE NOT NULL, inactive BOOLEAN DEFAULT FALSE NOT NULL, confirmed_at TIMESTAMP WITH TIME ZONE, confirmed_by UUID,
+                    id UUID PRIMARY KEY, personal_data_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE', external_key VARCHAR(200) UNIQUE, organization_id UUID NOT NULL,
                     name VARCHAR(200) NOT NULL, position VARCHAR(200), email VARCHAR(320), phone VARCHAR(50),
                     version INTEGER NOT NULL, created_by UUID NOT NULL, created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -562,6 +716,7 @@ class CatalogImportServiceTest {
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS interactions (
+                    work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500), problem VARCHAR(1000), risk_level VARCHAR(16), risk_reason VARCHAR(1000),
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL,
                     current_stage_id UUID NOT NULL, next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE,
                     program_id UUID, last_contact_at TIMESTAMP WITH TIME ZONE, version INTEGER NOT NULL,
@@ -573,8 +728,8 @@ class CatalogImportServiceTest {
                 CREATE TABLE IF NOT EXISTS product_agreements (
                     id UUID PRIMARY KEY, external_key VARCHAR(200) UNIQUE, interaction_id UUID NOT NULL,
                     product_id UUID NOT NULL, contract_number VARCHAR(200), license_signed BOOLEAN,
-                    license_expiry_year INTEGER, transfer_status VARCHAR(160), version INTEGER DEFAULT 0 NOT NULL,
-                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    license_expiry_year INTEGER, transfer_status VARCHAR(160), scan_attachment_id UUID, version INTEGER DEFAULT 0 NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL, archived_at TIMESTAMP WITH TIME ZONE
                 )
                 """,
                 """
@@ -634,16 +789,40 @@ class CatalogImportServiceTest {
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS interaction_event_contacts (
+                    event_id UUID NOT NULL,
+                    contact_id UUID NOT NULL,
+                    change_type VARCHAR(16) NOT NULL,
+                    PRIMARY KEY (event_id, contact_id)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS interaction_stage_completions (
+                    interaction_id UUID NOT NULL, stage_id UUID NOT NULL, completed_on DATE NOT NULL,
+                    comment VARCHAR(4000), event_id UUID NOT NULL, PRIMARY KEY (interaction_id, stage_id)
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS attachments (
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_id UUID NOT NULL, event_id UUID,
                     original_name VARCHAR(255) NOT NULL, media_type VARCHAR(160) NOT NULL, size_bytes BIGINT NOT NULL,
                     storage_key UUID NOT NULL, checksum CHAR(64) NOT NULL, status VARCHAR(32) NOT NULL,
+                    kind VARCHAR(32) DEFAULT 'OTHER' NOT NULL, revision INTEGER DEFAULT 1 NOT NULL, replaces_id UUID,
+                    version INTEGER DEFAULT 0 NOT NULL, deleted_at TIMESTAMP WITH TIME ZONE, deleted_by UUID,
                     created_by UUID NOT NULL, created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS product_transfers (
+                    agreement_id UUID NOT NULL, kind VARCHAR(16) NOT NULL, status VARCHAR(16) NOT NULL,
+                    transferred_on DATE, attachment_id UUID, updated_by UUID NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL, PRIMARY KEY (agreement_id, kind)
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS organization_assignment_events (
+                    reason VARCHAR(32), handover_note VARCHAR(2000),
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, command_id UUID NOT NULL,
                     previous_owner_manager_id UUID, previous_owner_manager_display_name VARCHAR(200),
                     owner_manager_id UUID, new_owner_manager_display_name VARCHAR(200), actor_profile_id UUID NOT NULL,

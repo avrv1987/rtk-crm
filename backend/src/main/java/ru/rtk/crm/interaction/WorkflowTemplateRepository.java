@@ -39,6 +39,58 @@ public class WorkflowTemplateRepository {
         return findDefault(true);
     }
 
+    public Optional<WorkflowTemplate> findDefaultForOrganizationForUpdate(UUID organizationId) {
+        return jdbcClient.sql("""
+                SELECT team.default_workflow_template_id
+                FROM organizations organization
+                JOIN teams team ON team.id = organization.team_id
+                WHERE organization.id = :organizationId AND team.default_workflow_template_id IS NOT NULL
+                """)
+                .param("organizationId", organizationId)
+                .query(UUID.class)
+                .optional()
+                .flatMap(this::findByIdForUpdate)
+                .map(this::toTemplate)
+                .or(this::findDefaultForUpdate);
+    }
+
+    public Optional<UUID> findTeamDefaultId(UUID teamId) {
+        return jdbcClient.sql("""
+                SELECT default_workflow_template_id
+                FROM teams
+                WHERE id = :teamId AND default_workflow_template_id IS NOT NULL
+                """)
+                .param("teamId", teamId)
+                .query(UUID.class)
+                .optional();
+    }
+
+    public void updateTeamDefault(UUID teamId, UUID templateId) {
+        jdbcClient.sql("UPDATE teams SET default_workflow_template_id = :templateId WHERE id = :teamId")
+                .param("teamId", teamId)
+                .param("templateId", templateId)
+                .update();
+    }
+
+    public void replaceGlobalDefault(UUID previousTemplateId, UUID templateId, OffsetDateTime updatedAt) {
+        jdbcClient.sql("""
+                UPDATE workflow_templates
+                SET default_template = FALSE, version = version + 1, updated_at = :updatedAt
+                WHERE id = :previousTemplateId
+                """)
+                .param("previousTemplateId", previousTemplateId)
+                .param("updatedAt", updatedAt)
+                .update();
+        jdbcClient.sql("""
+                UPDATE workflow_templates
+                SET default_template = TRUE, version = version + 1, updated_at = :updatedAt
+                WHERE id = :templateId
+                """)
+                .param("templateId", templateId)
+                .param("updatedAt", updatedAt)
+                .update();
+    }
+
     private Optional<WorkflowTemplate> findDefault(boolean forUpdate) {
         String lock = forUpdate ? " FOR UPDATE" : "";
         return jdbcClient.sql(("""
@@ -177,7 +229,7 @@ public class WorkflowTemplateRepository {
                 .params(parameters)
                 .query(Long.class)
                 .single();
-        return new WorkflowTemplatePage(items, query.page(), query.size(), total);
+        return new WorkflowTemplatePage(items, query.page(), query.size(), total, null);
     }
 
     private Optional<WorkflowTemplateRow> findOne(UUID templateId, boolean forUpdate) {

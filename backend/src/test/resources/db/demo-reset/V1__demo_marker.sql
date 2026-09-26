@@ -1,0 +1,1 @@
+CREATE TABLE demo_marker (id INTEGER PRIMARY KEY);

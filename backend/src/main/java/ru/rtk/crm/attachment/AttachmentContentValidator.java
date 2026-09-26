@@ -3,11 +3,13 @@ package ru.rtk.crm.attachment;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Locale;
+import java.util.Set;
 
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
@@ -92,6 +94,8 @@ public class AttachmentContentValidator {
     private enum AttachmentFormat {
         PNG("png", "image/png"),
         JPEG("jpeg", "image/jpeg"),
+        HEIC("heic", "image/heic"),
+        HEIF("heif", "image/heif"),
         PDF("pdf", "application/pdf"),
         ZIP("zip", "application/zip"),
         GZIP("gzip", "application/gzip"),
@@ -100,6 +104,10 @@ public class AttachmentContentValidator {
         DOCX("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         XLS("xls", "application/vnd.ms-excel"),
         XLSX("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+
+        private static final Set<String> HEIF_BRANDS = Set.of(
+                "heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs", "mif1", "msf1"
+        );
 
         private final String extension;
         private final String mediaType;
@@ -137,6 +145,7 @@ public class AttachmentContentValidator {
             return switch (this) {
                 case PNG -> startsWith(prefix, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
                 case JPEG -> startsWith(prefix, 0xff, 0xd8, 0xff);
+                case HEIC, HEIF -> heifSignature(prefix);
                 case PDF -> startsWith(prefix, 0x25, 0x50, 0x44, 0x46, 0x2d);
                 case ZIP, DOCX, XLSX -> zipSignature(prefix);
                 case GZIP -> startsWith(prefix, 0x1f, 0x8b);
@@ -144,6 +153,13 @@ public class AttachmentContentValidator {
                         || startsWith(prefix, 0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x01, 0x00);
                 case DOC, XLS -> startsWith(prefix, 0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1);
             };
+        }
+
+        private static boolean heifSignature(byte[] prefix) {
+            if (prefix.length < 12 || !new String(prefix, 4, 4, StandardCharsets.US_ASCII).equals("ftyp")) {
+                return false;
+            }
+            return HEIF_BRANDS.contains(new String(prefix, 8, 4, StandardCharsets.US_ASCII));
         }
 
         private static boolean zipSignature(byte[] prefix) {

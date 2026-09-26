@@ -10,6 +10,8 @@ public record ReportJob(
         ReportKind kind,
         ReportFormat format,
         StatisticsGroupBy groupBy,
+        ChartType chartType,
+        StatisticsGroupBy seriesBy,
         ReportJobStatus status,
         int progress,
         boolean resultReady,

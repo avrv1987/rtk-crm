@@ -113,6 +113,7 @@ class ReportJobServiceTest {
         assertThat(job.resultReady()).isTrue();
         assertThat(job.rowCount()).isEqualTo(2);
         assertThat(job.fileName()).isEqualTo("Отчёт_портфель_2026-08-01_2026-09-30.xlsx");
+        assertThat(job.chartType()).isNull();
 
         ReportJobService.ReportResult result = reportJobService.result(MANAGER_A_PROFILE, jobId);
         assertThat(result.format()).isEqualTo(ReportFormat.XLSX);
@@ -147,6 +148,8 @@ class ReportJobServiceTest {
         ReportJob png = reportJobService.get(LEADER_A_PROFILE, pngJob);
         assertThat(png.status()).isEqualTo(ReportJobStatus.SUCCEEDED);
         assertThat(png.groupBy()).isEqualTo(StatisticsGroupBy.PRODUCT);
+        assertThat(png.chartType()).isEqualTo(ChartType.BAR);
+        assertThat(png.seriesBy()).isNull();
         assertThat(png.rowCount()).isEqualTo(3);
         assertThat(png.fileName()).isEqualTo("Диаграмма_портфель_по_ИТ-продуктам_2026-08-01_2026-09-30.png");
         ReportJobService.ReportResult pngResult = reportJobService.result(LEADER_A_PROFILE, pngJob);
@@ -181,6 +184,53 @@ class ReportJobServiceTest {
         assertThatThrownBy(() -> reportJobService.result(MANAGER_B_PROFILE, pdfJob))
                 .isInstanceOfSatisfying(ReportException.class,
                         exception -> assertThat(exception.status()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void monthlyLineChartWithSeriesIsRenderedAsPngAndPdfWithBasisTable() throws IOException {
+        UUID pdfJob = reportJobService.submit(LEADER_A_PROFILE, line(ReportFormat.PDF, StatisticsGroupBy.PROGRAM), "line-1").jobId();
+
+        ReportJob pdf = reportJobService.get(LEADER_A_PROFILE, pdfJob);
+        assertThat(pdf.status()).isEqualTo(ReportJobStatus.SUCCEEDED);
+        assertThat(pdf.fileName()).isEqualTo("График_события_по_месяцам_линии_по_ИТ-программам_2026-08-01_2026-10-31.pdf");
+        assertThat(pdf.chartType()).isEqualTo(ChartType.LINE);
+        assertThat(pdf.seriesBy()).isEqualTo(StatisticsGroupBy.PROGRAM);
+        List<String> lines = pdfText(LEADER_A_PROFILE, pdfJob).lines().map(String::strip).toList();
+        assertThat(lines).contains("Таблица основания графика", "август 2026 2 0 2", "сентябрь 2026 3 1 4", "октябрь 2026 1 0 1",
+                "Итого за период 6 1 7", "Всего строк в выборке 7");
+        assertThat(String.join(" ", lines)).contains("Java-разработчик", "Не указано", "Всего за месяц", "пунктирная");
+
+        UUID pngJob = reportJobService.submit(LEADER_A_PROFILE, line(ReportFormat.PNG, null), "line-2").jobId();
+        assertThat(reportJobService.get(LEADER_A_PROFILE, pngJob).fileName()).startsWith("График_события_по_месяцам_2026");
+        BufferedImage image = ImageIO.read(reportJobService.result(LEADER_A_PROFILE, pngJob).file().toFile());
+        assertThat(image.getWidth()).isEqualTo(1200);
+
+        ReportRequest seriesOnBars = new ReportRequest(ReportKind.EVENTS, null, null, null, null, null, ReportFormat.PNG,
+                StatisticsGroupBy.MONTH, null, null, ChartType.BAR, StatisticsGroupBy.PROGRAM);
+        assertThatThrownBy(() -> reportJobService.submit(LEADER_A_PROFILE, seriesOnBars, "line-3"))
+                .isInstanceOf(InteractionValidationException.class);
+    }
+
+    @Test
+    void durationAndSnapshotFilesKeepNumbersAndDateInName() throws IOException {
+        ReportRequest duration = new ReportRequest(ReportKind.DURATION, LocalDate.parse("2026-09-01"),
+                LocalDate.parse("2026-09-20"), null, null, null, ReportFormat.XLSX, null, null, null, null, null);
+        UUID durationJob = reportJobService.submit(LEADER_A_PROFILE, duration, "duration-1").jobId();
+
+        assertThat(reportJobService.get(LEADER_A_PROFILE, durationJob).rowCount()).isEqualTo(8);
+        try (InputStream input = Files.newInputStream(reportJobService.result(LEADER_A_PROFILE, durationJob).file());
+             Workbook workbook = WorkbookFactory.create(input)) {
+            Sheet sheet = workbook.getSheetAt(0);
+            int header = sheet.getLastRowNum() - 10;
+            assertThat(sheet.getRow(header).getCell(4).getStringCellValue()).isEqualTo("Средняя длительность, дн.");
+            assertThat(sheet.getRow(header + 1).getCell(4).getNumericCellValue()).isEqualTo(26.1);
+            assertThat(sheet.getRow(header + 3).getCell(4).getStringCellValue()).isEqualTo("нет данных");
+        }
+
+        ReportRequest snapshot = new ReportRequest(ReportKind.SNAPSHOT, null, null, null, null, null, ReportFormat.JSON, null,
+                null, LocalDate.parse("2026-09-10"), null, null);
+        UUID snapshotJob = reportJobService.submit(LEADER_A_PROFILE, snapshot, "snapshot-1").jobId();
+        assertThat(reportJobService.get(LEADER_A_PROFILE, snapshotJob).fileName()).isEqualTo("Отчёт_состояние_на_2026-09-10.json");
     }
 
     @Test
@@ -329,6 +379,11 @@ class ReportJobServiceTest {
                 groupBy,
                 null
         );
+    }
+
+    private ReportRequest line(ReportFormat format, StatisticsGroupBy seriesBy) {
+        return new ReportRequest(ReportKind.EVENTS, LocalDate.parse("2026-08-01"), LocalDate.parse("2026-10-31"), null, null,
+                null, format, StatisticsGroupBy.MONTH, null, null, ChartType.LINE, seriesBy);
     }
 
     private String pdfText(CrmProfile profile, UUID jobId) throws IOException {

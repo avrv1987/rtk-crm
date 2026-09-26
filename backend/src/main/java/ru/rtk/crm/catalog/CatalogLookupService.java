@@ -16,28 +16,28 @@ public class CatalogLookupService {
     }
 
     @Transactional(readOnly = true)
-    public CatalogPage listPrograms(CrmProfile profile, CatalogQuery query) {
+    public CatalogPage listPrograms(CrmProfile profile, CatalogQuery query, CatalogEntryState state) {
         return hasBusinessCatalogScope(profile)
-                ? catalogRepository.findActivePrograms(query)
+                ? catalogRepository.findPrograms(query, state)
                 : empty(query);
     }
 
     @Transactional(readOnly = true)
-    public CatalogPage listProducts(CrmProfile profile, CatalogQuery query) {
+    public CatalogPage listProducts(CrmProfile profile, CatalogQuery query, CatalogEntryState state) {
         return hasBusinessCatalogScope(profile)
-                ? catalogRepository.findActiveProducts(query)
+                ? catalogRepository.findProducts(query, state)
                 : empty(query);
     }
 
     @Transactional(readOnly = true)
-    public CatalogPage listDirections(CrmProfile profile, CatalogQuery query) {
+    public CatalogPage listDirections(CrmProfile profile, CatalogQuery query, CatalogEntryState state) {
         return hasBusinessCatalogScope(profile)
-                ? catalogRepository.findActiveDirections(query)
+                ? catalogRepository.findDirections(query, state)
                 : empty(query);
     }
 
     private boolean hasBusinessCatalogScope(CrmProfile profile) {
-        return profile.teamId() != null && profile.role() != UserRole.ADMIN;
+        return profile.role() == UserRole.MANAGEMENT || (profile.teamId() != null && profile.role() != UserRole.ADMIN);
     }
 
     private CatalogPage empty(CatalogQuery query) {

@@ -8,7 +8,8 @@ export type SessionHandlers = {
 export const roleLabels: Record<CrmProfile['role'], string> = {
   USER: 'Менеджер (КАМ)',
   LEADER: 'Руководитель команды',
-  ADMIN: 'Администратор'
+  ADMIN: 'Администратор',
+  MANAGEMENT: 'Руководство (только чтение)'
 }
 
 const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', {

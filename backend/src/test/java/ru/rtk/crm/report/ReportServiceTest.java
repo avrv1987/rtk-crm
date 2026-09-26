@@ -13,15 +13,19 @@ import static ru.rtk.crm.report.ReportTestData.LEADER_A_PROFILE;
 import static ru.rtk.crm.report.ReportTestData.MANAGER_A;
 import static ru.rtk.crm.report.ReportTestData.MANAGER_A2;
 import static ru.rtk.crm.report.ReportTestData.MANAGER_A_PROFILE;
+import static ru.rtk.crm.report.ReportTestData.MANAGER_B;
 import static ru.rtk.crm.report.ReportTestData.MANAGER_B_PROFILE;
 import static ru.rtk.crm.report.ReportTestData.ORGANIZATION_A;
 import static ru.rtk.crm.report.ReportTestData.ORGANIZATION_B;
 import static ru.rtk.crm.report.ReportTestData.PRODUCT_X;
 import static ru.rtk.crm.report.ReportTestData.PRODUCT_Y;
 import static ru.rtk.crm.report.ReportTestData.PROGRAM;
+import static ru.rtk.crm.report.ReportTestData.VENDOR_ALPHA;
+import static ru.rtk.crm.report.ReportTestData.VENDOR_BETA;
 
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -35,8 +39,12 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import ru.rtk.crm.access.CrmProfile;
+import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.catalog.OrganizationRepository;
+import ru.rtk.crm.interaction.InteractionFlag;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.interaction.InteractionWorkStatus;
+import ru.rtk.crm.interaction.ProductTransferKind;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
@@ -100,6 +108,58 @@ class ReportServiceTest {
     }
 
     @Test
+    void managementSeesAllTeamsInReportsWithoutTeam() {
+        CrmProfile management = new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0);
+
+        assertThat(interactionIds(management, portfolio(filters()))).containsExactlyInAnyOrder(
+                INTERACTION_TWO_PRODUCTS,
+                INTERACTION_WITHOUT_LINKS,
+                INTERACTION_UNASSIGNED,
+                INTERACTION_FOREIGN
+        );
+        assertThat(reportService.managers(management)).extracting(ReportManagerOption::id)
+                .contains(MANAGER_A, MANAGER_B);
+    }
+
+    @Test
+    void leaderResponsibleForOrganizationAppearsAsManagerInFiltersRowsAndStatistics() {
+        jdbcTemplate.update(
+                "UPDATE organizations SET owner_manager_id = ? WHERE id = ?",
+                ReportTestData.LEADER_A,
+                ReportTestData.ORGANIZATION_A_UNASSIGNED
+        );
+
+        assertThat(reportService.managers(LEADER_A_PROFILE)).extracting(ReportManagerOption::id)
+                .containsExactlyInAnyOrder(MANAGER_A, MANAGER_A2, ReportTestData.LEADER_A);
+        assertThat(rows(LEADER_A_PROFILE, portfolio(filters().managers(ReportTestData.LEADER_A))))
+                .singleElement()
+                .satisfies(row -> {
+                    assertThat(row.interactionId()).isEqualTo(INTERACTION_UNASSIGNED);
+                    assertThat(row.managerName()).isEqualTo("Галина Лебедева");
+                });
+        assertThat(reportService.statistics(
+                LEADER_A_PROFILE,
+                statistics(ReportKind.PORTFOLIO, StatisticsGroupBy.MANAGER, null, null, filters())
+        ).items()).extracting(StatisticsResult.Item::label).contains("Галина Лебедева");
+    }
+
+    @Test
+    void eventsReportNamesStageCompletionMarks() {
+        OffsetDateTime markedAt = OffsetDateTime.parse("2026-09-21T10:00:00+03:00");
+        ReportTestData.event(jdbcTemplate, INTERACTION_WITHOUT_LINKS, "STAGE_COMPLETED", "Встреча", null,
+                "Дата выполнения: 20.09.2026", MANAGER_A, markedAt);
+        ReportTestData.event(jdbcTemplate, INTERACTION_WITHOUT_LINKS, "STAGE_COMPLETION_CLEARED", "Встреча", null,
+                "Снята отметка о выполнении 20.09.2026", MANAGER_A, markedAt.plusHours(1));
+
+        assertThat(rows(MANAGER_A_PROFILE, events(LocalDate.parse("2026-09-21"), LocalDate.parse("2026-09-21"), filters())))
+                .extracting(ReportRow::eventType, ReportRow::stageName, ReportRow::comment)
+                .containsExactlyInAnyOrder(
+                        tuple("Этап отмечен выполненным", "Встреча", "Дата выполнения: 20.09.2026"),
+                        tuple("Снята отметка выполнения этапа", "Встреча", "Снята отметка о выполнении 20.09.2026")
+                );
+    }
+
+    @Test
     void twoProductsDoNotDuplicateInteractionRowOrCounters() {
         ReportRequest request = portfolio(filters().products(PRODUCT_X, PRODUCT_Y));
 
@@ -139,6 +199,78 @@ class ReportServiceTest {
                         tuple(PRODUCT_Y.toString(), 5L)
                 );
         assertThat(eventsByProduct.maxChartBars()).isEqualTo(StatisticsResult.MAX_CHART_BARS);
+    }
+
+    @Test
+    void archivedAgreementLeavesProductFiltersListsAndCounters() {
+        jdbcTemplate.update("UPDATE product_agreements SET archived_at = CURRENT_TIMESTAMP WHERE interaction_id = ? AND product_id = ?",
+                INTERACTION_TWO_PRODUCTS, PRODUCT_X);
+        jdbcTemplate.update("UPDATE product_agreements SET archived_at = CURRENT_TIMESTAMP WHERE interaction_id = ?",
+                INTERACTION_UNASSIGNED);
+
+        assertThat(interactionIds(LEADER_A_PROFILE, portfolio(filters().products(PRODUCT_X)))).isEmpty();
+        assertThat(interactionIds(LEADER_A_PROFILE, portfolio(filters().noProduct())))
+                .containsExactlyInAnyOrder(INTERACTION_WITHOUT_LINKS, INTERACTION_UNASSIGNED);
+        ReportRow twoProducts = rows(LEADER_A_PROFILE, portfolio(filters().products(PRODUCT_Y))).getFirst();
+        assertThat(twoProducts.productNames()).isEqualTo("Продукт Игрек");
+
+        StatisticsResult byProduct = reportService.statistics(
+                LEADER_A_PROFILE,
+                statistics(ReportKind.PORTFOLIO, StatisticsGroupBy.PRODUCT, null, null, filters())
+        );
+        assertThat(byProduct.total()).isEqualTo(3);
+        assertThat(byProduct.unknownCount()).isEqualTo(2);
+        assertThat(byProduct.items()).extracting(StatisticsResult.Item::key, StatisticsResult.Item::count)
+                .containsExactly(tuple(PRODUCT_Y.toString(), 1L));
+    }
+
+    @Test
+    void portfolioShowsWorkStatusColumnAndSelectsClosedWork() {
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'COMPLETED' WHERE id = ?", INTERACTION_WITHOUT_LINKS);
+
+        assertThat(interactionIds(LEADER_A_PROFILE, portfolio(filters().workStatuses(InteractionWorkStatus.COMPLETED))))
+                .containsExactly(INTERACTION_WITHOUT_LINKS);
+        assertThat(interactionIds(LEADER_A_PROFILE, portfolio(filters().workStatuses(InteractionWorkStatus.ACTIVE))))
+                .containsExactlyInAnyOrder(INTERACTION_TWO_PRODUCTS, INTERACTION_UNASSIGNED);
+        assertThat(rows(LEADER_A_PROFILE, portfolio(filters())))
+                .filteredOn(row -> row.interactionId().equals(INTERACTION_WITHOUT_LINKS)).singleElement()
+                .satisfies(row -> assertThat(ReportColumn.WORK_STATUS.text(row)).isEqualTo("Завершена"));
+        assertThat(ReportKind.PORTFOLIO.columns()).contains(ReportColumn.WORK_STATUS);
+        assertThatThrownBy(() -> reportService.document(
+                LEADER_A_PROFILE,
+                demand(null, null, filters().workStatuses(InteractionWorkStatus.ACTIVE), null)
+        )).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("filters.workStatuses"));
+    }
+
+    @Test
+    void portfolioShowsWaitingProblemAndRiskAndSelectsWorkByThem() {
+        jdbcTemplate.update(
+                "UPDATE interactions SET waiting_on = 'UNIVERSITY', waiting_note = 'доступы', risk_level = 'HIGH', "
+                        + "risk_reason = 'вуз не отвечает три недели' WHERE id = ?",
+                INTERACTION_TWO_PRODUCTS
+        );
+        jdbcTemplate.update("UPDATE interactions SET problem = 'нет доступа к стенду' WHERE id = ?", INTERACTION_UNASSIGNED);
+
+        assertThat(interactionIds(LEADER_A_PROFILE, portfolio(filters().flags(InteractionFlag.RISK))))
+                .containsExactly(INTERACTION_TWO_PRODUCTS);
+        assertThat(interactionIds(LEADER_A_PROFILE, portfolio(filters().flags(InteractionFlag.PROBLEM))))
+                .containsExactly(INTERACTION_UNASSIGNED);
+        assertThat(interactionIds(LEADER_A_PROFILE, portfolio(filters().flags(InteractionFlag.WAITING_UNIVERSITY, InteractionFlag.RISK))))
+                .containsExactly(INTERACTION_TWO_PRODUCTS);
+        assertThat(interactionIds(LEADER_A_PROFILE, portfolio(filters().flags(InteractionFlag.WAITING_RTK)))).isEmpty();
+        assertThat(rows(LEADER_A_PROFILE, portfolio(filters())))
+                .filteredOn(row -> row.interactionId().equals(INTERACTION_TWO_PRODUCTS)).singleElement()
+                .satisfies(row -> {
+                    assertThat(ReportColumn.WAITING.text(row)).isEqualTo("Ждём вуз: доступы");
+                    assertThat(ReportColumn.RISK.text(row)).isEqualTo("высокий: вуз не отвечает три недели");
+                    assertThat(ReportColumn.PROBLEM.text(row)).isEmpty();
+                });
+        assertThatThrownBy(() -> reportService.document(
+                LEADER_A_PROFILE,
+                demand(null, null, filters().flags(InteractionFlag.RISK), null)
+        )).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("filters.flags"));
     }
 
     @Test
@@ -200,6 +332,29 @@ class ReportServiceTest {
     }
 
     @Test
+    void eventCommentNamesLinkedContactsFromTheContactRecordAtReadTime() {
+        UUID eventId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO contacts (id, organization_id, name) VALUES (?, ?, ?)",
+                contactId, UUID.randomUUID(), "Ирина Контактная");
+        jdbcTemplate.update("""
+                INSERT INTO interaction_events (
+                    id, interaction_id, type, stage_name_snapshot, comment, actor_profile_id, owner_manager_id_snapshot, occurred_at
+                ) VALUES (?, ?, 'DETAILS_UPDATED', 'Поиск контакта', 'Название: «А» → «Б»', ?, ?, ?)
+                """, eventId, INTERACTION_WITHOUT_LINKS, MANAGER_A, MANAGER_A, ReportTestData.at("2026-10-15T10:00:00Z"));
+        jdbcTemplate.update("INSERT INTO interaction_event_contacts (event_id, contact_id, change_type) VALUES (?, ?, 'ADDED')",
+                eventId, contactId);
+        LocalDate day = LocalDate.parse("2026-10-15");
+
+        assertThat(rows(LEADER_A_PROFILE, events(day, day, filters()))).extracting(ReportRow::comment)
+                .containsExactly("Название: «А» → «Б»; Добавлены контакты: «Ирина Контактная»");
+
+        jdbcTemplate.update("UPDATE contacts SET name = 'Контакт обезличен' WHERE id = ?", contactId);
+        assertThat(rows(LEADER_A_PROFILE, events(day, day, filters()))).extracting(ReportRow::comment)
+                .containsExactly("Название: «А» → «Б»; Добавлены контакты: «Контакт обезличен»");
+    }
+
+    @Test
     void monthStatisticsFillsZeroMonthsSeparatelyFromUnknown() {
         ReportTestData.event(jdbcTemplate, INTERACTION_WITHOUT_LINKS, "COMMENTED", "Поиск контакта", null,
                 "Полночь по Москве, вечер по UTC", MANAGER_A, ReportTestData.at("2026-09-30T21:30:00Z"));
@@ -225,7 +380,7 @@ class ReportServiceTest {
     @Test
     void monthGroupingIsRejectedForPortfolioSelectedByActivity() {
         StatisticsRequest activityByMonth = new StatisticsRequest(ReportKind.PORTFOLIO, StatisticsGroupBy.MONTH,
-                SEPTEMBER_FIRST, SEPTEMBER_LAST, PeriodBasis.ACTIVITY, filters().build());
+                SEPTEMBER_FIRST, SEPTEMBER_LAST, PeriodBasis.ACTIVITY, filters().build(), null, null);
 
         assertThatThrownBy(() -> reportService.statistics(LEADER_A_PROFILE, activityByMonth))
                 .isInstanceOfSatisfying(InteractionValidationException.class,
@@ -233,7 +388,7 @@ class ReportServiceTest {
 
         StatisticsResult createdByMonth = reportService.statistics(LEADER_A_PROFILE, new StatisticsRequest(
                 ReportKind.PORTFOLIO, StatisticsGroupBy.MONTH, SEPTEMBER_FIRST, SEPTEMBER_LAST, PeriodBasis.CREATED,
-                filters().build()));
+                filters().build(), null, null));
         assertThat(createdByMonth.items()).extracting(StatisticsResult.Item::key, StatisticsResult.Item::count)
                 .containsExactly(tuple("2026-09", 2L));
     }
@@ -271,8 +426,14 @@ class ReportServiceTest {
                 .extracting(ReportRow::programName, ReportRow::parallelRuns)
                 .containsExactlyInAnyOrder(tuple("Java-разработчик", 0L), tuple(null, null), tuple("Анализ данных", 1L));
         assertThat(rows(LEADER_A_PROFILE, demand(null, ReportTestData.TODAY.minusDays(31), filters(), null)))
+                .allSatisfy(row -> assertThat(row.participants()).isNull());
+        assertThat(rows(LEADER_A_PROFILE, demand(ReportTestData.TODAY.plusDays(10), ReportTestData.TODAY.plusDays(20),
+                filters(), null)))
                 .extracting(ReportRow::programName, ReportRow::participants, ReportRow::parallelRuns)
-                .contains(tuple("Java-разработчик", 8L, 0L), tuple("Анализ данных", 3L, 0L));
+                .containsExactlyInAnyOrder(tuple("Java-разработчик", 8L, 2L), tuple("Анализ данных", 3L, 1L));
+        assertThat(rows(LEADER_A_PROFILE, demand(ReportTestData.RUN_ENDS, null, filters(), null)))
+                .extracting(ReportRow::programName, ReportRow::participants)
+                .containsExactly(tuple("Анализ данных", 3L));
         assertThat(rows(MANAGER_A_PROFILE, demand(null, null, filters(), null)))
                 .extracting(ReportRow::programName, ReportRow::applications)
                 .containsExactly(tuple(null, 4L), tuple("Java-разработчик", 3L));
@@ -287,8 +448,9 @@ class ReportServiceTest {
                 .containsExactly(tuple(7L, 4L));
         assertThat(rows(ADMIN_PROFILE, demand(null, null, filters(), null))).isEmpty();
         assertThat(rows(LEADER_A_PROFILE, demand(SEPTEMBER_FIRST, SEPTEMBER_LAST, filters(), null)))
-                .extracting(ReportRow::applications, ReportRow::participants)
-                .containsExactly(tuple(4L, null), tuple(3L, 8L), tuple(null, 3L));
+                .filteredOn(row -> row.applications() != null)
+                .extracting(ReportRow::programName, ReportRow::applications)
+                .containsExactly(tuple(null, 4L), tuple("Java-разработчик", 3L));
         assertThat(rows(LEADER_A_PROFILE, demand(null, null, filters().programs(PROGRAM), null)))
                 .extracting(ReportRow::applications, ReportRow::participants)
                 .containsExactly(tuple(5L, 8L));
@@ -300,8 +462,16 @@ class ReportServiceTest {
                 tuple(ReportColumn.PROGRAM, ReportColumn.UNSPECIFIED),
                 tuple(ReportColumn.APPLICATIONS, ReportColumn.NO_DATA),
                 tuple(ReportColumn.PARTICIPANTS, ReportColumn.NO_DATA),
+                tuple(ReportColumn.LEARNERS_COMPLETED, ReportColumn.NO_DATA),
                 tuple(ReportColumn.PARALLEL_RUNS, ReportColumn.NO_DATA)
         );
+        assertThat(preview.columns()).extracting(ReportColumnView::title).contains("Заявки (сайт, весь период)")
+                .anyMatch(title -> title.startsWith("Обучающиеся (Moodle, снимок "));
+        assertThat(reportService.preview(LEADER_A_PROFILE, demand(SEPTEMBER_FIRST, SEPTEMBER_LAST, filters(), null), 0, 50)
+                .columns()).extracting(ReportColumnView::title)
+                .contains("Заявки (сайт, 01.09.2026–30.09.2026)", "Параллельные потоки (Moodle, на 30.09.2026)");
+        assertThat(preview.notes()).anyMatch(note -> note.startsWith("Снимок Moodle: последнее наблюдение")
+                && note.contains("период заявок: весь период"));
         assertThat(preview.notes()).anyMatch(note -> note.contains("нет данных") && note.contains("сортировка: заявки"));
 
         StatisticsResult byProgram = reportService.statistics(
@@ -325,6 +495,79 @@ class ReportServiceTest {
         assertThatThrownBy(() -> rows(LEADER_A_PROFILE, new ReportRequest(ReportKind.PORTFOLIO, null, null, null,
                 filters().build(), null, null, null, ReportColumn.APPLICATIONS)))
                 .isInstanceOf(InteractionValidationException.class);
+    }
+
+    @Test
+    void agreementColumnsAndFiltersFollowVendorLicenseAndTransferMarksOfTheSameProduct() {
+        jdbcTemplate.update("""
+                UPDATE product_agreements
+                SET contract_number = '007/2026', license_signed = TRUE, license_expiry_year = 2026,
+                    transfer_status = 'Передано частично'
+                WHERE interaction_id = ? AND product_id = ?
+                """, INTERACTION_TWO_PRODUCTS, PRODUCT_X);
+        UUID agreementX = jdbcTemplate.queryForObject(
+                "SELECT id FROM product_agreements WHERE interaction_id = ? AND product_id = ?",
+                UUID.class, INTERACTION_TWO_PRODUCTS, PRODUCT_X);
+        jdbcTemplate.update("""
+                INSERT INTO product_transfers (agreement_id, kind, status, transferred_on, updated_by, updated_at)
+                VALUES (?, 'MATERIALS', 'TRANSFERRED', DATE '2026-09-20', ?, CURRENT_TIMESTAMP)
+                """, agreementX, MANAGER_A);
+        ReportAgreementFilters expiringSigned = new ReportAgreementFilters(
+                List.of(VENDOR_ALPHA), true, 2026, List.of(ProductTransferKind.DOCUMENTATION));
+
+        assertThat(rows(MANAGER_A_PROFILE, portfolio(filters().agreement(expiringSigned)))).singleElement().satisfies(row -> {
+            assertThat(row.interactionId()).isEqualTo(INTERACTION_TWO_PRODUCTS);
+            assertThat(row.vendorNames()).isEqualTo("Вендор Бета, Вендор Альфа");
+            assertThat(row.contractNumbers()).isEqualTo("Продукт Игрек: Не указано; Продукт Икс: 007/2026");
+            assertThat(row.licenseSigned()).isEqualTo("Продукт Игрек: Не указано; Продукт Икс: Подписана");
+            assertThat(row.licenseExpiryYears()).isEqualTo("Продукт Игрек: Не указано; Продукт Икс: 2026");
+            assertThat(row.transferStatuses()).isEqualTo("Продукт Игрек: Не указано; Продукт Икс: Передано частично");
+            assertThat(row.materialsTransferredOn()).isEqualTo("Продукт Игрек: Не указано; Продукт Икс: 20.09.2026");
+        });
+        assertThat(interactionIds(MANAGER_A_PROFILE, portfolio(filters().agreement(
+                new ReportAgreementFilters(List.of(), null, 2025, List.of()))))).isEmpty();
+        assertThat(interactionIds(MANAGER_A_PROFILE, portfolio(filters().agreement(
+                new ReportAgreementFilters(List.of(VENDOR_BETA), true, null, List.of()))))).isEmpty();
+        assertThat(interactionIds(MANAGER_A_PROFILE, portfolio(filters().products(PRODUCT_X).agreement(
+                new ReportAgreementFilters(List.of(), null, null, List.of(ProductTransferKind.MATERIALS)))))).isEmpty();
+        assertThat(interactionIds(MANAGER_A_PROFILE, portfolio(filters().products(PRODUCT_Y).agreement(
+                new ReportAgreementFilters(List.of(), false, null, List.of(ProductTransferKind.MATERIALS))))))
+                .containsExactly(INTERACTION_TWO_PRODUCTS);
+        assertThat(interactionIds(MANAGER_B_PROFILE, portfolio(filters().agreement(
+                new ReportAgreementFilters(List.of(VENDOR_ALPHA), null, null, List.of())))))
+                .containsExactly(INTERACTION_FOREIGN);
+
+        ReportPreview preview = reportService.preview(MANAGER_A_PROFILE, portfolio(filters().agreement(expiringSigned)), 0, 10);
+        assertThat(preview.total()).isEqualTo(1);
+        assertThat(preview.notes()).anySatisfy(note -> assertThat(note).contains(
+                "вендоры: Вендор Альфа",
+                "лицензия: подписана",
+                "лицензия истекает до: 2026 г. включительно",
+                "не передано: документация"
+        ));
+        assertThat(preview.columns()).extracting(ReportColumnView::id)
+                .hasSize(16)
+                .doesNotContain(ReportColumn.VENDORS, ReportColumn.TRANSFER_STATUS);
+        ReportPreview chosen = reportService.preview(MANAGER_A_PROFILE, new ReportRequest(ReportKind.PORTFOLIO, null, null,
+                null, filters().build(), List.of(ReportColumn.VENDORS, ReportColumn.TRANSFER_STATUS), null, null, null), 0, 10);
+        assertThat(chosen.columns()).extracting(ReportColumnView::id)
+                .containsExactly(ReportColumn.VENDORS, ReportColumn.TRANSFER_STATUS);
+
+        ReportAgreementFilters materialsMissing = new ReportAgreementFilters(
+                List.of(), null, null, List.of(ProductTransferKind.MATERIALS));
+        jdbcTemplate.update("UPDATE product_agreements SET transfer_status = 'Передано' WHERE interaction_id = ? AND product_id = ?",
+                INTERACTION_TWO_PRODUCTS, PRODUCT_Y);
+        assertThat(interactionIds(MANAGER_A_PROFILE, portfolio(filters().products(PRODUCT_Y).agreement(materialsMissing))))
+                .isEmpty();
+        jdbcTemplate.update("UPDATE product_agreements SET transfer_status = 'Передано' WHERE interaction_id = ? AND product_id = ?",
+                INTERACTION_TWO_PRODUCTS, PRODUCT_X);
+        assertThat(interactionIds(MANAGER_A_PROFILE, portfolio(filters().products(PRODUCT_X).agreement(
+                new ReportAgreementFilters(List.of(), null, null, List.of(ProductTransferKind.LICENSE))))))
+                .containsExactly(INTERACTION_TWO_PRODUCTS);
+        assertThatThrownBy(() -> reportService.preview(MANAGER_A_PROFILE, demand(null, null, filters().agreement(
+                new ReportAgreementFilters(List.of(VENDOR_ALPHA), null, null, List.of())), null), 0, 10))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.field()).isEqualTo("filters.agreement"));
     }
 
     private static ReportRequest demand(LocalDate from, LocalDate to, Filters filters, ReportColumn sortBy) {
@@ -354,7 +597,7 @@ class ReportServiceTest {
             LocalDate to,
             Filters filters
     ) {
-        return new StatisticsRequest(kind, groupBy, from, to, null, filters.build());
+        return new StatisticsRequest(kind, groupBy, from, to, null, filters.build(), null, null);
     }
 
     private static Filters filters() {
@@ -372,6 +615,25 @@ class ReportServiceTest {
         private List<UUID> managers = List.of();
         private boolean noManager;
         private List<String> stages = List.of();
+        private List<InteractionWorkStatus> workStatuses = List.of();
+        private List<InteractionFlag> flags = List.of();
+
+        Filters workStatuses(InteractionWorkStatus... statuses) {
+            workStatuses = List.of(statuses);
+            return this;
+        }
+
+        Filters flags(InteractionFlag... values) {
+            flags = List.of(values);
+            return this;
+        }
+
+        private ReportAgreementFilters agreement = ReportAgreementFilters.none();
+
+        Filters agreement(ReportAgreementFilters value) {
+            agreement = value;
+            return this;
+        }
 
         Filters organizations(UUID... ids) {
             organizations = List.of(ids);
@@ -425,7 +687,7 @@ class ReportServiceTest {
 
         ReportFilters build() {
             return new ReportFilters(organizations, directions, noDirection, programs, noProgram, products, noProduct,
-                    managers, noManager, stages, null);
+                    managers, noManager, stages, null, workStatuses, flags, agreement, List.of(), null);
         }
     }
 

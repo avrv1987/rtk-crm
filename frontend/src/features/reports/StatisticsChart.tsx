@@ -9,9 +9,13 @@ type Bar = {
   unspecified: boolean
 }
 
-const unspecifiedLabel = 'Не указано'
+export const unspecifiedLabel = 'Не указано'
 
-const mayBeUnspecified: ReadonlySet<StatisticsGroupBy> = new Set<StatisticsGroupBy>(['DIRECTION', 'PROGRAM', 'PRODUCT', 'MANAGER'])
+const unspecifiedGroupings: ReadonlySet<StatisticsGroupBy> = new Set<StatisticsGroupBy>(['DIRECTION', 'PROGRAM', 'PRODUCT', 'MANAGER'])
+
+const mayBeUnspecified = (result: StatisticsResult) => (
+  unspecifiedGroupings.has(result.groupBy) || (result.kind === 'EVENTS' && result.groupBy === 'STAGE')
+)
 
 const groupingHeaders: Record<StatisticsGroupBy, string> = {
   STAGE: 'Этап',
@@ -23,22 +27,31 @@ const groupingHeaders: Record<StatisticsGroupBy, string> = {
   MONTH: 'Месяц'
 }
 
-const kindTitles: Record<StatisticsResult['kind'], string> = {
+export const kindTitles: Record<StatisticsResult['kind'], string> = {
   PORTFOLIO: 'Портфель взаимодействий: текущее состояние',
   EVENTS: 'События взаимодействий за период',
-  DEMAND: 'Востребованность программ'
+  DEMAND: 'Востребованность программ',
+  SNAPSHOT: 'Состояние портфеля на дату',
+  DURATION: 'Длительность этапов и цикла',
+  AGREEMENTS: 'Реализация соглашений с вузами'
 }
 
-const countTitles: Record<StatisticsResult['kind'], string> = {
+export const countTitles: Record<StatisticsResult['kind'], string> = {
   PORTFOLIO: 'Число взаимодействий',
   EVENTS: 'Число событий',
-  DEMAND: 'Число заявок'
+  DEMAND: 'Число заявок',
+  SNAPSHOT: 'Число взаимодействий',
+  DURATION: 'Число групп',
+  AGREEMENTS: 'Число мероприятий'
 }
 
-const monthTitles: Record<StatisticsResult['kind'], string> = {
+export const monthTitles: Record<StatisticsResult['kind'], string> = {
   PORTFOLIO: 'Месяц создания взаимодействия',
   EVENTS: 'Месяц события',
-  DEMAND: 'Месяц подачи заявки'
+  DEMAND: 'Месяц подачи заявки',
+  SNAPSHOT: 'Месяц создания взаимодействия',
+  DURATION: 'Месяц',
+  AGREEMENTS: 'Месяц мероприятия'
 }
 
 const labelLineLength = 32
@@ -51,12 +64,12 @@ const barAreaPercent = 86
 
 export const chartBars = (result: StatisticsResult): Bar[] => [
   ...result.items.map((item) => ({ key: item.key, label: item.label, count: item.count, unspecified: false })),
-  ...(mayBeUnspecified.has(result.groupBy)
+  ...(mayBeUnspecified(result)
     ? [{ key: 'unspecified', label: unspecifiedLabel, count: result.unknownCount, unspecified: true }]
     : [])
 ]
 
-const axisStep = (max: number) => {
+export const axisStep = (max: number) => {
   const raw = Math.max(1, Math.ceil(max / 5))
   let magnitude = 1
   while (magnitude * 10 <= raw) {
@@ -88,7 +101,7 @@ const captionLines = (result: StatisticsResult) => [
   ...(result.groupBy === 'PRODUCT'
     ? ['Строка с несколькими ИТ-продуктами учтена в каждом из них, поэтому сумма столбцов может быть больше итога.']
     : []),
-  ...(mayBeUnspecified.has(result.groupBy)
+  ...(mayBeUnspecified(result)
     ? [`«${unspecifiedLabel}» (штриховка) — строки без значения группировки: ${result.unknownCount}; это не нулевое значение.`]
     : []),
   ...(result.groupBy === 'MONTH'
@@ -117,7 +130,9 @@ export const StatisticsChart = ({ result }: StatisticsChartProps) => {
   const height = lastRow === undefined ? axisHeight + 40 : lastRow.top + lastRow.lines.length * labelLineHeight + barGap + 8
   const title = `${kindTitles[result.kind]} — ${groupingTitles[result.groupBy]}`
   const countTitle = countTitles[result.kind]
-  const groupHeader = result.kind === 'EVENTS' && result.groupBy === 'MANAGER'
+  const groupHeader = result.groupBy === 'MANAGER' && result.kind === 'SNAPSHOT'
+    ? 'Ответственный на дату'
+    : result.kind === 'EVENTS' && result.groupBy === 'MANAGER'
     ? 'Ответственный на момент события'
     : groupingHeaders[result.groupBy]
 

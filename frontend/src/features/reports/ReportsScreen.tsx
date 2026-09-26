@@ -3,37 +3,58 @@ import {
   ApiError,
   apiClient,
   createIdempotencyKey,
+  type Me,
   type ReportColumn,
   type ReportJob,
   type ReportKind,
   type ReportPreview,
   type ReportPreviewRequest,
   type ReportRequest,
+  type SavedReport,
   type StatisticsRequest,
   type StatisticsResult
 } from '../../shared/api/client'
 import { loadReportSelection, saveReportSelection } from '../interactions/drafts'
 import {
+  applyDefinition,
   columnTitle,
   defaultSelection,
   demandSorts,
+  eventTypeTitles,
+  eventTypes,
   groupingProblem,
   groupingTitles,
   groupingsFor,
+  lineChartSelected,
+  maxDaysOnStage,
+  moscowToday,
   normalizeSelection,
+  organizationTypeFilters,
   periodProblem,
   reportColumns,
   reportFormats,
+  reportFlagLabels,
+  reportFlags,
   reportKinds,
+  reportWorkStatusLabels,
+  reportWorkStatuses,
   selectionProblem,
+  seriesGroupingsFor,
   toPreviewRequest,
   toStatisticsRequest,
   type ReportSelection
 } from './reportSelection'
 import { StatisticsChart, chartBars } from './StatisticsChart'
+import { organizationTypeLabels } from '../organizations/OrganizationForm'
+import { ReportAgreementFilter } from './ReportAgreementFilter'
+import { LineChart, chartLines } from './LineChart'
+import { ColumnOrder } from './ColumnOrder'
+import { SavedReports } from './SavedReports'
+import { ErrorNotice } from './ReportErrorNotice'
 
 type ReportsScreenProps = {
   profileId: string
+  role: Me['role']
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
@@ -65,9 +86,9 @@ type PreviewState =
 
 type StatisticsState =
   | { kind: 'idle' }
-  | { kind: 'loading'; request: StatisticsRequest }
-  | { kind: 'ready'; request: StatisticsRequest; result: StatisticsResult }
-  | { kind: 'failed'; request: StatisticsRequest; error: unknown }
+  | { kind: 'loading'; request: StatisticsRequest; line: boolean }
+  | { kind: 'ready'; request: StatisticsRequest; line: boolean; result: StatisticsResult }
+  | { kind: 'failed'; request: StatisticsRequest; line: boolean; error: unknown }
 
 type OrderTarget = 'report' | 'chart'
 
@@ -88,18 +109,27 @@ const pollIntervalMs = 1000
 const kindLabels: Record<ReportKind, string> = {
   PORTFOLIO: 'Портфель взаимодействий',
   EVENTS: 'События за период',
-  DEMAND: 'Востребованность программ'
+  SNAPSHOT: 'Состояние портфеля на дату',
+  DURATION: 'Длительность этапов и цикла',
+  DEMAND: 'Востребованность программ',
+  AGREEMENTS: 'Реализация соглашений'
 }
 
 const kindHints: Record<ReportKind, string> = {
-  PORTFOLIO: 'Строка — взаимодействие. Этап и ответственный — текущие на момент формирования.',
-  EVENTS: 'Строка — событие: создание, переход или комментарий. Ответственный — КАМ на момент события.',
-  DEMAND: 'Строка — ИТ-программа. Заявки — заявки на обучение с сайта по предложенному контракту (демонстрационный стенд) в ваших вузах, период — по дате подачи. Обучающиеся (участия, не уникальные люди) — последний снимок потоков Moodle: курсов и групп, сопоставленных с датами начала и окончания, период к ним не применяется. Параллельные потоки — потоки, которые идут в последний день периода, а если он не задан — сегодня. «Нет данных» — источник не дал значения, это не ноль. Единого рейтинга нет: выберите показатель для сортировки.'
+  PORTFOLIO: 'Строка — взаимодействие. Этап и ответственный — текущие на момент формирования; «Дней на этапе» — полных суток с последнего входа в текущий этап, отбор «На этапе дольше» оставляет работы, которые стоят на этапе не меньше указанного числа дней. «Активные в периоде» — созданные до конца периода и не завершённые к его началу.',
+  EVENTS: 'Строка — событие: создание, переход, комментарий, изменение этапов или плана, а также назначение, смена и снятие КАМ вуза. Ответственный — КАМ на момент события.',
+  SNAPSHOT: 'Строка — взаимодействие, созданное до конца выбранного дня. Этап и ответственный восстановлены по истории переходов и назначений КАМ на эту дату; ИТ-программа и ИТ-продукты — текущие.',
+  DURATION: 'Строка — команда, ИТ-программа (итог команды — «Все программы») и этап или «Весь цикл». Средняя и максимальная длительность в календарных днях — по прохождениям, завершённым в периоде, по истории переходов; отдельно — сколько работ ещё на этапе на конец периода и самая долгая из них.',
+  DEMAND: 'Строка — ИТ-программа. Заявки — заявки на обучение с сайта по предложенному контракту (демонстрационный стенд) в ваших вузах, период — по дате подачи. Обучающиеся и завершившие (участия, не уникальные люди) — потоки занятий студентов в Moodle, которые шли в периоде хотя бы один день: у идущего потока — последнее наблюдение, у закрытого — последнее до окончания; обучение преподавателей не учитывается. Дата снимка Moodle и период заявок указаны в заголовках колонок. Параллельные потоки — потоки, которые идут в последний день периода, а если он не задан — сегодня. «Нет данных» — источник не дал значения, это не ноль. Единого рейтинга нет: выберите показатель для сортировки.',
+  AGREEMENTS: 'Строка — мероприятие плана соглашения с вузом; соглашение без мероприятий выводится одной строкой. Период отбирает мероприятия, чьи фактические сроки, а если их нет — плановые, иначе срок соглашения, пересекаются с периодом. Объёмы — числа без ФИО; подтверждения — проверенные документы, привязанные к мероприятию, со ссылками для скачивания после входа в CRM. Фильтр «Ответственный» — ответственный за мероприятие.'
 }
+
+const managerEventsHint = 'Строка — событие: создание, переход, комментарий, изменение этапов или плана. Ответственный — КАМ на момент события. История назначений КАМ видна руководителю команды.'
 
 const demandSortLabels: Record<(typeof demandSorts)[number], string> = {
   APPLICATIONS: 'по заявкам',
   PARTICIPANTS: 'по обучающимся',
+  LEARNERS_COMPLETED: 'по завершившим',
   PARALLEL_RUNS: 'по параллельным потокам'
 }
 
@@ -138,10 +168,54 @@ const jobStatusText = (job: ReportJob) => {
   return 'Не построен'
 }
 
+const periodBasisOptions: { value: ReportSelection['periodBasis']; label: string }[] = [
+  { value: 'CREATED', label: 'Созданные в периоде' },
+  { value: 'ACTIVITY', label: 'С событиями в периоде' },
+  { value: 'ACTIVE', label: 'Активные в периоде' }
+]
+
+const eventTypeOptions = (role: Me['role']): FilterOption[] => eventTypes
+  .filter((type) => role === 'LEADER' || role === 'MANAGEMENT' || type !== 'ASSIGNMENT')
+  .map((type) => ({ id: type, label: eventTypeTitles[type] }))
+
+const stageLegends: Record<ReportKind, string> = {
+  PORTFOLIO: 'Текущий этап',
+  EVENTS: 'Этап события',
+  SNAPSHOT: 'Этап на дату',
+  DURATION: 'Этап',
+  DEMAND: 'Этап',
+  AGREEMENTS: 'Этап'
+}
+
+const managerLegends: Record<ReportKind, string> = {
+  PORTFOLIO: 'Ответственный',
+  EVENTS: 'Ответственный на момент события',
+  SNAPSHOT: 'Ответственный на дату',
+  DURATION: 'Ответственный (текущий КАМ вуза)',
+  DEMAND: 'Ответственный',
+  AGREEMENTS: 'Ответственный за мероприятие'
+}
+
+const cellText = (value: unknown, column: ReportColumn) => {
+  if (dateColumns.has(column)) {
+    return formatDateTime(moscowDateTime, String(value))
+  }
+  return typeof value === 'number' ? value.toLocaleString('ru-RU') : String(value)
+}
+
+const chartTitle = (job: ReportJob & { groupBy: NonNullable<ReportJob['groupBy']> }) => {
+  if (job.chartType !== 'LINE') {
+    return `Диаграмма ${groupingTitles[job.groupBy]}`
+  }
+  return job.seriesBy === null || job.seriesBy === undefined
+    ? `График ${groupingTitles[job.groupBy]}`
+    : `График ${groupingTitles[job.groupBy]}, линии ${groupingTitles[job.seriesBy]}`
+}
+
 const jobTitle = (job: ReportJob) => (
   job.groupBy === null || job.groupBy === undefined
     ? `${kindLabels[job.kind]}, ${job.format}`
-    : `Диаграмма ${groupingTitles[job.groupBy]} — ${kindLabels[job.kind]}, ${job.format}`
+    : `${chartTitle({ ...job, groupBy: job.groupBy })} — ${kindLabels[job.kind]}, ${job.format}`
 )
 
 const upsertJob = (jobs: ReportJob[], job: ReportJob) => (
@@ -161,56 +235,11 @@ const loadAllPages = async <T,>(loadPage: (page: number) => Promise<{ items: T[]
   }
 }
 
-const catalogOptions = (items: { id: string; name: string }[]): FilterOption[] => (
-  items.map((item) => ({ id: item.id, label: item.name }))
+const catalogOptions = (items: { id: string; name: string; archived: boolean }[]): FilterOption[] => (
+  items.map((item) => ({ id: item.id, label: item.archived ? `${item.name} — в архиве` : item.name }))
 )
 
 const known = (ids: string[], options: FilterOption[]) => ids.filter((id) => options.some((option) => option.id === id))
-
-const errorText = (error: unknown, fallback: string) => {
-  if (!(error instanceof ApiError)) {
-    return 'Не удалось связаться с сервисом. Проверьте соединение и повторите попытку.'
-  }
-  if (error.code === 'REPORT_ACCESS_CHANGED') {
-    return 'Права доступа изменились после заказа, поэтому файл не выдаётся. Сформируйте отчёт заново.'
-  }
-  if (error.code === 'REPORT_CAPACITY_EXCEEDED') {
-    return 'Сейчас все места для построения отчётов заняты. Повторите заказ через 30 секунд.'
-  }
-  if (error.code === 'VALIDATION_ERROR') {
-    return 'Проверьте параметры отчёта.'
-  }
-  return fallback
-}
-
-type ErrorNoticeProps = {
-  error: unknown
-  message: string
-  onRetry?: () => void
-  retryLabel?: string
-}
-
-const ErrorNotice = ({ error, message, onRetry, retryLabel = 'Повторить' }: ErrorNoticeProps) => {
-  const fieldErrors = error instanceof ApiError ? Object.entries(error.fieldErrors ?? {}) : []
-  return (
-    <div className="interaction-command-error" role="alert">
-      <p>{errorText(error, message)}</p>
-      {error instanceof ApiError && (
-        <div className="structured-api-error">
-          <p>Код: {error.code}</p>
-          <p>{error.message}</p>
-          {fieldErrors.length > 0 && (
-            <ul>
-              {fieldErrors.map(([field, text]) => <li key={field}>{field}: {text}</li>)}
-            </ul>
-          )}
-          <p className="request-id">Request ID: {error.requestId}</p>
-        </div>
-      )}
-      {onRetry && <button type="button" onClick={onRetry}>{retryLabel}</button>}
-    </div>
-  )
-}
 
 type MultiSelectProps = {
   legend: string
@@ -285,7 +314,7 @@ const MultiSelect = ({ legend, options, selected, onChange, includeNone, onInclu
   )
 }
 
-export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailable }: ReportsScreenProps) => {
+export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnavailable }: ReportsScreenProps) => {
   const [selection, setSelection] = useState<ReportSelection>(() => normalizeSelection(loadReportSelection(profileId)))
   const [optionsState, setOptionsState] = useState<OptionsState>({ kind: 'loading' })
   const [previewState, setPreviewState] = useState<PreviewState>({ kind: 'idle' })
@@ -321,17 +350,19 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
     setOptionsState({ kind: 'loading' })
     try {
       const [organizations, directions, programs, products, managers, stages] = await Promise.all([
-        loadAllPages((page) => apiClient.listOrganizations({ page, size: 100, sort: 'name,asc' })),
-        loadAllPages((page) => apiClient.listDirections({ page, size: 100 })),
-        loadAllPages((page) => apiClient.listPrograms({ page, size: 100 })),
-        loadAllPages((page) => apiClient.listProducts({ page, size: 100 })),
+        loadAllPages((page) => apiClient.listOrganizations({ page, size: 100, sort: 'name,asc', status: 'ALL' })),
+        loadAllPages((page) => apiClient.listDirections({ page, size: 100, state: 'ALL' })),
+        loadAllPages((page) => apiClient.listPrograms({ page, size: 100, state: 'ALL' })),
+        loadAllPages((page) => apiClient.listProducts({ page, size: 100, state: 'ALL' })),
         apiClient.listReportManagers(),
         apiClient.listReportStages()
       ])
       const options: FilterOptions = {
         organizations: organizations.map((organization) => ({
           id: organization.id,
-          label: organization.type === 'SCHOOL' ? `${organization.name} (школа)` : organization.name
+          label: `${organization.name}${organization.type === 'UNIVERSITY'
+            ? ''
+            : ` (${organizationTypeLabels[organization.type].toLowerCase()})`}${organization.status === 'ARCHIVED' ? ' — в архиве' : ''}`
         })),
         directions: catalogOptions(directions),
         programs: catalogOptions(programs),
@@ -456,6 +487,7 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
   const statisticsProblem = groupingProblem(selection)
   const statisticsBlocked = periodProblem(selection) !== null || statisticsProblem !== null || optionsState.kind !== 'ready'
   const currentStatisticsRequest = toStatisticsRequest(selection)
+  const currentLine = lineChartSelected(selection)
   const columns = reportColumns[selection.kind]
   const selectedColumns = selection.columns[selection.kind]
 
@@ -482,19 +514,19 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
     }
   }
 
-  const runStatistics = async (request: StatisticsRequest) => {
+  const runStatistics = async (request: StatisticsRequest, line: boolean) => {
     const version = ++statisticsVersion.current
-    setStatisticsState({ kind: 'loading', request })
+    setStatisticsState({ kind: 'loading', request, line })
     try {
       const result = await apiClient.reportStatistics(request)
       if (version === statisticsVersion.current) {
-        setStatisticsState({ kind: 'ready', request, result })
+        setStatisticsState({ kind: 'ready', request, line, result })
       }
     } catch (error) {
       if (version !== statisticsVersion.current || handleAccessError(error)) {
         return
       }
-      setStatisticsState({ kind: 'failed', request, error })
+      setStatisticsState({ kind: 'failed', request, line, error })
     }
   }
 
@@ -534,16 +566,38 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
     }
   }
 
-  const orderChart = (request: StatisticsRequest, format: 'PNG' | 'PDF') => {
-    void orderJob({ ...request, format }, 'chart')
+  const orderChart = (request: StatisticsRequest, line: boolean, format: 'PNG' | 'PDF') => {
+    void orderJob({ ...request, format, chartType: line ? 'LINE' : 'BAR' }, 'chart')
+  }
+
+  const setColumns = (next: ReportColumn[]) => {
+    setSelection((current) => ({ ...current, columns: { ...current.columns, [current.kind]: next } }))
   }
 
   const toggleColumn = (column: ReportColumn, checked: boolean) => {
     setSelection((current) => {
-      const chosen = current.columns[current.kind]
-      const next = reportColumns[current.kind].filter((item) => item === column ? checked : chosen.includes(item))
-      return { ...current, columns: { ...current.columns, [current.kind]: next } }
+      const chosen = current.columns[current.kind].filter((item) => item !== column)
+      return { ...current, columns: { ...current.columns, [current.kind]: checked ? [...chosen, column] : chosen } }
     })
+  }
+
+  const openSavedReport = (report: SavedReport) => {
+    const restored = applyDefinition(selection, report.definition)
+    const next = optionsState.kind === 'ready'
+      ? {
+          ...restored,
+          organizationIds: known(restored.organizationIds, optionsState.options.organizations),
+          directionIds: known(restored.directionIds, optionsState.options.directions),
+          programIds: known(restored.programIds, optionsState.options.programs),
+          productIds: known(restored.productIds, optionsState.options.products),
+          managerIds: known(restored.managerIds, optionsState.options.managers),
+          stages: known(restored.stages, optionsState.options.stages)
+        }
+      : restored
+    setSelection(next)
+    if (selectionProblem(next) === null) {
+      void runPreview(toPreviewRequest(next), 0)
+    }
   }
 
   const resetSelection = () => {
@@ -553,9 +607,20 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
   const previewOutdated = previewState.kind === 'ready'
     && JSON.stringify(previewState.request) !== JSON.stringify(currentRequest)
   const statisticsOutdated = statisticsState.kind === 'ready'
-    && JSON.stringify(statisticsState.request) !== JSON.stringify(currentStatisticsRequest)
-  const chartBarCount = statisticsState.kind === 'ready' ? chartBars(statisticsState.result).length : 0
-  const chartTooLarge = statisticsState.kind === 'ready' && chartBarCount > statisticsState.result.maxChartBars
+    && (JSON.stringify(statisticsState.request) !== JSON.stringify(currentStatisticsRequest) || statisticsState.line !== currentLine)
+  const chartLimit = (() => {
+    if (statisticsState.kind !== 'ready') {
+      return null
+    }
+    const { result, line } = statisticsState
+    if (line && chartLines(result).length > result.maxChartSeries) {
+      return `В файл PNG или PDF помещается не больше ${result.maxChartSeries} линий, а на этом графике ${chartLines(result).length}. Оставьте меньше значений в фильтре или выберите другую разбивку на линии.`
+    }
+    const count = line ? result.items.length : chartBars(result).length
+    return count > result.maxChartBars
+      ? `В файл PNG или PDF помещается не больше ${result.maxChartBars} ${line ? 'месяцев' : 'столбцов с учётом «Не указано»'}, а здесь ${count}. Сузьте период или фильтры либо выберите другую группировку.`
+      : null
+  })()
   const chartJob = chartJobId === null || jobsState.kind !== 'ready'
     ? undefined
     : jobsState.jobs.find((job) => job.id === chartJobId)
@@ -578,14 +643,23 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
               {reportKinds.map((kind) => <option key={kind} value={kind}>{kindLabels[kind]}</option>)}
             </select>
           </label>
-          <label>
-            Период с
-            <input type="date" value={selection.from} max={selection.to || undefined} onChange={(event) => update({ from: event.target.value })} />
-          </label>
-          <label>
-            по
-            <input type="date" value={selection.to} min={selection.from || undefined} onChange={(event) => update({ to: event.target.value })} />
-          </label>
+          {selection.kind === 'SNAPSHOT' ? (
+            <label>
+              Состояние на дату
+              <input type="date" value={selection.asOf} max={moscowToday()} onChange={(event) => update({ asOf: event.target.value })} />
+            </label>
+          ) : (
+            <>
+              <label>
+                Период с
+                <input type="date" value={selection.from} max={selection.to || undefined} onChange={(event) => update({ from: event.target.value })} />
+              </label>
+              <label>
+                по
+                <input type="date" value={selection.to} min={selection.from || undefined} onChange={(event) => update({ to: event.target.value })} />
+              </label>
+            </>
+          )}
           {selection.kind === 'DEMAND' && (
             <label>
               Сортировка
@@ -602,16 +676,47 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
               Отбор по периоду
               <select
                 value={selection.periodBasis}
-                onChange={(event) => update({ periodBasis: event.target.value === 'ACTIVITY' ? 'ACTIVITY' : 'CREATED' })}
+                onChange={(event) => update({
+                  periodBasis: periodBasisOptions.find((option) => option.value === event.target.value)?.value ?? 'CREATED'
+                })}
               >
-                <option value="CREATED">Созданные в периоде</option>
-                <option value="ACTIVITY">С событиями в периоде</option>
+                {periodBasisOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
+            </label>
+          )}
+          <label>
+            Тип организации
+            <select
+              value={selection.organizationType}
+              onChange={(event) => update({
+                organizationType: organizationTypeFilters.find((type) => type === event.target.value) ?? ''
+              })}
+            >
+              {organizationTypeFilters.map((type) => (
+                <option key={type} value={type}>{type === '' ? 'Все типы' : organizationTypeLabels[type]}</option>
+              ))}
+            </select>
+          </label>
+          {selection.kind === 'PORTFOLIO' && (
+            <label>
+              На этапе дольше, дней
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={maxDaysOnStage}
+                step={1}
+                value={selection.minDaysOnStage}
+                placeholder="любой срок"
+                onChange={(event) => update({ minDaysOnStage: event.target.value })}
+              />
             </label>
           )}
         </div>
         <p className="reports__hint">
-          {kindHints[selection.kind]} Даты включительно, время московское; пустая дата снимает ограничение.
+          {selection.kind === 'EVENTS' && role !== 'LEADER' ? managerEventsHint : kindHints[selection.kind]} {selection.kind === 'SNAPSHOT'
+            ? 'Состояние — на конец выбранного дня по московскому времени; пустая дата — сегодня.'
+            : 'Даты включительно, время московское; пустая дата снимает ограничение.'}
         </p>
 
         {optionsState.kind === 'loading' && <p role="status">Загружаем значения фильтров…</p>}
@@ -630,23 +735,27 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
               selected={selection.organizationIds}
               onChange={(organizationIds) => update({ organizationIds })}
             />
-            <MultiSelect
-              legend="ИТ-направления"
-              options={optionsState.options.directions}
-              selected={selection.directionIds}
-              onChange={(directionIds) => update({ directionIds })}
-              includeNone={selection.includeNoDirection}
-              onIncludeNoneChange={(includeNoDirection) => update({ includeNoDirection })}
-            />
-            <MultiSelect
-              legend="ИТ-программы"
-              options={optionsState.options.programs}
-              selected={selection.programIds}
-              onChange={(programIds) => update({ programIds })}
-              includeNone={selection.includeNoProgram}
-              onIncludeNoneChange={(includeNoProgram) => update({ includeNoProgram })}
-            />
-            {selection.kind !== 'DEMAND' && (
+            {selection.kind !== 'AGREEMENTS' && (
+              <>
+                <MultiSelect
+                  legend="ИТ-направления"
+                  options={optionsState.options.directions}
+                  selected={selection.directionIds}
+                  onChange={(directionIds) => update({ directionIds })}
+                  includeNone={selection.includeNoDirection}
+                  onIncludeNoneChange={(includeNoDirection) => update({ includeNoDirection })}
+                />
+                <MultiSelect
+                  legend="ИТ-программы"
+                  options={optionsState.options.programs}
+                  selected={selection.programIds}
+                  onChange={(programIds) => update({ programIds })}
+                  includeNone={selection.includeNoProgram}
+                  onIncludeNoneChange={(includeNoProgram) => update({ includeNoProgram })}
+                />
+              </>
+            )}
+            {selection.kind !== 'DEMAND' && selection.kind !== 'AGREEMENTS' && (
               <MultiSelect
                 legend="ИТ-продукты"
                 options={optionsState.options.products}
@@ -657,19 +766,53 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
               />
             )}
             <MultiSelect
-              legend={selection.kind === 'EVENTS' ? 'Ответственный на момент события' : 'Ответственный'}
+              legend={managerLegends[selection.kind]}
               options={optionsState.options.managers}
               selected={selection.managerIds}
               onChange={(managerIds) => update({ managerIds })}
               includeNone={selection.includeNoManager}
               onIncludeNoneChange={(includeNoManager) => update({ includeNoManager })}
             />
-            {selection.kind !== 'DEMAND' && (
+            {selection.kind !== 'DEMAND' && selection.kind !== 'AGREEMENTS' && (
               <MultiSelect
-                legend={selection.kind === 'EVENTS' ? 'Этап события' : 'Текущий этап'}
+                legend={stageLegends[selection.kind]}
                 options={optionsState.options.stages}
                 selected={selection.stages}
                 onChange={(stages) => update({ stages })}
+              />
+            )}
+            {selection.kind === 'PORTFOLIO' && (
+              <MultiSelect
+                legend="Состояние работы"
+                options={reportWorkStatuses.map((status) => ({ id: status, label: reportWorkStatusLabels[status] }))}
+                selected={selection.workStatuses}
+                onChange={(workStatuses) => update({
+                  workStatuses: reportWorkStatuses.filter((status) => workStatuses.includes(status))
+                })}
+              />
+            )}
+            {selection.kind === 'PORTFOLIO' && (
+              <MultiSelect
+                legend="Отметки работы (все выбранные одновременно)"
+                options={reportFlags.map((flag) => ({ id: flag, label: reportFlagLabels[flag] }))}
+                selected={selection.flags}
+                onChange={(flags) => update({ flags: reportFlags.filter((flag) => flags.includes(flag)) })}
+              />
+            )}
+            {selection.kind !== 'DEMAND' && selection.kind !== 'AGREEMENTS' && (
+              <ReportAgreementFilter
+                value={selection.agreement}
+                onChange={(agreement) => update({ agreement })}
+                onSessionExpired={onSessionExpired}
+                onProfileUnavailable={onProfileUnavailable}
+              />
+            )}
+            {selection.kind === 'EVENTS' && (
+              <MultiSelect
+                legend="Вид события"
+                options={eventTypeOptions(role)}
+                selected={selection.eventTypes}
+                onChange={(ids) => update({ eventTypes: eventTypes.filter((type) => ids.includes(type)) })}
               />
             )}
           </div>
@@ -691,6 +834,7 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
               </li>
             ))}
           </ul>
+          <ColumnOrder kind={selection.kind} columns={selectedColumns} onChange={setColumns} />
         </fieldset>
 
         {problem !== null && <p className="reports__problem" role="alert">{problem}</p>}
@@ -701,8 +845,15 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
           </button>
           <button type="button" className="reports__secondary" onClick={resetSelection}>Сбросить выбор</button>
         </div>
-        <p className="reports__hint">Выбор фильтров и колонок хранится только в этой вкладке и удаляется при выходе из CRM.</p>
+        <p className="reports__hint">Текущий выбор фильтров и колонок хранится в этой вкладке и удаляется при выходе из CRM. Чтобы вернуться к нему позже, сохраните его как отчёт ниже.</p>
       </form>
+
+      <SavedReports
+        definition={currentRequest}
+        disabled={blocked}
+        onOpen={openSavedReport}
+        onAccessError={handleAccessError}
+      />
 
       <section className="reports__preview" aria-labelledby="reports-preview-title" aria-busy={previewState.kind === 'loading'}>
         <h3 id="reports-preview-title">Предпросмотр</h3>
@@ -742,9 +893,7 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
                             const value = row[column.id]
                             return (
                               <td key={column.id}>
-                                {value === null || value === undefined
-                                  ? column.emptyText
-                                  : dateColumns.has(column.id) ? formatDateTime(moscowDateTime, String(value)) : value}
+                                {value === null || value === undefined ? column.emptyText : cellText(value, column.id)}
                               </td>
                             )
                           })}
@@ -779,7 +928,7 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
         )}
       </section>
 
-      <section className="reports__statistics" aria-labelledby="reports-statistics-title" aria-busy={statisticsState.kind === 'loading'}>
+      <section className="reports__statistics" aria-labelledby="reports-statistics-title" aria-busy={statisticsState.kind === 'loading'} hidden={selection.kind === 'AGREEMENTS'}>
         <h3 id="reports-statistics-title">Статистика</h3>
         <p className="reports__hint">Диаграмма считается по тем же виду отчёта, периоду и фильтрам, что и таблица; выбор колонок на неё не влияет.</p>
         <div className="reports__order">
@@ -792,12 +941,40 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
               {groupingsFor(selection.kind).map((groupBy) => <option key={groupBy} value={groupBy}>{groupingTitles[groupBy]}</option>)}
             </select>
           </label>
+          {selection.groupBy === 'MONTH' && (
+            <label>
+              Вид отображения
+              <select
+                value={selection.chartType}
+                onChange={(event) => update({ chartType: event.target.value === 'LINE' ? 'LINE' : 'BAR' })}
+              >
+                <option value="BAR">Столбцы</option>
+                <option value="LINE">График (линия)</option>
+              </select>
+            </label>
+          )}
+          {currentLine && (
+            <label>
+              Линии
+              <select
+                value={currentStatisticsRequest.seriesBy ?? ''}
+                onChange={(event) => update({
+                  seriesBy: seriesGroupingsFor(selection.kind).find((groupBy) => groupBy === event.target.value) ?? null
+                })}
+              >
+                <option value="">Одна линия: всего</option>
+                {seriesGroupingsFor(selection.kind).map((groupBy) => (
+                  <option key={groupBy} value={groupBy}>Отдельно {groupingTitles[groupBy]}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <button
             type="button"
-            onClick={() => void runStatistics(currentStatisticsRequest)}
+            onClick={() => void runStatistics(currentStatisticsRequest, currentLine)}
             disabled={statisticsBlocked || statisticsState.kind === 'loading'}
           >
-            {statisticsState.kind === 'loading' ? 'Считаем…' : 'Построить диаграмму'}
+            {statisticsState.kind === 'loading' ? 'Считаем…' : currentLine ? 'Построить график' : 'Построить диаграмму'}
           </button>
         </div>
         {statisticsProblem !== null && <p className="reports__problem" role="alert">{statisticsProblem}</p>}
@@ -807,23 +984,33 @@ export const ReportsScreen = ({ profileId, onSessionExpired, onProfileUnavailabl
           <ErrorNotice
             error={statisticsState.error}
             message="Не удалось посчитать статистику."
-            onRetry={() => void runStatistics(statisticsState.request)}
+            onRetry={() => void runStatistics(statisticsState.request, statisticsState.line)}
           />
         )}
         {statisticsState.kind === 'ready' && (
           <>
             {statisticsOutdated && (
-              <p className="reports__outdated" role="status">Выбор изменён после построения диаграммы. Нажмите «Построить диаграмму», чтобы обновить её.</p>
+              <p className="reports__outdated" role="status">Выбор изменён после построения. Нажмите «{currentLine ? 'Построить график' : 'Построить диаграмму'}», чтобы обновить.</p>
             )}
-            <StatisticsChart result={statisticsState.result} />
+            {statisticsState.line ? <LineChart result={statisticsState.result} /> : <StatisticsChart result={statisticsState.result} />}
             <div className="reports__order">
-              <button type="button" onClick={() => orderChart(statisticsState.request, 'PNG')} disabled={ordering || chartTooLarge}>Скачать PNG</button>
-              <button type="button" onClick={() => orderChart(statisticsState.request, 'PDF')} disabled={ordering || chartTooLarge}>Скачать PDF</button>
+              <button
+                type="button"
+                onClick={() => orderChart(statisticsState.request, statisticsState.line, 'PNG')}
+                disabled={ordering || chartLimit !== null}
+              >
+                Скачать PNG
+              </button>
+              <button
+                type="button"
+                onClick={() => orderChart(statisticsState.request, statisticsState.line, 'PDF')}
+                disabled={ordering || chartLimit !== null}
+              >
+                Скачать PDF
+              </button>
             </div>
-            {chartTooLarge ? (
-              <p className="reports__problem" role="status">
-                В файл PNG или PDF помещается не больше {statisticsState.result.maxChartBars} столбцов с учётом «Не указано», а в этой диаграмме {chartBarCount}. Сузьте период или фильтры либо выберите другую группировку.
-              </p>
+            {chartLimit !== null ? (
+              <p className="reports__problem" role="status">{chartLimit}</p>
             ) : (
               <p className="reports__hint">
                 Файл строится на сервере по параметрам показанной диаграммы и скачивается, когда готов. Он также остаётся в списке «Заказанные файлы».

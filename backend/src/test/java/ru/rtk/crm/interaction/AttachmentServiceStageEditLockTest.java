@@ -30,9 +30,11 @@ import ru.rtk.crm.attachment.AttachmentScanner;
 import ru.rtk.crm.attachment.AttachmentService;
 import ru.rtk.crm.attachment.AttachmentStorage;
 import ru.rtk.crm.attachment.AttachmentUploadInspection;
+import ru.rtk.crm.attachment.AttachmentUploadRequest;
 import ru.rtk.crm.attachment.AttachmentValidationException;
 import ru.rtk.crm.catalog.Organization;
 import ru.rtk.crm.catalog.OrganizationRepository;
+import ru.rtk.crm.catalog.OrganizationStatus;
 import ru.rtk.crm.catalog.OrganizationType;
 
 class AttachmentServiceStageEditLockTest {
@@ -63,7 +65,14 @@ class AttachmentServiceStageEditLockTest {
                 now,
                 "Анна Смирнова",
                 "Команда А",
-                false
+                false,
+                OrganizationStatus.ACTIVE,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null
         );
         InteractionStage stage = new InteractionStage(STAGE_ID, "Этап", 0, false);
         MockMultipartFile file = new MockMultipartFile("file", "proof.pdf", "application/pdf", new byte[]{1});
@@ -98,10 +107,17 @@ class AttachmentServiceStageEditLockTest {
                 storage,
                 scanner,
                 commandIdempotencyRepository,
+                mock(InteractionService.class),
                 new ObjectMapper().findAndRegisterModules()
         );
 
-        assertThatThrownBy(() -> attachmentService.upload(profile, INTERACTION_ID, STAGE_ID, file, "attachment-race"))
+        assertThatThrownBy(() -> attachmentService.upload(
+                profile,
+                INTERACTION_ID,
+                new AttachmentUploadRequest(STAGE_ID, null, null),
+                file,
+                "attachment-race"
+        ))
                 .isInstanceOfSatisfying(AttachmentValidationException.class, exception -> {
                     assertThat(exception.field()).isEqualTo("stageId");
                 });

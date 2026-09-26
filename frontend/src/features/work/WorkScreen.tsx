@@ -3,12 +3,20 @@ import {
   ApiError,
   apiClient,
   type InteractionDue,
+  type InteractionFlagFilter,
   type InteractionListItem,
+  type InteractionWorkStatusFilter,
   type Me,
-  type Organization
+  type Organization,
+  type ReportManagerOption
 } from '../../shared/api/client'
 import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { InteractionMarkBadges } from '../interactions/InteractionMarkBadges'
+import { reportFlagLabels, reportFlags } from '../reports/reportSelection'
+import { TeamIndicators } from './TeamIndicators'
+import { TeamsSummary } from './TeamsSummary'
+import { daysLabel, daysSince, eventTypeLabel, formatDate, formatDateTime } from './workShared'
 
 type WorkScreenProps = {
   role: Me['role']
@@ -22,6 +30,11 @@ type WorkFilters = {
   due: InteractionDue | ''
   stage: string
   organizationId: string
+  flag: InteractionFlagFilter | ''
+  licenseExpiresBy: string
+  responsible: string
+  status: InteractionWorkStatusFilter
+  minDaysOnStage: number | null
   page: number
 }
 
@@ -32,11 +45,17 @@ type ListState =
 
 type OptionsState =
   | { kind: 'loading' }
-  | { kind: 'ready'; stages: string[]; organizations: Pick<Organization, 'id' | 'name'>[] }
+  | {
+    kind: 'ready'
+    stages: string[]
+    organizations: Pick<Organization, 'id' | 'name'>[]
+    managers: ReportManagerOption[]
+  }
   | { kind: 'failed'; error: unknown }
 
 const pageSize = 25
 const searchDelayMilliseconds = 300
+const unassigned = 'UNASSIGNED'
 
 const dueOptions: { value: InteractionDue | ''; label: string }[] = [
   { value: '', label: 'Все' },
@@ -45,25 +64,59 @@ const dueOptions: { value: InteractionDue | ''; label: string }[] = [
   { value: 'NO_NEXT_STEP', label: 'Без следующего шага или срока' }
 ]
 
-const emptyFilters: WorkFilters = { q: '', due: '', stage: '', organizationId: '', page: 0 }
+const currentYear = new Date().getFullYear()
 
-const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', {
-  dateStyle: 'medium',
-  timeStyle: 'short'
-})
+const licenseYears = Array.from({ length: 7 }, (_, index) => (currentYear - 1 + index).toString())
+
+const statusOptions: { value: InteractionWorkStatusFilter; label: string }[] = [
+  { value: 'ACTIVE', label: 'Активные' },
+  { value: 'PAUSED', label: 'Приостановленные' },
+  { value: 'COMPLETED', label: 'Завершённые' },
+  { value: 'ALL', label: 'Все, включая завершённые' }
+]
+
+const stageDayOptions = [7, 14, 30, 60, 90]
+
+const emptyFilters: WorkFilters = {
+  q: '',
+  due: '',
+  stage: '',
+  organizationId: '',
+  flag: '',
+  licenseExpiresBy: '',
+  responsible: '',
+  status: 'ACTIVE',
+  minDaysOnStage: null,
+  page: 0
+}
 
 const isDue = (value: string): value is InteractionDue => dueOptions.some((option) => option.value !== '' && option.value === value)
+
+const isFlag = (value: string): value is InteractionFlagFilter => reportFlags.some((flag) => flag === value)
+
+const isStatus = (value: string): value is InteractionWorkStatusFilter => statusOptions.some((option) => option.value === value)
+
+const positiveInteger = (value: string | null) => {
+  const number = Number(value ?? '')
+  return Number.isInteger(number) && number > 0 ? number : null
+}
 
 const filtersFromQuery = (query: string): WorkFilters => {
   const params = new URLSearchParams(query)
   const due = params.get('due') ?? ''
-  const page = Number(params.get('page') ?? '0')
+  const flag = params.get('flag') ?? ''
+  const status = params.get('status') ?? 'ACTIVE'
   return {
     q: params.get('q') ?? '',
     due: isDue(due) ? due : '',
     stage: params.get('stage') ?? '',
     organizationId: params.get('organization') ?? '',
-    page: Number.isInteger(page) && page > 0 ? page : 0
+    flag: isFlag(flag) ? flag : '',
+    licenseExpiresBy: /^\d{4}$/.test(params.get('license') ?? '') ? params.get('license') ?? '' : '',
+    responsible: params.get('responsible') ?? '',
+    status: isStatus(status) ? status : 'ACTIVE',
+    minDaysOnStage: positiveInteger(params.get('minDaysOnStage')),
+    page: positiveInteger(params.get('page')) ?? 0
   }
 }
 
@@ -81,6 +134,21 @@ const queryFromFilters = (filters: WorkFilters) => {
   if (filters.organizationId.length > 0) {
     params.set('organization', filters.organizationId)
   }
+  if (filters.flag !== '') {
+    params.set('flag', filters.flag)
+  }
+  if (filters.licenseExpiresBy !== '') {
+    params.set('license', filters.licenseExpiresBy)
+  }
+  if (filters.responsible.length > 0) {
+    params.set('responsible', filters.responsible)
+  }
+  if (filters.status !== 'ACTIVE') {
+    params.set('status', filters.status)
+  }
+  if (filters.minDaysOnStage !== null) {
+    params.set('minDaysOnStage', filters.minDaysOnStage.toString())
+  }
   if (filters.page > 0) {
     params.set('page', filters.page.toString())
   }
@@ -88,13 +156,16 @@ const queryFromFilters = (filters: WorkFilters) => {
 }
 
 const hasFilters = (filters: WorkFilters) => (
-  filters.q.trim().length > 0 || filters.due !== '' || filters.stage.length > 0 || filters.organizationId.length > 0
+  filters.q.trim().length > 0
+  || filters.due !== ''
+  || filters.stage.length > 0
+  || filters.organizationId.length > 0
+  || filters.responsible.length > 0
+  || filters.status !== 'ACTIVE'
+  || filters.minDaysOnStage !== null
+  || filters.flag !== ''
+  || filters.licenseExpiresBy !== ''
 )
-
-const formatDateTime = (value: string) => {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date)
-}
 
 const dueStatus = (item: InteractionListItem, now: number) => {
   const action = item.nextAction?.trim() ?? ''
@@ -107,12 +178,23 @@ const dueStatus = (item: InteractionListItem, now: number) => {
   const dueAt = new Date(item.nextActionAt).getTime()
   const dateLabel = formatDateTime(item.nextActionAt)
   if (action.length === 0) {
-    return { tone: 'missing', label: `Шаг не задан, срок ${dateLabel}` }
+    return dueAt < now
+      ? { tone: 'overdue', label: `Просрочен с ${dateLabel}, шаг не задан` }
+      : { tone: 'missing', label: `Шаг не задан, срок ${dateLabel}` }
   }
   if (dueAt < now) {
     return { tone: 'overdue', label: `Просрочен с ${dateLabel}` }
   }
   return { tone: 'planned', label: dateLabel }
+}
+
+const ownerLabel = (item: InteractionListItem) => {
+  const owner = item.ownerManagerName ?? 'Требует назначения'
+  if (item.deputyManagerName === null) {
+    return owner
+  }
+  const until = item.deputyEndsOn === null ? '' : ` до ${formatDate(item.deputyEndsOn)}`
+  return `${owner} (заместитель ${item.deputyManagerName}${until})`
 }
 
 const loadAllPages = async <T,>(loadPage: (page: number) => Promise<{ items: T[]; total: number }>) => {
@@ -134,6 +216,10 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
   const listRequestVersion = useRef(0)
   const resultsHeading = useRef<HTMLHeadingElement>(null)
   const focusResults = useRef(false)
+  const currentFilters = useRef(filters)
+  const seesTeamWork = role === 'LEADER' || role === 'MANAGEMENT'
+
+  currentFilters.current = filters
 
   const handleAccessError = useCallback((error: unknown) => {
     if (error instanceof ApiError && error.code === 'UNAUTHENTICATED') {
@@ -156,6 +242,11 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
         q: current.q,
         due: current.due || undefined,
         stage: current.stage,
+        flag: current.flag || undefined,
+        licenseExpiresBy: current.licenseExpiresBy === '' ? undefined : Number(current.licenseExpiresBy),
+        responsible: current.responsible || undefined,
+        status: current.status === 'ACTIVE' ? undefined : current.status,
+        minDaysOnStage: current.minDaysOnStage ?? undefined,
         page: current.page,
         size: pageSize,
         sort: 'nextActionAt,asc'
@@ -179,17 +270,18 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
   const loadOptions = useCallback(async () => {
     setOptionsState({ kind: 'loading' })
     try {
-      const [stages, organizations] = await Promise.all([
+      const [stages, organizations, managers] = await Promise.all([
         apiClient.listReportStages(),
-        loadAllPages((page) => apiClient.listOrganizations({ page, size: 100, sort: 'name,asc' }))
+        loadAllPages((page) => apiClient.listOrganizations({ page, size: 100, sort: 'name,asc' })),
+        seesTeamWork ? apiClient.listReportManagers() : Promise.resolve([])
       ])
-      setOptionsState({ kind: 'ready', stages, organizations })
+      setOptionsState({ kind: 'ready', stages, organizations, managers })
     } catch (error) {
       if (!handleAccessError(error)) {
         setOptionsState({ kind: 'failed', error })
       }
     }
-  }, [handleAccessError])
+  }, [handleAccessError, seesTeamWork])
 
   useEffect(() => {
     void loadOptions()
@@ -203,6 +295,23 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
 
   useEffect(() => () => {
     listRequestVersion.current += 1
+  }, [])
+
+  useEffect(() => {
+    const applyLinkedFilters = () => {
+      const [path, query = ''] = window.location.hash.replace(/^#\/?/, '').split('?')
+      if (path !== 'work') {
+        return
+      }
+      const linked = filtersFromQuery(query)
+      if (queryFromFilters(linked) === queryFromFilters(currentFilters.current)) {
+        return
+      }
+      setSearchText(linked.q)
+      setFilters(linked)
+    }
+    window.addEventListener('hashchange', applyLinkedFilters)
+    return () => window.removeEventListener('hashchange', applyLinkedFilters)
   }, [])
 
   useEffect(() => {
@@ -239,15 +348,22 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
   const now = Date.now()
   const organizationOptions = optionsState.kind === 'ready' ? optionsState.organizations : []
   const stageOptions = optionsState.kind === 'ready' ? optionsState.stages : []
+  const managerOptions = optionsState.kind === 'ready' ? optionsState.managers : []
+  const stageDays = filters.minDaysOnStage === null || stageDayOptions.includes(filters.minDaysOnStage)
+    ? stageDayOptions
+    : [...stageDayOptions, filters.minDaysOnStage].sort((a, b) => a - b)
   const filtered = hasFilters(filters)
 
   return (
     <section className="work" aria-labelledby="work-results-title">
       <p className="work__intro">
-        {role === 'LEADER'
-          ? 'Взаимодействия по всем вузам команды. Сначала идут ближайшие и просроченные сроки следующего шага.'
-          : 'Взаимодействия по вашим вузам. Сначала идут ближайшие и просроченные сроки следующего шага.'}
+        {role === 'MANAGEMENT' && 'Взаимодействия всех команд в режиме просмотра. Сначала идут ближайшие и просроченные сроки следующего шага.'}
+        {role === 'LEADER' && 'Взаимодействия по всем вузам команды. Сначала идут ближайшие и просроченные сроки следующего шага.'}
+        {role === 'USER' && 'Взаимодействия по вашим вузам. Сначала идут ближайшие и просроченные сроки следующего шага.'}
       </p>
+
+      {role === 'LEADER' && <TeamIndicators onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />}
+      {role === 'MANAGEMENT' && <TeamsSummary onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />}
 
       <form className="work-filters" role="search" aria-label="Отбор взаимодействий" onSubmit={(event) => event.preventDefault()}>
         <label className="work-filters__search">
@@ -304,6 +420,64 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
             ))}
           </select>
         </label>
+        <label>
+          Отметка
+          <select
+            value={filters.flag}
+            onChange={(event) => changeFilter({ flag: isFlag(event.target.value) ? event.target.value : '' })}
+          >
+            <option value="">Все работы</option>
+            {reportFlags.map((flag) => <option key={flag} value={flag}>{reportFlagLabels[flag]}</option>)}
+          </select>
+        </label>
+        <label>
+          Лицензия истекает
+          <select value={filters.licenseExpiresBy} onChange={(event) => changeFilter({ licenseExpiresBy: event.target.value })}>
+            <option value="">Любой срок</option>
+            {filters.licenseExpiresBy !== '' && !licenseYears.includes(filters.licenseExpiresBy) && (
+              <option value={filters.licenseExpiresBy}>до {filters.licenseExpiresBy} года включительно</option>
+            )}
+            {licenseYears.map((year) => <option key={year} value={year}>до {year} года включительно</option>)}
+          </select>
+        </label>
+        {seesTeamWork && (
+          <label>
+            Ответственный
+            <select
+              value={filters.responsible}
+              disabled={optionsState.kind !== 'ready' && filters.responsible.length === 0}
+              onChange={(event) => changeFilter({ responsible: event.target.value })}
+            >
+              <option value="">Все ответственные</option>
+              <option value={unassigned}>Требует назначения</option>
+              {filters.responsible.length > 0 && filters.responsible !== unassigned
+                && !managerOptions.some((manager) => manager.id === filters.responsible) && (
+                <option value={filters.responsible}>Выбранный ранее КАМ</option>
+              )}
+              {managerOptions.map((manager) => (
+                <option key={manager.id} value={manager.id}>
+                  {manager.active ? manager.displayName : `${manager.displayName} (неактивен)`}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label>
+          Статус работы
+          <select value={filters.status} onChange={(event) => changeFilter({ status: event.target.value as InteractionWorkStatusFilter })}>
+            {statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <label>
+          На текущем этапе
+          <select
+            value={filters.minDaysOnStage ?? ''}
+            onChange={(event) => changeFilter({ minDaysOnStage: positiveInteger(event.target.value) })}
+          >
+            <option value="">Любой срок</option>
+            {stageDays.map((days) => <option key={days} value={days}>дольше {daysLabel(days)}</option>)}
+          </select>
+        </label>
         {filtered && (
           <button type="button" className="button--secondary work-filters__reset" onClick={resetFilters}>Сбросить фильтры</button>
         )}
@@ -311,7 +485,7 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
 
       {optionsState.kind === 'failed' && (
         <div className="notice notice--error" role="alert">
-          <p>Не удалось загрузить списки этапов и вузов для фильтров. Поиск и отбор по сроку работают.</p>
+          <p>Не удалось загрузить списки этапов, вузов и ответственных для фильтров. Поиск и остальные отборы работают.</p>
           <SupportDetails requestId={optionsState.error instanceof ApiError ? optionsState.error.requestId : undefined} />
           <button type="button" className="button--secondary" onClick={() => void loadOptions()}>Повторить</button>
         </div>
@@ -341,7 +515,7 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
           </div>
         ) : (
           <div className="notice">
-            <p>Взаимодействий пока нет. Создайте первое в карточке вуза.</p>
+            <p>Активных взаимодействий нет. Завершённые работы показывает отбор «Статус работы».</p>
             <a className="button-link" href="#/organizations">Перейти к вузам</a>
           </div>
         )
@@ -356,11 +530,16 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
                 <div className="work-item__heading">
                   <a className="work-item__title" href={`#/organizations/${item.organizationId}/${item.id}`}>{item.title}</a>
                   <a className="work-item__organization" href={`#/organizations/${item.organizationId}`}>{item.organizationName}</a>
+                  <InteractionMarkBadges marks={item.marks} />
                 </div>
                 <dl className="work-item__facts">
                   <div>
                     <dt>Этап</dt>
                     <dd>{item.currentStageName}</dd>
+                  </div>
+                  <div>
+                    <dt>Дней на этапе</dt>
+                    <dd>{daysLabel(daysSince(item.stageEnteredAt, now))}</dd>
                   </div>
                   <div>
                     <dt>Следующий шаг</dt>
@@ -371,13 +550,21 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
                     <dd><span className={`status status--${status.tone}`}>{status.label}</span></dd>
                   </div>
                   <div>
+                    <dt>Последнее событие</dt>
+                    <dd>
+                      {item.lastEventAt === null
+                        ? 'Событий нет'
+                        : `${formatDateTime(item.lastEventAt)}, ${eventTypeLabel(item.lastEventType)}`}
+                    </dd>
+                  </div>
+                  <div>
                     <dt>Программа</dt>
                     <dd>{item.programName ?? 'Не указана'}</dd>
                   </div>
-                  {role === 'LEADER' && (
+                  {(seesTeamWork || item.deputyManagerName !== null) && (
                     <div>
                       <dt>Ответственный</dt>
-                      <dd>{item.ownerManagerName ?? 'Требует назначения'}</dd>
+                      <dd>{ownerLabel(item)}</dd>
                     </div>
                   )}
                 </dl>

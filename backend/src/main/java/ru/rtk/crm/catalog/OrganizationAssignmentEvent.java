@@ -14,6 +14,8 @@ public record OrganizationAssignmentEvent(
         UUID actorProfileId,
         String actorDisplayName,
         String requestId,
+        OrganizationAssignmentReason reason,
+        String handoverNote,
         int version,
         OffsetDateTime occurredAt
 ) {

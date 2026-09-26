@@ -53,6 +53,20 @@
       "organization": { "externalId": "site-uni-b", "name": "Университет Б" },
       "program": { "name": "Демо-программа: цифровой университет" },
       "applicationsCount": 6
+    },
+    {
+      "externalId": "la-demo-110",
+      "type": "learning_application",
+      "createdAt": "2026-09-23T12:00:00+03:00",
+      "updatedAt": "2026-09-23T12:00:00+03:00",
+      "status": "new",
+      "organization": { "externalId": "site-college-1", "name": "Колледж связи (демо)" },
+      "contact": {
+        "name": "Абитуриент Демонстрационный",
+        "email": "applicant.demo@example.test",
+        "phone": "+7 000 000-00-21"
+      },
+      "applicationsCount": 1
     }
   ],
   "nextPage": null

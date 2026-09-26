@@ -1,18 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, apiClient, type Me } from '../shared/api/client'
+import { AdminCatalogsPanel } from '../features/admin/AdminCatalogsPanel'
+import { AdminSectionNav } from '../features/admin/AdminSectionNav'
+import { ActivityKindsPanel } from '../features/agreements/ActivityKindsPanel'
+import { AgreementConfirmationsPanel } from '../features/agreements/AgreementConfirmationsPanel'
 import { CatalogImportPanel } from '../features/admin/CatalogImportPanel'
 import { AdminProfilesScreen } from '../features/admin/AdminProfilesScreen'
 import { SourcesPanel } from '../features/admin/SourcesPanel'
+import { AuditJournalPanel } from '../features/admin/AuditJournalPanel'
+import { PersonalDataPanel } from '../features/admin/PersonalDataPanel'
+import { RetentionPanel } from '../features/admin/RetentionPanel'
+import { ActivationRequest, PasswordLink } from '../features/session/ActivationRequest'
+import { PendingSourceRecords } from '../features/sources/PendingSourceRecords'
+import { SourceAlerts } from '../features/sources/SourceAlerts'
 import { WorkflowTemplatesPanel } from '../features/admin/WorkflowTemplatesPanel'
 import {
   clearDraftsForProfile,
   clearRememberedProfileDrafts,
   forgetActiveProfile,
-  rememberActiveProfile
+  rememberActiveProfile,
+  rememberReturnRoute,
+  takeReturnRoute
 } from '../features/interactions/drafts'
+import { UnsavedDraftNotice } from '../features/interactions/UnsavedDraftNotice'
+import { LandingPage } from '../features/landing/LandingPage'
 import { OrganizationsScreen } from '../features/organizations/OrganizationsScreen'
+import { KamReviewPanel } from '../features/reports/KamReviewPanel'
 import { ReportsScreen } from '../features/reports/ReportsScreen'
 import { ProfileSummary, SessionScreen } from '../features/session/SessionScreen'
+import { ReminderCenter } from '../features/work/ReminderCenter'
 import { WorkScreen } from '../features/work/WorkScreen'
 import { SupportDetails } from '../shared/ui/SupportDetails'
 
@@ -53,6 +69,12 @@ export const App = () => {
   }, [])
 
   useEffect(() => {
+    if (state.kind === 'anonymous') {
+      rememberReturnRoute()
+    }
+  }, [state.kind, hash])
+
+  useEffect(() => {
     const syncHash = () => setHash(window.location.hash)
     window.addEventListener('hashchange', syncHash)
     return () => window.removeEventListener('hashchange', syncHash)
@@ -64,6 +86,10 @@ export const App = () => {
       await apiClient.refreshCsrf()
       rememberActiveProfile(profile.id)
       activeProfileId.current = profile.id
+      const returnRoute = takeReturnRoute()
+      if (returnRoute !== null && returnRoute !== window.location.hash) {
+        window.location.hash = returnRoute
+      }
       setState({ kind: 'profile', profile })
     } catch (error) {
       if (error instanceof ApiError && error.code === 'UNAUTHENTICATED') {
@@ -113,10 +139,7 @@ export const App = () => {
   }
   if (state.kind === 'anonymous') {
     return (
-      <SessionScreen title="Вход в CRM">
-        <p>Используйте корпоративную учётную запись через защищённый вход.</p>
-        <button type="button" onClick={() => apiClient.login()}>Войти</button>
-      </SessionScreen>
+      <LandingPage onLogin={() => apiClient.login()} />
     )
   }
   if (state.kind === 'forbidden') {
@@ -127,6 +150,7 @@ export const App = () => {
             ? 'Учётная запись подтверждена, профиль CRM создан. Администратор назначит роль и команду, после этого откроется доступ к данным.'
             : 'Учётная запись успешно подтверждена, но активный профиль CRM отсутствует или заблокирован. Обратитесь к администратору CRM.'}
         </p>
+        {state.pending && <ActivationRequest onSessionExpired={handleSessionExpired} />}
         <SupportDetails requestId={state.requestId} />
         <button type="button" className="button--secondary" onClick={() => void logout()}>Выйти</button>
       </SessionScreen>
@@ -166,7 +190,16 @@ export const App = () => {
           </ul>
         </nav>
         <div className="app-header__profile">
+          {(state.profile.role === 'USER' || state.profile.role === 'LEADER') && (
+            <ReminderCenter
+              profileId={state.profile.id}
+              refreshKey={section}
+              onSessionExpired={handleSessionExpired}
+              onProfileUnavailable={handleProfileUnavailable}
+            />
+          )}
           <ProfileSummary profile={state.profile} />
+          <PasswordLink />
           <button type="button" className="button--secondary" onClick={() => void logout()}>Выйти</button>
         </div>
       </header>
@@ -175,11 +208,14 @@ export const App = () => {
         <div className="app-content">
           {section === 'admin' && (
             <>
+              <AdminSectionNav />
+              <SourceAlerts onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
               <AdminProfilesScreen
                 currentProfile={state.profile}
                 onSessionExpired={handleSessionExpired}
                 onProfileUnavailable={handleProfileUnavailable}
               />
+              <AdminCatalogsPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
               <WorkflowTemplatesPanel
                 role={state.profile.role}
                 onSessionExpired={handleSessionExpired}
@@ -190,6 +226,13 @@ export const App = () => {
                 onProfileUnavailable={handleProfileUnavailable}
               />
               <SourcesPanel
+                onSessionExpired={handleSessionExpired}
+                onProfileUnavailable={handleProfileUnavailable}
+              />
+              <AuditJournalPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
+              <PersonalDataPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
+              <RetentionPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
+              <ActivityKindsPanel
                 onSessionExpired={handleSessionExpired}
                 onProfileUnavailable={handleProfileUnavailable}
               />
@@ -214,6 +257,11 @@ export const App = () => {
                 onSessionExpired={handleSessionExpired}
                 onProfileUnavailable={handleProfileUnavailable}
               />
+              <PendingSourceRecords
+                role={state.profile.role}
+                onSessionExpired={handleSessionExpired}
+                onProfileUnavailable={handleProfileUnavailable}
+              />
               {state.profile.role === 'LEADER' && (
                 <WorkflowTemplatesPanel
                   role={state.profile.role}
@@ -224,13 +272,24 @@ export const App = () => {
             </>
           )}
           {section === 'reports' && (
-            <ReportsScreen
-              profileId={state.profile.id}
-              onSessionExpired={handleSessionExpired}
-              onProfileUnavailable={handleProfileUnavailable}
-            />
+            <>
+              <ReportsScreen
+                profileId={state.profile.id}
+                role={state.profile.role}
+                onSessionExpired={handleSessionExpired}
+                onProfileUnavailable={handleProfileUnavailable}
+              />
+              <AgreementConfirmationsPanel
+                onSessionExpired={handleSessionExpired}
+                onProfileUnavailable={handleProfileUnavailable}
+              />
+            </>
+          )}
+          {section === 'reports' && (
+            <KamReviewPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
           )}
         </div>
+        <UnsavedDraftNotice />
       </main>
     </div>
   )

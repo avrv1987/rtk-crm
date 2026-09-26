@@ -34,6 +34,18 @@ enum SourceRecordStatus {
     SKIPPED
 }
 
+enum RunKind {
+    STUDENTS,
+    TEACHERS
+}
+
+enum SyncTrigger {
+    MANUAL,
+    SCHEDULE,
+    CARD,
+    BOOTSTRAP
+}
+
 enum SyncOutcome {
     CREATED,
     UPDATED,
@@ -57,7 +69,10 @@ record SyncRunView(
         String errorMessage,
         OffsetDateTime createdAt,
         OffsetDateTime startedAt,
-        OffsetDateTime finishedAt
+        OffsetDateTime finishedAt,
+        SyncTrigger trigger,
+        String startedByName,
+        String organizationName
 ) {
 }
 
@@ -70,7 +85,10 @@ record SourceView(
         OffsetDateTime updatedSince,
         OffsetDateTime lastSuccessAt,
         long problemCount,
-        SyncRunView lastRun
+        SyncRunView lastRun,
+        String schedule,
+        OffsetDateTime nextRunAt,
+        boolean stale
 ) {
 }
 
@@ -93,7 +111,16 @@ record SourceRecordView(
 ) {
 }
 
-record SourceRecordApplyRequest(UUID organizationId, UUID programId, LocalDate runStartsOn, LocalDate runEndsOn) {
+record SourceRecordApplyRequest(
+        UUID organizationId,
+        UUID programId,
+        LocalDate runStartsOn,
+        LocalDate runEndsOn,
+        RunKind runKind
+) {
+    SourceRecordApplyRequest(UUID organizationId, UUID programId, LocalDate runStartsOn, LocalDate runEndsOn) {
+        this(organizationId, programId, runStartsOn, runEndsOn, null);
+    }
 }
 
 record SourceRecordApplyResult(SourceRecordView record, int reappliedCount) {
@@ -106,4 +133,62 @@ record SourceMappingOption(UUID id, String name) {
 }
 
 record SourceMappingOptions(List<SourceMappingOption> organizations, List<SourceMappingOption> programs) {
+}
+
+record SourceMappingView(
+        UUID id,
+        SourceCode source,
+        String kind,
+        String externalKey,
+        String label,
+        UUID organizationId,
+        String organizationName,
+        UUID programId,
+        String programName,
+        LocalDate runStartsOn,
+        LocalDate runEndsOn,
+        RunKind runKind,
+        int version,
+        String updatedByName,
+        OffsetDateTime updatedAt,
+        Integer participants,
+        OffsetDateTime observedAt,
+        boolean closed,
+        boolean outdated
+) {
+}
+
+record SourceMappingRequest(
+        Integer version,
+        UUID organizationId,
+        UUID programId,
+        LocalDate runStartsOn,
+        LocalDate runEndsOn,
+        RunKind runKind
+) {
+}
+
+record PendingSourceRecordView(
+        UUID id,
+        String recordType,
+        String externalId,
+        OffsetDateTime submittedAt,
+        SourceRecordStatus status,
+        String error,
+        String organizationName,
+        String organizationExternalId,
+        String programName,
+        UUID organizationId,
+        String crmOrganizationName,
+        boolean canResolve
+) {
+}
+
+record SourceRecordResolveRequest(UUID organizationId) {
+}
+
+record SourceOrganizationCreateRequest(String name, String type, UUID teamId) {
+}
+
+record SourceOrganizationCreated(UUID organizationId, String organizationName, SourceRecordApplyResult result) {
 }

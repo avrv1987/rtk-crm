@@ -21,6 +21,7 @@ import {
   roleLabels,
   type SessionHandlers
 } from './adminShared'
+import './security.css'
 
 type AdminProfilesScreenProps = SessionHandlers & {
   currentProfile: Me
@@ -48,6 +49,10 @@ type EditState = {
   error?: unknown
   idempotencyKey: string | null
 }
+
+type AccountSyncState =
+  | { kind: 'syncing'; profileId: string }
+  | { kind: 'failed'; profileId: string; error: unknown }
 
 type JournalState =
   | { kind: 'loading'; profileId: string }
@@ -123,6 +128,9 @@ const accessSummary = (profile: CrmProfile, update: CrmProfileUpdate, teams: Tea
   if (profile.role === 'USER' && (update.teamId !== undefined || nextRole !== 'USER' || !nextActive)) {
     lines.push('Вузы, закреплённые за этим КАМ, получат статус «Требует назначения».')
   }
+  if (update.role === 'MANAGEMENT') {
+    lines.push('Роль «Руководство»: просмотр карточек и отчётов всех команд без права изменений; команда не требуется.')
+  }
   lines.push('Новые права действуют со следующего запроса пользователя; ранее сформированные им отчёты станут недоступны для скачивания.')
   return lines
 }
@@ -149,7 +157,10 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
   const [teamsState, setTeamsState] = useState<TeamsState>({ kind: 'loading' })
   const [teamNamesRevision, setTeamNamesRevision] = useState(0)
   const [filter, setFilter] = useState<ProfileFilter>('all')
+  const [searchDraft, setSearchDraft] = useState('')
+  const [search, setSearch] = useState('')
   const [pageIndex, setPageIndex] = useState(0)
+  const [accountSync, setAccountSync] = useState<AccountSyncState | null>(null)
   const [edit, setEdit] = useState<EditState | null>(null)
   const [journal, setJournal] = useState<JournalState | null>(null)
   const listRequestVersion = useRef(0)
@@ -160,7 +171,7 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
     handledSessionError(error, { onSessionExpired, onProfileUnavailable })
   ), [onProfileUnavailable, onSessionExpired])
 
-  const loadProfiles = useCallback(async (requestedPage: number, requestedFilter: ProfileFilter) => {
+  const loadProfiles = useCallback(async (requestedPage: number, requestedFilter: ProfileFilter, requestedSearch: string) => {
     const requestVersion = ++listRequestVersion.current
     setProfilesState({ kind: 'loading' })
     try {
@@ -168,7 +179,8 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
         page: requestedPage,
         size: profilesPageSize,
         sort: 'displayName,asc',
-        pending: requestedFilter === 'pending'
+        pending: requestedFilter === 'pending',
+        q: requestedSearch || undefined
       })
       if (requestVersion === listRequestVersion.current) {
         setProfilesState({ kind: 'ready', page })
@@ -214,11 +226,11 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
   }, [handleError])
 
   useEffect(() => {
-    void loadProfiles(pageIndex, filter)
+    void loadProfiles(pageIndex, filter, search)
     return () => {
       listRequestVersion.current += 1
     }
-  }, [filter, loadProfiles, pageIndex, teamNamesRevision])
+  }, [filter, loadProfiles, pageIndex, search, teamNamesRevision])
 
   useEffect(() => {
     void loadTeams()
@@ -276,7 +288,8 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
     try {
       const updated = await apiClient.updateCrmProfile(edit.profile.id, update, idempotencyKey)
       setEdit(null)
-      await loadProfiles(pageIndex, filter)
+      setAccountSync(updated.accountSyncError ? { kind: 'failed', profileId: updated.id, error: updated.accountSyncError } : null)
+      await loadProfiles(pageIndex, filter, search)
       if (journal?.profileId === updated.id) {
         await loadJournal(updated.id)
       }
@@ -295,13 +308,69 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
 
   const reloadAfterConflict = async () => {
     setEdit(null)
-    await loadProfiles(pageIndex, filter)
+    await loadProfiles(pageIndex, filter, search)
   }
 
   const changeFilter = (value: ProfileFilter) => {
     setEdit(null)
     setPageIndex(0)
     setFilter(value)
+  }
+
+  const submitSearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setEdit(null)
+    setPageIndex(0)
+    setSearch(searchDraft.trim())
+  }
+
+  const resetSearch = () => {
+    setSearchDraft('')
+    setPageIndex(0)
+    setSearch('')
+  }
+
+  const syncAccount = async (profile: CrmProfile) => {
+    setAccountSync({ kind: 'syncing', profileId: profile.id })
+    try {
+      await apiClient.syncCrmProfileAccount(profile.id)
+      setAccountSync(null)
+      await loadProfiles(pageIndex, filter, search)
+    } catch (error) {
+      if (!handleError(error)) {
+        setAccountSync({ kind: 'failed', profileId: profile.id, error })
+      }
+    }
+  }
+
+  const renderAccount = (profile: CrmProfile) => {
+    if (!profile.accountSyncRequired) {
+      return null
+    }
+    const syncing = accountSync?.kind === 'syncing' && accountSync.profileId === profile.id
+    const failure = accountSync?.kind === 'failed' && accountSync.profileId === profile.id ? accountSync.error : null
+    return (
+      <div className="security-account" role="status">
+        <p>
+          {profile.active
+            ? 'Учётная запись Keycloak отключена, хотя доступ к CRM открыт: требует синхронизации.'
+            : 'Доступ к CRM закрыт, но учётная запись Keycloak ещё не отключена: требует синхронизации.'}
+        </p>
+        {failure !== null && (
+          <p>
+            {typeof failure === 'string'
+              ? failure
+              : failure instanceof ApiError && failure.code === 'ACCOUNT_SYNC_FAILED' ? failure.message : commandErrorMessage(failure)}
+            {failure instanceof ApiError && <span className="request-id"> Request ID: {failure.requestId}</span>}
+          </p>
+        )}
+        <div className="security-actions">
+          <button type="button" className="button--secondary" disabled={syncing} onClick={() => void syncAccount(profile)}>
+            {syncing ? 'Синхронизируем…' : profile.active ? 'Включить в Keycloak' : 'Отключить в Keycloak'}
+          </button>
+        </div>
+      </div>
+    )
   }
 
   const renderEditor = (profile: CrmProfile) => {
@@ -312,7 +381,9 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
     const update = updateOf(profile, edit.draft)
     const hasChanges = Object.keys(update).length > 1
     const nameInvalid = edit.draft.displayName.trim().length === 0
-    const teamOptions = teamsState.kind === 'ready' ? teamsState.teams : []
+    const teamOptions = teamsState.kind === 'ready'
+      ? teamsState.teams.filter((team) => !team.archived || team.id === profile.teamId)
+      : []
     return (
       <form className="admin-profile-form" onSubmit={submitEdit} aria-label={`Изменение профиля ${profileName(profile)}`}>
         <label>
@@ -335,6 +406,7 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
             <option value="USER">{roleLabels.USER}</option>
             <option value="LEADER">{roleLabels.LEADER}</option>
             <option value="ADMIN">{roleLabels.ADMIN}</option>
+            <option value="MANAGEMENT">{roleLabels.MANAGEMENT}</option>
           </select>
         </label>
         <label>
@@ -364,7 +436,7 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
         )}
         {profile.pendingActivation && (
           <p className="admin-profile-form__hint">
-            Профиль создан при первом входе сотрудника. Выберите роль и команду и откройте доступ — менеджеру и руководителю команда обязательна.
+            Профиль создан при первом входе сотрудника. Выберите роль и команду и откройте доступ — КАМ и руководителю команда обязательна.
           </p>
         )}
         {edit.confirming && (
@@ -467,15 +539,43 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
 
         <p className="admin-profiles__intro">
           Назначайте роль и команду, открывайте и закрывайте доступ. Новый сотрудник после первого входа появляется в списке «Ожидают активации».
+          Если связь с Keycloak настроена, закрытие доступа сразу отключает учётную запись в Keycloak, открытие — включает;
+          иначе профиль помечается «требует синхронизации» с причиной.
         </p>
 
-        <label className="admin-profiles__filter">
-          Показать
-          <select value={filter} onChange={(event) => changeFilter(event.target.value as ProfileFilter)}>
-            <option value="all">Все профили</option>
-            <option value="pending">Ожидают активации</option>
-          </select>
-        </label>
+        {profilesState.kind === 'ready' && profilesState.page.pendingTotal > 0 && (
+          <div className="security-pending" role="status">
+            <p>Ожидают активации: {profilesState.page.pendingTotal}</p>
+            {filter !== 'pending' && (
+              <button type="button" className="button--secondary" onClick={() => changeFilter('pending')}>Показать</button>
+            )}
+          </div>
+        )}
+
+        <div className="security-toolbar">
+          <label className="admin-profiles__filter">
+            Показать
+            <select value={filter} onChange={(event) => changeFilter(event.target.value as ProfileFilter)}>
+              <option value="all">Все профили</option>
+              <option value="pending">Ожидают активации</option>
+            </select>
+          </label>
+          <form className="security-search" onSubmit={submitSearch} role="search" aria-label="Поиск профиля">
+            <label>
+              Имя или логин
+              <input
+                type="search"
+                value={searchDraft}
+                maxLength={200}
+                onChange={(event) => setSearchDraft(event.target.value)}
+              />
+            </label>
+            <button type="submit">Найти</button>
+            {search !== '' && (
+              <button type="button" className="button--secondary" onClick={resetSearch}>Сбросить</button>
+            )}
+          </form>
+        </div>
 
         {profilesState.kind === 'loading' && (
           <p className="organizations-message" role="status">Загружаем профили CRM…</p>
@@ -485,7 +585,7 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
           <div className="organizations-message organizations-message--error" role="alert">
             <p>Не удалось загрузить профили CRM. Повторите попытку.</p>
             {profilesState.requestId && <p className="request-id">Request ID: {profilesState.requestId}</p>}
-            <button type="button" onClick={() => void loadProfiles(pageIndex, filter)}>Повторить</button>
+            <button type="button" onClick={() => void loadProfiles(pageIndex, filter, search)}>Повторить</button>
           </div>
         )}
 
@@ -493,7 +593,9 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
           <>
             {profilesState.page.items.length === 0 ? (
               <p className="organizations-message">
-                {filter === 'pending' ? 'Нет профилей, ожидающих активации.' : 'Профили CRM пока не найдены.'}
+                {search !== ''
+                  ? 'По этому имени или логину профили не найдены.'
+                  : filter === 'pending' ? 'Нет профилей, ожидающих активации.' : 'Профили CRM пока не найдены.'}
               </p>
             ) : (
               <ul className="admin-profiles__list" aria-label="Список профилей CRM">
@@ -506,6 +608,11 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
                         <div>
                           <h3>{profileName(profile)}</h3>
                           <p className={`admin-profiles__status ${status.className}`}>{status.label}</p>
+                          {profile.pendingActivation && profile.activationRequestedAt && (
+                            <p className="security-badge security-badge--warning">
+                              Сотрудник сообщил о себе {formatDateTime(profile.activationRequestedAt)}
+                            </p>
+                          )}
                         </div>
                         <dl className="admin-profiles__fields">
                           <div>
@@ -520,7 +627,14 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
                             <dt>Ревизия доступа</dt>
                             <dd>{profile.accessRevision}</dd>
                           </div>
+                          {profile.login && (
+                            <div>
+                              <dt>Логин</dt>
+                              <dd>{profile.login}</dd>
+                            </div>
+                          )}
                         </dl>
+                        {renderAccount(profile)}
                         {renderEditor(profile)}
                         {renderJournal(profile)}
                       </div>

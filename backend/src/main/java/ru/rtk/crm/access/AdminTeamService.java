@@ -2,13 +2,20 @@ package ru.rtk.crm.access;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import ru.rtk.crm.audit.AuditAction;
+import ru.rtk.crm.audit.AuditJournalRepository;
+import ru.rtk.crm.catalog.CatalogChangeAction;
+import ru.rtk.crm.catalog.CatalogChangeEventRepository;
+import ru.rtk.crm.catalog.CatalogEntityType;
 import ru.rtk.crm.interaction.CommandFingerprint;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
 import ru.rtk.crm.interaction.CommandOperation;
@@ -21,27 +28,52 @@ public class AdminTeamService {
 
     private final AdminTeamRepository adminTeamRepository;
     private final CommandIdempotencyRepository commandIdempotencyRepository;
+    private final AuditJournalRepository auditJournalRepository;
+    private final CatalogChangeEventRepository catalogChangeEventRepository;
     private final ObjectMapper objectMapper;
 
     public AdminTeamService(
             AdminTeamRepository adminTeamRepository,
             CommandIdempotencyRepository commandIdempotencyRepository,
+            AuditJournalRepository auditJournalRepository,
+            CatalogChangeEventRepository catalogChangeEventRepository,
             ObjectMapper objectMapper
     ) {
         this.adminTeamRepository = adminTeamRepository;
         this.commandIdempotencyRepository = commandIdempotencyRepository;
+        this.auditJournalRepository = auditJournalRepository;
+        this.catalogChangeEventRepository = catalogChangeEventRepository;
         this.objectMapper = objectMapper;
     }
 
     @Transactional(readOnly = true)
-    public List<Team> list(CrmProfile actor) {
+    public List<AdminTeam> list(CrmProfile actor) {
         AdminAuthorization.requireAdmin(actor);
-        return adminTeamRepository.findAll();
+        Map<UUID, List<AdminTeamRepository.TeamMember>> members = adminTeamRepository.findActiveMembers().stream()
+                .collect(Collectors.groupingBy(AdminTeamRepository.TeamMember::teamId));
+        Map<UUID, Long> organizations = adminTeamRepository.countCurrentOrganizations().stream()
+                .collect(Collectors.toMap(AdminTeamRepository.TeamCount::teamId, AdminTeamRepository.TeamCount::total));
+        Map<UUID, Long> profiles = adminTeamRepository.countProfiles().stream()
+                .collect(Collectors.toMap(AdminTeamRepository.TeamCount::teamId, AdminTeamRepository.TeamCount::total));
+        return adminTeamRepository.findAll().stream().map(team -> {
+            List<AdminTeamRepository.TeamMember> teamMembers = members.getOrDefault(team.id(), List.of());
+            return new AdminTeam(
+                    team.id(),
+                    team.name(),
+                    team.version(),
+                    team.archived(),
+                    namesWithRole(teamMembers, UserRole.LEADER),
+                    namesWithRole(teamMembers, UserRole.USER),
+                    organizations.getOrDefault(team.id(), 0L),
+                    profiles.getOrDefault(team.id(), 0L) - teamMembers.size()
+            );
+        }).toList();
     }
 
     @Transactional
-    public Team create(CrmProfile actor, TeamRequest request, String idempotencyKey) {
+    public Team create(CrmProfile actor, TeamRequest request, String idempotencyKey, String requestId) {
         AdminAuthorization.requireAdmin(actor);
+        String auditRequestId = AdminAuthorization.requiredRequestId(requestId);
         TeamCommand command = new TeamCommand(null, null, requiredName(request));
         String normalizedKey = AdminAuthorization.requiredIdempotencyKey(idempotencyKey);
         String fingerprint = CommandFingerprint.of(objectMapper, command);
@@ -57,12 +89,18 @@ public class AdminTeamService {
         } catch (DuplicateKeyException exception) {
             throw nameTaken();
         }
+        auditJournalRepository.record(AuditAction.TEAM_CREATED, actor.id(), "TEAM", teamId, command.name(), null, auditRequestId);
+        catalogChangeEventRepository.insert(
+                CatalogEntityType.TEAM, teamId, CatalogChangeAction.CREATE, command.name(), null,
+                actor.id(), auditRequestId, now
+        );
         return store(commandId, adminTeamRepository.findById(teamId).orElseThrow(TeamNotFoundException::new));
     }
 
     @Transactional
-    public Team rename(CrmProfile actor, UUID teamId, TeamRequest request, String idempotencyKey) {
+    public Team rename(CrmProfile actor, UUID teamId, TeamRequest request, String idempotencyKey, String requestId) {
         AdminAuthorization.requireAdmin(actor);
+        String auditRequestId = AdminAuthorization.requiredRequestId(requestId);
         if (teamId == null) {
             throw new InteractionValidationException("id", "Укажите команду");
         }
@@ -96,7 +134,87 @@ public class AdminTeamService {
                     adminTeamRepository.findById(teamId).map(Team::version).orElseThrow(TeamNotFoundException::new)
             );
         }
+        auditJournalRepository.record(
+                AuditAction.TEAM_RENAMED, actor.id(), "TEAM", teamId, command.name(),
+                "название: " + current.name() + " → " + command.name(), auditRequestId
+        );
+        catalogChangeEventRepository.insert(
+                CatalogEntityType.TEAM, teamId, CatalogChangeAction.UPDATE, command.name(),
+                "Название: «" + current.name() + "» → «" + command.name() + "»", actor.id(), auditRequestId, now
+        );
         return store(commandId, adminTeamRepository.findById(teamId).orElseThrow(TeamNotFoundException::new));
+    }
+
+    @Transactional
+    public Team changeArchived(
+            CrmProfile actor,
+            UUID teamId,
+            TeamArchiveRequest request,
+            String idempotencyKey,
+            String requestId
+    ) {
+        AdminAuthorization.requireAdmin(actor);
+        String auditRequestId = AdminAuthorization.requiredRequestId(requestId);
+        if (teamId == null) {
+            throw new InteractionValidationException("id", "Укажите команду");
+        }
+        if (request == null || request.archived() == null) {
+            throw new InteractionValidationException("archived", "Укажите, архивировать команду или восстановить");
+        }
+        if (request.version() == null || request.version() < 0) {
+            throw new InteractionValidationException("version", "Некорректная версия записи; обновите страницу");
+        }
+        ArchiveCommand command = new ArchiveCommand(teamId, request.version(), request.archived());
+        String normalizedKey = AdminAuthorization.requiredIdempotencyKey(idempotencyKey);
+        String fingerprint = CommandFingerprint.of(objectMapper, command);
+        UUID commandId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
+        if (!commandIdempotencyRepository.reserve(commandId, actor.id(), CommandOperation.ARCHIVE_TEAM, normalizedKey, fingerprint, now)) {
+            return replay(actor.id(), CommandOperation.ARCHIVE_TEAM, normalizedKey, fingerprint);
+        }
+        Team current = adminTeamRepository.findByIdForUpdate(teamId).orElseThrow(TeamNotFoundException::new);
+        if (current.version() != command.version()) {
+            throw InteractionConflictException.teamVersion(current.version());
+        }
+        if (current.archived() == command.archived()) {
+            throw new InteractionValidationException(
+                    "archived", command.archived() ? "Команда уже в архиве" : "Команда не в архиве"
+            );
+        }
+        if (command.archived()) {
+            long organizations = adminTeamRepository.countCurrentOrganizations(teamId);
+            if (organizations > 0) {
+                throw new InteractionValidationException(
+                        "archived", "В команде есть организации (" + organizations + "): перенесите их в другую команду или архивируйте"
+                );
+            }
+            long profiles = adminTeamRepository.countProfiles(teamId);
+            if (profiles > 0) {
+                throw new InteractionValidationException(
+                        "archived", "В команде есть сотрудники (" + profiles + "): переведите их в другую команду"
+                );
+            }
+        }
+        if (!adminTeamRepository.updateArchived(teamId, command.version(), command.archived(), now)) {
+            throw InteractionConflictException.teamVersion(current.version());
+        }
+        auditJournalRepository.record(
+                command.archived() ? AuditAction.TEAM_ARCHIVED : AuditAction.TEAM_RESTORED,
+                actor.id(), "TEAM", teamId, current.name(), null, auditRequestId
+        );
+        catalogChangeEventRepository.insert(
+                CatalogEntityType.TEAM, teamId,
+                command.archived() ? CatalogChangeAction.ARCHIVE : CatalogChangeAction.RESTORE,
+                current.name(), null, actor.id(), auditRequestId, now
+        );
+        return store(commandId, adminTeamRepository.findById(teamId).orElseThrow(TeamNotFoundException::new));
+    }
+
+    private static List<String> namesWithRole(List<AdminTeamRepository.TeamMember> members, UserRole role) {
+        return members.stream()
+                .filter(member -> member.role() == role)
+                .map(AdminTeamRepository.TeamMember::displayName)
+                .toList();
     }
 
     private String requiredName(TeamRequest request) {
@@ -150,5 +268,8 @@ public class AdminTeamService {
     }
 
     private record TeamCommand(UUID teamId, Integer version, String name) {
+    }
+
+    private record ArchiveCommand(UUID teamId, int version, boolean archived) {
     }
 }

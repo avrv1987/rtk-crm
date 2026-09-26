@@ -75,7 +75,7 @@ public class SiteApiClient {
         try {
             response = httpClient.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
         } catch (IOException exception) {
-            throw SourceFetchException.unavailable("Сайт недоступен: " + exception.getClass().getSimpleName());
+            throw SourceFetchException.unreachable("Сайт", exception);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw SourceFetchException.unavailable("Синхронизация прервана");

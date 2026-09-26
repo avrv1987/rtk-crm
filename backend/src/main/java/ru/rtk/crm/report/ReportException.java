@@ -76,6 +76,19 @@ public class ReportException extends RuntimeException {
         );
     }
 
+    public static ReportException chartSeriesLimit(int maxSeries) {
+        return new ReportException(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "REPORT_CHART_LIMIT",
+                "График строится не более чем для " + maxSeries + " линий; оставьте меньше значений в фильтре или выберите"
+                        + " другую разбивку на линии"
+        );
+    }
+
+    public static ReportException savedReportNotFound() {
+        return new ReportException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Сохранённый отчёт не найден");
+    }
+
     public HttpStatus status() {
         return status;
     }

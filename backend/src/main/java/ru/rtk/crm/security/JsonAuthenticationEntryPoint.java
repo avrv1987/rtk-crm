@@ -23,6 +23,13 @@ public class JsonAuthenticationEntryPoint implements AuthenticationEntryPoint {
             HttpServletResponse response,
             AuthenticationException authenticationException
     ) throws IOException, ServletException {
-        apiErrorWriter.write(request, response, HttpServletResponse.SC_UNAUTHORIZED, "UNAUTHENTICATED", "Требуется вход в систему");
+        apiErrorWriter.write(
+                request,
+                response,
+                HttpServletResponse.SC_UNAUTHORIZED,
+                "UNAUTHENTICATED",
+                "Требуется вход в систему",
+                authenticationException.getClass().getSimpleName()
+        );
     }
 }

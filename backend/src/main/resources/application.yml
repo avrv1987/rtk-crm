@@ -50,6 +50,10 @@ app:
     scanner-connect-timeout: ${APP_ATTACHMENTS_SCANNER_CONNECT_TIMEOUT:2s}
     scanner-read-timeout: ${APP_ATTACHMENTS_SCANNER_READ_TIMEOUT:20s}
     max-file-size: 20MB
+  organizations:
+    manager-creation-requires-approval: ${APP_ORGANIZATIONS_MANAGER_CREATION_REQUIRES_APPROVAL:true}
+  agreements:
+    archive-max-size: 1GB
   reports:
     storage-root: ${APP_REPORTS_STORAGE_ROOT:/var/lib/rtk-crm/reports}
     slots: 10
@@ -60,6 +64,7 @@ app:
     slots: 1
     queue-capacity: 1
     sync-cron: ${APP_SOURCES_SYNC_CRON:-}
+    stale-after: ${APP_SOURCES_STALE_AFTER:26h}
     website:
       base-url: ${APP_SOURCES_WEBSITE_BASE_URL:}
       token: ${APP_SOURCES_WEBSITE_TOKEN:}
@@ -76,6 +81,33 @@ app:
       connect-timeout: 5s
       read-timeout: 20s
       max-response-size: 5MB
+  retention:
+    cron: ${APP_RETENTION_CRON:0 30 3 * * *}
+    report-files: ${APP_RETENTION_REPORT_FILES:7d}
+    inactive-contacts: ${APP_RETENTION_INACTIVE_CONTACTS:1095d}
+    dismissed-profiles: ${APP_RETENTION_DISMISSED_PROFILES:365d}
+    audit-events: ${APP_RETENTION_AUDIT_EVENTS:1095d}
+  account-sync:
+    base-url: ${APP_OIDC_INTERNAL_BASE_URL:}
+    realm: rtk-crm
+    client-id: crm-account-sync
+    client-secret: ${APP_KEYCLOAK_ACCOUNT_SYNC_CLIENT_SECRET:}
+    timeout: 5s
+  work:
+    stuck-days: 30
+    upcoming-days: 7
+    license-years-ahead: 1
+    training-stage-names: Обучение преподавателей,Повышение квалификации
+    training-cycle-years: 3
+    training-notice-days: 90
+    reminder-list-limit: 50
+    deputy-expiry-delay: PT5M
+  enrolment:
+    enabled: ${APP_ENROLMENT_ENABLED:false}
+    active-key-version: ${APP_ENROLMENT_ACTIVE_KEY_VERSION:}
+    keys:
+      v1: ${APP_ENROLMENT_KEYS_V1:}
+    fingerprint-key: ${APP_ENROLMENT_FINGERPRINT_KEY:}
   oidc:
     issuer-uri: ${APP_OIDC_ISSUER_URI:}
     public-base-url: ${APP_OIDC_PUBLIC_BASE_URL:}

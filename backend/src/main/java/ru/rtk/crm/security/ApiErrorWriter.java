@@ -12,15 +12,25 @@ import ru.rtk.crm.web.ApiError;
 @Component
 public class ApiErrorWriter {
     private final ObjectMapper objectMapper;
+    private final ApiErrorLog apiErrorLog;
 
-    public ApiErrorWriter(ObjectMapper objectMapper) {
+    public ApiErrorWriter(ObjectMapper objectMapper, ApiErrorLog apiErrorLog) {
         this.objectMapper = objectMapper;
+        this.apiErrorLog = apiErrorLog;
     }
 
-    public void write(HttpServletRequest request, HttpServletResponse response, int status, String code, String message)
-            throws IOException {
+    public void write(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            int status,
+            String code,
+            String message,
+            String reason
+    ) throws IOException {
+        ApiError error = ApiError.of(code, message, RequestId.from(request));
+        apiErrorLog.record(request, status, error, reason);
         response.setStatus(status);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        objectMapper.writeValue(response.getOutputStream(), ApiError.of(code, message, RequestId.from(request)));
+        objectMapper.writeValue(response.getOutputStream(), error);
     }
 }

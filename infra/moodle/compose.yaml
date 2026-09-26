@@ -3,6 +3,7 @@ name: rtk-crm-moodle
 services:
   moodle-db:
     restart: unless-stopped
+    mem_limit: 512m
     image: mariadb:11.4.5
     command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
     environment:
@@ -20,6 +21,7 @@ services:
 
   moodle:
     restart: unless-stopped
+    mem_limit: 768m
     image: bitnamilegacy/moodle:4.5.4-debian-12-r0
     environment:
       MOODLE_DATABASE_TYPE: mariadb

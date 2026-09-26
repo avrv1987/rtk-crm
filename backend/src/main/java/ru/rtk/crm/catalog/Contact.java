@@ -13,6 +13,13 @@ public record Contact(
         int version,
         UUID createdBy,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt
+        OffsetDateTime updatedAt,
+        ContactRole role,
+        boolean primary,
+        boolean inactive,
+        OffsetDateTime confirmedAt,
+        UUID confirmedBy,
+        String confirmedByName,
+        PersonalDataStatus personalDataStatus
 ) {
 }

@@ -24,10 +24,12 @@ public record Interaction(
         List<UUID> productIds,
         List<ProductAgreement> productAgreements,
         List<Attachment> attachments,
+        List<InteractionStageCompletion> stageCompletions,
         OffsetDateTime lastContactAt,
         int version,
         UUID createdBy,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt
+        OffsetDateTime updatedAt,
+        InteractionMarks marks
 ) {
 }

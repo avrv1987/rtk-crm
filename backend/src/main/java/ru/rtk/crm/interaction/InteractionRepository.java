@@ -2,6 +2,7 @@ package ru.rtk.crm.interaction;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -14,21 +15,40 @@ import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
 import ru.rtk.crm.catalog.SearchPattern;
 
 @Repository
 public class InteractionRepository {
+    public static final String EVENT_COMMENT = """
+            NULLIF(CONCAT_WS('; ', e.comment, %s, %s), '')""".formatted(
+            eventContacts("ADDED", "Добавлены контакты: "),
+            eventContacts("REMOVED", "Удалены контакты: ")
+    );
     private static final String EVENT_SELECT = """
             SELECT e.id, e.type, e.command_id, e.stage_id, e.stage_name_snapshot,
                    e.from_stage_id, e.from_stage_name_snapshot,
-                   e.to_stage_id, e.to_stage_name_snapshot, e.comment,
+                   e.to_stage_id, e.to_stage_name_snapshot, %s AS comment,
                    e.plan_changed, e.next_action, e.next_action_at,
                    e.actor_profile_id, actor.display_name AS actor_display_name,
                    e.owner_manager_id_snapshot, e.version, e.occurred_at
             FROM interaction_events e
             JOIN crm_user_profiles actor ON actor.id = e.actor_profile_id
-            """;
+            """.formatted(EVENT_COMMENT);
+
+    public static final String STAGE_ENTERED_AT = """
+            COALESCE((
+                SELECT MAX(stage_entry.occurred_at)
+                FROM interaction_events stage_entry
+                WHERE stage_entry.interaction_id = i.id AND stage_entry.to_stage_id = i.current_stage_id
+            ), i.created_at)""";
+    private static final String LAST_EVENT = """
+            (SELECT last_event.%s
+             FROM interaction_events last_event
+             WHERE last_event.interaction_id = i.id
+             ORDER BY last_event.occurred_at DESC, last_event.version DESC, last_event.id DESC
+             LIMIT 1)""";
 
     private final JdbcClient jdbcClient;
 
@@ -75,8 +95,14 @@ public class InteractionRepository {
                 SELECT i.id, i.organization_id, i.title, i.current_stage_id, current_stage.name AS current_stage_name,
                        i.next_action, i.next_action_at, i.program_id, i.last_contact_at,
                        i.version, i.created_by, i.created_at, i.updated_at,
+                       i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note, i.problem, i.risk_level, i.risk_reason,
                        o.name AS organization_name, program.name AS program_name,
-                       owner_profile.display_name AS owner_manager_name
+                       owner_profile.display_name AS owner_manager_name,
+                       %s AS last_event_type,
+                       %s AS last_event_at,
+                       %s AS stage_entered_at,
+                       (SELECT deputy.deputy_display_name %s) AS deputy_manager_name,
+                       (SELECT deputy.ends_on %s) AS deputy_ends_on
                 FROM interactions i
                 JOIN interaction_stages current_stage
                   ON current_stage.id = i.current_stage_id AND current_stage.interaction_id = i.id
@@ -86,7 +112,15 @@ public class InteractionRepository {
                 WHERE %s
                 ORDER BY %s
                 LIMIT :size OFFSET :offset
-                """.formatted(selection.where(), query.sort().orderBy()))
+                """.formatted(
+                        LAST_EVENT.formatted("type"),
+                        LAST_EVENT.formatted("occurred_at"),
+                        STAGE_ENTERED_AT,
+                        OrganizationRepository.activeDeputy("o"),
+                        OrganizationRepository.activeDeputy("o"),
+                        selection.where(),
+                        query.sort().orderBy()
+                ))
                 .params(selection.parameters())
                 .param("size", query.size())
                 .param("offset", query.offset())
@@ -94,7 +128,12 @@ public class InteractionRepository {
                         mapInteractionRow(resultSet, rowNumber),
                         resultSet.getString("organization_name"),
                         resultSet.getString("program_name"),
-                        resultSet.getString("owner_manager_name")
+                        resultSet.getString("owner_manager_name"),
+                        resultSet.getString("last_event_type"),
+                        resultSet.getObject("last_event_at", OffsetDateTime.class),
+                        resultSet.getObject("stage_entered_at", OffsetDateTime.class),
+                        resultSet.getString("deputy_manager_name"),
+                        resultSet.getObject("deputy_ends_on", LocalDate.class)
                 ))
                 .list();
     }
@@ -131,10 +170,28 @@ public class InteractionRepository {
             conditions.add("current_stage.name = :stage");
             parameters.put("stage", filter.stage());
         }
+        if (filter.responsibleId() != null) {
+            conditions.add("o.owner_manager_id = :responsibleId AND NOT " + OrganizationRepository.requiresAssignment("o"));
+            parameters.put("responsibleId", filter.responsibleId());
+        }
+        if (filter.unassigned()) {
+            conditions.add(OrganizationRepository.requiresAssignment("o"));
+        }
+        if (filter.status() != null) {
+            conditions.add("i.work_status = :workStatus");
+            parameters.put("workStatus", filter.status().name());
+        }
+        if (filter.flag() != null) {
+            conditions.add(filter.flag().condition());
+        }
+        if (filter.minDaysOnStage() != null) {
+            conditions.add(STAGE_ENTERED_AT + " <= :stageEnteredBefore");
+            parameters.put("stageEnteredBefore", now.minusDays(filter.minDaysOnStage()));
+        }
         if (filter.due() != null) {
             switch (filter.due()) {
                 case OVERDUE -> {
-                    conditions.add("i.next_action IS NOT NULL AND i.next_action_at < :now");
+                    conditions.add("i.next_action_at < :now");
                     parameters.put("now", now);
                 }
                 case THIS_WEEK -> {
@@ -145,6 +202,14 @@ public class InteractionRepository {
                 }
                 case NO_NEXT_STEP -> conditions.add("(i.next_action IS NULL OR i.next_action_at IS NULL)");
             }
+        }
+        if (filter.licenseExpiresBy() != null) {
+            conditions.add("""
+                    EXISTS (SELECT 1 FROM product_agreements license_agreement
+                            WHERE license_agreement.interaction_id = i.id
+                              AND license_agreement.archived_at IS NULL
+                              AND license_agreement.license_expiry_year <= :licenseExpiresBy)""");
+            parameters.put("licenseExpiresBy", filter.licenseExpiresBy());
         }
         return new ListSelection(String.join(" AND ", conditions), parameters);
     }
@@ -420,25 +485,52 @@ public class InteractionRepository {
     }
 
     public List<ProductAgreement> findProductAgreements(UUID interactionId) {
+        Map<UUID, List<ProductTransfer>> transfers = new HashMap<>();
+        jdbcClient.sql("""
+                SELECT transfer.agreement_id, transfer.kind, transfer.status, transfer.transferred_on, transfer.attachment_id
+                FROM product_transfers transfer
+                JOIN product_agreements agreement ON agreement.id = transfer.agreement_id
+                WHERE agreement.interaction_id = :interactionId
+                ORDER BY transfer.kind
+                """)
+                .param("interactionId", interactionId)
+                .query((ResultSet resultSet) -> {
+                    transfers.computeIfAbsent(resultSet.getObject("agreement_id", UUID.class), id -> new ArrayList<>())
+                            .add(new ProductTransfer(
+                                    ProductTransferKind.valueOf(resultSet.getString("kind")),
+                                    ProductTransferStatus.valueOf(resultSet.getString("status")),
+                                    resultSet.getObject("transferred_on", LocalDate.class),
+                                    resultSet.getObject("attachment_id", UUID.class)
+                            ));
+                });
         return jdbcClient.sql("""
                 SELECT agreement.id, agreement.product_id, product.name AS product_name, product.archived AS product_archived,
-                       agreement.contract_number, agreement.license_signed, agreement.license_expiry_year, agreement.transfer_status
+                       agreement.contract_number, agreement.license_signed, agreement.license_expiry_year, agreement.transfer_status,
+                       agreement.archived_at, vendor.name AS vendor_name, agreement.scan_attachment_id
                 FROM product_agreements agreement
                 JOIN products product ON product.id = agreement.product_id
+                JOIN vendors vendor ON vendor.id = product.vendor_id
                 WHERE agreement.interaction_id = :interactionId
                 ORDER BY product.name ASC, agreement.id ASC
                 """)
                 .param("interactionId", interactionId)
-                .query((resultSet, rowNumber) -> new ProductAgreement(
-                        resultSet.getObject("id", UUID.class),
-                        resultSet.getObject("product_id", UUID.class),
-                        resultSet.getString("product_name"),
-                        resultSet.getBoolean("product_archived"),
-                        resultSet.getString("contract_number"),
-                        resultSet.getObject("license_signed", Boolean.class),
-                        resultSet.getObject("license_expiry_year", Integer.class),
-                        resultSet.getString("transfer_status")
-                ))
+                .query((resultSet, rowNumber) -> {
+                    UUID id = resultSet.getObject("id", UUID.class);
+                    return new ProductAgreement(
+                            id,
+                            resultSet.getObject("product_id", UUID.class),
+                            resultSet.getString("product_name"),
+                            resultSet.getBoolean("product_archived"),
+                            resultSet.getString("contract_number"),
+                            resultSet.getObject("license_signed", Boolean.class),
+                            resultSet.getObject("license_expiry_year", Integer.class),
+                            resultSet.getString("transfer_status"),
+                            resultSet.getObject("archived_at") != null,
+                            resultSet.getString("vendor_name"),
+                            resultSet.getObject("scan_attachment_id", UUID.class),
+                            transfers.getOrDefault(id, List.of())
+                    );
+                })
                 .list();
     }
 
@@ -452,7 +544,9 @@ public class InteractionRepository {
                 WHERE interaction_id = :interactionId
                   AND product_id IN (:productIds)
                   AND (contract_number IS NOT NULL OR license_signed IS NOT NULL
-                       OR license_expiry_year IS NOT NULL OR transfer_status IS NOT NULL)
+                       OR license_expiry_year IS NOT NULL OR transfer_status IS NOT NULL
+                       OR scan_attachment_id IS NOT NULL
+                       OR id IN (SELECT agreement_id FROM product_transfers))
                 """)
                 .param("interactionId", interactionId)
                 .param("productIds", productIds)
@@ -470,6 +564,8 @@ public class InteractionRepository {
                   AND product_id IN (:productIds)
                   AND contract_number IS NULL AND license_signed IS NULL
                   AND license_expiry_year IS NULL AND transfer_status IS NULL
+                  AND scan_attachment_id IS NULL
+                  AND id NOT IN (SELECT agreement_id FROM product_transfers)
                 """)
                 .param("interactionId", interactionId)
                 .param("productIds", productIds)
@@ -487,6 +583,71 @@ public class InteractionRepository {
                 .param("nextActionAt", nextActionAt)
                 .param("programId", programId)
                 .update();
+    }
+
+    public void updateDetails(UUID interactionId, String title, OffsetDateTime lastContactAt) {
+        jdbcClient.sql("""
+                UPDATE interactions
+                SET title = :title, last_contact_at = :lastContactAt
+                WHERE id = :interactionId
+                """)
+                .param("interactionId", interactionId)
+                .param("title", title)
+                .param("lastContactAt", lastContactAt)
+                .update();
+    }
+
+    public void deleteContacts(UUID interactionId, List<UUID> contactIds) {
+        if (contactIds.isEmpty()) {
+            return;
+        }
+        jdbcClient.sql("DELETE FROM interaction_contacts WHERE interaction_id = :interactionId AND contact_id IN (:contactIds)")
+                .param("interactionId", interactionId)
+                .param("contactIds", contactIds)
+                .update();
+    }
+
+    public void insertEventContacts(UUID eventId, List<UUID> contactIds, String changeType) {
+        for (UUID contactId : contactIds) {
+            jdbcClient.sql("""
+                    INSERT INTO interaction_event_contacts (event_id, contact_id, change_type)
+                    VALUES (:eventId, :contactId, :changeType)
+                    """)
+                    .param("eventId", eventId)
+                    .param("contactId", contactId)
+                    .param("changeType", changeType)
+                    .update();
+        }
+    }
+
+    private static String eventContacts(String changeType, String label) {
+        return """
+                (SELECT '%s' || STRING_AGG('«' || event_contact.name || '»', ', ' ORDER BY event_contact.name)
+                 FROM interaction_event_contacts event_change
+                 JOIN contacts event_contact ON event_contact.id = event_change.contact_id
+                 WHERE event_change.event_id = e.id AND event_change.change_type = '%s')""".formatted(label, changeType);
+    }
+
+    public boolean updateMarks(UUID interactionId, int expectedVersion, InteractionMarks marks, OffsetDateTime updatedAt) {
+        return jdbcClient.sql("""
+                UPDATE interactions
+                SET work_status = :workStatus, work_status_reason = :workStatusReason,
+                    waiting_on = :waitingOn, waiting_note = :waitingNote, problem = :problem,
+                    risk_level = :riskLevel, risk_reason = :riskReason,
+                    version = version + 1, updated_at = :updatedAt
+                WHERE id = :interactionId AND version = :expectedVersion
+                """)
+                .param("interactionId", interactionId)
+                .param("expectedVersion", expectedVersion)
+                .param("workStatus", marks.status().name())
+                .param("workStatusReason", marks.statusReason())
+                .param("waitingOn", marks.waitingOn() == null ? null : marks.waitingOn().name())
+                .param("waitingNote", marks.waitingNote())
+                .param("problem", marks.problem())
+                .param("riskLevel", marks.riskLevel() == null ? null : marks.riskLevel().name())
+                .param("riskReason", marks.riskReason())
+                .param("updatedAt", updatedAt)
+                .update() == 1;
     }
 
     public boolean updateCurrentStage(
@@ -576,6 +737,62 @@ public class InteractionRepository {
                 .single();
     }
 
+    public List<InteractionStageCompletion> findStageCompletions(UUID interactionId) {
+        return jdbcClient.sql("""
+                SELECT c.stage_id, c.completed_on, c.comment, c.event_id,
+                       actor.display_name AS actor_display_name, e.occurred_at
+                FROM interaction_stage_completions c
+                JOIN interaction_stages s ON s.id = c.stage_id AND s.interaction_id = c.interaction_id
+                JOIN interaction_events e ON e.id = c.event_id
+                JOIN crm_user_profiles actor ON actor.id = e.actor_profile_id
+                WHERE c.interaction_id = :interactionId
+                ORDER BY s.stage_order ASC
+                """)
+                .param("interactionId", interactionId)
+                .query((resultSet, rowNumber) -> new InteractionStageCompletion(
+                        resultSet.getObject("stage_id", UUID.class),
+                        resultSet.getObject("completed_on", LocalDate.class),
+                        resultSet.getString("comment"),
+                        resultSet.getObject("event_id", UUID.class),
+                        resultSet.getString("actor_display_name"),
+                        resultSet.getObject("occurred_at", OffsetDateTime.class)
+                ))
+                .list();
+    }
+
+    public Optional<LocalDate> findStageCompletionDate(UUID interactionId, UUID stageId) {
+        return jdbcClient.sql("""
+                SELECT completed_on
+                FROM interaction_stage_completions
+                WHERE interaction_id = :interactionId AND stage_id = :stageId
+                """)
+                .param("interactionId", interactionId)
+                .param("stageId", stageId)
+                .query((resultSet, rowNumber) -> resultSet.getObject("completed_on", LocalDate.class))
+                .optional();
+    }
+
+    public void saveStageCompletion(UUID interactionId, UUID stageId, LocalDate completedOn, String comment, UUID eventId) {
+        deleteStageCompletion(interactionId, stageId);
+        jdbcClient.sql("""
+                INSERT INTO interaction_stage_completions (interaction_id, stage_id, completed_on, comment, event_id)
+                VALUES (:interactionId, :stageId, :completedOn, :comment, :eventId)
+                """)
+                .param("interactionId", interactionId)
+                .param("stageId", stageId)
+                .param("completedOn", completedOn)
+                .param("comment", comment)
+                .param("eventId", eventId)
+                .update();
+    }
+
+    public void deleteStageCompletion(UUID interactionId, UUID stageId) {
+        jdbcClient.sql("DELETE FROM interaction_stage_completions WHERE interaction_id = :interactionId AND stage_id = :stageId")
+                .param("interactionId", interactionId)
+                .param("stageId", stageId)
+                .update();
+    }
+
     public List<InteractionEvent> findEvents(UUID interactionId) {
         return jdbcClient.sql(EVENT_SELECT + """
                 WHERE e.interaction_id = :interactionId
@@ -591,7 +808,8 @@ public class InteractionRepository {
         return jdbcClient.sql(("""
                 SELECT i.id, i.organization_id, i.title, i.current_stage_id, current_stage.name AS current_stage_name,
                        i.next_action, i.next_action_at, i.program_id, i.last_contact_at,
-                       i.version, i.created_by, i.created_at, i.updated_at
+                       i.version, i.created_by, i.created_at, i.updated_at,
+                       i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note, i.problem, i.risk_level, i.risk_reason
                 FROM interactions i
                 JOIN interaction_stages current_stage
                   ON current_stage.id = i.current_stage_id AND current_stage.interaction_id = i.id
@@ -616,7 +834,22 @@ public class InteractionRepository {
                 resultSet.getInt("version"),
                 resultSet.getObject("created_by", UUID.class),
                 resultSet.getObject("created_at", OffsetDateTime.class),
-                resultSet.getObject("updated_at", OffsetDateTime.class)
+                resultSet.getObject("updated_at", OffsetDateTime.class),
+                mapMarks(resultSet)
+        );
+    }
+
+    private InteractionMarks mapMarks(ResultSet resultSet) throws SQLException {
+        String waitingOn = resultSet.getString("waiting_on");
+        String riskLevel = resultSet.getString("risk_level");
+        return new InteractionMarks(
+                InteractionWorkStatus.valueOf(resultSet.getString("work_status")),
+                resultSet.getString("work_status_reason"),
+                waitingOn == null ? null : InteractionWaiting.valueOf(waitingOn),
+                resultSet.getString("waiting_note"),
+                resultSet.getString("problem"),
+                riskLevel == null ? null : InteractionRiskLevel.valueOf(riskLevel),
+                resultSet.getString("risk_reason")
         );
     }
 
@@ -649,7 +882,17 @@ public class InteractionRepository {
     private record ListSelection(String where, Map<String, Object> parameters) {
     }
 
-    record InteractionListRow(InteractionRow row, String organizationName, String programName, String ownerManagerName) {
+    record InteractionListRow(
+            InteractionRow row,
+            String organizationName,
+            String programName,
+            String ownerManagerName,
+            String lastEventType,
+            OffsetDateTime lastEventAt,
+            OffsetDateTime stageEnteredAt,
+            String deputyManagerName,
+            LocalDate deputyEndsOn
+    ) {
     }
 
     record InteractionRow(
@@ -665,7 +908,8 @@ public class InteractionRepository {
             int version,
             UUID createdBy,
             OffsetDateTime createdAt,
-            OffsetDateTime updatedAt
+            OffsetDateTime updatedAt,
+            InteractionMarks marks
     ) {
     }
 }

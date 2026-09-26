@@ -27,12 +27,15 @@ import org.springframework.security.oauth2.client.authentication.OAuth2Authentic
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
+import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.catalog.AdminOrganization;
 import ru.rtk.crm.catalog.AdminOrganizationRepository;
 import ru.rtk.crm.catalog.AdminOrganizationService;
 import ru.rtk.crm.catalog.AdminOrganizationTeamRequest;
+import ru.rtk.crm.catalog.CatalogChangeEventRepository;
 import ru.rtk.crm.catalog.Organization;
 import ru.rtk.crm.catalog.OrganizationAssignmentEvent;
+import ru.rtk.crm.catalog.OrganizationAssignmentReason;
 import ru.rtk.crm.catalog.OrganizationAssignmentRepository;
 import ru.rtk.crm.catalog.OrganizationAssignmentRequest;
 import ru.rtk.crm.catalog.OrganizationAssignmentService;
@@ -53,6 +56,7 @@ import ru.rtk.crm.security.CrmProfileRegistrationSuccessHandler;
         AdminCrmProfileService.class,
         AdminTeamRepository.class,
         AdminTeamService.class,
+        CatalogChangeEventRepository.class,
         AdminOrganizationRepository.class,
         AdminOrganizationService.class,
         CurrentProfileService.class,
@@ -61,6 +65,7 @@ import ru.rtk.crm.security.CrmProfileRegistrationSuccessHandler;
         OrganizationAssignmentRepository.class,
         OrganizationAssignmentService.class,
         CommandIdempotencyRepository.class,
+        AuditJournalRepository.class,
         AdminCrmProfileServiceTest.JsonConfiguration.class
 })
 class AdminCrmProfileServiceTest {
@@ -120,6 +125,8 @@ class AdminCrmProfileServiceTest {
     @BeforeEach
     void setUp() {
         createSchema();
+        jdbcTemplate.update("DELETE FROM audit_events");
+        jdbcTemplate.update("DELETE FROM catalog_change_events");
         jdbcTemplate.update("DELETE FROM organization_team_events");
         jdbcTemplate.update("DELETE FROM crm_profile_events");
         jdbcTemplate.update("DELETE FROM organization_assignment_events");
@@ -143,7 +150,7 @@ class AdminCrmProfileServiceTest {
     void administratorsListPaginatedProfilesAndOtherRolesAreForbidden() {
         AdminCrmProfilePage page = adminCrmProfileService.list(
                 administrator,
-                AdminCrmProfileQuery.from(0, 2, "displayName,asc", false)
+                AdminCrmProfileQuery.from(0, 2, "displayName,asc", false, null)
         );
 
         assertThat(page.total()).isEqualTo(4);
@@ -160,7 +167,7 @@ class AdminCrmProfileServiceTest {
         assertThat(profile(USER_A).teamName()).isEqualTo("Команда А");
         assertThatThrownBy(() -> adminCrmProfileService.list(
                 leaderA,
-                AdminCrmProfileQuery.from(0, 25, "displayName,asc", false)
+                AdminCrmProfileQuery.from(0, 25, "displayName,asc", false, null)
         )).isInstanceOf(AdminCrmProfileAccessDeniedException.class);
         assertThatThrownBy(() -> adminCrmProfileService.update(
                 userA,
@@ -382,6 +389,8 @@ class AdminCrmProfileServiceTest {
         assertThat(organizationRepository.findVisibleById(after, ORGANIZATION_A)).isEmpty();
         assertThat(ownerOf(ORGANIZATION_A)).isNull();
         assertThat(ownerOf(ORGANIZATION_A_SECOND)).isNull();
+        assertThat(organizationAssignmentRepository.findEventsByOrganizationId(ORGANIZATION_A)).singleElement()
+                .satisfies(event -> assertThat(event.reason()).isEqualTo(OrganizationAssignmentReason.PROFILE_TEAM_CHANGED));
         assertThat(adminCrmProfileService.events(administrator, USER_A)).singleElement().satisfies(event -> {
             assertThat(event.previousTeamName()).isEqualTo("Команда А");
             assertThat(event.teamName()).isEqualTo("Команда Б");
@@ -491,8 +500,19 @@ class AdminCrmProfileServiceTest {
                 .isInstanceOf(CrmProfilePendingException.class);
         assertThatThrownBy(() -> currentProfileService.requireActiveProfile(oidcUser("unknown", null, null)))
                 .isInstanceOf(CrmProfileNotFoundException.class);
-        AdminCrmProfile pending = adminCrmProfileService.list(administrator, pendingQuery()).items().getFirst();
+        AdminCrmProfilePage pendingPage = adminCrmProfileService.list(administrator, pendingQuery());
+        AdminCrmProfile pending = pendingPage.items().getFirst();
+        assertThat(pendingPage.pendingTotal()).isEqualTo(1);
         assertThat(pending.displayName()).isEqualTo("Новый Сотрудник");
+        assertThat(pending.login()).isEqualTo("newcomer");
+        assertThat(pending.accountSyncRequired()).isFalse();
+        assertThat(profile(USER_A).login()).isEqualTo("other");
+        assertThat(adminCrmProfileService.list(administrator, AdminCrmProfileQuery.from(0, 25, "displayName,asc", false, "NEWCOMER"))
+                .items()).extracting(AdminCrmProfile::id).containsExactly(pending.id());
+        assertThat(adminCrmProfileService.list(administrator, AdminCrmProfileQuery.from(0, 25, "displayName,asc", false, "сотрудник"))
+                .items()).extracting(AdminCrmProfile::id).containsExactly(pending.id());
+        assertThat(adminCrmProfileService.list(administrator, AdminCrmProfileQuery.from(0, 25, "displayName,asc", false, "100%"))
+                .total()).isZero();
         assertThat(pending.role()).isEqualTo(UserRole.USER);
         assertThat(pending.teamId()).isNull();
         assertThat(pending.active()).isFalse();
@@ -551,24 +571,35 @@ class AdminCrmProfileServiceTest {
 
     @Test
     void administratorCreatesAndRenamesTeamsWithUniqueNamesAndVersions() {
-        Team created = adminTeamService.create(administrator, new TeamRequest(" Команда В ", null), "create-team-c");
-        Team replayed = adminTeamService.create(administrator, new TeamRequest(" Команда В ", null), "create-team-c");
+        Team created = adminTeamService.create(administrator, new TeamRequest(" Команда В ", null), "create-team-c", REQUEST_ID);
+        Team replayed = adminTeamService.create(administrator, new TeamRequest(" Команда В ", null), "create-team-c", REQUEST_ID);
 
         assertThat(created.name()).isEqualTo("Команда В");
         assertThat(replayed).isEqualTo(created);
-        assertThat(adminTeamService.list(administrator)).extracting(Team::name)
+        assertThat(adminTeamService.list(administrator)).extracting(AdminTeam::name)
                 .containsExactly("Команда А", "Команда Б", "Команда В");
-        assertThatThrownBy(() -> adminTeamService.create(administrator, new TeamRequest("команда а", null), "create-duplicate"))
+        assertThatThrownBy(() -> adminTeamService.create(administrator, new TeamRequest("команда а", null), "create-duplicate", REQUEST_ID))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
                         assertThat(exception.field()).isEqualTo("name"));
 
-        Team renamed = adminTeamService.rename(administrator, created.id(), new TeamRequest("Команда Восток", 0), "rename-team-c");
+        Team renamed = adminTeamService.rename(
+                administrator, created.id(), new TeamRequest("Команда Восток", 0), "rename-team-c", REQUEST_ID
+        );
         assertThat(renamed.version()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForList("SELECT action FROM audit_events ORDER BY action", String.class))
+                .containsExactly("TEAM_CREATED", "TEAM_RENAMED");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT details FROM audit_events WHERE action = 'TEAM_RENAMED'", String.class
+        )).isEqualTo("название: Команда В → Команда Восток");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT actor_display_name FROM audit_events WHERE action = 'TEAM_CREATED'", String.class
+        )).isEqualTo("Администратор");
         assertThatThrownBy(() -> adminTeamService.rename(
                 administrator,
                 created.id(),
                 new TeamRequest("Команда Запад", 0),
-                "rename-stale"
+                "rename-stale",
+                REQUEST_ID
         )).isInstanceOfSatisfying(InteractionConflictException.class, exception -> {
             assertThat(exception.code()).isEqualTo("VERSION_CONFLICT");
             assertThat(exception.currentVersion()).isEqualTo(1);
@@ -577,14 +608,61 @@ class AdminCrmProfileServiceTest {
                 administrator,
                 created.id(),
                 new TeamRequest("Команда Б", 1),
-                "rename-duplicate"
+                "rename-duplicate",
+                REQUEST_ID
         )).isInstanceOf(InteractionValidationException.class);
         assertThatThrownBy(() -> adminTeamService.rename(
                 administrator,
                 MISSING_TEAM,
                 new TeamRequest("Нет такой", 0),
-                "rename-missing"
+                "rename-missing",
+                REQUEST_ID
         )).isInstanceOf(TeamNotFoundException.class);
+    }
+
+    @Test
+    void teamListShowsCompositionAndOnlyAnEmptyTeamIsArchivedWithJournal() {
+        insertProfile(LEADER_B, "Борис Руководитель", "LEADER", TEAM_B, true);
+        insertProfile(UUID.fromString("20000000-0000-0000-0000-000000000007"), "Отключённый КАМ", "USER", TEAM_A, false);
+        Team empty = adminTeamService.create(administrator, new TeamRequest("UAT Команда проверки", null), "create-empty", REQUEST_ID);
+
+        assertThat(adminTeamService.list(administrator))
+                .extracting(AdminTeam::name, AdminTeam::leaderNames, AdminTeam::managerNames, AdminTeam::organizationCount,
+                        AdminTeam::otherProfileCount)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple("Команда А", List.of("Елена Руководитель"), List.of("Анна Менеджер"), 3L, 1L),
+                        org.assertj.core.groups.Tuple.tuple("Команда Б", List.of("Борис Руководитель"), List.of("Борис Менеджер"), 1L, 0L),
+                        org.assertj.core.groups.Tuple.tuple("UAT Команда проверки", List.of(), List.of(), 0L, 0L)
+                );
+        assertThatThrownBy(() -> adminTeamService.list(leaderA)).isInstanceOf(AdminCrmProfileAccessDeniedException.class);
+        assertThatThrownBy(() -> adminTeamService.changeArchived(
+                administrator, TEAM_A, new TeamArchiveRequest(true, 0), "archive-busy", REQUEST_ID
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.getMessage()).contains("организации (3)"));
+
+        Team archived = adminTeamService.changeArchived(
+                administrator, empty.id(), new TeamArchiveRequest(true, 0), "archive-empty", REQUEST_ID
+        );
+        Team replayed = adminTeamService.changeArchived(
+                administrator, empty.id(), new TeamArchiveRequest(true, 0), "archive-empty", REQUEST_ID
+        );
+
+        assertThat(archived.archived()).isTrue();
+        assertThat(replayed).isEqualTo(archived);
+        assertThatThrownBy(() -> adminTeamService.changeArchived(
+                administrator, empty.id(), new TeamArchiveRequest(false, 0), "restore-stale", REQUEST_ID
+        )).isInstanceOf(InteractionConflictException.class);
+        assertThatThrownBy(() -> adminCrmProfileService.update(
+                administrator,
+                USER_A,
+                new AdminCrmProfileUpdateRequest(0).setTeamId(empty.id()),
+                "move-to-archived",
+                REQUEST_ID
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("teamId"));
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT action FROM catalog_change_events WHERE entity_id = ?", String.class, empty.id()
+        )).containsExactlyInAnyOrder("CREATE", "ARCHIVE");
     }
 
     @Test
@@ -689,6 +767,46 @@ class AdminCrmProfileServiceTest {
         assertThat(versionOf(ORGANIZATION_UNASSIGNED)).isZero();
     }
 
+    @Test
+    void leaderOwnershipSurvivesRenameAndIsRemovedOnDeactivationLikeManagerOwnership() {
+        organizationAssignmentService.assign(
+                leaderA,
+                ORGANIZATION_UNASSIGNED,
+                new OrganizationAssignmentRequest(0, LEADER_A),
+                "assign-leader-self",
+                REQUEST_ID
+        );
+        AdminCrmProfile renamed = adminCrmProfileService.update(
+                administrator,
+                LEADER_A,
+                new AdminCrmProfileUpdateRequest(0).setDisplayName("Елена Руководитель команды"),
+                "rename-owning-leader",
+                REQUEST_ID
+        );
+
+        assertThat(renamed.version()).isEqualTo(1);
+        assertThat(ownerOf(ORGANIZATION_UNASSIGNED)).isEqualTo(LEADER_A);
+
+        adminCrmProfileService.update(
+                administrator,
+                LEADER_A,
+                AdminCrmProfileUpdateRequest.active(1, false),
+                "deactivate-owning-leader",
+                REQUEST_ID
+        );
+
+        assertThat(ownerOf(ORGANIZATION_UNASSIGNED)).isNull();
+        assertThat(versionOf(ORGANIZATION_UNASSIGNED)).isEqualTo(2);
+        assertThat(organizationAssignmentRepository.findEventsByOrganizationId(ORGANIZATION_UNASSIGNED))
+                .hasSize(2)
+                .last()
+                .satisfies(event -> {
+                    assertThat(event.previousOwnerManagerId()).isEqualTo(LEADER_A);
+                    assertThat(event.ownerManagerId()).isNull();
+                    assertThat(event.actorProfileId()).isEqualTo(ADMIN);
+                });
+    }
+
     private void assertAutomaticDeassignment(OrganizationAssignmentEvent event, UUID organizationId) {
         assertThat(event.organizationId()).isEqualTo(organizationId);
         assertThat(event.previousOwnerManagerId()).isEqualTo(USER_A);
@@ -698,6 +816,7 @@ class AdminCrmProfileServiceTest {
         assertThat(event.actorProfileId()).isEqualTo(ADMIN);
         assertThat(event.actorDisplayName()).isEqualTo("Администратор");
         assertThat(event.requestId()).isEqualTo(REQUEST_ID);
+        assertThat(event.reason()).isEqualTo(OrganizationAssignmentReason.PROFILE_BLOCKED);
         assertThat(event.version()).isEqualTo(1);
         assertThat(event.occurredAt()).isNotNull();
     }
@@ -727,22 +846,34 @@ class AdminCrmProfileServiceTest {
     }
 
     private AdminCrmProfileQuery pendingQuery() {
-        return AdminCrmProfileQuery.from(0, 25, "displayName,asc", true);
+        return AdminCrmProfileQuery.from(0, 25, "displayName,asc", true, null);
     }
 
     private void createSchema() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS catalog_change_events (
+                    id UUID PRIMARY KEY, entity_type VARCHAR(16) NOT NULL, entity_id UUID NOT NULL,
+                    action VARCHAR(16) NOT NULL, entity_name VARCHAR(300) NOT NULL, changes VARCHAR(2000),
+                    actor_profile_id UUID NOT NULL, actor_display_name VARCHAR(200) NOT NULL,
+                    request_id VARCHAR(64) NOT NULL, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS teams (
                     id UUID PRIMARY KEY,
                     name VARCHAR(160) NOT NULL UNIQUE,
                     version INTEGER NOT NULL DEFAULT 0,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, archived BOOLEAN DEFAULT FALSE NOT NULL, default_workflow_template_id UUID
                 )
                 """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS crm_user_profiles (
                     id UUID PRIMARY KEY,
+                    login VARCHAR(200),
+                    idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    activation_requested_at TIMESTAMP WITH TIME ZONE,
+                    anonymized_at TIMESTAMP WITH TIME ZONE,
                     issuer VARCHAR(512) NOT NULL,
                     subject VARCHAR(512) NOT NULL,
                     display_name VARCHAR(200) NOT NULL,
@@ -765,7 +896,26 @@ class AdminCrmProfileServiceTest {
                     team_id UUID NOT NULL,
                     owner_manager_id UUID,
                     version INTEGER NOT NULL,
-                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL, status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, city VARCHAR(200), website VARCHAR(300), inn VARCHAR(12)
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id UUID PRIMARY KEY,
+                    organization_id UUID NOT NULL,
+                    name VARCHAR(200) NOT NULL,
+                    confirmed_at TIMESTAMP WITH TIME ZONE,
+                    confirmed_by UUID
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS organization_deputies (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, deputy_profile_id UUID NOT NULL,
+                    deputy_display_name VARCHAR(200) NOT NULL, starts_on DATE NOT NULL, ends_on DATE NOT NULL,
+                    starts_at TIMESTAMP WITH TIME ZONE NOT NULL, ends_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    command_id UUID NOT NULL, actor_profile_id UUID NOT NULL, actor_display_name VARCHAR(200) NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, ended_at TIMESTAMP WITH TIME ZONE,
+                    ended_by_profile_id UUID, ended_by_display_name VARCHAR(200)
                 )
                 """);
         jdbcTemplate.execute("""
@@ -782,6 +932,7 @@ class AdminCrmProfileServiceTest {
                 """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS organization_assignment_events (
+                    reason VARCHAR(32), handover_note VARCHAR(2000),
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
                     command_id UUID NOT NULL REFERENCES command_idempotency_records(id),
@@ -816,6 +967,21 @@ class AdminCrmProfileServiceTest {
                     version INTEGER NOT NULL,
                     occurred_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     UNIQUE (command_id)
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id UUID PRIMARY KEY,
+                    category VARCHAR(32) NOT NULL,
+                    action VARCHAR(64) NOT NULL,
+                    actor_profile_id UUID,
+                    actor_display_name VARCHAR(200) NOT NULL,
+                    object_type VARCHAR(32),
+                    object_id UUID,
+                    object_name VARCHAR(500),
+                    details VARCHAR(2000),
+                    request_id VARCHAR(64),
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """);
         jdbcTemplate.execute("""

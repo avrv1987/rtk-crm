@@ -12,6 +12,11 @@ public record Attachment(
         String mediaType,
         long sizeBytes,
         AttachmentStatus status,
+        AttachmentKind kind,
+        int revision,
+        UUID replacesId,
+        UUID createdBy,
+        int version,
         OffsetDateTime createdAt
 ) {
 }

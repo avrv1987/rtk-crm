@@ -2,8 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, apiClient, type Me, type Organization, type PageOrganization } from '../../shared/api/client'
 import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { AgreementsPanel } from '../agreements/AgreementsPanel'
 import { InteractionsPanel } from '../interactions/InteractionsPanel'
+import { OrganizationAssignmentHistory } from './OrganizationAssignmentHistory'
 import { OrganizationAssignmentPanel } from './OrganizationAssignmentPanel'
+import { OrganizationCatalogPanel, OrganizationStatusBadge } from './OrganizationCatalogPanel'
+import { OrganizationForm, organizationTypeLabels } from './OrganizationForm'
+import { OrganizationBulkTransfer } from './OrganizationBulkTransfer'
+import { formatDate } from '../work/workShared'
 
 type OrganizationsScreenProps = {
   profileId: string
@@ -15,9 +21,12 @@ type OrganizationsScreenProps = {
   onProfileUnavailable: (requestId: string) => void
 }
 
+type ListStatus = 'CURRENT' | 'PENDING' | 'ARCHIVED'
+
 type ListFilters = {
   q: string
   requiresAssignment: boolean
+  status: ListStatus
   page: number
 }
 
@@ -40,9 +49,13 @@ const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', {
   timeStyle: 'short'
 })
 
-const organizationTypeLabel = (type: Organization['type']) => (
-  type === 'UNIVERSITY' ? 'Университет' : 'Школа'
-)
+const organizationTypeLabel = (type: Organization['type']) => organizationTypeLabels[type]
+
+const listStatuses: Array<{ value: ListStatus; label: string }> = [
+  { value: 'CURRENT', label: 'Действующие' },
+  { value: 'PENDING', label: 'Ожидают подтверждения' },
+  { value: 'ARCHIVED', label: 'Архив' }
+]
 
 const formatUpdatedAt = (value: string) => {
   const date = new Date(value)
@@ -52,9 +65,11 @@ const formatUpdatedAt = (value: string) => {
 const filtersFromQuery = (query: string, role: Me['role']): ListFilters => {
   const params = new URLSearchParams(query)
   const page = Number(params.get('page') ?? '0')
+  const status = listStatuses.find((item) => item.value === params.get('status'))?.value ?? 'CURRENT'
   return {
     q: params.get('q') ?? '',
     requiresAssignment: role === 'LEADER' && params.get('requiresAssignment') === 'true',
+    status,
     page: Number.isInteger(page) && page > 0 ? page : 0
   }
 }
@@ -66,6 +81,9 @@ const queryFromFilters = (filters: ListFilters) => {
   }
   if (filters.requiresAssignment) {
     params.set('requiresAssignment', 'true')
+  }
+  if (filters.status !== 'CURRENT') {
+    params.set('status', filters.status)
   }
   if (filters.page > 0) {
     params.set('page', filters.page.toString())
@@ -83,8 +101,14 @@ const ownerLabel = (organization: Organization) => {
   }
   return organization.ownerManagerName === null
     ? 'Требует назначения: ответственный не назначен'
-    : `Требует назначения: ${organization.ownerManagerName} больше не активный менеджер команды`
+    : `Требует назначения: ${organization.ownerManagerName} больше не активный КАМ команды`
 }
+
+const deputyLabel = (organization: Organization) => (
+  organization.deputyManagerName === null
+    ? null
+    : `${organization.deputyManagerName}${organization.deputyEndsOn === null ? '' : ` до ${formatDate(organization.deputyEndsOn)}`}`
+)
 
 export const OrganizationsScreen = ({
   profileId,
@@ -99,6 +123,9 @@ export const OrganizationsScreen = ({
   const [searchText, setSearchText] = useState(filters.q)
   const [listState, setListState] = useState<ListState>({ kind: 'loading' })
   const [detailState, setDetailState] = useState<DetailState>({ kind: 'idle' })
+  const [creating, setCreating] = useState(false)
+  const [createdMessage, setCreatedMessage] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Record<string, Organization>>({})
   const listRequestVersion = useRef(0)
   const detailRequestVersion = useRef(0)
   const detailHeading = useRef<HTMLHeadingElement>(null)
@@ -124,7 +151,8 @@ export const OrganizationsScreen = ({
         size: pageSize,
         sort: 'name,asc',
         q: current.q,
-        requiresAssignment: current.requiresAssignment
+        requiresAssignment: current.requiresAssignment,
+        status: current.status
       })
       if (requestVersion !== listRequestVersion.current) {
         return
@@ -177,6 +205,16 @@ export const OrganizationsScreen = ({
     ))
   }, [])
 
+  const refreshOrganization = useCallback(async (id: Organization['id']) => {
+    try {
+      replaceOrganization(await apiClient.getOrganization(id))
+    } catch (error) {
+      if (!handleAccessError(error)) {
+        void loadOrganization(id)
+      }
+    }
+  }, [handleAccessError, loadOrganization, replaceOrganization])
+
   useEffect(() => {
     void loadOrganizations(filters)
   }, [filters, loadOrganizations])
@@ -221,11 +259,50 @@ export const OrganizationsScreen = ({
     }
   }, [detailOrganizationId, selectedInteractionId])
 
-  const filtered = filters.q.trim().length > 0 || filters.requiresAssignment
+  const filtered = filters.q.trim().length > 0 || filters.requiresAssignment || filters.status !== 'CURRENT'
+
+  const toggleSelected = (organization: Organization, checked: boolean) => {
+    setSelected((current) => {
+      const next = { ...current }
+      if (checked) {
+        next[organization.id] = organization
+      } else {
+        delete next[organization.id]
+      }
+      return next
+    })
+  }
+
+  const pageItems = listState.kind === 'ready' ? listState.page.items : []
+  const allOnPageSelected = pageItems.length > 0 && pageItems.every((organization) => selected[organization.id] !== undefined)
+  const selectedOrganizations = Object.values(selected)
+
+  const afterTransfer = async () => {
+    setSelected({})
+    await Promise.all([
+      loadOrganizations(filters),
+      selectedOrganizationId === undefined ? Promise.resolve() : loadOrganization(selectedOrganizationId)
+    ])
+  }
 
   const resetFilters = () => {
     setSearchText('')
-    setFilters({ q: '', requiresAssignment: false, page: 0 })
+    setFilters({ q: '', requiresAssignment: false, status: 'CURRENT', page: 0 })
+  }
+
+  const organizationCreated = (organization: Organization) => {
+    setCreating(false)
+    setCreatedMessage(organization.status === 'PENDING'
+      ? `«${organization.name}» создана и отправлена руководителю на подтверждение. Работу можно начинать сразу.`
+      : `«${organization.name}» создана.`)
+    void loadOrganizations(filters)
+    window.location.hash = `#/organizations/${organization.id}${listSuffix}`
+  }
+
+  const organizationChanged = (organization: Organization) => {
+    setCreatedMessage(null)
+    replaceOrganization(organization)
+    void loadOrganizations(filters)
   }
 
   return (
@@ -238,6 +315,35 @@ export const OrganizationsScreen = ({
               {listState.kind === 'ready' && (listState.refreshing ? 'Обновляем…' : `Найдено: ${listState.page.total}`)}
             </p>
           </div>
+
+          {!creating && (
+            <button
+              type="button"
+              className="organizations-create"
+              onClick={() => {
+                setCreatedMessage(null)
+                setCreating(true)
+              }}
+            >
+              Добавить организацию
+            </button>
+          )}
+          {createdMessage !== null && <p className="notice" role="status">{createdMessage}</p>}
+          {creating && (
+            <OrganizationForm
+              title="Новая организация"
+              submitLabel={role === 'LEADER' ? 'Создать организацию' : 'Создать и отправить на подтверждение'}
+              hint={role === 'LEADER'
+                ? 'Организация появится в команде без ответственного; назначьте КАМ в карточке.'
+                : 'Вы станете ответственным. Руководитель команды подтвердит организацию; работу можно вести сразу.'}
+              linkDuplicates
+              onSubmit={async (payload, idempotencyKey) => {
+                organizationCreated(await apiClient.createOrganization(payload, idempotencyKey))
+              }}
+              onCancel={() => setCreating(false)}
+              onSessionError={handleAccessError}
+            />
+          )}
 
           <form className="organizations-filters" role="search" aria-label="Отбор вузов" onSubmit={(event) => event.preventDefault()}>
             <label>
@@ -259,6 +365,15 @@ export const OrganizationsScreen = ({
                 Только требующие назначения
               </label>
             )}
+            <label>
+              Состояние
+              <select
+                value={filters.status}
+                onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value as ListStatus, page: 0 }))}
+              >
+                {listStatuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+            </label>
           </form>
 
           {listState.kind === 'loading' && (
@@ -281,17 +396,50 @@ export const OrganizationsScreen = ({
               </div>
             ) : (
               <p className="organizations-message">
-                {role === 'LEADER' ? 'У команды пока нет вузов.' : 'Вам пока не назначены вузы. Назначение выполняет руководитель команды.'}
+                {role === 'LEADER' && 'У команды пока нет вузов.'}
+                {role === 'MANAGEMENT' && 'В CRM пока нет вузов.'}
+                {role === 'USER' && 'Вам пока не назначены вузы. Назначение выполняет руководитель команды.'}
               </p>
             )
+          )}
+
+          {role === 'LEADER' && (
+            <OrganizationBulkTransfer
+              organizations={selectedOrganizations}
+              onClear={() => setSelected({})}
+              onTransferred={afterTransfer}
+              onSessionExpired={onSessionExpired}
+              onProfileUnavailable={onProfileUnavailable}
+            />
+          )}
+
+          {role === 'LEADER' && pageItems.length > 0 && (
+            <label className="checkbox-field organizations-select-all">
+              <input
+                type="checkbox"
+                checked={allOnPageSelected}
+                onChange={(event) => pageItems.forEach((organization) => toggleSelected(organization, event.target.checked))}
+              />
+              Выбрать все вузы на странице для передачи
+            </label>
           )}
 
           {listState.kind === 'ready' && listState.page.items.length > 0 && (
             <ul className="organizations-list" aria-label="Список организаций" aria-busy={listState.refreshing}>
               {listState.page.items.map((organization) => {
                 const isSelected = organization.id === selectedOrganizationId
+                const deputy = deputyLabel(organization)
                 return (
-                  <li key={organization.id}>
+                  <li key={organization.id} className={role === 'LEADER' ? 'organizations-list__selectable' : undefined}>
+                    {role === 'LEADER' && (
+                      <input
+                        type="checkbox"
+                        className="organizations-list__select"
+                        aria-label={`Выбрать «${organization.name}» для передачи`}
+                        checked={selected[organization.id] !== undefined}
+                        onChange={(event) => toggleSelected(organization, event.target.checked)}
+                      />
+                    )}
                     <a
                       className={`organization-list-item${isSelected ? ' organization-list-item--selected' : ''}`}
                       href={`#/organizations/${organization.id}${listSuffix}`}
@@ -300,11 +448,19 @@ export const OrganizationsScreen = ({
                       <span className="organization-list-item__name">{organization.name}</span>
                       <span className="organization-list-item__meta">
                         <span className="organization-list-item__type">{organizationTypeLabel(organization.type)}</span>
-                        {role === 'LEADER' && (
+                        <OrganizationStatusBadge status={organization.status} />
+                        {(role === 'LEADER' || role === 'MANAGEMENT') && (
                           organization.requiresAssignment
                             ? <span className="status status--missing">Требует назначения</span>
                             : <span className="organization-list-item__owner">{organization.ownerManagerName}</span>
                         )}
+                        {organization.inherited && !organization.requiresAssignment && (
+                          <span className="status status--missing" title="Контакты ещё не подтверждены новым ответственным">Унаследован</span>
+                        )}
+                        {role === 'MANAGEMENT' && organization.teamName !== null && (
+                          <span className="organization-list-item__type">{organization.teamName}</span>
+                        )}
+                        {deputy !== null && <span className="status status--planned">Замещение: {deputy}</span>}
                       </span>
                     </a>
                   </li>
@@ -345,7 +501,7 @@ export const OrganizationsScreen = ({
             <>
               <h3 id="organization-detail-title">Карточка вуза</h3>
               <div className="notice notice--error" role="alert">
-                <p>Не удалось открыть карточку вуза. Возможно, вуз передан другому менеджеру; обновите список или повторите попытку.</p>
+                <p>Не удалось открыть карточку вуза. Возможно, организация передана другому КАМ; обновите список или повторите попытку.</p>
                 <SupportDetails requestId={detailState.requestId} />
                 <button type="button" onClick={() => void loadOrganization(detailState.id)}>Повторить</button>
               </div>
@@ -364,20 +520,61 @@ export const OrganizationsScreen = ({
                   <dd>{detailState.organization.teamName ?? 'Не указана'}</dd>
                 </div>
                 <div>
-                  <dt>Ответственный менеджер</dt>
+                  <dt>Ответственный КАМ</dt>
                   <dd className={detailState.organization.requiresAssignment ? 'organization-detail__attention' : undefined}>
                     {ownerLabel(detailState.organization)}
                   </dd>
                 </div>
+                {detailState.organization.inherited && !detailState.organization.requiresAssignment && (
+                  <div>
+                    <dt>После передачи</dt>
+                    <dd className="organization-detail__attention">
+                      {role === 'USER'
+                        ? 'Унаследованный вуз: вы ещё не подтвердили ни одного контакта. Свяжитесь с контактом и отметьте у него «Контакт подтверждён».'
+                        : `Унаследованный вуз: ${detailState.organization.ownerManagerName ?? 'новый ответственный'} ещё не подтвердил ни одного контакта после передачи.`}
+                    </dd>
+                  </div>
+                )}
+                {deputyLabel(detailState.organization) !== null && (
+                  <div>
+                    <dt>Заместитель</dt>
+                    <dd>{deputyLabel(detailState.organization)}</dd>
+                  </div>
+                )}
                 <div>
                   <dt>Обновлено</dt>
                   <dd>{formatUpdatedAt(detailState.organization.updatedAt)}</dd>
                 </div>
               </dl>
+              <OrganizationCatalogPanel
+                key={`catalog:${detailState.organization.id}`}
+                organization={detailState.organization}
+                canEdit={role === 'LEADER'}
+                canApprove={role === 'LEADER'}
+                canArchive={role === 'LEADER' || detailState.organization.ownerManagerId === profileId}
+                canRestore={role === 'LEADER'}
+                linkDuplicates
+                update={(payload, idempotencyKey) => apiClient.updateOrganization(detailState.organization.id, payload, idempotencyKey)}
+                changeStatus={(payload, idempotencyKey) => (
+                  apiClient.changeOrganizationStatus(detailState.organization.id, payload, idempotencyKey)
+                )}
+                onChanged={organizationChanged}
+                onSessionError={handleAccessError}
+              />
+              {role === 'USER' && (
+                <OrganizationAssignmentHistory
+                  key={detailState.organization.id}
+                  organizationId={detailState.organization.id}
+                  revision={0}
+                  onSessionExpired={onSessionExpired}
+                  onProfileUnavailable={onProfileUnavailable}
+                />
+              )}
               {role === 'LEADER' && (
                 <OrganizationAssignmentPanel
                   key={detailState.organization.id}
                   organization={detailState.organization}
+                  profileId={profileId}
                   onOrganizationChanged={replaceOrganization}
                   onReload={() => loadOrganization(detailState.organization.id)}
                   onSessionExpired={onSessionExpired}
@@ -389,6 +586,14 @@ export const OrganizationsScreen = ({
                 organizationId={detailState.organization.id}
                 initialInteractionId={selectedInteractionId}
                 profileId={profileId}
+                role={role}
+                onContactsChanged={() => void refreshOrganization(detailState.organization.id)}
+                onSessionExpired={onSessionExpired}
+                onProfileUnavailable={onProfileUnavailable}
+              />
+              <AgreementsPanel
+                key={`agreements:${detailState.organization.id}`}
+                organizationId={detailState.organization.id}
                 role={role}
                 onSessionExpired={onSessionExpired}
                 onProfileUnavailable={onProfileUnavailable}

@@ -15,6 +15,9 @@ public final class InteractionPlanRequest {
     private Optional<OffsetDateTime> nextActionAt;
     private Optional<UUID> programId;
     private Optional<List<UUID>> productIds;
+    private Optional<String> title;
+    private Optional<OffsetDateTime> lastContactAt;
+    private Optional<List<UUID>> contactIds;
 
     public InteractionPlanRequest(
             Integer version,
@@ -53,6 +56,33 @@ public final class InteractionPlanRequest {
 
     public Optional<List<UUID>> productIds() {
         return productIds;
+    }
+
+    public Optional<String> title() {
+        return title;
+    }
+
+    public Optional<OffsetDateTime> lastContactAt() {
+        return lastContactAt;
+    }
+
+    public Optional<List<UUID>> contactIds() {
+        return contactIds;
+    }
+
+    @JsonSetter("title")
+    public void setTitle(String title) {
+        this.title = Optional.ofNullable(title);
+    }
+
+    @JsonSetter("lastContactAt")
+    public void setLastContactAt(OffsetDateTime lastContactAt) {
+        this.lastContactAt = Optional.ofNullable(lastContactAt);
+    }
+
+    @JsonSetter("contactIds")
+    public void setContactIds(List<UUID> contactIds) {
+        this.contactIds = Optional.ofNullable(contactIds);
     }
 
     @JsonSetter("nextAction")

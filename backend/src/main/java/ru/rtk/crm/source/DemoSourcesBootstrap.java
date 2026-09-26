@@ -47,6 +47,9 @@ public class DemoSourcesBootstrap implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        if (!properties.demoData()) {
+            return;
+        }
         UUID adminId = administratorId();
         LocalDate runStartsOn = LocalDate.now(ZONE).withDayOfMonth(1);
         RunDates demoRun = new RunDates(runStartsOn, runStartsOn.plusYears(1));

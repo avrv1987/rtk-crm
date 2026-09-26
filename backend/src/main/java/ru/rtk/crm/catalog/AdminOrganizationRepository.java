@@ -14,7 +14,8 @@ import org.springframework.stereotype.Repository;
 public class AdminOrganizationRepository {
     private static final String ORGANIZATION_QUERY = """
             SELECT org.id, org.name, org.type, org.team_id, team.name AS team_name,
-                   org.owner_manager_id, owner.display_name AS owner_manager_name, org.version
+                   org.owner_manager_id, owner.display_name AS owner_manager_name, org.version,
+                   org.status, org.city, org.website, org.inn
             FROM organizations org
             JOIN teams team ON team.id = org.team_id
             LEFT JOIN crm_user_profiles owner ON owner.id = org.owner_manager_id
@@ -27,15 +28,23 @@ public class AdminOrganizationRepository {
     }
 
     public AdminOrganizationPage findPage(OrganizationQuery query) {
-        List<AdminOrganization> items = jdbcClient.sql(ORGANIZATION_QUERY + """
+        String where = " WHERE " + query.status().condition("org.status")
+                + (query.search() == null ? "" : " AND LOWER(org.name) LIKE :search " + SearchPattern.LIKE_ESCAPE);
+        String search = query.search() == null ? "" : SearchPattern.contains(query.search());
+        List<AdminOrganization> items = jdbcClient.sql(ORGANIZATION_QUERY + where + """
+
                 ORDER BY org.name ASC, org.id ASC
                 LIMIT :size OFFSET :offset
                 """)
+                .param("search", search)
                 .param("size", query.size())
                 .param("offset", query.offset())
                 .query(this::mapOrganization)
                 .list();
-        long total = jdbcClient.sql("SELECT COUNT(*) FROM organizations").query(Long.class).single();
+        long total = jdbcClient.sql("SELECT COUNT(*) FROM organizations org" + where)
+                .param("search", search)
+                .query(Long.class)
+                .single();
         return new AdminOrganizationPage(items, query.page(), query.size(), total);
     }
 
@@ -54,11 +63,12 @@ public class AdminOrganizationRepository {
                 .flatMap(this::findById);
     }
 
-    public boolean teamExists(UUID teamId) {
-        return jdbcClient.sql("SELECT COUNT(*) FROM teams WHERE id = :teamId")
+    public boolean activeTeamExists(UUID teamId) {
+        return jdbcClient.sql("SELECT id FROM teams WHERE id = :teamId AND archived = FALSE FOR UPDATE")
                 .param("teamId", teamId)
-                .query(Long.class)
-                .single() > 0;
+                .query(UUID.class)
+                .optional()
+                .isPresent();
     }
 
     public Optional<UUID> findProfileTeamId(UUID profileId) {
@@ -147,7 +157,11 @@ public class AdminOrganizationRepository {
                 resultSet.getString("team_name"),
                 resultSet.getObject("owner_manager_id", UUID.class),
                 resultSet.getString("owner_manager_name"),
-                resultSet.getInt("version")
+                resultSet.getInt("version"),
+                OrganizationStatus.valueOf(resultSet.getString("status")),
+                resultSet.getString("city"),
+                resultSet.getString("website"),
+                resultSet.getString("inn")
         );
     }
 }

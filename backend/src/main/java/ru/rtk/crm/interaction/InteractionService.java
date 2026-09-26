@@ -1,6 +1,9 @@
 package ru.rtk.crm.interaction;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -23,14 +26,22 @@ import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.attachment.AttachmentRepository;
 import ru.rtk.crm.catalog.CatalogReference;
 import ru.rtk.crm.catalog.CatalogRepository;
+import ru.rtk.crm.catalog.Contact;
 import ru.rtk.crm.catalog.ContactRepository;
 import ru.rtk.crm.catalog.Organization;
 import ru.rtk.crm.catalog.OrganizationNotFoundException;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
+import ru.rtk.crm.catalog.OrganizationStatus;
 
 @Service
 public class InteractionService {
+    private static final DateTimeFormatter EVENT_DATE_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
+            .withZone(ZoneId.of("Europe/Moscow"));
+    private static final DateTimeFormatter STEP_DEADLINE_FORMAT = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
+    private static final ZoneId COMPLETION_ZONE = ZoneId.of("Europe/Moscow");
+    private static final DateTimeFormatter COMPLETION_DATE_FORMAT = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+
     private final OrganizationRepository organizationRepository;
     private final ContactRepository contactRepository;
     private final CatalogRepository catalogRepository;
@@ -99,9 +110,11 @@ public class InteractionService {
     public Interaction create(CrmProfile profile, InteractionCreateRequest request, String idempotencyKey) {
         Organization organization = requireVisibleOrganization(profile, request.organizationId());
         ContactInteractionMutationAuthorization.requireCardEditor(profile);
+        requireWorkableOrganization(organization.status() == OrganizationStatus.ARCHIVED);
         String title = requiredText(request.title(), "title", 200);
         String nextAction = optionalText(request.nextAction(), "nextAction", 500);
         List<UUID> contactIds = validatedContactIds(organization.id(), request.contactIds());
+        requireActiveContacts(organization.id(), contactIds);
         UUID programId = validatedProgramId(request.programId());
         List<UUID> productIds = validatedProductIds(request.productIds());
         WorkflowTemplate template = requireAvailableTemplate(organization, request.templateId());
@@ -162,7 +175,8 @@ public class InteractionService {
             UUID commandId,
             OffsetDateTime now
     ) {
-        WorkflowTemplate template = workflowTemplateRepository.findDefaultForUpdate()
+        requireWorkableOrganization(organizationRepository.isArchived(organizationId));
+        WorkflowTemplate template = workflowTemplateRepository.findDefaultForOrganizationForUpdate(organizationId)
                 .orElseThrow(() -> new InteractionValidationException(
                         "templateId", "Нет шаблона процесса по умолчанию; создайте его перед импортом"
                 ));
@@ -187,7 +201,8 @@ public class InteractionService {
             UUID commandId,
             OffsetDateTime now
     ) {
-        WorkflowTemplate template = workflowTemplateRepository.findDefaultForUpdate()
+        requireWorkableOrganization(organizationRepository.isArchived(organizationId));
+        WorkflowTemplate template = workflowTemplateRepository.findDefaultForOrganizationForUpdate(organizationId)
                 .orElseThrow(() -> new InteractionValidationException(
                         "templateId", "Нет шаблона процесса по умолчанию; создайте его перед применением записей источника"
                 ));
@@ -495,6 +510,140 @@ public class InteractionService {
     }
 
     @Transactional
+    public Interaction completeStage(
+            CrmProfile profile,
+            UUID interactionId,
+            InteractionStageCompletionRequest request,
+            String idempotencyKey
+    ) {
+        VisibleInteraction visible = requireVisibleInteractionForUpdate(profile, interactionId);
+        ContactInteractionMutationAuthorization.requireCardEditor(profile);
+        int expectedVersion = requiredVersion(request.version());
+        String normalizedKey = requiredIdempotencyKey(idempotencyKey);
+        LocalDate completedOn = requiredCompletionDate(request.completedOn());
+        String comment = optionalText(request.comment(), "comment", 4_000);
+        List<UUID> attachmentIds = validatedAttachmentIds(request.attachmentIds());
+        CompleteStageCommand command = new CompleteStageCommand(
+                interactionId,
+                expectedVersion,
+                request.stageId(),
+                completedOn,
+                comment,
+                attachmentIds
+        );
+        String fingerprint = CommandFingerprint.of(objectMapper, command);
+        UUID commandId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
+        if (!commandIdempotencyRepository.reserve(
+                commandId,
+                profile.id(),
+                CommandOperation.COMPLETE_INTERACTION_STAGE,
+                normalizedKey,
+                fingerprint,
+                now
+        )) {
+            return replayInteraction(profile.id(), CommandOperation.COMPLETE_INTERACTION_STAGE, normalizedKey, fingerprint);
+        }
+        requireExpectedVersion(visible.row(), expectedVersion);
+        InteractionStage stage = targetStage(interactionRepository.findStages(interactionId), request.stageId(), "stageId");
+        if (stage.id().equals(visible.row().currentStageId())) {
+            throw new InteractionValidationException(
+                    "stageId",
+                    "Текущий этап завершается переходом; отметить выполненным можно другой этап"
+            );
+        }
+        if (!interactionRepository.touchVersion(interactionId, expectedVersion, now)) {
+            throw versionConflict(interactionId, visible.row().version());
+        }
+        String text = "Дата выполнения: " + COMPLETION_DATE_FORMAT.format(completedOn)
+                + (comment == null ? "" : ". " + comment);
+        InteractionEvent event = interactionRepository.insertEvent(
+                UUID.randomUUID(),
+                interactionId,
+                commandId,
+                InteractionEventType.STAGE_COMPLETED,
+                stage,
+                null,
+                null,
+                text,
+                null,
+                profile.id(),
+                visible.organization().ownerManagerId(),
+                expectedVersion + 1,
+                now
+        );
+        interactionRepository.saveStageCompletion(interactionId, stage.id(), completedOn, comment, event.id());
+        attachmentRepository.bindCleanUnbound(interactionId, stage.id(), event.id(), attachmentIds, now);
+        Interaction updated = toInteraction(interactionRepository.findById(interactionId)
+                .orElseThrow(InteractionNotFoundException::new));
+        return storeInteraction(commandId, updated);
+    }
+
+    @Transactional
+    public Interaction clearStageCompletion(
+            CrmProfile profile,
+            UUID interactionId,
+            UUID stageId,
+            Integer version,
+            String idempotencyKey
+    ) {
+        VisibleInteraction visible = requireVisibleInteractionForUpdate(profile, interactionId);
+        ContactInteractionMutationAuthorization.requireCardEditor(profile);
+        int expectedVersion = requiredVersion(version);
+        String normalizedKey = requiredIdempotencyKey(idempotencyKey);
+        ClearStageCompletionCommand command = new ClearStageCompletionCommand(interactionId, expectedVersion, stageId);
+        String fingerprint = CommandFingerprint.of(objectMapper, command);
+        UUID commandId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
+        if (!commandIdempotencyRepository.reserve(
+                commandId,
+                profile.id(),
+                CommandOperation.CLEAR_INTERACTION_STAGE_COMPLETION,
+                normalizedKey,
+                fingerprint,
+                now
+        )) {
+            return replayInteraction(profile.id(), CommandOperation.CLEAR_INTERACTION_STAGE_COMPLETION, normalizedKey, fingerprint);
+        }
+        requireExpectedVersion(visible.row(), expectedVersion);
+        InteractionStage stage = targetStage(interactionRepository.findStages(interactionId), stageId, "stageId");
+        LocalDate completedOn = interactionRepository.findStageCompletionDate(interactionId, stage.id())
+                .orElseThrow(() -> new InteractionValidationException("stageId", "Этап не отмечен выполненным"));
+        if (!interactionRepository.touchVersion(interactionId, expectedVersion, now)) {
+            throw versionConflict(interactionId, visible.row().version());
+        }
+        interactionRepository.deleteStageCompletion(interactionId, stage.id());
+        interactionRepository.insertEvent(
+                UUID.randomUUID(),
+                interactionId,
+                commandId,
+                InteractionEventType.STAGE_COMPLETION_CLEARED,
+                stage,
+                null,
+                null,
+                "Снята отметка о выполнении " + COMPLETION_DATE_FORMAT.format(completedOn),
+                null,
+                profile.id(),
+                visible.organization().ownerManagerId(),
+                expectedVersion + 1,
+                now
+        );
+        Interaction updated = toInteraction(interactionRepository.findById(interactionId)
+                .orElseThrow(InteractionNotFoundException::new));
+        return storeInteraction(commandId, updated);
+    }
+
+    private LocalDate requiredCompletionDate(LocalDate value) {
+        if (value == null) {
+            throw new InteractionValidationException("completedOn", "Укажите дату выполнения");
+        }
+        if (value.isAfter(LocalDate.now(COMPLETION_ZONE))) {
+            throw new InteractionValidationException("completedOn", "Дата выполнения не может быть позже сегодняшней");
+        }
+        return value;
+    }
+
+    @Transactional
     public Interaction updatePlan(
             CrmProfile profile,
             UUID interactionId,
@@ -513,7 +662,14 @@ public class InteractionService {
         List<UUID> requestedProductIds = request.productIds() == null
                 ? null
                 : requestedProductIds(request.productIds().orElse(List.of()));
-        if (!nextStep.nextActionSet() && !nextStep.nextActionAtSet() && !programSet && requestedProductIds == null) {
+        String requestedTitle = request.title() == null ? null : requiredText(request.title().orElse(null), "title", 200);
+        boolean lastContactAtSet = request.lastContactAt() != null;
+        OffsetDateTime requestedLastContactAt = lastContactAtSet ? request.lastContactAt().orElse(null) : null;
+        List<UUID> requestedContactIds = request.contactIds() == null
+                ? null
+                : validatedContactIds(visible.row().organizationId(), request.contactIds().orElse(List.of()));
+        if (!nextStep.nextActionSet() && !nextStep.nextActionAtSet() && !programSet && requestedProductIds == null
+                && requestedTitle == null && !lastContactAtSet && requestedContactIds == null) {
             throw new InteractionValidationException("body", "Измените хотя бы одно поле плана");
         }
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
@@ -523,7 +679,11 @@ public class InteractionService {
                 nextStep,
                 programSet,
                 requestedProgramId,
-                requestedProductIds
+                requestedProductIds,
+                requestedTitle,
+                lastContactAtSet,
+                requestedLastContactAt,
+                requestedContactIds
         );
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
@@ -558,12 +718,40 @@ public class InteractionService {
         requireRemovableProducts(interactionId, removedProductIds);
         InteractionNextStep resolvedNextStep = resolveNextStep(row, nextStep);
         boolean nextStepChanged = !sameNextStep(row, resolvedNextStep);
-        if (!nextStepChanged && !programChanged && addedProductIds.isEmpty() && removedProductIds.isEmpty()) {
+        boolean titleChanged = requestedTitle != null && !requestedTitle.equals(row.title());
+        boolean lastContactChanged = lastContactAtSet && !sameInstant(row.lastContactAt(), requestedLastContactAt);
+        List<UUID> currentContactIds = interactionRepository.findContactIds(interactionId);
+        List<UUID> addedContactIds = requestedContactIds == null
+                ? List.of()
+                : requestedContactIds.stream().filter(id -> !currentContactIds.contains(id)).toList();
+        List<UUID> removedContactIds = requestedContactIds == null
+                ? List.of()
+                : currentContactIds.stream().filter(id -> !requestedContactIds.contains(id)).toList();
+        requireActiveContacts(row.organizationId(), addedContactIds);
+        boolean detailsChanged = titleChanged || lastContactChanged || !addedContactIds.isEmpty() || !removedContactIds.isEmpty();
+        if (!nextStepChanged && !programChanged && addedProductIds.isEmpty() && removedProductIds.isEmpty() && !detailsChanged) {
             return storeInteraction(commandId, toInteraction(row));
         }
         if (!interactionRepository.touchVersion(interactionId, expectedVersion, now)) {
             throw versionConflict(interactionId, row.version());
         }
+        List<String> detailChanges = new ArrayList<>();
+        if (titleChanged || lastContactChanged) {
+            interactionRepository.updateDetails(
+                    interactionId,
+                    titleChanged ? requestedTitle : row.title(),
+                    lastContactChanged ? requestedLastContactAt : row.lastContactAt()
+            );
+        }
+        if (titleChanged) {
+            detailChanges.add("Название: «" + row.title() + "» → «" + requestedTitle + "»");
+        }
+        if (lastContactChanged) {
+            detailChanges.add("Дата последнего контакта: " + eventDateTime(row.lastContactAt())
+                    + " → " + eventDateTime(requestedLastContactAt));
+        }
+        interactionRepository.deleteContacts(interactionId, removedContactIds);
+        interactionRepository.insertContacts(interactionId, row.organizationId(), addedContactIds);
         List<ProductAgreement> previousAgreements = interactionRepository.findProductAgreements(interactionId);
         interactionRepository.updatePlan(
                 interactionId,
@@ -574,7 +762,7 @@ public class InteractionService {
         interactionRepository.deleteEmptyProductAgreements(interactionId, removedProductIds);
         requireRemovableProducts(interactionId, removedProductIds);
         interactionRepository.insertProductAgreements(interactionId, addedProductIds, now);
-        List<String> changes = new ArrayList<>();
+        List<String> changes = new ArrayList<>(detailChanges);
         if (programChanged) {
             changes.add(programId == null
                     ? "Программа снята"
@@ -591,11 +779,12 @@ public class InteractionService {
         if (!removedProductIds.isEmpty()) {
             changes.add("Удалены продукты: " + productNames(previousAgreements, removedProductIds));
         }
+        UUID eventId = UUID.randomUUID();
         interactionRepository.insertEvent(
-                UUID.randomUUID(),
+                eventId,
                 interactionId,
                 commandId,
-                InteractionEventType.PLAN_UPDATED,
+                detailsChanged ? InteractionEventType.DETAILS_UPDATED : InteractionEventType.PLAN_UPDATED,
                 currentStage(interactionRepository.findStages(interactionId), row),
                 null,
                 null,
@@ -606,9 +795,290 @@ public class InteractionService {
                 expectedVersion + 1,
                 now
         );
+        interactionRepository.insertEventContacts(eventId, addedContactIds, "ADDED");
+        interactionRepository.insertEventContacts(eventId, removedContactIds, "REMOVED");
         Interaction updated = toInteraction(interactionRepository.findById(interactionId)
                 .orElseThrow(InteractionNotFoundException::new));
         return storeInteraction(commandId, updated);
+    }
+
+    @Transactional
+    public Interaction completeStep(
+            CrmProfile profile,
+            UUID interactionId,
+            InteractionStepCompletionRequest request,
+            String idempotencyKey
+    ) {
+        VisibleInteraction visible = requireVisibleInteractionForUpdate(profile, interactionId);
+        ContactInteractionMutationAuthorization.requireCardEditor(profile);
+        if (request == null) {
+            throw new InteractionValidationException("body", "Не переданы данные запроса");
+        }
+        int expectedVersion = requiredVersion(request.version());
+        String result = optionalText(request.result(), "result", 4_000);
+        InteractionNextStep nextStep = request.nextStep() == null
+                ? new InteractionNextStep(null, null)
+                : new InteractionNextStep(
+                        optionalText(request.nextStep().nextAction(), "nextStep.nextAction", 500),
+                        request.nextStep().nextActionAt()
+                );
+        String normalizedKey = requiredIdempotencyKey(idempotencyKey);
+        CompleteStepCommand command = new CompleteStepCommand(interactionId, expectedVersion, result, nextStep);
+        String fingerprint = CommandFingerprint.of(objectMapper, command);
+        UUID commandId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
+        if (!commandIdempotencyRepository.reserve(
+                commandId,
+                profile.id(),
+                CommandOperation.COMPLETE_INTERACTION_STEP,
+                normalizedKey,
+                fingerprint,
+                now
+        )) {
+            return replayInteraction(profile.id(), CommandOperation.COMPLETE_INTERACTION_STEP, normalizedKey, fingerprint);
+        }
+        InteractionRepository.InteractionRow row = visible.row();
+        requireExpectedVersion(row, expectedVersion);
+        if (row.nextAction() == null && row.nextActionAt() == null) {
+            throw new InteractionValidationException("nextStep", "Следующий шаг не задан: отмечать выполненным нечего");
+        }
+        if (!interactionRepository.touchVersion(interactionId, expectedVersion, now)) {
+            throw versionConflict(interactionId, row.version());
+        }
+        interactionRepository.updatePlan(interactionId, nextStep.nextAction(), nextStep.nextActionAt(), row.programId());
+        interactionRepository.insertEvent(
+                UUID.randomUUID(),
+                interactionId,
+                commandId,
+                InteractionEventType.PLAN_UPDATED,
+                currentStage(interactionRepository.findStages(interactionId), row),
+                null,
+                null,
+                completedStepText(row, result),
+                nextStep,
+                profile.id(),
+                visible.organization().ownerManagerId(),
+                expectedVersion + 1,
+                now
+        );
+        Interaction updated = toInteraction(interactionRepository.findById(interactionId)
+                .orElseThrow(InteractionNotFoundException::new));
+        return storeInteraction(commandId, updated);
+    }
+
+    private String completedStepText(InteractionRepository.InteractionRow row, String result) {
+        StringBuilder text = new StringBuilder("Шаг выполнен");
+        if (row.nextAction() != null) {
+            text.append(": «").append(row.nextAction()).append("»");
+        }
+        if (row.nextActionAt() != null) {
+            text.append(row.nextAction() == null ? ", срок " : " (срок ")
+                    .append(STEP_DEADLINE_FORMAT.format(row.nextActionAt().atZoneSameInstant(InteractionDue.ZONE)))
+                    .append(row.nextAction() == null ? "" : ")");
+        }
+        if (result != null) {
+            text.append(". Результат: ").append(result);
+        }
+        return text.toString();
+    }
+
+    @Transactional
+    public Interaction changeStatus(
+            CrmProfile profile,
+            UUID interactionId,
+            InteractionStatusRequest request,
+            String idempotencyKey
+    ) {
+        VisibleInteraction visible = requireVisibleInteractionForUpdate(profile, interactionId);
+        ContactInteractionMutationAuthorization.requireCardEditor(profile);
+        if (request == null) {
+            throw new InteractionValidationException("body", "Не переданы данные запроса");
+        }
+        int expectedVersion = requiredVersion(request.version());
+        if (request.status() == null) {
+            throw new InteractionValidationException("status", "Выберите статус работы");
+        }
+        String reason = optionalText(request.reason(), "reason", 1_000);
+        if (reason == null && request.status() != InteractionWorkStatus.ACTIVE) {
+            throw new InteractionValidationException(
+                    "reason",
+                    request.status() == InteractionWorkStatus.COMPLETED ? "Укажите итог работы" : "Укажите причину приостановки"
+            );
+        }
+        String normalizedKey = requiredIdempotencyKey(idempotencyKey);
+        ChangeStatusCommand command = new ChangeStatusCommand(interactionId, expectedVersion, request.status(), reason);
+        String fingerprint = CommandFingerprint.of(objectMapper, command);
+        UUID commandId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
+        if (!commandIdempotencyRepository.reserve(
+                commandId,
+                profile.id(),
+                CommandOperation.CHANGE_INTERACTION_STATUS,
+                normalizedKey,
+                fingerprint,
+                now
+        )) {
+            return replayInteraction(profile.id(), CommandOperation.CHANGE_INTERACTION_STATUS, normalizedKey, fingerprint);
+        }
+        InteractionRepository.InteractionRow row = visible.row();
+        requireExpectedVersion(row, expectedVersion);
+        InteractionMarks current = row.marks();
+        if (current.status() == request.status()) {
+            throw new InteractionValidationException("status", "Работа уже в этом статусе");
+        }
+        InteractionMarks next = new InteractionMarks(
+                request.status(),
+                reason,
+                current.waitingOn(),
+                current.waitingNote(),
+                current.problem(),
+                current.riskLevel(),
+                current.riskReason()
+        );
+        return saveMarks(profile, visible, commandId, expectedVersion, next, InteractionEventType.STATUS_CHANGED,
+                statusDescription(request.status(), reason), now);
+    }
+
+    @Transactional
+    public Interaction updateFlags(
+            CrmProfile profile,
+            UUID interactionId,
+            InteractionFlagsRequest request,
+            String idempotencyKey
+    ) {
+        VisibleInteraction visible = requireVisibleInteractionForUpdate(profile, interactionId);
+        ContactInteractionMutationAuthorization.requireCardEditor(profile);
+        if (request == null) {
+            throw new InteractionValidationException("body", "Не переданы данные запроса");
+        }
+        int expectedVersion = requiredVersion(request.version());
+        String waitingNote = optionalText(request.waitingNote(), "waitingNote", 500);
+        if (request.waitingOn() == null && waitingNote != null) {
+            throw new InteractionValidationException("waitingOn", "Выберите, чьего ответа ждём");
+        }
+        String problem = optionalText(request.problem(), "problem", 1_000);
+        String riskReason = optionalText(request.riskReason(), "riskReason", 1_000);
+        if (request.riskLevel() != null && riskReason == null) {
+            throw new InteractionValidationException("riskReason", "Укажите причину риска");
+        }
+        if (request.riskLevel() == null && riskReason != null) {
+            throw new InteractionValidationException("riskLevel", "Выберите уровень риска");
+        }
+        String normalizedKey = requiredIdempotencyKey(idempotencyKey);
+        UpdateFlagsCommand command = new UpdateFlagsCommand(
+                interactionId,
+                expectedVersion,
+                request.waitingOn(),
+                waitingNote,
+                problem,
+                request.riskLevel(),
+                riskReason
+        );
+        String fingerprint = CommandFingerprint.of(objectMapper, command);
+        UUID commandId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
+        if (!commandIdempotencyRepository.reserve(
+                commandId,
+                profile.id(),
+                CommandOperation.UPDATE_INTERACTION_FLAGS,
+                normalizedKey,
+                fingerprint,
+                now
+        )) {
+            return replayInteraction(profile.id(), CommandOperation.UPDATE_INTERACTION_FLAGS, normalizedKey, fingerprint);
+        }
+        InteractionRepository.InteractionRow row = visible.row();
+        requireExpectedVersion(row, expectedVersion);
+        InteractionMarks current = row.marks();
+        InteractionMarks next = new InteractionMarks(
+                current.status(),
+                current.statusReason(),
+                request.waitingOn(),
+                waitingNote,
+                problem,
+                request.riskLevel(),
+                riskReason
+        );
+        List<String> changes = flagChanges(current, next);
+        if (changes.isEmpty()) {
+            return storeInteraction(commandId, toInteraction(row));
+        }
+        return saveMarks(profile, visible, commandId, expectedVersion, next, InteractionEventType.DETAILS_UPDATED,
+                String.join("; ", changes), now);
+    }
+
+    private Interaction saveMarks(
+            CrmProfile profile,
+            VisibleInteraction visible,
+            UUID commandId,
+            int expectedVersion,
+            InteractionMarks marks,
+            InteractionEventType type,
+            String description,
+            OffsetDateTime now
+    ) {
+        InteractionRepository.InteractionRow row = visible.row();
+        if (!interactionRepository.updateMarks(row.id(), expectedVersion, marks, now)) {
+            throw versionConflict(row.id(), row.version());
+        }
+        interactionRepository.insertEvent(
+                UUID.randomUUID(),
+                row.id(),
+                commandId,
+                type,
+                currentStage(interactionRepository.findStages(row.id()), row),
+                null,
+                null,
+                description,
+                null,
+                profile.id(),
+                visible.organization().ownerManagerId(),
+                expectedVersion + 1,
+                now
+        );
+        Interaction updated = toInteraction(interactionRepository.findById(row.id())
+                .orElseThrow(InteractionNotFoundException::new));
+        return storeInteraction(commandId, updated);
+    }
+
+    private String statusDescription(InteractionWorkStatus status, String reason) {
+        return switch (status) {
+            case ACTIVE -> reason == null ? "Работа возобновлена" : "Работа возобновлена: " + reason;
+            case PAUSED -> "Работа приостановлена. Причина: " + reason;
+            case COMPLETED -> "Работа завершена. Итог: " + reason;
+        };
+    }
+
+    private List<String> flagChanges(InteractionMarks current, InteractionMarks next) {
+        List<String> changes = new ArrayList<>();
+        if (current.waitingOn() != next.waitingOn() || !Objects.equals(current.waitingNote(), next.waitingNote())) {
+            changes.add(next.waitingOn() == null
+                    ? "Ожидание снято"
+                    : next.waitingOn().label() + (next.waitingNote() == null ? "" : ": «" + next.waitingNote() + "»"));
+        }
+        if (!Objects.equals(current.problem(), next.problem())) {
+            changes.add(next.problem() == null ? "Проблема снята" : "Есть проблема: «" + next.problem() + "»");
+        }
+        if (current.riskLevel() != next.riskLevel() || !Objects.equals(current.riskReason(), next.riskReason())) {
+            changes.add(next.riskLevel() == null
+                    ? "Риск снят"
+                    : "Риск " + next.riskLevel().label() + ": «" + next.riskReason() + "»");
+        }
+        return changes;
+    }
+
+    private void requireActiveContacts(UUID organizationId, List<UUID> contactIds) {
+        if (contactRepository.findByIds(organizationId, contactIds).stream().anyMatch(Contact::inactive)) {
+            throw new InteractionValidationException("contactIds", "Контакт отмечен как неактуальный; выберите действующий контакт");
+        }
+    }
+
+    private boolean sameInstant(OffsetDateTime left, OffsetDateTime right) {
+        return Objects.equals(left == null ? null : left.toInstant(), right == null ? null : right.toInstant());
+    }
+
+    private String eventDateTime(OffsetDateTime value) {
+        return value == null ? "не указана" : EVENT_DATE_TIME.format(value);
     }
 
     private void requireRemovableProducts(UUID interactionId, List<UUID> productIds) {
@@ -822,6 +1292,14 @@ public class InteractionService {
                 .orElseThrow(OrganizationNotFoundException::new);
     }
 
+    private static void requireWorkableOrganization(boolean archived) {
+        if (archived) {
+            throw new InteractionValidationException(
+                    "organizationId", "Организация в архиве; восстановите её, чтобы начать новую работу"
+            );
+        }
+    }
+
     private VisibleInteraction requireVisibleInteraction(CrmProfile profile, UUID interactionId) {
         InteractionRepository.InteractionRow row = interactionRepository.findById(interactionId)
                 .orElseThrow(InteractionNotFoundException::new);
@@ -906,7 +1384,7 @@ public class InteractionService {
 
     private WorkflowTemplate requireAvailableTemplate(Organization organization, UUID templateId) {
         WorkflowTemplate template = (templateId == null
-                ? workflowTemplateRepository.findDefaultForUpdate()
+                ? workflowTemplateRepository.findDefaultForOrganizationForUpdate(organization.id())
                 : workflowTemplateRepository.findByIdForUpdate(templateId).map(workflowTemplateRepository::toTemplate))
                 .orElseThrow(() -> new InteractionValidationException("templateId", "Шаблон процесса недоступен"));
         if (template.teamId() != null && !template.teamId().equals(organization.teamId())) {
@@ -952,7 +1430,13 @@ public class InteractionService {
                 row.updatedAt(),
                 listRow.organizationName(),
                 listRow.programName(),
-                listRow.ownerManagerName()
+                listRow.ownerManagerName(),
+                row.marks(),
+                listRow.lastEventType(),
+                listRow.lastEventAt(),
+                listRow.stageEnteredAt(),
+                listRow.deputyManagerName(),
+                listRow.deputyEndsOn()
         );
     }
 
@@ -981,11 +1465,13 @@ public class InteractionService {
                 interactionRepository.findProductIds(row.id()),
                 interactionRepository.findProductAgreements(row.id()),
                 attachmentRepository.findByInteractionId(row.id()),
+                interactionRepository.findStageCompletions(row.id()),
                 row.lastContactAt(),
                 row.version(),
                 row.createdBy(),
                 row.createdAt(),
-                row.updatedAt()
+                row.updatedAt(),
+                row.marks()
         );
     }
 
@@ -1216,6 +1702,19 @@ public class InteractionService {
     ) {
     }
 
+    private record CompleteStageCommand(
+            UUID interactionId,
+            int version,
+            UUID stageId,
+            LocalDate completedOn,
+            String comment,
+            List<UUID> attachmentIds
+    ) {
+    }
+
+    private record ClearStageCompletionCommand(UUID interactionId, int version, UUID stageId) {
+    }
+
     private record StageEditInteractionCommand(
             UUID interactionId,
             int version,
@@ -1237,13 +1736,39 @@ public class InteractionService {
     ) {
     }
 
+    private record CompleteStepCommand(
+            UUID interactionId,
+            int version,
+            String result,
+            InteractionNextStep nextStep
+    ) {
+    }
+
     private record UpdatePlanCommand(
             UUID interactionId,
             int version,
             NextStepPatch nextStep,
             boolean programSet,
             UUID programId,
-            List<UUID> productIds
+            List<UUID> productIds,
+            String title,
+            boolean lastContactAtSet,
+            OffsetDateTime lastContactAt,
+            List<UUID> contactIds
+    ) {
+    }
+
+    private record ChangeStatusCommand(UUID interactionId, int version, InteractionWorkStatus status, String reason) {
+    }
+
+    private record UpdateFlagsCommand(
+            UUID interactionId,
+            int version,
+            InteractionWaiting waitingOn,
+            String waitingNote,
+            String problem,
+            InteractionRiskLevel riskLevel,
+            String riskReason
     ) {
     }
 }

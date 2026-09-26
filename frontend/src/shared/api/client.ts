@@ -19,11 +19,14 @@ export type OrganizationAssignmentEvent = {
   newOwnerManagerDisplayName?: string | null
   actorProfileId: string
   actorDisplayName?: string | null
+  reason?: components['schemas']['OrganizationAssignmentEvent']['reason']
+  handoverNote?: string | null
   occurredAt: string
 }
 export type OrganizationAssignment = {
   version: number
   ownerManagerId: string | null
+  handoverNote?: string | null
 }
 export type OrganizationAssignmentResult = {
   organization: Organization
@@ -31,6 +34,9 @@ export type OrganizationAssignmentResult = {
 }
 export type Contact = components['schemas']['Contact']
 export type ContactCreate = components['schemas']['ContactCreate']
+export type ContactUpdate = components['schemas']['ContactUpdate']
+export type ContactRole = components['schemas']['ContactRole']
+export type ContactEvent = components['schemas']['ContactEvent']
 export type CatalogLookup = components['schemas']['CatalogLookup']
 export type PageCatalogLookup = components['schemas']['PageCatalogLookup']
 export type CatalogListParams = NonNullable<operations['listPrograms']['parameters']['query']>
@@ -39,6 +45,8 @@ export type Attachment = components['schemas']['Attachment']
 export type AttachmentUpload = {
   file: File
   stageId: Attachment['stageId']
+  kind?: Attachment['kind']
+  replacesId?: Attachment['id']
 }
 export type Interaction = components['schemas']['Interaction']
 export type InteractionStage = components['schemas']['InteractionStage']
@@ -52,10 +60,29 @@ export type InteractionTransition = components['schemas']['InteractionTransition
 export type InteractionComment = components['schemas']['InteractionComment']
 export type InteractionCommentResult = operations['commentInteraction']['responses'][200]['content']['application/json']
 export type InteractionStageEdit = components['schemas']['InteractionStageEdit']
+export type InteractionStageCompletion = components['schemas']['InteractionStageCompletion']
+export type InteractionStageCompletionRequest = components['schemas']['InteractionStageCompletionRequest']
 export type InteractionPlanUpdate = components['schemas']['InteractionPlanUpdate']
 export type InteractionNextStep = components['schemas']['InteractionNextStep']
+export type InteractionMarks = components['schemas']['InteractionMarks']
+export type InteractionStatusChange = components['schemas']['InteractionStatusChange']
+export type InteractionFlagsUpdate = components['schemas']['InteractionFlagsUpdate']
 export type InteractionListParams = NonNullable<operations['listInteractions']['parameters']['query']>
 export type InteractionDue = NonNullable<InteractionListParams['due']>
+export type InteractionStatusFilter = NonNullable<InteractionListParams['status']>
+export type InteractionFlagFilter = NonNullable<InteractionListParams['flag']>
+export type InteractionWorkStatusFilter = NonNullable<InteractionListParams['status']>
+export type InteractionStepCompletion = components['schemas']['InteractionStepCompletion']
+export type OrganizationBulkAssignment = components['schemas']['OrganizationBulkAssignment']
+export type OrganizationBulkAssignmentResult = components['schemas']['OrganizationBulkAssignmentResult']
+export type OrganizationDeputy = components['schemas']['OrganizationDeputy']
+export type OrganizationDeputyCreate = components['schemas']['OrganizationDeputyCreate']
+export type TeamIndicators = components['schemas']['TeamIndicators']
+export type ManagerIndicators = components['schemas']['ManagerIndicators']
+export type TeamsSummary = components['schemas']['TeamsSummary']
+export type TeamSummary = components['schemas']['TeamSummary']
+export type ReminderDigest = components['schemas']['ReminderDigest']
+export type ReminderSettings = components['schemas']['ReminderSettings']
 export type WorkflowStageInput = components['schemas']['WorkflowStageInput']
 export type WorkflowTransitionInput = components['schemas']['WorkflowTransitionInput']
 export type WorkflowTemplate = components['schemas']['WorkflowTemplate']
@@ -76,6 +103,10 @@ export type ReportManagerOption = components['schemas']['ReportManagerOption']
 export type StatisticsGroupBy = components['schemas']['StatisticsGroupBy']
 export type StatisticsRequest = components['schemas']['StatisticsRequest']
 export type StatisticsResult = components['schemas']['StatisticsResult']
+export type ChartType = components['schemas']['ChartType']
+export type ReportEventType = components['schemas']['ReportEventType']
+export type SavedReport = components['schemas']['SavedReport']
+export type SavedReportRequest = components['schemas']['SavedReportRequest']
 export type CrmProfile = components['schemas']['CrmProfile']
 export type PageCrmProfile = components['schemas']['PageCrmProfile']
 export type CrmProfileListParams = NonNullable<operations['listCrmProfiles']['parameters']['query']>
@@ -88,6 +119,23 @@ export type AdminOrganization = components['schemas']['AdminOrganization']
 export type PageAdminOrganization = components['schemas']['PageAdminOrganization']
 export type AdminOrganizationListParams = NonNullable<operations['listAdminOrganizations']['parameters']['query']>
 export type OrganizationTeamTransfer = components['schemas']['OrganizationTeamTransfer']
+export type OrganizationDetails = components['schemas']['OrganizationDetails']
+export type OrganizationStatus = components['schemas']['OrganizationStatus']
+export type OrganizationStatusChange = components['schemas']['OrganizationStatusChange']
+export type OrganizationDuplicate = components['schemas']['OrganizationDuplicate']
+export type AdminTeam = components['schemas']['AdminTeam']
+export type TeamArchive = components['schemas']['TeamArchive']
+export type CatalogKind = components['schemas']['CatalogKind']
+export type CatalogEntityType = components['schemas']['CatalogEntityType']
+export type AdminCatalogEntry = components['schemas']['AdminCatalogEntry']
+export type PageAdminCatalogEntry = components['schemas']['PageAdminCatalogEntry']
+export type AdminCatalogListParams = NonNullable<operations['listAdminCatalogEntries']['parameters']['query']>
+export type CatalogEntryChange = components['schemas']['CatalogEntryChange']
+export type PageCatalogChangeEvent = components['schemas']['PageCatalogChangeEvent']
+export type CatalogChangeEvent = components['schemas']['CatalogChangeEvent']
+export type CatalogChangeEventListParams = NonNullable<operations['listCatalogChangeEvents']['parameters']['query']>
+export type CatalogImportManagerCandidate = components['schemas']['CatalogImportManagerCandidate']
+export type CatalogImportMissingRecord = components['schemas']['CatalogImportMissingRecord']
 export type SourceCode = components['schemas']['SourceCode']
 export type DataSource = components['schemas']['DataSource']
 export type SyncRun = components['schemas']['SyncRun']
@@ -96,6 +144,19 @@ export type SourceRecord = components['schemas']['SourceRecord']
 export type SourceRecordApply = components['schemas']['SourceRecordApply']
 export type SourceRecordApplyResult = components['schemas']['SourceRecordApplyResult']
 export type SourceMappingOptions = components['schemas']['SourceMappingOptions']
+export type RunKind = components['schemas']['RunKind']
+export type SourceMapping = components['schemas']['SourceMapping']
+export type SourceMappingUpdate = components['schemas']['SourceMappingUpdate']
+export type PendingSourceRecord = components['schemas']['PendingSourceRecord']
+export type SourceOrganizationCreate = components['schemas']['SourceOrganizationCreate']
+export type SourceOrganizationCreated = components['schemas']['SourceOrganizationCreated']
+export type InteractionSourceStatus = components['schemas']['InteractionSourceStatus']
+export type SourcesRefresh = components['schemas']['SourcesRefresh']
+export type TeacherTraining = components['schemas']['TeacherTraining']
+export type TeacherTrainingCreate = components['schemas']['TeacherTrainingCreate']
+export type TeacherTrainingCreated = components['schemas']['TeacherTrainingCreated']
+export type InteractionCycle = components['schemas']['InteractionCycle']
+export type CycleStart = components['schemas']['CycleStart']
 export type CatalogImportProfile = 'AGREEMENT' | 'DIRECTION_PROGRAM'
 export type CatalogImportRowTarget = {
   organizationId?: string | null
@@ -107,6 +168,7 @@ export type CatalogImportMapping = {
   columns: Record<string, string>
   rowTargets?: Record<string, CatalogImportRowTarget>
   transferStatuses?: Record<string, string>
+  unassignedTeamId?: string | null
 }
 export type CatalogImportSheet = {
   name: string
@@ -128,6 +190,7 @@ export type CatalogImportRow = {
   oldValues: Record<string, string>
   newValues: Record<string, string>
   applied: boolean
+  managerCandidates: CatalogImportManagerCandidate[]
 }
 export type CatalogImport = {
   id: string
@@ -137,10 +200,12 @@ export type CatalogImport = {
   rows: CatalogImportRow[]
   createdAt: string
   updatedAt: string
+  missingRecords: CatalogImportMissingRecord[]
 }
 export type CatalogImportApply = {
   version: number
   confirmedRowIds: string[]
+  archiveAgreementIds?: string[]
 }
 export type CatalogImportApplyResult = {
   jobId: string
@@ -154,6 +219,36 @@ export type CatalogImportJob = {
   result: string
   createdAt: string
   completedAt: string
+}
+
+export type ActivationRequest = components['schemas']['ActivationRequest']
+export type AuditCategory = components['schemas']['AuditCategory']
+export type AuditEntry = components['schemas']['AuditEntry']
+export type PageAuditEntry = components['schemas']['PageAuditEntry']
+export type AuditEventListParams = NonNullable<operations['listAuditEvents']['parameters']['query']>
+export type AuditEventExportParams = NonNullable<operations['exportAuditEvents']['parameters']['query']>
+export type SubjectQuery = components['schemas']['SubjectQuery']
+export type SubjectExportFormat = components['schemas']['SubjectExportFormat']
+export type SubjectSearchResult = components['schemas']['SubjectSearchResult']
+export type SubjectContact = components['schemas']['SubjectContact']
+export type SubjectProfile = components['schemas']['SubjectProfile']
+export type SubjectMention = components['schemas']['SubjectMention']
+export type SubjectAttachment = components['schemas']['SubjectAttachment']
+export type ContactRectification = components['schemas']['ContactRectification']
+export type ContactRestriction = components['schemas']['ContactRestriction']
+export type AnonymizationRequest = components['schemas']['AnonymizationRequest']
+export type AnonymizationResult = components['schemas']['AnonymizationResult']
+export type RetentionPolicy = components['schemas']['RetentionPolicy']
+export type RetentionRun = components['schemas']['RetentionRun']
+
+const querySuffix = (query: Record<string, string | number | boolean | null | undefined>) => {
+  const searchParams = new URLSearchParams()
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      searchParams.set(key, String(value))
+    }
+  })
+  return searchParams.size === 0 ? '' : `?${searchParams.toString()}`
 }
 
 export class ApiError extends Error {
@@ -214,6 +309,9 @@ export class ApiClient {
     if (query.requiresAssignment === true) {
       searchParams.set('requiresAssignment', 'true')
     }
+    if (query.status !== undefined) {
+      searchParams.set('status', query.status)
+    }
     const suffix = searchParams.size === 0 ? '' : `?${searchParams.toString()}`
     return this.request<PageOrganization>(`/api/organizations${suffix}`)
   }
@@ -254,6 +352,26 @@ export class ApiClient {
     return this.command<Contact>(`/api/organizations/${encodeURIComponent(organizationId)}/contacts`, payload, idempotencyKey)
   }
 
+  async updateOrganizationContact(
+    organizationId: Organization['id'],
+    contactId: Contact['id'],
+    payload: ContactUpdate,
+    idempotencyKey: string
+  ): Promise<Contact> {
+    return this.command<Contact>(
+      `/api/organizations/${encodeURIComponent(organizationId)}/contacts/${encodeURIComponent(contactId)}`,
+      payload,
+      idempotencyKey,
+      'PATCH'
+    )
+  }
+
+  async listOrganizationContactEvents(organizationId: Organization['id'], contactId: Contact['id']): Promise<ContactEvent[]> {
+    return this.request<ContactEvent[]>(
+      `/api/organizations/${encodeURIComponent(organizationId)}/contacts/${encodeURIComponent(contactId)}/events`
+    )
+  }
+
   async listPrograms(query: CatalogListParams = {}): Promise<PageCatalogLookup> {
     return this.listCatalog('/api/programs', query)
   }
@@ -279,6 +397,21 @@ export class ApiClient {
     }
     if (query.stage !== undefined && query.stage.length > 0) {
       searchParams.set('stage', query.stage)
+    }
+    if (query.status !== undefined) {
+      searchParams.set('status', query.status)
+    }
+    if (query.flag !== undefined) {
+      searchParams.set('flag', query.flag)
+    }
+    if (query.licenseExpiresBy !== undefined) {
+      searchParams.set('licenseExpiresBy', query.licenseExpiresBy.toString())
+    }
+    if (query.responsible !== undefined && query.responsible.length > 0) {
+      searchParams.set('responsible', query.responsible)
+    }
+    if (query.minDaysOnStage !== undefined) {
+      searchParams.set('minDaysOnStage', query.minDaysOnStage.toString())
     }
     if (query.page !== undefined) {
       searchParams.set('page', query.page.toString())
@@ -334,6 +467,12 @@ export class ApiClient {
     const formData = new FormData()
     formData.set('file', payload.file)
     formData.set('stageId', payload.stageId)
+    if (payload.kind !== undefined) {
+      formData.set('kind', payload.kind)
+    }
+    if (payload.replacesId !== undefined) {
+      formData.set('replacesId', payload.replacesId)
+    }
     return this.request<Attachment>(`/api/interactions/${encodeURIComponent(id)}/attachments`, {
       method: 'POST',
       headers: {
@@ -368,12 +507,50 @@ export class ApiClient {
     return this.command<InteractionCommentResult>(`/api/interactions/${encodeURIComponent(id)}/comments`, payload, idempotencyKey)
   }
 
+  async changeInteractionStatus(
+    id: Interaction['id'],
+    payload: InteractionStatusChange,
+    idempotencyKey: string
+  ): Promise<Interaction> {
+    return this.command<Interaction>(`/api/interactions/${encodeURIComponent(id)}/status`, payload, idempotencyKey)
+  }
+
+  async updateInteractionFlags(
+    id: Interaction['id'],
+    payload: InteractionFlagsUpdate,
+    idempotencyKey: string
+  ): Promise<Interaction> {
+    return this.command<Interaction>(`/api/interactions/${encodeURIComponent(id)}/flags`, payload, idempotencyKey)
+  }
+
   async editInteractionStages(
     id: Interaction['id'],
     payload: InteractionStageEdit,
     idempotencyKey: string
   ): Promise<Interaction> {
     return this.command<Interaction>(`/api/interactions/${encodeURIComponent(id)}/stage-edits`, payload, idempotencyKey)
+  }
+
+  async completeInteractionStage(
+    id: Interaction['id'],
+    payload: InteractionStageCompletionRequest,
+    idempotencyKey: string
+  ): Promise<Interaction> {
+    return this.command<Interaction>(`/api/interactions/${encodeURIComponent(id)}/stage-completions`, payload, idempotencyKey)
+  }
+
+  async clearInteractionStageCompletion(
+    id: Interaction['id'],
+    stageId: InteractionStage['id'],
+    version: number,
+    idempotencyKey: string
+  ): Promise<Interaction> {
+    return this.command<Interaction>(
+      `/api/interactions/${encodeURIComponent(id)}/stage-completions/${encodeURIComponent(stageId)}?${new URLSearchParams({ version: version.toString() })}`,
+      undefined,
+      idempotencyKey,
+      'DELETE'
+    )
   }
 
   async listAvailableWorkflowTemplates(query: WorkflowTemplateListParams = {}): Promise<PageWorkflowTemplate> {
@@ -432,6 +609,9 @@ export class ApiClient {
     if (query.pending !== undefined) {
       searchParams.set('pending', query.pending.toString())
     }
+    if (query.q !== undefined && query.q !== '') {
+      searchParams.set('q', query.q)
+    }
     const suffix = searchParams.size === 0 ? '' : `?${searchParams.toString()}`
     return this.request<PageCrmProfile>(`/api/admin/crm-profiles${suffix}`)
   }
@@ -440,8 +620,8 @@ export class ApiClient {
     return this.request<CrmProfileEvent[]>(`/api/admin/crm-profiles/${encodeURIComponent(id)}/events`)
   }
 
-  async listTeams(): Promise<Team[]> {
-    return this.request<Team[]>('/api/admin/teams')
+  async listTeams(): Promise<AdminTeam[]> {
+    return this.request<AdminTeam[]>('/api/admin/teams')
   }
 
   async createTeam(payload: TeamCreate, idempotencyKey: string): Promise<Team> {
@@ -459,6 +639,12 @@ export class ApiClient {
     }
     if (query.size !== undefined) {
       searchParams.set('size', query.size.toString())
+    }
+    if (query.q !== undefined && query.q.trim().length > 0) {
+      searchParams.set('q', query.q.trim())
+    }
+    if (query.status !== undefined) {
+      searchParams.set('status', query.status)
     }
     const suffix = searchParams.size === 0 ? '' : `?${searchParams.toString()}`
     return this.request<PageAdminOrganization>(`/api/admin/organizations${suffix}`)
@@ -488,6 +674,83 @@ export class ApiClient {
       idempotencyKey,
       'PATCH'
     )
+  }
+
+  async syncCrmProfileAccount(id: CrmProfile['id']): Promise<CrmProfile> {
+    return this.post<CrmProfile>(`/api/admin/crm-profiles/${encodeURIComponent(id)}/account-sync`)
+  }
+
+  async requestProfileActivation(): Promise<ActivationRequest> {
+    return this.post<ActivationRequest>('/api/me/activation-request')
+  }
+
+  async listAuditEvents(query: AuditEventListParams = {}): Promise<PageAuditEntry> {
+    return this.request<PageAuditEntry>(`/api/admin/audit-events${querySuffix(query)}`)
+  }
+
+  async exportAuditEvents(query: AuditEventExportParams): Promise<Blob> {
+    return this.download(`/api/admin/audit-events/export${querySuffix(query)}`)
+  }
+
+  async searchPersonalData(payload: SubjectQuery): Promise<SubjectSearchResult> {
+    return this.post<SubjectSearchResult>('/api/admin/personal-data/search', payload)
+  }
+
+  async exportPersonalData(payload: SubjectQuery, format: SubjectExportFormat): Promise<Blob> {
+    if (this.csrf === null) {
+      await this.refreshCsrf()
+    }
+    const response = await fetch(`/api/admin/personal-data/export?format=${format}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        Accept: 'application/octet-stream',
+        'Content-Type': 'application/json',
+        [this.csrf!.headerName]: this.csrf!.token
+      },
+      body: JSON.stringify(payload)
+    })
+    if (!response.ok) {
+      return this.throwResponseError(response)
+    }
+    return response.blob()
+  }
+
+  async rectifyPersonalDataContact(
+    id: SubjectContact['id'],
+    payload: ContactRectification,
+    idempotencyKey: string
+  ): Promise<SubjectContact> {
+    return this.command<SubjectContact>(
+      `/api/admin/personal-data/contacts/${encodeURIComponent(id)}`,
+      payload,
+      idempotencyKey,
+      'PATCH'
+    )
+  }
+
+  async restrictPersonalDataContact(
+    id: SubjectContact['id'],
+    payload: ContactRestriction,
+    idempotencyKey: string
+  ): Promise<SubjectContact> {
+    return this.command<SubjectContact>(
+      `/api/admin/personal-data/contacts/${encodeURIComponent(id)}/restriction`,
+      payload,
+      idempotencyKey
+    )
+  }
+
+  async anonymizePersonalData(payload: AnonymizationRequest, idempotencyKey: string): Promise<AnonymizationResult> {
+    return this.command<AnonymizationResult>('/api/admin/personal-data/anonymization', payload, idempotencyKey)
+  }
+
+  async getRetentionPolicy(): Promise<RetentionPolicy> {
+    return this.request<RetentionPolicy>('/api/admin/retention')
+  }
+
+  async runRetention(): Promise<RetentionRun> {
+    return this.post<RetentionRun>('/api/admin/retention/run')
   }
 
   async inspectCatalogImport(file: File): Promise<CatalogImportInspect> {
@@ -556,6 +819,27 @@ export class ApiClient {
     return this.request<string[]>('/api/report-filters/stages')
   }
 
+  async listSavedReports(): Promise<SavedReport[]> {
+    return this.request<SavedReport[]>('/api/saved-reports')
+  }
+
+  async createSavedReport(payload: SavedReportRequest, idempotencyKey: string): Promise<SavedReport> {
+    return this.command<SavedReport>('/api/saved-reports', payload, idempotencyKey)
+  }
+
+  async updateSavedReport(id: SavedReport['id'], payload: SavedReportRequest, idempotencyKey: string): Promise<SavedReport> {
+    return this.command<SavedReport>(`/api/saved-reports/${encodeURIComponent(id)}`, payload, idempotencyKey, 'PATCH')
+  }
+
+  async deleteSavedReport(id: SavedReport['id'], version: number, idempotencyKey: string): Promise<void> {
+    return this.command<void>(
+      `/api/saved-reports/${encodeURIComponent(id)}?${new URLSearchParams({ version: version.toString() })}`,
+      undefined,
+      idempotencyKey,
+      'DELETE'
+    )
+  }
+
   async previewReport(payload: ReportPreviewRequest, page: number, size: number): Promise<ReportPreview> {
     if (this.csrf === null) {
       await this.refreshCsrf()
@@ -621,6 +905,238 @@ export class ApiClient {
     return this.post<SourceRecordApplyResult>(`/api/admin/source-records/${encodeURIComponent(id)}/apply`, payload)
   }
 
+  async createOrganization(payload: OrganizationDetails, idempotencyKey: string): Promise<Organization> {
+    return this.command<Organization>('/api/organizations', payload, idempotencyKey)
+  }
+
+  async updateOrganization(id: Organization['id'], payload: OrganizationDetails, idempotencyKey: string): Promise<Organization> {
+    return this.command<Organization>(`/api/organizations/${encodeURIComponent(id)}`, payload, idempotencyKey, 'PATCH')
+  }
+
+  async changeOrganizationStatus(
+    id: Organization['id'],
+    payload: OrganizationStatusChange,
+    idempotencyKey: string
+  ): Promise<Organization> {
+    return this.command<Organization>(`/api/organizations/${encodeURIComponent(id)}/status`, payload, idempotencyKey)
+  }
+
+  async findOrganizationDuplicates(name: string, exceptId?: string): Promise<OrganizationDuplicate[]> {
+    const searchParams = new URLSearchParams({ name })
+    if (exceptId !== undefined) {
+      searchParams.set('exceptId', exceptId)
+    }
+    return this.request<OrganizationDuplicate[]>(`/api/organizations/duplicates?${searchParams.toString()}`)
+  }
+
+  async createAdminOrganization(payload: OrganizationDetails, idempotencyKey: string): Promise<AdminOrganization> {
+    return this.command<AdminOrganization>('/api/admin/organizations', payload, idempotencyKey)
+  }
+
+  async updateAdminOrganization(
+    id: AdminOrganization['id'],
+    payload: OrganizationDetails,
+    idempotencyKey: string
+  ): Promise<AdminOrganization> {
+    return this.command<AdminOrganization>(`/api/admin/organizations/${encodeURIComponent(id)}`, payload, idempotencyKey, 'PATCH')
+  }
+
+  async changeAdminOrganizationStatus(
+    id: AdminOrganization['id'],
+    payload: OrganizationStatusChange,
+    idempotencyKey: string
+  ): Promise<AdminOrganization> {
+    return this.command<AdminOrganization>(`/api/admin/organizations/${encodeURIComponent(id)}/status`, payload, idempotencyKey)
+  }
+
+  async changeTeamArchived(id: Team['id'], payload: TeamArchive, idempotencyKey: string): Promise<Team> {
+    return this.command<Team>(`/api/admin/teams/${encodeURIComponent(id)}/archive`, payload, idempotencyKey, 'PATCH')
+  }
+
+  async listAdminCatalogEntries(kind: CatalogKind, query: AdminCatalogListParams = {}): Promise<PageAdminCatalogEntry> {
+    const searchParams = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value.toString().trim().length > 0) {
+        searchParams.set(key, value.toString().trim())
+      }
+    }
+    const suffix = searchParams.size === 0 ? '' : `?${searchParams.toString()}`
+    return this.request<PageAdminCatalogEntry>(`/api/admin/catalogs/${kind}${suffix}`)
+  }
+
+  async createAdminCatalogEntry(kind: CatalogKind, payload: CatalogEntryChange, idempotencyKey: string): Promise<AdminCatalogEntry> {
+    return this.command<AdminCatalogEntry>(`/api/admin/catalogs/${kind}`, payload, idempotencyKey)
+  }
+
+  async updateAdminCatalogEntry(
+    kind: CatalogKind,
+    id: AdminCatalogEntry['id'],
+    payload: CatalogEntryChange,
+    idempotencyKey: string
+  ): Promise<AdminCatalogEntry> {
+    return this.command<AdminCatalogEntry>(`/api/admin/catalogs/${kind}/${encodeURIComponent(id)}`, payload, idempotencyKey, 'PATCH')
+  }
+
+  async listCatalogChangeEvents(query: CatalogChangeEventListParams = {}): Promise<PageCatalogChangeEvent> {
+    const searchParams = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined) {
+        searchParams.set(key, value.toString())
+      }
+    }
+    const suffix = searchParams.size === 0 ? '' : `?${searchParams.toString()}`
+    return this.request<PageCatalogChangeEvent>(`/api/admin/catalog-events${suffix}`)
+  }
+
+  async makeWorkflowTemplateDefault(id: WorkflowTemplate['id'], version: number, idempotencyKey: string): Promise<WorkflowTemplate> {
+    return this.command<WorkflowTemplate>(
+      `/api/admin/workflow-templates/${encodeURIComponent(id)}/default`,
+      { version },
+      idempotencyKey
+    )
+  }
+
+  async completeInteractionStep(
+    id: Interaction['id'],
+    payload: InteractionStepCompletion,
+    idempotencyKey: string
+  ): Promise<Interaction> {
+    return this.command<Interaction>(`/api/interactions/${encodeURIComponent(id)}/step-completions`, payload, idempotencyKey)
+  }
+
+  async bulkAssignOrganizations(
+    payload: OrganizationBulkAssignment,
+    idempotencyKey: string
+  ): Promise<OrganizationBulkAssignmentResult> {
+    return this.command<OrganizationBulkAssignmentResult>('/api/organization-assignments', payload, idempotencyKey)
+  }
+
+  async listOrganizationDeputies(id: Organization['id']): Promise<OrganizationDeputy[]> {
+    return this.request<OrganizationDeputy[]>(`/api/organizations/${encodeURIComponent(id)}/deputies`)
+  }
+
+  async assignOrganizationDeputy(
+    id: Organization['id'],
+    payload: OrganizationDeputyCreate,
+    idempotencyKey: string
+  ): Promise<OrganizationDeputy> {
+    return this.command<OrganizationDeputy>(`/api/organizations/${encodeURIComponent(id)}/deputies`, payload, idempotencyKey)
+  }
+
+  async endOrganizationDeputy(
+    id: Organization['id'],
+    deputyId: OrganizationDeputy['id'],
+    idempotencyKey: string
+  ): Promise<OrganizationDeputy> {
+    return this.command<OrganizationDeputy>(
+      `/api/organizations/${encodeURIComponent(id)}/deputies/${encodeURIComponent(deputyId)}/end`,
+      undefined,
+      idempotencyKey
+    )
+  }
+
+  async getTeamIndicators(stuckDays?: number): Promise<TeamIndicators> {
+    const suffix = stuckDays === undefined ? '' : `?${new URLSearchParams({ stuckDays: stuckDays.toString() })}`
+    return this.request<TeamIndicators>(`/api/work/team-indicators${suffix}`)
+  }
+
+  async getTeamsSummary(stuckDays?: number): Promise<TeamsSummary> {
+    const suffix = stuckDays === undefined ? '' : `?${new URLSearchParams({ stuckDays: stuckDays.toString() })}`
+    return this.request<TeamsSummary>(`/api/work/teams-summary${suffix}`)
+  }
+
+  async getReminders(): Promise<ReminderDigest> {
+    return this.request<ReminderDigest>('/api/reminders')
+  }
+
+  async saveReminderSettings(payload: ReminderSettings): Promise<ReminderSettings> {
+    if (this.csrf === null) {
+      await this.refreshCsrf()
+    }
+    return this.request<ReminderSettings>('/api/reminders/settings', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        [this.csrf!.headerName]: this.csrf!.token
+      },
+      body: JSON.stringify(payload)
+    })
+  }
+
+  async createOrganizationFromAdminSourceRecord(
+    id: SourceRecord['id'],
+    payload: SourceOrganizationCreate
+  ): Promise<SourceOrganizationCreated> {
+    return this.post<SourceOrganizationCreated>(`/api/admin/source-records/${encodeURIComponent(id)}/organization`, payload)
+  }
+
+  async listSourceSyncRuns(source: SourceCode): Promise<SyncRun[]> {
+    return this.request<SyncRun[]>(`/api/admin/sources/${encodeURIComponent(source)}/runs`)
+  }
+
+  async listSourceMappings(): Promise<SourceMapping[]> {
+    return this.request<SourceMapping[]>('/api/admin/source-mappings')
+  }
+
+  async updateSourceMapping(id: SourceMapping['id'], payload: SourceMappingUpdate): Promise<SourceMapping> {
+    return this.send<SourceMapping>(`/api/admin/source-mappings/${encodeURIComponent(id)}`, 'PUT', payload)
+  }
+
+  async removeSourceMapping(id: SourceMapping['id'], version: number): Promise<void> {
+    return this.send<void>(`/api/admin/source-mappings/${encodeURIComponent(id)}?version=${version}`, 'DELETE')
+  }
+
+  async addSourceMappingRun(id: SourceMapping['id'], payload: SourceMappingUpdate): Promise<SourceMapping> {
+    return this.post<SourceMapping>(`/api/admin/source-mappings/${encodeURIComponent(id)}/runs`, payload)
+  }
+
+  async deleteSourceMappingSnapshot(id: SourceMapping['id']): Promise<void> {
+    return this.send<void>(`/api/admin/source-mappings/${encodeURIComponent(id)}/snapshot`, 'DELETE')
+  }
+
+  async listPendingSourceRecords(): Promise<PendingSourceRecord[]> {
+    return this.request<PendingSourceRecord[]>('/api/source-records')
+  }
+
+  async resolvePendingSourceRecord(id: PendingSourceRecord['id'], organizationId: string): Promise<SourceRecordApplyResult> {
+    return this.post<SourceRecordApplyResult>(`/api/source-records/${encodeURIComponent(id)}/resolve`, { organizationId })
+  }
+
+  async createOrganizationFromSourceRecord(
+    id: PendingSourceRecord['id'],
+    payload: SourceOrganizationCreate
+  ): Promise<SourceOrganizationCreated> {
+    return this.post<SourceOrganizationCreated>(`/api/source-records/${encodeURIComponent(id)}/organization`, payload)
+  }
+
+  async getInteractionSourceStatus(id: Interaction['id']): Promise<InteractionSourceStatus> {
+    return this.request<InteractionSourceStatus>(`/api/interactions/${encodeURIComponent(id)}/source-status`)
+  }
+
+  async refreshInteractionSources(id: Interaction['id']): Promise<SourcesRefresh> {
+    return this.post<SourcesRefresh>(`/api/interactions/${encodeURIComponent(id)}/sources/refresh`)
+  }
+
+  async listTeacherTrainings(id: Interaction['id']): Promise<TeacherTraining[]> {
+    return this.request<TeacherTraining[]>(`/api/interactions/${encodeURIComponent(id)}/teacher-trainings`)
+  }
+
+  async createTeacherTraining(
+    id: Interaction['id'],
+    payload: TeacherTrainingCreate,
+    idempotencyKey: string
+  ): Promise<TeacherTrainingCreated> {
+    return this.command<TeacherTrainingCreated>(`/api/interactions/${encodeURIComponent(id)}/teacher-trainings`, payload, idempotencyKey)
+  }
+
+  async getInteractionCycle(id: Interaction['id']): Promise<InteractionCycle> {
+    return this.request<InteractionCycle>(`/api/interactions/${encodeURIComponent(id)}/cycle`)
+  }
+
+  async startInteractionCycle(id: Interaction['id'], payload: CycleStart, idempotencyKey: string): Promise<Interaction> {
+    return this.command<Interaction>(`/api/interactions/${encodeURIComponent(id)}/cycles`, payload, idempotencyKey)
+  }
+
   async logout(): Promise<LogoutResult> {
     if (this.csrf === null) {
       await this.refreshCsrf()
@@ -649,6 +1165,9 @@ export class ApiClient {
     }
     if (query.size !== undefined) {
       searchParams.set('size', query.size.toString())
+    }
+    if (query.state !== undefined) {
+      searchParams.set('state', query.state)
     }
     const suffix = searchParams.size === 0 ? '' : `?${searchParams.toString()}`
     return this.request<PageCatalogLookup>(`${path}${suffix}`)
@@ -686,7 +1205,21 @@ export class ApiClient {
     })
   }
 
-  private async command<T>(
+  private async send<T>(path: string, method: 'PUT' | 'DELETE', payload?: object): Promise<T> {
+    if (this.csrf === null) {
+      await this.refreshCsrf()
+    }
+    return this.request<T>(path, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        [this.csrf!.headerName]: this.csrf!.token
+      },
+      body: payload === undefined ? undefined : JSON.stringify(payload)
+    })
+  }
+
+  async command<T>(
     path: string,
     payload: object | undefined,
     idempotencyKey: string,
@@ -709,7 +1242,7 @@ export class ApiClient {
     })
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await fetch(path, {
       ...init,
       credentials: 'include',
@@ -729,11 +1262,11 @@ export class ApiClient {
     return body as T
   }
 
-  private async download(path: string): Promise<Blob> {
+  async download(path: string): Promise<Blob> {
     const response = await fetch(path, {
       credentials: 'include',
       headers: {
-        Accept: 'application/octet-stream'
+        Accept: 'application/octet-stream, application/json'
       }
     })
     if (!response.ok) {

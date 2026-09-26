@@ -18,6 +18,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserProfileRepository;
+import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.catalog.Contact;
 import ru.rtk.crm.catalog.ContactCreateRequest;
 import ru.rtk.crm.catalog.ContactService;
@@ -56,8 +57,14 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     @Transactional
     public void run(ApplicationArguments args) {
         List<DemoBootstrapProperties.Identity> identities = required(properties.identities(), "identities");
-        List<DemoBootstrapProperties.Organization> organizations = required(properties.organizations(), "organizations");
         Map<String, DemoBootstrapProperties.Identity> identitiesByKey = uniqueIdentities(identities);
+        if (!properties.demoData()) {
+            requireSingleAdministrator(identities);
+            createProfiles(identities, Map.of());
+            LOGGER.info("CRM administrator bootstrap completed without demo data");
+            return;
+        }
+        List<DemoBootstrapProperties.Organization> organizations = required(properties.organizations(), "organizations");
         Map<String, UUID> teamIds = createTeams(identities);
         Map<String, UUID> profileIds = createProfiles(identities, teamIds);
         Map<String, UUID> organizationIds = createOrganizations(organizations, identitiesByKey, teamIds, profileIds);
@@ -73,11 +80,19 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         return values;
     }
 
+    private void requireSingleAdministrator(List<DemoBootstrapProperties.Identity> identities) {
+        if (identities.size() != 1 || identities.getFirst().role() != UserRole.ADMIN || !blank(identities.getFirst().teamKey())
+                || !properties.organizations().isEmpty() || !properties.learningMappings().isEmpty()) {
+            throw new IllegalStateException("Bootstrap without demo data expects exactly one administrator without team and no demo records");
+        }
+    }
+
     private Map<String, DemoBootstrapProperties.Identity> uniqueIdentities(List<DemoBootstrapProperties.Identity> identities) {
         Map<String, DemoBootstrapProperties.Identity> values = new HashMap<>();
         for (DemoBootstrapProperties.Identity identity : identities) {
             if (blank(identity.key()) || blank(identity.issuer()) || blank(identity.subject()) || blank(identity.displayName())
-                    || identity.role() == null || blank(identity.teamKey()) || values.put(identity.key(), identity) != null) {
+                    || identity.role() == null || identity.role() != UserRole.ADMIN && blank(identity.teamKey())
+                    || values.put(identity.key(), identity) != null) {
                 throw new IllegalStateException("Demo bootstrap identities must be complete and unique");
             }
         }
@@ -87,15 +102,31 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     private Map<String, UUID> createTeams(List<DemoBootstrapProperties.Identity> identities) {
         Map<String, UUID> teamIds = new HashMap<>();
         for (DemoBootstrapProperties.Identity identity : identities) {
+            if (blank(identity.teamKey()) || teamIds.containsKey(identity.teamKey())) {
+                continue;
+            }
             UUID proposedId = stableId("team:" + identity.teamKey());
+            String name = teamName(identity.teamKey());
             jdbcClient.sql("""
                     INSERT INTO teams (id, name)
                     VALUES (:id, :name)
                     ON CONFLICT DO NOTHING
                     """)
                     .param("id", proposedId)
-                    .param("name", identity.teamKey())
+                    .param("name", name)
                     .update();
+            if (!name.equals(identity.teamKey())) {
+                jdbcClient.sql("""
+                        UPDATE teams
+                        SET name = :name, version = version + 1, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = :id AND name = :key
+                          AND NOT EXISTS (SELECT 1 FROM teams other WHERE LOWER(other.name) = LOWER(:name))
+                        """)
+                        .param("id", proposedId)
+                        .param("key", identity.teamKey())
+                        .param("name", name)
+                        .update();
+            }
             UUID teamId = jdbcClient.sql("SELECT id FROM teams WHERE id = :id")
                     .param("id", proposedId)
                     .query(UUID.class)
@@ -104,6 +135,14 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             teamIds.put(identity.teamKey(), teamId);
         }
         return teamIds;
+    }
+
+    private String teamName(String key) {
+        return properties.teams().stream()
+                .filter(team -> key.equals(team.key()) && !blank(team.name()))
+                .map(team -> team.name().strip())
+                .findFirst()
+                .orElse(key);
     }
 
     private Map<String, UUID> createProfiles(
@@ -123,14 +162,14 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                     .param("subject", identity.subject())
                     .param("displayName", identity.displayName())
                     .param("role", identity.role().name())
-                    .param("teamId", teamIds.get(identity.teamKey()))
+                    .param("teamId", teamId(identity, teamIds))
                     .update();
             userProfileRepository.activatePending(
                     identity.issuer(),
                     identity.subject(),
                     identity.displayName(),
                     identity.role(),
-                    teamIds.get(identity.teamKey())
+                    teamId(identity, teamIds)
             );
             UUID profileId = jdbcClient.sql("""
                     SELECT id FROM crm_user_profiles
@@ -144,6 +183,10 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             profileIds.put(identity.key(), profileId);
         }
         return profileIds;
+    }
+
+    private UUID teamId(DemoBootstrapProperties.Identity identity, Map<String, UUID> teamIds) {
+        return blank(identity.teamKey()) ? null : teamIds.get(identity.teamKey());
     }
 
     private Map<String, UUID> createOrganizations(
@@ -201,7 +244,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         jdbcClient.sql("""
                 INSERT INTO directions (id, name)
                 VALUES (:id, :name)
-                ON CONFLICT (name) DO NOTHING
+                ON CONFLICT DO NOTHING
                 """)
                 .param("id", stableId("demo-direction:digital-transformation"))
                 .param("name", name)
@@ -216,7 +259,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         jdbcClient.sql("""
                 INSERT INTO programs (id, direction_id, name)
                 VALUES (:id, :directionId, :name)
-                ON CONFLICT (direction_id, name) DO NOTHING
+                ON CONFLICT DO NOTHING
                 """)
                 .param("id", stableId(key))
                 .param("directionId", directionId)
@@ -233,7 +276,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         jdbcClient.sql("""
                 INSERT INTO vendors (id, name)
                 VALUES (:id, :name)
-                ON CONFLICT (name) DO NOTHING
+                ON CONFLICT DO NOTHING
                 """)
                 .param("id", stableId("demo-vendor:rtk"))
                 .param("name", name)
@@ -248,7 +291,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         jdbcClient.sql("""
                 INSERT INTO products (id, vendor_id, name)
                 VALUES (:id, :vendorId, :name)
-                ON CONFLICT (vendor_id, name) DO NOTHING
+                ON CONFLICT DO NOTHING
                 """)
                 .param("id", stableId(key))
                 .param("vendorId", vendorId)

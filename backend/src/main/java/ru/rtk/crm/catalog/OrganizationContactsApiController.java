@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -50,11 +51,49 @@ public class OrganizationContactsApiController {
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
 
+    @PatchMapping("/{contactId}")
+    public Contact update(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @PathVariable String contactId,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @Valid @RequestBody ContactUpdateRequest request
+    ) {
+        return contactService.update(
+                currentProfileService.requireActiveProfile(user),
+                parseOrganizationId(id),
+                parseContactId(contactId),
+                request,
+                idempotencyKey
+        );
+    }
+
+    @GetMapping("/{contactId}/events")
+    public List<ContactEvent> events(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @PathVariable String contactId
+    ) {
+        return contactService.events(
+                currentProfileService.requireActiveProfile(user),
+                parseOrganizationId(id),
+                parseContactId(contactId)
+        );
+    }
+
     private UUID parseOrganizationId(String value) {
         try {
             return UUID.fromString(value);
         } catch (IllegalArgumentException exception) {
             throw new InteractionValidationException("id", "Некорректный идентификатор вуза");
+        }
+    }
+
+    private UUID parseContactId(String value) {
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException exception) {
+            throw new InteractionValidationException("contactId", "Некорректный идентификатор контакта");
         }
     }
 }

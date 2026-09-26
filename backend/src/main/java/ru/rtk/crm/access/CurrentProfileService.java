@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class CurrentProfileService {
     private static final int DISPLAY_NAME_LIMIT = 200;
+    private static final int LOGIN_LIMIT = 200;
 
     private final UserProfileRepository userProfileRepository;
 
@@ -25,12 +26,28 @@ public class CurrentProfileService {
     }
 
     public boolean registerPendingProfile(OidcUser user) {
-        return userProfileRepository.insertPendingIfAbsent(
+        String issuer = user.getIdToken().getIssuer().toString();
+        String login = login(user);
+        boolean created = userProfileRepository.insertPendingIfAbsent(
                 UUID.randomUUID(),
-                user.getIdToken().getIssuer().toString(),
+                issuer,
                 user.getSubject(),
-                displayName(user)
+                displayName(user),
+                login
         );
+        if (!created && login != null) {
+            userProfileRepository.updateLogin(issuer, user.getSubject(), login);
+        }
+        return created;
+    }
+
+    private static String login(OidcUser user) {
+        String value = user.getPreferredUsername();
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.strip();
+        return normalized.length() > LOGIN_LIMIT ? normalized.substring(0, LOGIN_LIMIT) : normalized;
     }
 
     private static String displayName(OidcUser user) {

@@ -24,6 +24,8 @@ final class ReportTestData {
     static final UUID PROGRAM_DATA = uuid(302);
     static final UUID PRODUCT_X = uuid(401);
     static final UUID PRODUCT_Y = uuid(402);
+    static final UUID VENDOR_ALPHA = uuid(451);
+    static final UUID VENDOR_BETA = uuid(452);
     static final UUID INTERACTION_TWO_PRODUCTS = uuid(501);
     static final UUID INTERACTION_WITHOUT_LINKS = uuid(502);
     static final UUID INTERACTION_UNASSIGNED = uuid(503);
@@ -45,6 +47,10 @@ final class ReportTestData {
         jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS crm_user_profiles (
                     id UUID PRIMARY KEY,
+                    login VARCHAR(200),
+                    idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    activation_requested_at TIMESTAMP WITH TIME ZONE,
+                    anonymized_at TIMESTAMP WITH TIME ZONE,
                     display_name VARCHAR(200) NOT NULL,
                     role VARCHAR(16) NOT NULL,
                     team_id UUID,
@@ -60,7 +66,17 @@ final class ReportTestData {
                     team_id UUID NOT NULL,
                     owner_manager_id UUID,
                     version INTEGER NOT NULL DEFAULT 0,
-                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, city VARCHAR(200), website VARCHAR(300), inn VARCHAR(12)
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS organization_deputies (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, deputy_profile_id UUID NOT NULL,
+                    deputy_display_name VARCHAR(200) NOT NULL, starts_on DATE NOT NULL, ends_on DATE NOT NULL,
+                    starts_at TIMESTAMP WITH TIME ZONE NOT NULL, ends_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    command_id UUID NOT NULL, actor_profile_id UUID NOT NULL, actor_display_name VARCHAR(200) NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, ended_at TIMESTAMP WITH TIME ZONE,
+                    ended_by_profile_id UUID, ended_by_display_name VARCHAR(200)
                 )
                 """);
         jdbc.execute("""
@@ -79,14 +95,24 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS vendors (
+                    id UUID PRIMARY KEY,
+                    name VARCHAR(200) NOT NULL,
+                    archived BOOLEAN NOT NULL DEFAULT FALSE,
+                    version INTEGER NOT NULL DEFAULT 0
+                )
+                """);
+        jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS products (
                     id UUID PRIMARY KEY,
+                    vendor_id UUID NOT NULL,
                     name VARCHAR(200) NOT NULL,
                     archived BOOLEAN NOT NULL DEFAULT FALSE
                 )
                 """);
         jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS interactions (
+                    work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500), problem VARCHAR(1000), risk_level VARCHAR(16), risk_reason VARCHAR(1000),
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
                     title VARCHAR(200) NOT NULL,
@@ -109,7 +135,25 @@ final class ReportTestData {
                 CREATE TABLE IF NOT EXISTS product_agreements (
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
-                    product_id UUID NOT NULL
+                    product_id UUID NOT NULL,
+                    contract_number VARCHAR(200),
+                    license_signed BOOLEAN,
+                    license_expiry_year INTEGER,
+                    transfer_status VARCHAR(160),
+                    scan_attachment_id UUID,
+                    archived_at TIMESTAMP WITH TIME ZONE
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS product_transfers (
+                    agreement_id UUID NOT NULL,
+                    kind VARCHAR(16) NOT NULL,
+                    status VARCHAR(16) NOT NULL,
+                    transferred_on DATE,
+                    attachment_id UUID,
+                    updated_by UUID NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    PRIMARY KEY (agreement_id, kind)
                 )
                 """);
         jdbc.execute("""
@@ -117,12 +161,75 @@ final class ReportTestData {
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
                     type VARCHAR(32) NOT NULL,
+                    stage_id UUID,
                     stage_name_snapshot VARCHAR(200) NOT NULL,
                     from_stage_name_snapshot VARCHAR(200),
                     comment TEXT,
                     actor_profile_id UUID NOT NULL,
                     owner_manager_id_snapshot UUID,
+                    version INTEGER NOT NULL DEFAULT 0,
                     occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id UUID PRIMARY KEY,
+                    organization_id UUID NOT NULL,
+                    name VARCHAR(200) NOT NULL
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS interaction_event_contacts (
+                    event_id UUID NOT NULL,
+                    contact_id UUID NOT NULL,
+                    change_type VARCHAR(16) NOT NULL,
+                    PRIMARY KEY (event_id, contact_id)
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS teams (
+                    id UUID PRIMARY KEY,
+                    name VARCHAR(160) NOT NULL
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS organization_assignment_events (
+                    id UUID PRIMARY KEY,
+                    organization_id UUID NOT NULL,
+                    previous_owner_manager_id UUID,
+                    previous_owner_manager_display_name VARCHAR(200),
+                    owner_manager_id UUID,
+                    new_owner_manager_display_name VARCHAR(200),
+                    actor_profile_id UUID NOT NULL,
+                    actor_display_name VARCHAR(200) NOT NULL,
+                    version INTEGER NOT NULL,
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    reason VARCHAR(32),
+                    handover_note VARCHAR(2000)
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS command_idempotency_records (
+                    id UUID PRIMARY KEY,
+                    actor_profile_id UUID NOT NULL,
+                    operation VARCHAR(64) NOT NULL,
+                    idempotency_key VARCHAR(255) NOT NULL,
+                    request_fingerprint CHAR(64) NOT NULL,
+                    result_json TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT command_idempotency_records_key UNIQUE (actor_profile_id, operation, idempotency_key)
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS saved_reports (
+                    id UUID PRIMARY KEY,
+                    owner_profile_id UUID NOT NULL,
+                    name VARCHAR(200) NOT NULL,
+                    definition_json TEXT NOT NULL,
+                    period_preset VARCHAR(32),
+                    version INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """);
         jdbc.execute("""
@@ -138,6 +245,8 @@ final class ReportTestData {
                     kind VARCHAR(16) NOT NULL,
                     format VARCHAR(8) NOT NULL,
                     group_by VARCHAR(16),
+                    chart_type VARCHAR(8),
+                    series_by VARCHAR(16),
                     status VARCHAR(16) NOT NULL,
                     progress INTEGER NOT NULL DEFAULT 0,
                     row_count INTEGER,
@@ -170,7 +279,9 @@ final class ReportTestData {
                 """);
         jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS learning_snapshots (
-                    source_record_id UUID PRIMARY KEY,
+                    mapping_id UUID PRIMARY KEY,
+                    source_record_id UUID NOT NULL,
+                    interaction_id UUID,
                     organization_id UUID NOT NULL,
                     program_id UUID NOT NULL,
                     course_id BIGINT NOT NULL,
@@ -197,18 +308,22 @@ final class ReportTestData {
                     organization_id UUID,
                     program_id UUID,
                     run_starts_on DATE,
-                    run_ends_on DATE
+                    run_ends_on DATE,
+                    run_kind VARCHAR(16) NOT NULL DEFAULT 'STUDENTS'
                 )
                 """);
         for (String table : new String[]{
-                "learning_snapshots", "source_mappings", "source_records", "report_jobs", "interaction_events", "product_agreements", "interaction_stages", "interactions",
-                "products", "programs", "directions", "organizations", "crm_user_profiles"
+                "learning_snapshots", "source_mappings", "source_records", "report_jobs", "interaction_event_contacts", "contacts", "interaction_events", "product_transfers", "product_agreements", "interaction_stages",
+                "interactions", "products", "vendors", "programs", "directions", "organizations", "crm_user_profiles", "teams", "organization_assignment_events",
+                "command_idempotency_records", "saved_reports"
         }) {
             jdbc.update("DELETE FROM " + table);
         }
     }
 
     static void insertScenario(JdbcTemplate jdbc) {
+        jdbc.update("INSERT INTO teams (id, name) VALUES (?, ?)", TEAM_A, "Команда А");
+        jdbc.update("INSERT INTO teams (id, name) VALUES (?, ?)", TEAM_B, "Команда Б");
         profile(jdbc, MANAGER_A, "Анна Кузнецова", "USER", TEAM_A);
         profile(jdbc, MANAGER_A2, "Борис Смирнов", "USER", TEAM_A);
         profile(jdbc, MANAGER_B, "Вера Орлова", "USER", TEAM_B);
@@ -221,8 +336,10 @@ final class ReportTestData {
 
         jdbc.update("INSERT INTO directions (id, name) VALUES (?, ?)", DIRECTION, "Программирование");
         jdbc.update("INSERT INTO programs (id, direction_id, name) VALUES (?, ?, ?)", PROGRAM, DIRECTION, "Java-разработчик");
-        jdbc.update("INSERT INTO products (id, name) VALUES (?, ?)", PRODUCT_X, "Продукт Икс");
-        jdbc.update("INSERT INTO products (id, name) VALUES (?, ?)", PRODUCT_Y, "Продукт Игрек");
+        jdbc.update("INSERT INTO vendors (id, name) VALUES (?, ?)", VENDOR_ALPHA, "Вендор Альфа");
+        jdbc.update("INSERT INTO vendors (id, name) VALUES (?, ?)", VENDOR_BETA, "Вендор Бета");
+        jdbc.update("INSERT INTO products (id, vendor_id, name) VALUES (?, ?, ?)", PRODUCT_X, VENDOR_ALPHA, "Продукт Икс");
+        jdbc.update("INSERT INTO products (id, vendor_id, name) VALUES (?, ?, ?)", PRODUCT_Y, VENDOR_BETA, "Продукт Игрек");
 
         interaction(jdbc, INTERACTION_TWO_PRODUCTS, ORGANIZATION_A, "Договор на курс Java", PROGRAM, 2,
                 at("2026-08-10T10:00:00+03:00"));
@@ -275,7 +392,13 @@ final class ReportTestData {
 
     private static void learning(JdbcTemplate jdbc, long courseId, Long groupId, UUID organizationId, UUID programId,
                                  int participants, LocalDate runStartsOn, LocalDate runEndsOn) {
+        learning(jdbc, courseId, groupId, organizationId, programId, participants, runStartsOn, runEndsOn, "STUDENTS");
+    }
+
+    static void learning(JdbcTemplate jdbc, long courseId, Long groupId, UUID organizationId, UUID programId,
+                         int participants, LocalDate runStartsOn, LocalDate runEndsOn, String runKind) {
         UUID recordId = UUID.randomUUID();
+        UUID mappingId = UUID.randomUUID();
         String externalId = groupId == null ? Long.toString(courseId) : courseId + ":" + groupId;
         jdbc.update("""
                 INSERT INTO source_records (
@@ -284,16 +407,18 @@ final class ReportTestData {
                 """, recordId, groupId == null ? "moodle_course" : "moodle_group", externalId, organizationId, programId);
         jdbc.update("""
                 INSERT INTO source_mappings (
-                    id, source, kind, external_key, organization_id, program_id, run_starts_on, run_ends_on
-                ) VALUES (?, 'MOODLE', ?, ?, ?, ?, ?, ?)
-                """, UUID.randomUUID(), groupId == null ? "COURSE" : "GROUP", externalId, organizationId, programId, runStartsOn,
-                runEndsOn);
+                    id, source, kind, external_key, organization_id, program_id, run_starts_on, run_ends_on, run_kind
+                ) VALUES (?, 'MOODLE', ?, ?, ?, ?, ?, ?, ?)
+                """, mappingId, groupId == null ? "COURSE" : "GROUP", externalId, organizationId, programId, runStartsOn,
+                runEndsOn, runKind);
         jdbc.update("""
                 INSERT INTO learning_snapshots (
-                    source_record_id, organization_id, program_id, course_id, group_id, course_name, participants_count,
-                    teachers_count, completed_count, not_completed_count, unknown_count, groups_count, observed_at, changed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """, recordId, organizationId, programId, courseId, groupId, "Курс " + courseId, participants, participants);
+                    mapping_id, source_record_id, organization_id, program_id, course_id, group_id, course_name,
+                    participants_count, teachers_count, completed_count, not_completed_count, unknown_count, groups_count,
+                    observed_at, changed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, mappingId, recordId, organizationId, programId, courseId, groupId, "Курс " + courseId, participants,
+                participants);
     }
 
     private static void demand(
@@ -375,12 +500,38 @@ final class ReportTestData {
                 SELECT o.owner_manager_id FROM organizations o JOIN interactions i ON i.organization_id = o.id WHERE i.id = ?
                 """, UUID.class, interactionId);
         UUID snapshot = type.equals("CREATED") && interactionId.equals(INTERACTION_TWO_PRODUCTS) ? MANAGER_A2 : owner;
+        UUID stageId = jdbc.queryForList("SELECT id FROM interaction_stages WHERE interaction_id = ? AND name = ?",
+                UUID.class, interactionId, stageName).stream().findFirst().orElse(null);
+        Integer version = jdbc.queryForObject("SELECT COUNT(*) FROM interaction_events WHERE interaction_id = ?",
+                Integer.class, interactionId);
         jdbc.update("""
                 INSERT INTO interaction_events (
-                    id, interaction_id, type, stage_name_snapshot, from_stage_name_snapshot, comment,
-                    actor_profile_id, owner_manager_id_snapshot, occurred_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, UUID.randomUUID(), interactionId, type, stageName, fromStageName, comment, actorId, snapshot, occurredAt);
+                    id, interaction_id, type, stage_id, stage_name_snapshot, from_stage_name_snapshot, comment,
+                    actor_profile_id, owner_manager_id_snapshot, version, occurred_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, UUID.randomUUID(), interactionId, type, stageId, stageName, fromStageName, comment, actorId, snapshot,
+                version, occurredAt);
+    }
+
+    static void assignment(
+            JdbcTemplate jdbc,
+            UUID organizationId,
+            UUID previousOwnerId,
+            String previousOwnerName,
+            UUID ownerId,
+            String ownerName,
+            OffsetDateTime occurredAt
+    ) {
+        Integer version = jdbc.queryForObject("SELECT COUNT(*) + 1 FROM organization_assignment_events WHERE organization_id = ?",
+                Integer.class, organizationId);
+        jdbc.update("""
+                INSERT INTO organization_assignment_events (
+                    id, organization_id, previous_owner_manager_id, previous_owner_manager_display_name, owner_manager_id,
+                    new_owner_manager_display_name, actor_profile_id, actor_display_name, version, occurred_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, UUID.randomUUID(), organizationId, previousOwnerId, previousOwnerName, ownerId, ownerName, LEADER_A,
+                "Галина Лебедева", version, occurredAt);
+        jdbc.update("UPDATE organizations SET owner_manager_id = ? WHERE id = ?", ownerId, organizationId);
     }
 
     private static UUID uuid(int value) {

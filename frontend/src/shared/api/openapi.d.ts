@@ -72,6 +72,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/activation-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Сообщить администратору о профиле, ожидающем активации
+         * @description Available only to an identity whose CRM profile waits for activation. The first call stores the request time, the administrator sees it in the profile list and the security journal; repeated calls return the same time.
+         */
+        post: operations["requestProfileActivation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/csrf": {
         parameters: {
             query?: never;
@@ -99,6 +119,30 @@ export interface paths {
         /** Список организаций */
         get: operations["listOrganizations"];
         put?: never;
+        /**
+         * Добавить организацию
+         * @description Руководитель создаёт действующую организацию своей команды без ответственного. КАМ создаёт организацию своей команды с собой в роли ответственного; при app.organizations.manager-creation-requires-approval=true она получает статус PENDING до подтверждения руководителем. Дубль по нормализованному названию отклоняется.
+         */
+        post: operations["createOrganization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/duplicates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Возможные дубли организации
+         * @description Совпадение по нормализованному названию (регистр, пробелы, кавычки, ё) ищется во всём каталоге; похожие названия — только в области видимости. Для организации вне области видимости id не возвращается.
+         */
+        get: operations["findOrganizationDuplicates"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -117,6 +161,30 @@ export interface paths {
         get: operations["getOrganization"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить название и реквизиты организации
+         * @description Только руководитель команды организации; изменение пишется в журнал справочников.
+         */
+        patch: operations["updateOrganization"];
+        trace?: never;
+    };
+    "/api/organizations/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Подтвердить, отклонить, архивировать или восстановить организацию
+         * @description APPROVE и REJECT — руководитель для заявки PENDING; ARCHIVE — руководитель или КАМ-ответственный; RESTORE — руководитель. Архивная организация скрыта из списков и не принимает новые взаимодействия, история сохраняется.
+         */
+        post: operations["changeOrganizationStatus"];
         delete?: never;
         options?: never;
         head?: never;
@@ -141,6 +209,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/organizations/{id}/contacts/{contactId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить контакт организации
+         * @description Replaces the editable fields of the contact: name, position, email, phone, role, primary and inactive flags. confirm=true stamps the confirmation with the current user and time. Only one contact of an organization is primary: marking a new primary contact clears the previous one with its own history event. An inactive contact cannot be primary and is not accepted for new links to interactions; existing links and history keep its name. Every effective change writes one contact event with previous and new values; a request without changes returns the contact unchanged.
+         */
+        patch: operations["updateOrganizationContact"];
+        trace?: never;
+    };
+    "/api/organizations/{id}/contacts/{contactId}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** История изменений контакта */
+        get: operations["listOrganizationContactEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/organizations/{id}/assignment-options": {
         parameters: {
             query?: never;
@@ -148,7 +253,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Кандидаты в ответственные КАМ */
+        /** Кандидаты в ответственные за вуз */
         get: operations["listOrganizationAssignmentOptions"];
         put?: never;
         post?: never;
@@ -186,6 +291,141 @@ export interface paths {
         put?: never;
         /** Назначить ответственного КАМ */
         post: operations["assignOrganizationOwner"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organization-assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Передать несколько вузов ответственным КАМ
+         * @description Одна команда руководителя на 1–100 вузов своей команды, каждому вузу — свой новый КАМ. Все вузы проверяются до изменений (чужой вуз — 404, ничего не меняется); вуз, уже закреплённый за этим КАМ, возвращается в unchangedOrganizationIds. Каждое назначение пишет запись в историю назначений вуза.
+         */
+        post: operations["bulkAssignOrganizations"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/{id}/deputies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Замещения ответственного КАМ вуза */
+        get: operations["listOrganizationDeputies"];
+        put?: never;
+        /**
+         * Назначить временного заместителя КАМ
+         * @description Заместитель — активный КАМ команды вуза, отличный от ответственного; у вуза одно открытое замещение. На период с startsOn по endsOn включительно (по Москве) заместитель видит вуз и ведёт его работы, основной КАМ остаётся ответственным и сохраняет доступ. После окончания периода доступ заместителя закрывается автоматически.
+         */
+        post: operations["assignOrganizationDeputy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/{id}/deputies/{deputyId}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Досрочно завершить замещение */
+        post: operations["endOrganizationDeputy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/work/team-indicators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Показатели руководителя по каждому КАМ команды
+         * @description Только руководителю команды. Считаются незавершённые работы (status ≠ COMPLETED) по тем же правилам, что и отборы «Моей работы»; строка с managerId = null — работы вузов, требующих назначения.
+         */
+        get: operations["getTeamIndicators"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/work/teams-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Сводка по всем командам для руководства школы
+         * @description Только роли MANAGEMENT (просмотр всех команд без изменений).
+         */
+        get: operations["getTeamsSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reminders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Сводка напоминаний на сегодня
+         * @description Для КАМ и руководителя в их области. Просроченные и наступающие (app.work.upcoming-days) шаги незавершённых работ, истекающие лицензии и следующий цикл повышения квалификации; списки ограничены app.work.reminder-list-limit, итоги считаются полностью.
+         */
+        get: operations["getReminders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reminders/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Включить или выключить ежедневную сводку напоминаний */
+        put: operations["saveReminderSettings"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -276,8 +516,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Изменить план взаимодействия
-         * @description Changes the plan of the card: next step, its due date, program and products. An absent property keeps the current value, an explicit null clears it. Removing a product whose agreement already has contract data is rejected. A change writes one PLAN_UPDATED history event; a request without effective changes returns the card unchanged.
+         * Изменить план и данные взаимодействия
+         * @description Changes the plan of the card (next step, its due date, program and products) and its details (title, date of the last contact, linked contacts). An absent property keeps the current value, an explicit null clears it; the title cannot be cleared. contactIds replaces the linked contacts; newly linked contacts must belong to the organization and must not be inactive. Removing a product whose agreement already has contract data is rejected. A change writes one history event: DETAILS_UPDATED when the title, the last contact or the linked contacts changed, otherwise PLAN_UPDATED; its comment lists previous and new values. Added and removed contacts are stored as references and named from the current contact record when history or a report is read, so a renamed or anonymised contact never keeps its former name in the event. A request without effective changes returns the card unchanged.
          */
         patch: operations["updateInteractionPlan"];
         trace?: never;
@@ -339,6 +579,164 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/interactions/{id}/source-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Состояние источников данных для карточки
+         * @description Any profile that sees the interaction. For LMS and the site: whether the source is configured, the last successful run that covered the organization of the interaction (full runs or runs started from its cards), the error of the last finished run when it failed after that success, and the stale flag (no success within SOURCES_STALE_AFTER, 26 hours by default). learning.state explains why the card has no LMS data: NO_PROGRAM, NOT_CONFIGURED, NOT_MAPPED, OTHER_CYCLE, NOT_DATED, SOURCE_FAILED, RUN_ENDED, NOT_SYNCED; AVAILABLE when snapshots exist.
+         */
+        get: operations["getInteractionSourceStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interactions/{id}/sources/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Обновить данные LMS и сайта по карточке
+         * @description USER or LEADER of the interaction scope, without waiting for the administrator. LMS: the same scoped read as /learning-snapshots/sync. Site: reads the records changed since the source watermark and applies only those whose organization resolves to the organization of the interaction; the watermark is not moved, other organizations wait for the full run. Each source reports UPDATED, UNCHANGED, FAILED or SKIPPED with a Russian message; a failure of one source does not stop the other and keeps stored data. The runs are stored with trigger CARD and the organization.
+         */
+        post: operations["refreshInteractionSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interactions/{id}/teacher-trainings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Записи об обучении преподавателей */
+        get: operations["listTeacherTrainings"];
+        put?: never;
+        /**
+         * Записать факт обучения преподавателей
+         * @description USER or LEADER of the interaction scope. Writes a COMMENTED history event on stageId with the course, date, enrolled and completed counts, binds the clean unbound attachment (the document on professional development) uploaded to the same stage, and with remind=true sets the next step of the card to the next cycle date, so the reminder appears in «Моя работа». Uses the interaction version (409 VERSION_CONFLICT) and Idempotency-Key.
+         */
+        post: operations["createTeacherTraining"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interactions/{id}/cycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Цикл работы и ссылки на соседние циклы */
+        get: operations["getInteractionCycle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interactions/{id}/cycles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Начать новый цикл работы
+         * @description USER or LEADER of the interaction scope. Creates a new interaction of the same organization with the program, products and contacts of this one, by the chosen template (the default template when templateId is omitted), and links it as the next cycle starting on startsOn (today by default, later than the start of this cycle). A work has at most one next cycle (400). The history of this interaction is not changed. LMS training runs of the same organization and program belong to the cycle whose [startsOn, next startsOn) contains the run start.
+         */
+        post: operations["startInteractionCycle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/source-records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Заявки сайта, ожидающие разбора
+         * @description Site records in NEEDS_MAPPING or FAILED with the reason. A LEADER sees the records of organizations of the team and the records whose university is not in CRM yet; a USER sees only the records of own universities (for example, an unknown program). Contacts of the applications are not returned. ADMIN uses /api/admin/source-records.
+         */
+        get: operations["listPendingSourceRecords"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/source-records/{id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Сопоставить заявку сайта с вузом команды
+         * @description LEADER only (403 for USER on a visible record). The university of a record without an organization is mapped to an organization of the leader team (another organization is 404); the record and the other waiting records of the same site university are applied again. A repeated request for an applied record returns it unchanged.
+         */
+        post: operations["resolvePendingSourceRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/source-records/{id}/organization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Создать организацию из заявки сайта
+         * @description LEADER (organization of the own team) or ADMIN (teamId required). Creates the organization named as in the request or in the record, without a responsible KAM («Требует назначения»), maps the site university to it and applies the record and the other waiting records of that university. A taken name is 400 on name, a record that already has an organization is 409 CONFLICT.
+         */
+        post: operations["createOrganizationFromSourceRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/interactions/{id}/transitions": {
         parameters: {
             query?: never;
@@ -373,6 +771,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/interactions/{id}/step-completions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Отметить следующий шаг выполненным
+         * @description Записывает в историю событие PLAN_UPDATED с текстом «Шаг выполнен» и результатом и заменяет следующий шаг новым из nextStep; без nextStep шаг и срок очищаются. Порядок проверок как у комментария; если шаг и срок не заданы, ответ 400.
+         */
+        post: operations["completeInteractionStep"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interactions/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Изменить статус работы
+         * @description Pauses, completes or resumes the work. PAUSED requires a reason, COMPLETED requires an outcome, ACTIVE accepts an optional comment. Paused and completed work leaves the default list of «Моя работа» but keeps its history, stays in the organization card and in reports. Writes one STATUS_CHANGED history event.
+         */
+        post: operations["changeInteractionStatus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interactions/{id}/flags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Отметить ожидание, проблему и риск работы
+         * @description Replaces the flags of the work: whose answer is awaited (university or RTK) with a note, an open problem and a risk level with its reason. Omitted or null values clear the flag; a risk level requires a reason. An effective change writes one DETAILS_UPDATED history event; a request without changes returns the card unchanged.
+         */
+        post: operations["updateInteractionFlags"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/interactions/{id}/stage-edits": {
         parameters: {
             query?: never;
@@ -385,6 +843,40 @@ export interface paths {
         /** Изменить этапы взаимодействия */
         post: operations["editInteractionStages"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interactions/{id}/stage-completions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Отметить этап выполненным без смены текущего */
+        post: operations["completeInteractionStage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interactions/{id}/stage-completions/{stageId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Снять отметку о выполнении этапа */
+        delete: operations["clearInteractionStageCompletion"];
         options?: never;
         head?: never;
         patch?: never;
@@ -407,6 +899,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/interactions/{id}/attachments/{attachmentId}/deletion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Удалить ошибочно загруженный документ
+         * @description Soft deletion: the file is no longer listed, downloaded, previewed or offered for binding; the record stays for audit and one ATTACHMENT_DELETED history event with the file name, kind, revision and optional reason is written. Allowed to the author of the upload and to the team leader. A document used as a contract scan or as a transfer confirmation is rejected with 400 until it is replaced there.
+         */
+        post: operations["deleteInteractionAttachment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interactions/{id}/product-agreements/{agreementId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Договор, лицензия и отметки передачи по продукту
+         * @description contract, when present, replaces contract number, license signing, license expiry year and scan (null clears a value). transfers, when present, replaces all transfer marks of the product (an absent kind means not specified) and recalculates transferStatus: all three transferred — «Передано», some — «Передано частично», none — «Не передано», no marks — null. The scan and confirmation files must be CLEAN documents of this interaction. A change writes one AGREEMENT_UPDATED history event with previous and new values; a request without effective changes returns the card unchanged.
+         */
+        patch: operations["updateProductAgreement"];
+        trace?: never;
+    };
     "/api/attachments/{id}": {
         parameters: {
             query?: never;
@@ -416,6 +948,30 @@ export interface paths {
         };
         /** Сведения о вложении */
         get: operations["getAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить вид документа
+         * @description Sets the document kind; version is the attachment version. Repeating the current kind returns the attachment unchanged
+         */
+        patch: operations["updateAttachmentKind"];
+        trace?: never;
+    };
+    "/api/attachments/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Просмотреть документ в браузере
+         * @description CLEAN PDF, PNG and JPEG only, served inline with Content-Security-Policy default-src 'none', nosniff and Cache-Control private, no-store. Other formats are rejected with 400 and are downloaded instead.
+         */
+        get: operations["previewAttachment"];
         put?: never;
         post?: never;
         delete?: never;
@@ -433,6 +989,197 @@ export interface paths {
         };
         /** Скачать вложение */
         get: operations["downloadAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agreement-activity-kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Виды мероприятий соглашений */
+        get: operations["listAgreementActivityKinds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agreement-activity-kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Добавить вид мероприятия */
+        post: operations["createAgreementActivityKind"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agreement-activity-kinds/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить вид мероприятия
+         * @description Renames or archives a kind; an archived kind stays on existing activities and cannot be chosen for new ones
+         */
+        patch: operations["updateAgreementActivityKind"];
+        trace?: never;
+    };
+    "/api/organizations/{id}/agreements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Соглашения вуза */
+        get: operations["listOrganizationAgreements"];
+        put?: never;
+        /**
+         * Добавить соглашение с вузом
+         * @description USER for own organizations and LEADER for the team; the number is unique within the organization
+         */
+        post: operations["createOrganizationAgreement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/{id}/agreement-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Значения для плана соглашения */
+        get: operations["getAgreementOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agreements/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Соглашение с планом мероприятий */
+        get: operations["getAgreement"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Изменить реквизиты соглашения */
+        patch: operations["updateAgreement"];
+        trace?: never;
+    };
+    "/api/agreements/{id}/activities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Добавить мероприятие в план соглашения */
+        post: operations["createAgreementActivity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agreement-activities/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Удалить мероприятие из плана
+         * @description Removes the activity and its links; the documents themselves stay in the works
+         */
+        delete: operations["deleteAgreementActivity"];
+        options?: never;
+        head?: never;
+        /**
+         * Изменить мероприятие плана
+         * @description Replaces the fields and the full lists of linked works and confirmation documents; version is required
+         */
+        patch: operations["updateAgreementActivity"];
+        trace?: never;
+    };
+    "/api/agreement-confirmations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Подтверждения мероприятий соглашений
+         * @description Documents linked to agreement activities in the caller's scope, ordered by activity kind. The period selects activities whose actual dates, otherwise planned dates, otherwise the agreement term intersect [from, to]. More than 500 documents returns 422 CONFIRMATION_LIMIT.
+         */
+        get: operations["listAgreementConfirmations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agreement-confirmations/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Скачать подтверждения одним архивом
+         * @description ZIP of the same selection: CLEAN files grouped by activity kind and university with the inventory опись.csv (university, agreement, kind, activity, dates, work, file, upload time); files that are not CLEAN are listed in the inventory but not included. The archive is streamed without a request time limit; when the CLEAN files of the selection exceed app.agreements.archive-max-size (1 GB by default) the answer is 422 CONFIRMATION_LIMIT.
+         */
+        get: operations["downloadAgreementConfirmations"];
         put?: never;
         post?: never;
         delete?: never;
@@ -469,7 +1216,7 @@ export interface paths {
         put?: never;
         /**
          * Заказать отчёт или диаграмму
-         * @description Persists a PENDING report job and hands it to one of the bounded report slots. The same Idempotency-Key with the same payload returns the same jobId; a different payload under the key returns 409 IDEMPOTENCY_CONFLICT. 503 REPORT_CAPACITY_EXCEEDED with Retry-After means all slots and the bounded queue are busy and no job was kept. With groupBy the job renders a chart of POST /api/statistics for the same request as PNG or PDF (chart, basis table, unit, period, filters and generation time) instead of the row report.
+         * @description Persists a PENDING report job and hands it to one of the bounded report slots. The same Idempotency-Key with the same payload returns the same jobId; a different payload under the key returns 409 IDEMPOTENCY_CONFLICT. 503 REPORT_CAPACITY_EXCEEDED with Retry-After means all slots and the bounded queue are busy and no job was kept. With groupBy the job renders a chart of POST /api/statistics for the same request as PNG or PDF (chart, basis table, unit, period, filters and generation time) instead of the row report. chartType LINE (or seriesBy) renders a line chart of MONTH grouping, one line per seriesBy group; more than maxChartSeries lines or maxChartBars months fail the job with REPORT_CHART_LIMIT. DURATION rejects groupBy with 400 VALIDATION_ERROR.
          */
         post: operations["createReportJob"];
         delete?: never;
@@ -509,7 +1256,7 @@ export interface paths {
         put?: never;
         /**
          * Статистика для диаграмм
-         * @description Counts over exactly the same row set as the report with the same filters, aggregated by the database; rows are not loaded into the API process and app.reports.max-rows does not apply. unknownCount holds rows without a value for the grouping; groups present in items with count 0 are real zeros (MONTH is zero-filled over the period). MONTH with kind PORTFOLIO and periodBasis ACTIVITY is rejected with 400 VALIDATION_ERROR (field groupBy).
+         * @description Counts over exactly the same row set as the report with the same filters, aggregated by the database; rows are not loaded into the API process and app.reports.max-rows does not apply. unknownCount holds rows without a value for the grouping; groups present in items with count 0 are real zeros (MONTH is zero-filled over the period). MONTH with kind PORTFOLIO and periodBasis ACTIVITY or ACTIVE is rejected with 400 VALIDATION_ERROR (field groupBy). seriesBy (only with MONTH) adds series, the monthly counts split by that grouping; rows without a value form the «Не указано» series. DURATION is not grouped here and returns 400 VALIDATION_ERROR.
          */
         post: operations["reportStatistics"];
         delete?: never;
@@ -589,6 +1336,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/report-filters/vendors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Вендоры для фильтра отчёта */
+        get: operations["listReportVendors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/report-filters/stages": {
         parameters: {
             query?: never;
@@ -604,6 +1368,48 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/saved-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Сохранённые отчёты пользователя */
+        get: operations["listSavedReports"];
+        put?: never;
+        /**
+         * Сохранить набор фильтров и колонок как отчёт
+         * @description Stores kind, period, periodBasis, asOf, filters, columns in their order and sortBy under a name unique for the profile (case-insensitive); format, groupBy, chartType and seriesBy are not stored. The definition is validated like a report request. At most 50 reports per profile. The same Idempotency-Key with the same payload returns the stored result.
+         */
+        post: operations["createSavedReport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/saved-reports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Удалить сохранённый отчёт */
+        delete: operations["deleteSavedReport"];
+        options?: never;
+        head?: never;
+        /**
+         * Изменить сохранённый отчёт
+         * @description Replaces name and definition when version matches; another profile's report is 404, a stale version 409 VERSION_CONFLICT
+         */
+        patch: operations["updateSavedReport"];
         trace?: never;
     };
     "/api/workflow-templates": {
@@ -660,6 +1466,26 @@ export interface paths {
         patch: operations["updateWorkflowTemplate"];
         trace?: never;
     };
+    "/api/admin/workflow-templates/{id}/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Сделать шаблон шаблоном по умолчанию
+         * @description Администратор меняет общий шаблон по умолчанию на другой общий шаблон. Руководитель выбирает шаблон своей команды по умолчанию для новых работ команды; выбор общего шаблона по умолчанию снимает выбор команды.
+         */
+        post: operations["makeWorkflowTemplateDefault"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/crm-profiles": {
         parameters: {
             query?: never;
@@ -711,6 +1537,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/crm-profiles/{id}/account-sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Синхронизировать учётную запись Keycloak с доступом в CRM
+         * @description Disables the Keycloak account of a blocked profile and ends its sessions, or enables the account of an active profile. Does nothing when the account is already in sync.
+         */
+        post: operations["syncCrmProfileAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/teams": {
         parameters: {
             query?: never;
@@ -746,6 +1592,26 @@ export interface paths {
         patch: operations["renameTeam"];
         trace?: never;
     };
+    "/api/admin/teams/{id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Архивировать или восстановить команду
+         * @description Архивировать можно только команду без действующих вузов и профилей; архивная команда не предлагается в списках выбора.
+         */
+        patch: operations["changeTeamArchived"];
+        trace?: never;
+    };
     "/api/admin/organizations": {
         parameters: {
             query?: never;
@@ -754,12 +1620,47 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Вузы и команды
+         * Организации и команды
          * @description Service list for team transfer; contains no contacts, interactions or other business data
          */
         get: operations["listAdminOrganizations"];
         put?: never;
+        /** Добавить организацию в команду */
+        post: operations["createAdminOrganization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/organizations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Изменить название и реквизиты организации */
+        patch: operations["updateAdminOrganization"];
+        trace?: never;
+    };
+    "/api/admin/organizations/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Подтвердить, отклонить, архивировать или восстановить организацию */
+        post: operations["changeAdminOrganizationStatus"];
         delete?: never;
         options?: never;
         head?: never;
@@ -784,6 +1685,64 @@ export interface paths {
          * @description A responsible manager outside the new team is removed with an assignment event; leaders of both teams and the removed manager get a new accessRevision
          */
         patch: operations["transferOrganizationTeam"];
+        trace?: never;
+    };
+    "/api/admin/catalogs/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Записи справочника */
+        get: operations["listAdminCatalogEntries"];
+        put?: never;
+        /**
+         * Добавить запись справочника
+         * @description Для программы обязателен parentId направления, для продукта — вендора. Дубль по нормализованному названию отклоняется.
+         */
+        post: operations["createAdminCatalogEntry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/catalogs/{kind}/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Переименовать, архивировать или восстановить запись справочника
+         * @description Архивная запись не предлагается для новых взаимодействий и остаётся в истории и отчётах.
+         */
+        patch: operations["updateAdminCatalogEntry"];
+        trace?: never;
+    };
+    "/api/admin/catalog-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Журнал изменений справочников */
+        get: operations["listCatalogChangeEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/admin/sources": {
@@ -883,6 +1842,183 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/audit-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Журнал администратора и безопасности
+         * @description Profile changes, KAM assignments, organization transfers, team changes, source synchronization runs, file and report downloads, personal data actions, retention runs and Keycloak account synchronization, newest first.
+         */
+        get: operations["listAuditEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/audit-events/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Выгрузить журнал администратора и безопасности
+         * @description Up to 10000 newest rows matching the filters; the export itself is written to the journal
+         */
+        get: operations["exportAuditEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/personal-data/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Найти данные субъекта ПДн
+         * @description Searches contacts, CRM profiles, comments and next steps, attachment names and source records by name, email, phone and other spellings. The search terms travel in the body and are not written to the journal; the journal keeps the author, time and counts.
+         */
+        post: operations["searchPersonalDataSubject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/personal-data/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Выгрузить сведения о субъекте ПДн
+         * @description Operator, purposes, sources, recipients, retention periods and every found record in JSON or PDF
+         */
+        post: operations["exportPersonalDataSubject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/personal-data/contacts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Уточнить данные контакта
+         * @description Replaces name, position, email and phone of a contact; the changed field names are written to the journal
+         */
+        patch: operations["rectifyPersonalDataContact"];
+        trace?: never;
+    };
+    "/api/admin/personal-data/contacts/{id}/restriction": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ограничить обработку данных контакта или снять ограничение
+         * @description A restricted contact stays readable in history but cannot be linked to interactions
+         */
+        post: operations["restrictPersonalDataContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/personal-data/anonymization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Обезличить данные субъекта ПДн
+         * @description Replaces the subject's name, email and phone with a marker in the chosen contacts, blocked CRM profiles, comments, next steps, source records and technical snapshots; deletes the chosen attachments and report files that could contain the subject. Interaction history and event links are kept.
+         */
+        post: operations["anonymizePersonalDataSubject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Сроки хранения */
+        get: operations["getRetentionPolicy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/retention/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Применить сроки хранения сейчас
+         * @description Same work as the nightly job; repeating it is safe because expired data is already removed
+         */
+        post: operations["runRetention"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/imports/inspect": {
         parameters: {
             query?: never;
@@ -951,15 +2087,336 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/sources/{source}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * История запусков синхронизации
+         * @description ADMIN only. The last 50 runs of the source with the author, trigger and, for card runs, the organization
+         */
+        get: operations["listSourceSyncRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/source-mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Сохранённые сопоставления источников
+         * @description ADMIN only. Site university and program mappings and Moodle training runs (course or group → organization, program, run dates and run kind) with the current snapshot. outdated marks an open run whose snapshot was not observed by the last successful full Moodle run.
+         */
+        get: operations["listSourceMappings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/source-mappings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Изменить сопоставление источника
+         * @description ADMIN only, with version (409 VERSION_CONFLICT with currentVersion). A Moodle run needs organizationId, programId, runStartsOn and runEndsOn not overlapping other runs of the same course or group; its snapshot moves with the run when the latest observation is still inside it (the new organization gets a «Данные LMS» event), otherwise it is recalculated from the latest observation. A site mapping changes the organization or program, and the records resolved through it are applied again.
+         */
+        put: operations["updateSourceMapping"];
+        post?: never;
+        /**
+         * Снять сопоставление источника
+         * @description ADMIN only, with version. A Moodle run is removed with its snapshot, so its numbers leave cards and reports; the course and group records are evaluated again and return to review when nothing maps them. Site records resolved through a removed university or program mapping return to NEEDS_MAPPING; history events stay.
+         */
+        delete: operations["removeSourceMapping"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/source-mappings/{id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Добавить поток на сопоставленный курс
+         * @description ADMIN only. Adds another training run with new dates to the same Moodle course or group (for a new cycle); runs of one course or group follow each other and must not overlap (400). An observation is published into the earliest run that has not ended on its date; a run that ended keeps its last snapshot.
+         */
+        post: operations["addSourceMappingRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/source-mappings/{id}/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Удалить устаревший снимок потока
+         * @description ADMIN only. Deletes the stored snapshot of a Moodle run and keeps the mapping, for example after the group was deleted in Moodle. The next sync publishes the run again if Moodle still returns it. 400 when the run has no snapshot.
+         */
+        delete: operations["deleteSourceMappingSnapshot"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/source-records/{id}/organization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Создать организацию из записи разбора
+         * @description Same as /api/source-records/{id}/organization for ADMIN; teamId is required
+         */
+        post: operations["createOrganizationFromAdminSourceRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description DRAFT проект, ACTIVE действует, COMPLETED завершено, TERMINATED расторгнуто
+         * @enum {string}
+         */
+        AgreementStatus: "DRAFT" | "ACTIVE" | "COMPLETED" | "TERMINATED";
+        /**
+         * @description PLANNED запланировано, IN_PROGRESS выполняется, DONE выполнено, CANCELLED отменено
+         * @enum {string}
+         */
+        AgreementActivityStatus: "PLANNED" | "IN_PROGRESS" | "DONE" | "CANCELLED";
+        AgreementActivityKind: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            sortOrder: number;
+            archived: boolean;
+            version: number;
+        };
+        AgreementActivityKindCreate: {
+            name: string;
+        };
+        AgreementActivityKindUpdate: {
+            version: number;
+            name: string;
+            archived: boolean;
+        };
+        AgreementSummary: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organizationId: string;
+            number: string;
+            /** Format: date */
+            concludedOn: string | null;
+            /** Format: date */
+            validUntil: string | null;
+            status: components["schemas"]["AgreementStatus"];
+            activityCount: number;
+            confirmationCount: number;
+            version: number;
+        };
+        AgreementInput: {
+            /** @description Required when updating */
+            version?: number | null;
+            number: string;
+            /** Format: date */
+            concludedOn?: string | null;
+            /**
+             * Format: date
+             * @description Last day of the term; not earlier than concludedOn
+             */
+            validUntil?: string | null;
+            /** @description Parties and signatories */
+            parties?: string | null;
+            status: components["schemas"]["AgreementStatus"];
+            /**
+             * Format: uuid
+             * @description CLEAN document from a work of the same organization holding the signed agreement
+             */
+            fileAttachmentId?: string | null;
+        };
+        Agreement: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            number: string;
+            /** Format: date */
+            concludedOn: string | null;
+            /** Format: date */
+            validUntil: string | null;
+            parties: string | null;
+            status: components["schemas"]["AgreementStatus"];
+            file: components["schemas"]["AgreementLinkedDocument"] | null;
+            version: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            activities: components["schemas"]["AgreementActivity"][];
+        };
+        AgreementActivity: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            agreementId: string;
+            /** Format: uuid */
+            kindId: string;
+            kindName: string;
+            title: string;
+            unit: string | null;
+            plannedVolume: number | null;
+            actualVolume: number | null;
+            /** Format: date */
+            plannedStart: string | null;
+            /** Format: date */
+            plannedEnd: string | null;
+            /** Format: date */
+            actualStart: string | null;
+            /** Format: date */
+            actualEnd: string | null;
+            /** Format: uuid */
+            responsibleProfileId: string | null;
+            responsibleName: string | null;
+            status: components["schemas"]["AgreementActivityStatus"];
+            version: number;
+            interactions: components["schemas"]["AgreementLinkedWork"][];
+            attachments: components["schemas"]["AgreementLinkedDocument"][];
+        };
+        AgreementActivityInput: {
+            /** @description Required when updating */
+            version?: number | null;
+            /**
+             * Format: uuid
+             * @description Active kind; an archived kind is accepted only if the activity already has it
+             */
+            kindId: string;
+            title: string;
+            unit?: string | null;
+            plannedVolume?: number | null;
+            actualVolume?: number | null;
+            /** Format: date */
+            plannedStart?: string | null;
+            /** Format: date */
+            plannedEnd?: string | null;
+            /** Format: date */
+            actualStart?: string | null;
+            /** Format: date */
+            actualEnd?: string | null;
+            /**
+             * Format: uuid
+             * @description Active USER or LEADER of the organization team
+             */
+            responsibleProfileId?: string | null;
+            status: components["schemas"]["AgreementActivityStatus"];
+            /** @description Works of the same organization; the list replaces the current links */
+            interactionIds?: string[];
+            /** @description CLEAN documents of works of the same organization; the list replaces the current links */
+            attachmentIds?: string[];
+        };
+        AgreementLinkedWork: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+        };
+        AgreementLinkedDocument: {
+            /** Format: uuid */
+            id: string;
+            originalName: string;
+            /** Format: uuid */
+            interactionId: string;
+            interactionTitle: string;
+            stageName: string;
+            /** @enum {string} */
+            status: "QUARANTINE" | "CLEAN" | "REJECTED" | "UNVERIFIABLE";
+            /** Format: date-time */
+            createdAt: string;
+        };
+        AgreementResponsible: {
+            /** Format: uuid */
+            id: string;
+            displayName: string;
+        };
+        AgreementOptions: {
+            interactions: components["schemas"]["AgreementLinkedWork"][];
+            attachments: components["schemas"]["AgreementLinkedDocument"][];
+            responsibles: components["schemas"]["AgreementResponsible"][];
+        };
+        AgreementConfirmation: {
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            /** Format: uuid */
+            agreementId: string;
+            agreementNumber: string;
+            /** Format: uuid */
+            activityId: string;
+            activityTitle: string;
+            /** Format: uuid */
+            kindId: string;
+            kindName: string;
+            /** Format: date */
+            activityStart: string | null;
+            /** Format: date */
+            activityEnd: string | null;
+            /** Format: uuid */
+            attachmentId: string;
+            originalName: string;
+            /** Format: int64 */
+            sizeBytes: number;
+            /** @enum {string} */
+            status: "QUARANTINE" | "CLEAN" | "REJECTED" | "UNVERIFIABLE";
+            /** Format: date-time */
+            createdAt: string;
+            interactionTitle: string;
+        };
         Me: {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            role: "USER" | "LEADER" | "ADMIN";
+            role: "USER" | "LEADER" | "ADMIN" | "MANAGEMENT";
             /** Format: uuid */
             teamId: string | null;
             teamName: string | null;
@@ -979,7 +2436,7 @@ export interface components {
         };
         ApiError: {
             /** @enum {string} */
-            code: "VALIDATION_ERROR" | "BAD_REQUEST" | "UNAUTHENTICATED" | "FORBIDDEN" | "CRM_PROFILE_REQUIRED" | "CRM_PROFILE_PENDING" | "LAST_ACTIVE_ADMIN" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "CONFLICT" | "VERSION_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "DEPENDENCY_UNAVAILABLE" | "REPORT_NOT_READY" | "REPORT_ACCESS_CHANGED" | "REPORT_RESULT_UNAVAILABLE" | "REPORT_CAPACITY_EXCEEDED" | "SOURCE_NOT_CONFIGURED" | "SYNC_ALREADY_RUNNING" | "SYNC_CAPACITY_EXCEEDED" | "LMS_NOT_MAPPED" | "LMS_SYNC_FAILED";
+            code: "VALIDATION_ERROR" | "BAD_REQUEST" | "UNAUTHENTICATED" | "FORBIDDEN" | "CRM_PROFILE_REQUIRED" | "CRM_PROFILE_PENDING" | "LAST_ACTIVE_ADMIN" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "CONFLICT" | "VERSION_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "DEPENDENCY_UNAVAILABLE" | "REPORT_NOT_READY" | "REPORT_ACCESS_CHANGED" | "REPORT_RESULT_UNAVAILABLE" | "REPORT_CAPACITY_EXCEEDED" | "SOURCE_NOT_CONFIGURED" | "SYNC_ALREADY_RUNNING" | "SYNC_CAPACITY_EXCEEDED" | "LMS_NOT_MAPPED" | "LMS_SYNC_FAILED" | "ACCOUNT_SYNC_FAILED" | "PERSONAL_DATA_ANONYMIZED" | "PROFILE_ACTIVE" | "RETENTION_RUNNING" | "CONFIRMATION_LIMIT";
             message: string;
             /** Format: uuid */
             requestId: string;
@@ -1007,7 +2464,7 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            type: "UNIVERSITY" | "SCHOOL";
+            type: "UNIVERSITY" | "SCHOOL" | "COLLEGE";
             /** Format: uuid */
             teamId: string;
             /** Format: uuid */
@@ -1017,8 +2474,21 @@ export interface components {
             updatedAt: string;
             ownerManagerName: string | null;
             teamName: string | null;
-            /** @description true, если ответственного нет или он не является активным КАМ команды вуза */
+            /** @description true, если ответственного нет или он не является активным КАМ или руководителем команды вуза */
             requiresAssignment: boolean;
+            status: components["schemas"]["OrganizationStatus"];
+            city: string | null;
+            website: string | null;
+            inn: string | null;
+            /** @description true, если вуз ранее вёл другой КАМ и текущий ответственный после получения вуза ещё не подтвердил ни одного контакта («Контакт подтверждён») */
+            inherited: boolean;
+            /** @description Временный заместитель ответственного КАМ, если замещение действует сейчас */
+            deputyManagerName: string | null;
+            /**
+             * Format: date
+             * @description Последний день действующего замещения по московскому времени
+             */
+            deputyEndsOn: string | null;
         };
         PageOrganization: components["schemas"]["PageMeta"] & {
             items: components["schemas"]["Organization"][];
@@ -1035,6 +2505,8 @@ export interface components {
              * @description An active USER of the organization team, or null to explicitly remove the owner
              */
             ownerManagerId: string | null;
+            /** @description Комментарий к передаче, который видит новый ответственный в истории назначений */
+            handoverNote?: string | null;
         };
         OrganizationAssignmentEvent: {
             /** Format: uuid */
@@ -1052,8 +2524,13 @@ export interface components {
             /** Format: uuid */
             actorProfileId: string;
             actorDisplayName: string;
-            /** Format: uuid */
             requestId: string;
+            /**
+             * @description Reason of an automatic owner change; null for a change made by the team leader
+             * @enum {string|null}
+             */
+            reason?: "PROFILE_BLOCKED" | "PROFILE_ROLE_CHANGED" | "PROFILE_TEAM_CHANGED" | "ORGANIZATION_TEAM_CHANGED" | "IMPORT" | null;
+            handoverNote?: string | null;
             version: number;
             /** Format: date-time */
             occurredAt: string;
@@ -1079,18 +2556,66 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+            personalDataStatus?: components["schemas"]["PersonalDataStatus"];
+            role: components["schemas"]["ContactRole"] | null;
+            primary: boolean;
+            inactive: boolean;
+            /** Format: date-time */
+            confirmedAt: string | null;
+            /** Format: uuid */
+            confirmedBy: string | null;
+            confirmedByName: string | null;
         };
+        /**
+         * @description SIGNATORY — подписант (ЛПР), IMPLEMENTER — исполнитель (внедрение), TEACHER — преподаватель, APPROVER — согласует документы, OTHER — другое
+         * @enum {string}
+         */
+        ContactRole: "SIGNATORY" | "IMPLEMENTER" | "TEACHER" | "APPROVER" | "OTHER";
         ContactCreate: {
             name: string;
             position?: string | null;
             /** Format: email */
             email?: string | null;
             phone?: string | null;
+            role?: components["schemas"]["ContactRole"] | null;
+            primary?: boolean;
+        };
+        ContactUpdate: {
+            version: number;
+            name: string;
+            position?: string | null;
+            /** Format: email */
+            email?: string | null;
+            phone?: string | null;
+            role?: components["schemas"]["ContactRole"] | null;
+            primary: boolean;
+            inactive: boolean;
+            /** @description true records that the current user confirmed the contact now */
+            confirm?: boolean;
+        };
+        ContactEvent: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            contactId: string;
+            /** Format: uuid */
+            actorProfileId: string;
+            actorDisplayName: string;
+            changes: {
+                /** @enum {string} */
+                field: "name" | "position" | "email" | "phone" | "role" | "primary" | "inactive" | "confirmed";
+                previousValue: string | null;
+                value: string | null;
+            }[];
+            version: number;
+            /** Format: date-time */
+            occurredAt: string;
         };
         CatalogLookup: {
             /** Format: uuid */
             id: string;
             name: string;
+            archived: boolean;
             version: number;
         };
         CatalogReference: {
@@ -1103,6 +2628,33 @@ export interface components {
         PageCatalogLookup: components["schemas"]["PageMeta"] & {
             items: components["schemas"]["CatalogLookup"][];
         };
+        /** @enum {string} */
+        ProductTransferKind: "MATERIALS" | "LICENSE" | "DOCUMENTATION";
+        /** @enum {string} */
+        ProductTransferStatus: "TRANSFERRED" | "NOT_TRANSFERRED";
+        /** @description TRANSFERRED requires transferredOn not later than today in Europe/Moscow; NOT_TRANSFERRED takes neither date nor file */
+        ProductTransfer: {
+            kind: components["schemas"]["ProductTransferKind"];
+            status: components["schemas"]["ProductTransferStatus"];
+            /** Format: date */
+            transferredOn?: string | null;
+            /** Format: uuid */
+            attachmentId?: string | null;
+        };
+        ProductAgreementContract: {
+            /** @description Stored as text; leading zeros are kept, surrounding spaces are removed, blank clears the value */
+            contractNumber?: string | null;
+            licenseSigned?: boolean | null;
+            licenseExpiryYear?: number | null;
+            /** Format: uuid */
+            scanAttachmentId?: string | null;
+        };
+        ProductAgreementUpdate: {
+            /** @description Current version of the interaction card */
+            version: number;
+            contract?: components["schemas"]["ProductAgreementContract"] | null;
+            transfers?: components["schemas"]["ProductTransfer"][] | null;
+        };
         ProductAgreement: {
             /** Format: uuid */
             id: string;
@@ -1114,6 +2666,12 @@ export interface components {
             licenseSigned: boolean | null;
             licenseExpiryYear: number | null;
             transferStatus: string | null;
+            /** @description Договор архивирован при импорте реестра, в котором его нет */
+            archived: boolean;
+            vendorName: string;
+            /** Format: uuid */
+            scanAttachmentId: string | null;
+            transfers: components["schemas"]["ProductTransfer"][];
         };
         InteractionStage: {
             /** Format: uuid */
@@ -1134,6 +2692,26 @@ export interface components {
             /** Format: uuid */
             toStageId: string;
             commentRequired: boolean;
+        };
+        InteractionMarks: {
+            /**
+             * @description ACTIVE — активна, PAUSED — приостановлена, COMPLETED — завершена
+             * @enum {string}
+             */
+            status: "ACTIVE" | "PAUSED" | "COMPLETED";
+            /** @description Причина приостановки, итог завершения или комментарий к возобновлению */
+            statusReason: string | null;
+            /**
+             * @description UNIVERSITY — ждём вуз, RTK — ждём РТК
+             * @enum {string|null}
+             */
+            waitingOn: "UNIVERSITY" | "RTK" | null;
+            waitingNote: string | null;
+            /** @description Описание нерешённой проблемы; null — проблемы нет */
+            problem: string | null;
+            /** @enum {string|null} */
+            riskLevel: "MEDIUM" | "HIGH" | null;
+            riskReason: string | null;
         };
         InteractionSummary: {
             /** Format: uuid */
@@ -1160,6 +2738,7 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+            marks: components["schemas"]["InteractionMarks"];
         };
         Interaction: components["schemas"]["InteractionSummary"] & {
             stages: components["schemas"]["InteractionStage"][];
@@ -1168,6 +2747,8 @@ export interface components {
             program: components["schemas"]["CatalogReference"] | null;
             productAgreements: components["schemas"]["ProductAgreement"][];
             attachments: components["schemas"]["Attachment"][];
+            /** @description Stages marked completed outside the current stage, in route order */
+            stageCompletions: components["schemas"]["InteractionStageCompletion"][];
         };
         PageInteraction: components["schemas"]["PageMeta"] & {
             items: components["schemas"]["InteractionListItem"][];
@@ -1176,6 +2757,19 @@ export interface components {
             organizationName: string;
             programName: string | null;
             ownerManagerName: string | null;
+            /** @description Тип последнего события истории (значения InteractionEvent.type) */
+            lastEventType: string | null;
+            /** Format: date-time */
+            lastEventAt: string | null;
+            /**
+             * Format: date-time
+             * @description Время последнего входа в текущий этап; дни на этапе считаются от него
+             */
+            stageEnteredAt: string;
+            /** @description Действующий временный заместитель ответственного КАМ */
+            deputyManagerName: string | null;
+            /** Format: date */
+            deputyEndsOn: string | null;
         };
         InteractionCreate: {
             /** Format: uuid */
@@ -1211,6 +2805,164 @@ export interface components {
             /** @description When present, replaces both the next step and its due date in the same command */
             nextStep?: components["schemas"]["InteractionNextStep"] | null;
         };
+        InteractionStepCompletion: {
+            version: number;
+            result?: string | null;
+            nextStep?: components["schemas"]["InteractionNextStep"] | null;
+        };
+        OrganizationBulkAssignment: {
+            items: {
+                /** Format: uuid */
+                organizationId: string;
+                version: number;
+                /** Format: uuid */
+                ownerManagerId: string;
+            }[];
+        };
+        OrganizationBulkAssignmentResult: {
+            assigned: components["schemas"]["OrganizationAssignmentResult"][];
+            unchangedOrganizationIds: string[];
+        };
+        OrganizationDeputyCreate: {
+            /** Format: uuid */
+            deputyProfileId: string;
+            /** Format: date */
+            startsOn: string;
+            /** Format: date */
+            endsOn: string;
+        };
+        OrganizationDeputy: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organizationId: string;
+            /** Format: uuid */
+            deputyProfileId: string;
+            deputyDisplayName: string;
+            /** Format: date */
+            startsOn: string;
+            /** Format: date */
+            endsOn: string;
+            /** Format: date-time */
+            endsAt: string;
+            /** Format: uuid */
+            actorProfileId: string;
+            actorDisplayName: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            endedAt: string | null;
+            /**
+             * Format: uuid
+             * @description null при автоматическом завершении по окончании периода
+             */
+            endedByProfileId: string | null;
+            endedByDisplayName: string | null;
+            /** @enum {string} */
+            status: "SCHEDULED" | "ACTIVE" | "ENDED";
+        };
+        ManagerIndicators: {
+            /**
+             * Format: uuid
+             * @description null — вузы, требующие назначения
+             */
+            managerId: string | null;
+            managerName: string | null;
+            organizations: number;
+            interactions: number;
+            overdue: number;
+            withoutNextStep: number;
+            stuck: number;
+        };
+        TeamIndicators: {
+            /** Format: date-time */
+            calculatedAt: string;
+            stuckDays: number;
+            unassignedOrganizations: number;
+            managers: components["schemas"]["ManagerIndicators"][];
+        };
+        TeamSummary: {
+            /**
+             * Format: uuid
+             * @description null — итог по всем командам
+             */
+            teamId: string | null;
+            teamName: string | null;
+            organizations: number;
+            unassignedOrganizations: number;
+            interactions: number;
+            overdue: number;
+            withoutNextStep: number;
+            stuck: number;
+            organizationsWithLearning: number;
+            /** @description Обучающиеся по последним снимкам Moodle */
+            participants: number;
+            /** @description Преподаватели по последним снимкам Moodle */
+            teachers: number;
+        };
+        TeamsSummary: {
+            /** Format: date-time */
+            calculatedAt: string;
+            stuckDays: number;
+            teams: components["schemas"]["TeamSummary"][];
+            total: components["schemas"]["TeamSummary"];
+        };
+        ReminderStep: {
+            /** Format: uuid */
+            interactionId: string;
+            /** Format: uuid */
+            organizationId: string;
+            title: string;
+            organizationName: string;
+            nextAction: string | null;
+            /** Format: date-time */
+            nextActionAt: string;
+            ownerManagerName: string | null;
+        };
+        ReminderLicense: {
+            /** Format: uuid */
+            interactionId: string;
+            /** Format: uuid */
+            organizationId: string;
+            title: string;
+            organizationName: string;
+            productName: string;
+            vendorName: string | null;
+            licenseExpiryYear: number;
+        };
+        ReminderTraining: {
+            /** Format: uuid */
+            interactionId: string;
+            /** Format: uuid */
+            organizationId: string;
+            title: string;
+            organizationName: string;
+            stageName: string;
+            /**
+             * Format: date-time
+             * @description Последний вход в этап обучения преподавателей или повышения квалификации
+             */
+            trainedAt: string;
+            /** Format: date */
+            nextCycleOn: string;
+        };
+        ReminderDigest: {
+            /** @description Показывать ли сводку при первом входе за день */
+            enabled: boolean;
+            /** Format: date-time */
+            generatedAt: string;
+            upcomingDays: number;
+            overdueTotal: number;
+            dueTodayTotal: number;
+            upcomingTotal: number;
+            overdue: components["schemas"]["ReminderStep"][];
+            upcoming: components["schemas"]["ReminderStep"][];
+            expiringLicenses: components["schemas"]["ReminderLicense"][];
+            trainingCycles: components["schemas"]["ReminderTraining"][];
+        };
+        ReminderSettings: {
+            enabled: boolean;
+        };
         InteractionNextStep: {
             nextAction: string | null;
             /** Format: date-time */
@@ -1224,6 +2976,26 @@ export interface components {
             /** Format: uuid */
             programId?: string | null;
             productIds?: string[] | null;
+            title?: string | null;
+            /** Format: date-time */
+            lastContactAt?: string | null;
+            contactIds?: string[] | null;
+        };
+        InteractionStatusChange: {
+            version: number;
+            /** @enum {string} */
+            status: "ACTIVE" | "PAUSED" | "COMPLETED";
+            reason?: string | null;
+        };
+        InteractionFlagsUpdate: {
+            version: number;
+            /** @enum {string|null} */
+            waitingOn?: "UNIVERSITY" | "RTK" | null;
+            waitingNote?: string | null;
+            problem?: string | null;
+            /** @enum {string|null} */
+            riskLevel?: "MEDIUM" | "HIGH" | null;
+            riskReason?: string | null;
         };
         InteractionStageEdit: {
             version: number;
@@ -1238,6 +3010,20 @@ export interface components {
             afterId?: string | null;
             name?: string | null;
             optional?: boolean | null;
+        };
+        /**
+         * @description Document kind; OTHER when not specified
+         * @enum {string}
+         */
+        AttachmentKind: "CONTRACT" | "LICENSE_AGREEMENT" | "APPENDIX" | "ACT" | "SIGNED_SCAN" | "MATERIALS" | "DOCUMENTATION" | "CURRICULUM" | "QUALIFICATION" | "OTHER";
+        AttachmentKindUpdate: {
+            version: number;
+            kind: components["schemas"]["AttachmentKind"];
+        };
+        AttachmentDeletion: {
+            /** @description Current version of the interaction card */
+            version: number;
+            reason?: string | null;
         };
         Attachment: {
             /** Format: uuid */
@@ -1254,8 +3040,44 @@ export interface components {
             sizeBytes: number;
             /** @enum {string} */
             status: "QUARANTINE" | "CLEAN" | "REJECTED" | "UNVERIFIABLE";
+            kind: components["schemas"]["AttachmentKind"];
+            /** @description Document version number within its chain of replacements */
+            revision: number;
+            /** Format: uuid */
+            replacesId: string | null;
+            /** Format: uuid */
+            createdBy: string;
+            /** @description Optimistic lock version of the attachment metadata */
+            version: number;
             /** Format: date-time */
             createdAt: string;
+        };
+        InteractionStageCompletion: {
+            /** Format: uuid */
+            stageId: string;
+            /** Format: date */
+            completedOn: string;
+            comment: string | null;
+            /**
+             * Format: uuid
+             * @description STAGE_COMPLETED history event; files bound to the mark reference it
+             */
+            eventId: string;
+            actorDisplayName: string;
+            /** Format: date-time */
+            markedAt: string;
+        };
+        InteractionStageCompletionRequest: {
+            version: number;
+            /** Format: uuid */
+            stageId: string;
+            /**
+             * Format: date
+             * @description Completion date, not later than today in Moscow time
+             */
+            completedOn: string;
+            comment?: string | null;
+            attachmentIds?: string[];
         };
         InteractionCommentResult: {
             interaction: components["schemas"]["Interaction"];
@@ -1265,7 +3087,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            type: "CREATED" | "TRANSITIONED" | "COMMENTED" | "STAGES_EDITED" | "PLAN_UPDATED";
+            type: "CREATED" | "TRANSITIONED" | "COMMENTED" | "STAGES_EDITED" | "PLAN_UPDATED" | "DETAILS_UPDATED" | "STATUS_CHANGED" | "AGREEMENT_UPDATED" | "ATTACHMENT_DELETED" | "STAGE_COMPLETED" | "STAGE_COMPLETION_CLEARED";
             /** Format: uuid */
             stageId: string;
             stageNameSnapshot: string;
@@ -1334,13 +3156,21 @@ export interface components {
         };
         PageWorkflowTemplate: components["schemas"]["PageMeta"] & {
             items: components["schemas"]["WorkflowTemplate"][];
+            /**
+             * Format: uuid
+             * @description Шаблон команды по умолчанию; null — новые работы команды идут по общему шаблону по умолчанию
+             */
+            teamDefaultTemplateId: string | null;
+        };
+        WorkflowTemplateDefault: {
+            version: number;
         };
         CrmProfile: {
             /** Format: uuid */
             id: string;
             displayName: string;
             /** @enum {string} */
-            role: "USER" | "LEADER" | "ADMIN";
+            role: "USER" | "LEADER" | "ADMIN" | "MANAGEMENT";
             /** Format: uuid */
             teamId: string | null;
             teamName: string | null;
@@ -1349,13 +3179,24 @@ export interface components {
             pendingActivation: boolean;
             accessRevision: number;
             version: number;
+            /** @description Keycloak preferred_username from the last login */
+            login?: string | null;
+            /**
+             * Format: date-time
+             * @description When the employee pressed «Сообщить администратору» on the waiting screen
+             */
+            activationRequestedAt?: string | null;
+            /** @description The Keycloak account is still enabled for a blocked profile or disabled for an active one */
+            accountSyncRequired?: boolean;
+            /** @description Why the Keycloak account was not synchronized right after this change; returned only by the profile update, null when the account is synchronized or no synchronization was needed */
+            accountSyncError?: string | null;
         };
-        /** @description Changes only the listed fields. An administrator cannot change own role, team or activity; an active USER or LEADER needs a team; the last active ADMIN cannot be demoted or blocked (409 LAST_ACTIVE_ADMIN) */
+        /** @description Changes only the listed fields. An administrator cannot change own role, team or activity; an active USER or LEADER needs a team, MANAGEMENT (read-only access to all teams) and ADMIN do not; the last active ADMIN cannot be demoted or blocked (409 LAST_ACTIVE_ADMIN) */
         CrmProfileUpdate: {
             version: number;
             displayName?: string;
             /** @enum {string} */
-            role?: "USER" | "LEADER" | "ADMIN";
+            role?: "USER" | "LEADER" | "ADMIN" | "MANAGEMENT";
             /** Format: uuid */
             teamId?: string | null;
             active?: boolean;
@@ -1373,9 +3214,9 @@ export interface components {
             previousDisplayName: string;
             displayName: string;
             /** @enum {string} */
-            previousRole: "USER" | "LEADER" | "ADMIN";
+            previousRole: "USER" | "LEADER" | "ADMIN" | "MANAGEMENT";
             /** @enum {string} */
-            role: "USER" | "LEADER" | "ADMIN";
+            role: "USER" | "LEADER" | "ADMIN" | "MANAGEMENT";
             /** Format: uuid */
             previousTeamId: string | null;
             previousTeamName: string | null;
@@ -1394,6 +3235,24 @@ export interface components {
             id: string;
             name: string;
             version: number;
+            archived: boolean;
+        };
+        AdminTeam: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            version: number;
+            archived: boolean;
+            leaderNames: string[];
+            managerNames: string[];
+            /** @description Действующие и ожидающие подтверждения организации команды */
+            organizationCount: number;
+            /** @description Профили команды вне состава (заблокированные и администраторы); пока они есть, команду нельзя архивировать */
+            otherProfileCount: number;
+        };
+        TeamArchive: {
+            archived: boolean;
+            version: number;
         };
         TeamCreate: {
             name: string;
@@ -1407,7 +3266,7 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            type: "UNIVERSITY" | "SCHOOL";
+            type: "UNIVERSITY" | "SCHOOL" | "COLLEGE";
             /** Format: uuid */
             teamId: string;
             teamName: string;
@@ -1415,6 +3274,10 @@ export interface components {
             ownerManagerId: string | null;
             ownerManagerName: string | null;
             version: number;
+            status: components["schemas"]["OrganizationStatus"];
+            city: string | null;
+            website: string | null;
+            inn: string | null;
         };
         PageAdminOrganization: components["schemas"]["PageMeta"] & {
             items: components["schemas"]["AdminOrganization"][];
@@ -1426,6 +3289,111 @@ export interface components {
         };
         PageCrmProfile: components["schemas"]["PageMeta"] & {
             items: components["schemas"]["CrmProfile"][];
+            /** @description All profiles waiting for activation, regardless of the filters */
+            pendingTotal: number;
+        };
+        /**
+         * @description PENDING — заявка КАМ ждёт подтверждения руководителем; ARCHIVED — скрыта из списков, история сохранена
+         * @enum {string}
+         */
+        OrganizationStatus: "ACTIVE" | "PENDING" | "ARCHIVED";
+        OrganizationDetails: {
+            name: string;
+            /** @enum {string} */
+            type: "UNIVERSITY" | "SCHOOL" | "COLLEGE";
+            city?: string | null;
+            /** @description Адрес сайта; без схемы дополняется https:// */
+            website?: string | null;
+            inn?: string | null;
+            /**
+             * Format: uuid
+             * @description Команда новой организации; обязательна только для администратора
+             */
+            teamId?: string | null;
+            /** @description Обязательна при изменении */
+            version?: number | null;
+        };
+        OrganizationStatusChange: {
+            /** @enum {string} */
+            action: "APPROVE" | "REJECT" | "ARCHIVE" | "RESTORE";
+            version: number;
+            reason?: string | null;
+        };
+        OrganizationDuplicate: {
+            /**
+             * Format: uuid
+             * @description null, если организация вне области видимости
+             */
+            id: string | null;
+            name: string;
+            /** @enum {string} */
+            type: "UNIVERSITY" | "SCHOOL" | "COLLEGE";
+            status: components["schemas"]["OrganizationStatus"];
+            teamName: string;
+            exact: boolean;
+        };
+        /** @enum {string} */
+        CatalogKind: "directions" | "programs" | "vendors" | "products";
+        /** @enum {string} */
+        CatalogEntityType: "ORGANIZATION" | "TEAM" | "DIRECTION" | "PROGRAM" | "VENDOR" | "PRODUCT" | "AGREEMENT";
+        AdminCatalogEntry: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: uuid */
+            parentId: string | null;
+            parentName: string | null;
+            archived: boolean;
+            version: number;
+        };
+        PageAdminCatalogEntry: components["schemas"]["PageMeta"] & {
+            items: components["schemas"]["AdminCatalogEntry"][];
+        };
+        CatalogEntryChange: {
+            name?: string | null;
+            /**
+             * Format: uuid
+             * @description Направление программы или вендор продукта; только при создании
+             */
+            parentId?: string | null;
+            archived?: boolean | null;
+            /** @description Обязательна при изменении */
+            version?: number | null;
+        };
+        CatalogChangeEvent: {
+            /** Format: uuid */
+            id: string;
+            entityType: components["schemas"]["CatalogEntityType"];
+            /** Format: uuid */
+            entityId: string;
+            /** @enum {string} */
+            action: "CREATE" | "REQUEST" | "APPROVE" | "REJECT" | "UPDATE" | "ARCHIVE" | "RESTORE";
+            entityName: string;
+            /** @description Что было и что стало */
+            changes: string | null;
+            actorDisplayName: string;
+            requestId: string;
+            /** Format: date-time */
+            occurredAt: string;
+        };
+        PageCatalogChangeEvent: components["schemas"]["PageMeta"] & {
+            items: components["schemas"]["CatalogChangeEvent"][];
+        };
+        CatalogImportManagerCandidate: {
+            /** Format: uuid */
+            profileId: string;
+            displayName: string;
+            teamName: string | null;
+            organizationCount: number;
+        };
+        CatalogImportMissingRecord: {
+            /** Format: uuid */
+            agreementId: string;
+            organizationName: string;
+            vendorName: string;
+            productName: string;
+            contractNumber: string | null;
+            interactionTitle: string;
         };
         /**
          * @description AGREEMENT loads the ten TZ catalog fields; DIRECTION_PROGRAM loads directions and programs by stable keys. Matching rules are described in docs/import.md.
@@ -1459,6 +3427,11 @@ export interface components {
             transferStatuses?: {
                 [key: string]: string;
             };
+            /**
+             * Format: uuid
+             * @description Команда для новых вузов без ФИО менеджера: такой вуз создаётся в ней со статусом «Требует назначения». Без команды строка остаётся ошибкой.
+             */
+            unassignedTeamId?: string | null;
         };
         CatalogImportSheet: {
             name: string;
@@ -1490,6 +3463,8 @@ export interface components {
                 [key: string]: string;
             };
             applied: boolean;
+            /** @description Активные КАМ с одинаковым ФИО для выбора в строке протокола; выбор передаётся через rowTargets */
+            managerCandidates: components["schemas"]["CatalogImportManagerCandidate"][];
         };
         CatalogImport: {
             /** Format: uuid */
@@ -1503,10 +3478,15 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+            /** @description Действующие договоры вузов из файла, продуктов которых нет в загруженном реестре; пусто после применения */
+            missingRecords: components["schemas"]["CatalogImportMissingRecord"][];
         };
+        /** @description Нужна хотя бы одна строка или одна запись для архивирования */
         CatalogImportApply: {
             version: number;
             confirmedRowIds: string[];
+            /** @description Договоры из missingRecords, которые администратор подтвердил архивировать */
+            archiveAgreementIds?: string[];
         };
         CatalogImportApplyResult: {
             /** Format: uuid */
@@ -1530,26 +3510,41 @@ export interface components {
             completedAt: string;
         };
         /**
-         * @description DEMAND ranks programs by separate sortable measures: applications from the site (learning_application records applied from the proposed contract, withdrawn ones excluded), participants from the latest Moodle snapshots of training runs (courses and groups mapped with run dates; the period does not apply to them) and parallel runs, the number of those training runs whose [runStartsOn, runEndsOn) contains the last day of the period, or the report date when the period has no end; a measure without source data is null («нет данных»), not 0; no combined index is computed
+         * @description DEMAND ranks programs by separate sortable measures: applications from the site (learning_application records applied from the proposed contract, withdrawn ones excluded), participants from the latest Moodle snapshots of student training runs (courses and groups mapped with run dates) that overlap the period by at least one day, the last observation of an open run or the last one before the end of a closed run; teacher training runs are excluded; completed participants are summed over runs with completion tracking; and parallel runs, the number of those training runs whose [runStartsOn, runEndsOn) contains the last day of the period, or the report date when the period has no end; a measure without source data is null («нет данных»), not 0; no combined index is computed. EVENTS also lists assignment, reassignment and removal of the organization KAM as rows without an interaction to LEADER only, like the assignment history of the organization card; USER gets interaction events only. SNAPSHOT shows interactions created before the end of asOf with the stage of the last transition and the organization KAM restored from assignment history at that date; from and to are rejected. DURATION groups by team, program and stage the average and maximum days of stage stays and of the whole cycle (creation until the first entry into the last stage of the route) completed in the period, plus stays still open at the period end. AGREEMENTS has one row per activity of an agreement plan (an agreement without activities gives one row): the period selects activities whose actual dates, otherwise planned dates, otherwise the agreement term intersect it; MANAGER is the activity responsible, PARTICIPANTS sums Moodle participations of the programs of linked works, counting only training runs whose [runStartsOn, runEndsOn) overlaps both the activity dates and the report period; only organizationIds, organizationType, managerIds and includeNoManager filters apply and no chart is built
          * @enum {string}
          */
-        ReportKind: "PORTFOLIO" | "EVENTS" | "DEMAND";
+        ReportKind: "PORTFOLIO" | "EVENTS" | "DEMAND" | "SNAPSHOT" | "DURATION" | "AGREEMENTS";
         /**
          * @description PNG is allowed only for a chart (groupBy set); a chart is exported as PNG or PDF
          * @enum {string}
          */
         ReportFormat: "XLSX" | "XLS" | "PDF" | "JSON" | "PNG";
         /**
-         * @description PORTFOLIO only. CREATED selects interactions created in the period, ACTIVITY those with at least one event in it
+         * @description PORTFOLIO only. CREATED selects interactions created in the period, ACTIVITY those with at least one event in it, ACTIVE those created before the end of the period and not completed before its start (the work status is not taken into account yet, so every interaction created before the end is active)
          * @enum {string}
          */
-        PeriodBasis: "CREATED" | "ACTIVITY";
+        PeriodBasis: "CREATED" | "ACTIVITY" | "ACTIVE";
         /**
-         * @description PORTFOLIO allows ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT. EVENTS allows EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE, FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND allows DIRECTION, PROGRAM, APPLICATIONS, PARTICIPANTS, PARALLEL_RUNS.
+         * @description BAR (default) for horizontal bars, LINE for a line chart of MONTH grouping
          * @enum {string}
          */
-        ReportColumn: "ORGANIZATION" | "INTERACTION" | "DIRECTION" | "PROGRAM" | "PRODUCTS" | "STAGE" | "MANAGER" | "CREATED_AT" | "LAST_EVENT_AT" | "NEXT_ACTION" | "NEXT_ACTION_AT" | "EVENT_AT" | "EVENT_TYPE" | "FROM_STAGE" | "COMMENT" | "AUTHOR" | "APPLICATIONS" | "PARTICIPANTS" | "PARALLEL_RUNS";
-        /** @description An empty list with the include flag false leaves the dimension unfiltered, including rows without a value. includeNo* adds rows without the value to the selected ids. managerIds and includeNoManager use the current organization owner in PORTFOLIO and DEMAND and the owner snapshot of the event in EVENTS. DEMAND rejects productIds, includeNoProduct and stages with 400 VALIDATION_ERROR. */
+        ChartType: "BAR" | "LINE";
+        /**
+         * @description EVENTS filter; ASSIGNMENT covers assignment, reassignment and removal of the organization KAM and selects rows for LEADER only (USER gets no rows for it)
+         * @enum {string}
+         */
+        ReportEventType: "CREATED" | "TRANSITIONED" | "COMMENTED" | "STAGES_EDITED" | "PLAN_UPDATED" | "DETAILS_UPDATED" | "STATUS_CHANGED" | "AGREEMENT_UPDATED" | "ATTACHMENT_DELETED" | "STAGE_COMPLETED" | "STAGE_COMPLETION_CLEARED" | "ASSIGNMENT";
+        /**
+         * @description WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — отмечена проблема; RISK — отмечен риск любого уровня
+         * @enum {string}
+         */
+        InteractionFlag: "WAITING_UNIVERSITY" | "WAITING_RTK" | "PROBLEM" | "RISK";
+        /**
+         * @description PORTFOLIO allows ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON; DAYS_ON_STAGE is the number of whole days from the last entry into the current stage (creation when the card never entered it by a transition) until the report is generated; agreement columns show the value itself for one product and «product: value» pairs for several products. EVENTS allows EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE, FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND allows DIRECTION, PROGRAM, APPLICATIONS, PARTICIPANTS, LEARNERS_COMPLETED, PARALLEL_RUNS; DEMAND column titles carry the application period, the latest Moodle observation and the parallel-runs date. SNAPSHOT allows ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT. DURATION allows TEAM, PROGRAM, STAGE, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; days are decimal numbers with one fractional digit. AGREEMENTS allows ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS, PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS.
+         * @enum {string}
+         */
+        ReportColumn: "ORGANIZATION" | "INTERACTION" | "DIRECTION" | "PROGRAM" | "PRODUCTS" | "STAGE" | "DAYS_ON_STAGE" | "WORK_STATUS" | "WAITING" | "PROBLEM" | "RISK" | "MANAGER" | "CREATED_AT" | "LAST_EVENT_AT" | "NEXT_ACTION" | "NEXT_ACTION_AT" | "EVENT_AT" | "EVENT_TYPE" | "FROM_STAGE" | "COMMENT" | "AUTHOR" | "APPLICATIONS" | "PARTICIPANTS" | "LEARNERS_COMPLETED" | "PARALLEL_RUNS" | "VENDORS" | "CONTRACT_NUMBER" | "LICENSE_SIGNED" | "LICENSE_EXPIRY_YEAR" | "TRANSFER_STATUS" | "MATERIALS_TRANSFERRED_ON" | "TEAM" | "COMPLETED" | "AVG_DAYS" | "MAX_DAYS" | "CURRENT" | "CURRENT_MAX_DAYS" | "AGREEMENT" | "AGREEMENT_STATUS" | "AGREEMENT_TERM" | "ACTIVITY_KIND" | "ACTIVITY" | "PLANNED_VOLUME" | "ACTUAL_VOLUME" | "VOLUME_UNIT" | "PLANNED_DATES" | "ACTUAL_DATES" | "ACTIVITY_STATUS" | "WORKS" | "CONFIRMATIONS" | "CONFIRMATION_LINKS";
+        /** @description An empty list with the include flag false leaves the dimension unfiltered, including rows without a value. includeNo* adds rows without the value to the selected ids. managerIds and includeNoManager use the current organization owner in PORTFOLIO and DEMAND and the owner snapshot of the event in EVENTS. DEMAND rejects productIds, includeNoProduct, stages, workStatuses and flags with 400 VALIDATION_ERROR. */
         ReportFilters: {
             organizationIds?: string[];
             directionIds?: string[];
@@ -1562,7 +3557,23 @@ export interface components {
             includeNoManager?: boolean;
             stages?: string[];
             /** @enum {string|null} */
-            organizationType?: "UNIVERSITY" | "SCHOOL" | null;
+            organizationType?: "UNIVERSITY" | "SCHOOL" | "COLLEGE" | null;
+            /** @description Статусы работы (активна, приостановлена, завершена); пустой список не ограничивает отбор */
+            workStatuses?: ("ACTIVE" | "PAUSED" | "COMPLETED")[];
+            /** @description Отметки работы; выбранные отметки должны быть у работы одновременно, пустой список не ограничивает отбор */
+            flags?: components["schemas"]["InteractionFlag"][];
+            agreement?: components["schemas"]["ReportAgreementFilters"];
+            /** @description EVENTS only; empty means all kinds including KAM assignments, other kinds reject a non-empty list */
+            eventTypes?: components["schemas"]["ReportEventType"][];
+            /** @description PORTFOLIO only; keeps interactions whose last entry into the current stage was at least this many days before the report is generated, the same rule as DAYS_ON_STAGE and the minDaysOnStage filter of the work list; other kinds reject it with 400 VALIDATION_ERROR */
+            minDaysOnStage?: number | null;
+        };
+        /** @description Conditions on one and the same product agreement of the interaction (restricted to productIds when they are given): vendor, license signed (false means not signed or not specified), license expiry year not later than licenseExpiresBy, and no TRANSFERRED mark for each notTransferred kind; an agreement without any marks whose stored transferStatus is «Передано» counts as fully transferred. DEMAND rejects any of them with 400. */
+        ReportAgreementFilters: {
+            vendorIds?: string[];
+            licenseSigned?: boolean | null;
+            licenseExpiresBy?: number | null;
+            notTransferred?: components["schemas"]["ProductTransferKind"][];
         };
         /** @description from and to are inclusive dates converted to [from 00:00, to+1 00:00) in Europe/Moscow */
         ReportPreviewRequest: {
@@ -1571,17 +3582,25 @@ export interface components {
             from?: string | null;
             /** Format: date */
             to?: string | null;
+            /**
+             * Format: date
+             * @description SNAPSHOT only; state at the end of this Moscow day, today when omitted, a future date is rejected
+             */
+            asOf?: string | null;
             periodBasis?: components["schemas"]["PeriodBasis"] | null;
             filters?: components["schemas"]["ReportFilters"];
-            /** @description Omitted or empty means all columns of the kind in the default order */
+            /** @description Omitted or empty means the default columns of the kind in the default order: for PORTFOLIO all columns except the agreement ones (VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON), which are returned only when listed explicitly; for EVENTS and DEMAND all columns */
             columns?: components["schemas"]["ReportColumn"][];
-            /** @description DEMAND only, APPLICATIONS (default), PARTICIPANTS or PARALLEL_RUNS; rows are sorted by that measure descending with «нет данных» last, then by program name. Other kinds reject it with 400 VALIDATION_ERROR. */
+            /** @description DEMAND only, APPLICATIONS (default), PARTICIPANTS, LEARNERS_COMPLETED or PARALLEL_RUNS; rows are sorted by that measure descending with «нет данных» last, then by program name. Other kinds reject it with 400 VALIDATION_ERROR. */
             sortBy?: components["schemas"]["ReportColumn"] | null;
         };
         ReportRequest: components["schemas"]["ReportPreviewRequest"] & {
             format: components["schemas"]["ReportFormat"];
             /** @description Set to order a chart of the statistics grouped this way instead of the row report; columns are ignored and format must be PNG or PDF */
             groupBy?: components["schemas"]["StatisticsGroupBy"] | null;
+            chartType?: components["schemas"]["ChartType"] | null;
+            /** @description Line chart only, with groupBy MONTH; one line per group of this grouping */
+            seriesBy?: components["schemas"]["StatisticsGroupBy"] | null;
         };
         ReportJobCreated: {
             /** Format: uuid */
@@ -1594,6 +3613,10 @@ export interface components {
             format: components["schemas"]["ReportFormat"];
             /** @description Grouping of a chart job; null for a row report */
             groupBy?: components["schemas"]["StatisticsGroupBy"] | null;
+            /** @description BAR or LINE for a chart job; null for a row report */
+            chartType?: components["schemas"]["ChartType"] | null;
+            /** @description Grouping of the separate lines of a line chart job; null otherwise */
+            seriesBy?: components["schemas"]["StatisticsGroupBy"] | null;
             /** @enum {string} */
             status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
             progress: number;
@@ -1625,7 +3648,7 @@ export interface components {
             /** @description The same generation time, period rule, manager semantics and filter lines as in the file header */
             notes: string[];
             columns: components["schemas"]["ReportColumnView"][];
-            /** @description Row objects keyed by column id; dates are ISO 8601 strings, DEMAND measures are integers, missing values are null */
+            /** @description Row objects keyed by column id; dates are ISO 8601 strings, DEMAND measures and DURATION counts are integers, DURATION days are decimal numbers, missing values are null */
             items: {
                 [key: string]: string | number | null;
             }[];
@@ -1647,6 +3670,18 @@ export interface components {
             to?: string | null;
             periodBasis?: components["schemas"]["PeriodBasis"] | null;
             filters?: components["schemas"]["ReportFilters"];
+            /** Format: date */
+            asOf?: string | null;
+            /** @description Only with groupBy MONTH; splits monthly counts into series of this grouping for a line chart */
+            seriesBy?: components["schemas"]["StatisticsGroupBy"] | null;
+        };
+        StatisticsSeries: {
+            key: string;
+            label: string;
+            /** @description Rows without a value of seriesBy («Не указано»), always the last series */
+            unspecified: boolean;
+            /** @description One count per item of the result, in the same order */
+            counts: number[];
         };
         StatisticsItem: {
             key: string;
@@ -1671,8 +3706,41 @@ export interface components {
             total: number;
             unknownCount: number;
             items: components["schemas"]["StatisticsItem"][];
-            /** @description Largest number of bars a PNG/PDF chart file can hold, counting the «Не указано» bar of DIRECTION, PROGRAM, PRODUCT and MANAGER; a larger chart job fails with REPORT_CHART_LIMIT */
+            /** @description Largest number of bars a PNG/PDF chart file can hold, counting the «Не указано» bar of DIRECTION, PROGRAM, PRODUCT and MANAGER (and STAGE for EVENTS, where KAM assignments have no stage); a larger chart job fails with REPORT_CHART_LIMIT. For a line chart it limits the number of months */
             maxChartBars: number;
+            /** Format: date */
+            asOf?: string | null;
+            seriesBy?: components["schemas"]["StatisticsGroupBy"] | null;
+            /** @description Empty without seriesBy; ordered by total descending with «Не указано» last */
+            series: components["schemas"]["StatisticsSeries"][];
+            /** @description Largest number of lines a PNG/PDF line chart can hold; a job with more lines fails with REPORT_CHART_LIMIT */
+            maxChartSeries: number;
+        };
+        /**
+         * @description Relative period of a saved report resolved in Europe/Moscow when the list is read: calendar month or quarter containing today, or the one before it
+         * @enum {string}
+         */
+        SavedReportPeriod: "CURRENT_MONTH" | "PREVIOUS_MONTH" | "CURRENT_QUARTER" | "PREVIOUS_QUARTER";
+        SavedReport: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description With a period, from and to hold the dates of that period for the current day */
+            definition: components["schemas"]["ReportPreviewRequest"];
+            period?: components["schemas"]["SavedReportPeriod"] | null;
+            version: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        SavedReportRequest: {
+            name: string;
+            definition: components["schemas"]["ReportPreviewRequest"];
+            /** @description Required for update */
+            version?: number | null;
+            /** @description Null keeps the from and to of the definition; a relative period replaces them each time the report is opened. SNAPSHOT rejects a period with 400 VALIDATION_ERROR (field period): an empty asOf already means today */
+            period?: components["schemas"]["SavedReportPeriod"] | null;
         };
         ReportManagerOption: {
             /** Format: uuid */
@@ -1711,7 +3779,19 @@ export interface components {
             startedAt?: string | null;
             /** Format: date-time */
             finishedAt?: string | null;
+            trigger?: components["schemas"]["SyncTrigger"];
+            /** @description Profile that started the run; for scheduled runs the administrator on whose behalf they run */
+            startedByName?: string | null;
+            /** @description Organization of a run started from its card */
+            organizationName?: string | null;
         };
+        /** @enum {string} */
+        SyncTrigger: "MANUAL" | "SCHEDULE" | "CARD" | "BOOTSTRAP";
+        /**
+         * @description STUDENTS — classes of learners, counted in reports; TEACHERS — training of university teachers, shown separately and excluded from DEMAND
+         * @enum {string}
+         */
+        RunKind: "STUDENTS" | "TEACHERS";
         SyncRunCreated: {
             /** Format: uuid */
             runId: string;
@@ -1731,6 +3811,15 @@ export interface components {
             /** @description Records with status NEEDS_MAPPING or FAILED */
             problemCount: number;
             lastRun?: components["schemas"]["SyncRun"] | null;
+            /** @description Spring cron of SOURCES_SYNC_CRON (Moscow time); null when the schedule is off */
+            schedule?: string | null;
+            /**
+             * Format: date-time
+             * @description Next scheduled start; null when the schedule is off, the source is not configured or no administrator started it yet
+             */
+            nextRunAt?: string | null;
+            /** @description Configured source without a successful run within SOURCES_STALE_AFTER */
+            stale?: boolean;
         };
         SourceRecord: {
             /** Format: uuid */
@@ -1773,6 +3862,7 @@ export interface components {
              * @description Day after the last day of the run (exclusive end); later than runStartsOn
              */
             runEndsOn?: string | null;
+            runKind?: components["schemas"]["RunKind"] | null;
         };
         SourceRecordApplyResult: {
             record: components["schemas"]["SourceRecord"];
@@ -1783,6 +3873,12 @@ export interface components {
             snapshots: components["schemas"]["LearningSnapshot"][];
         };
         LearningSnapshot: {
+            /**
+             * Format: uuid
+             * @description Training run (saved mapping) of the snapshot
+             */
+            mappingId: string;
+            runKind: components["schemas"]["RunKind"];
             /** Format: int64 */
             courseId: number;
             courseName: string;
@@ -1823,6 +3919,211 @@ export interface components {
              */
             changedAt: string;
         };
+        SourceState: {
+            configured: boolean;
+            /** Format: date-time */
+            lastSuccessAt?: string | null;
+            /**
+             * Format: date-time
+             * @description Finish of the last run when it failed after the last success
+             */
+            errorAt?: string | null;
+            errorCode?: string | null;
+            errorMessage?: string | null;
+            stale: boolean;
+            /**
+             * Format: date-time
+             * @description For LMS, the latest observation of the card snapshots
+             */
+            dataObservedAt?: string | null;
+        };
+        LearningState: {
+            /** @enum {string} */
+            state: "AVAILABLE" | "NO_PROGRAM" | "NOT_CONFIGURED" | "NOT_MAPPED" | "OTHER_CYCLE" | "NOT_DATED" | "SOURCE_FAILED" | "RUN_ENDED" | "NOT_SYNCED";
+            message?: string | null;
+        };
+        InteractionSourceStatus: {
+            lms: components["schemas"]["SourceState"];
+            site: components["schemas"]["SourceState"];
+            learning: components["schemas"]["LearningState"];
+        };
+        RefreshOutcome: {
+            /** @enum {string} */
+            status: "UPDATED" | "UNCHANGED" | "FAILED" | "SKIPPED";
+            changedCount: number;
+            message: string;
+        };
+        SourcesRefresh: {
+            lms: components["schemas"]["RefreshOutcome"];
+            site: components["schemas"]["RefreshOutcome"];
+            status: components["schemas"]["InteractionSourceStatus"];
+            snapshots: components["schemas"]["LearningSnapshot"][];
+        };
+        TeacherTraining: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            interactionId: string;
+            /** Format: uuid */
+            eventId: string;
+            /** Format: date */
+            trainedOn: string;
+            courseName: string;
+            enrolledCount: number;
+            completedCount?: number | null;
+            /** Format: uuid */
+            attachmentId?: string | null;
+            attachmentName?: string | null;
+            /** Format: date */
+            nextCycleOn?: string | null;
+            createdByName?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        TeacherTrainingCreate: {
+            version: number;
+            /** Format: uuid */
+            stageId: string;
+            /**
+             * Format: date
+             * @description Not later than today
+             */
+            trainedOn: string;
+            courseName: string;
+            enrolledCount: number;
+            /** @description Not more than enrolledCount; null means «нет данных» */
+            completedCount?: number | null;
+            /** Format: uuid */
+            attachmentId?: string | null;
+            /** Format: date */
+            nextCycleOn?: string | null;
+            /** @description Set the next step of the card to the next cycle date */
+            remind?: boolean | null;
+        };
+        TeacherTrainingCreated: {
+            training: components["schemas"]["TeacherTraining"];
+            interaction: components["schemas"]["Interaction"];
+        };
+        CycleLink: {
+            /** Format: uuid */
+            interactionId: string;
+            title: string;
+            /** Format: date */
+            startsOn?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        InteractionCycle: {
+            /** Format: uuid */
+            interactionId: string;
+            /**
+             * Format: date
+             * @description Start of this cycle; null for a work that is not a repeated cycle
+             */
+            startsOn?: string | null;
+            previous?: components["schemas"]["CycleLink"] | null;
+            next?: components["schemas"]["CycleLink"] | null;
+        };
+        CycleStart: {
+            title: string;
+            /** Format: uuid */
+            templateId?: string | null;
+            /** Format: date */
+            startsOn?: string | null;
+            nextAction?: string | null;
+            /** Format: date-time */
+            nextActionAt?: string | null;
+        };
+        PendingSourceRecord: {
+            /** Format: uuid */
+            id: string;
+            recordType: string;
+            externalId: string;
+            /** Format: date-time */
+            submittedAt?: string | null;
+            /** @enum {string} */
+            status: "APPLIED" | "NEEDS_MAPPING" | "FAILED" | "SKIPPED";
+            error?: string | null;
+            /** @description University name on the site */
+            organizationName?: string | null;
+            organizationExternalId?: string | null;
+            programName?: string | null;
+            /** Format: uuid */
+            organizationId?: string | null;
+            crmOrganizationName?: string | null;
+            /** @description The caller is a leader and the record has no organization yet */
+            canResolve: boolean;
+        };
+        SourceRecordResolve: {
+            /** Format: uuid */
+            organizationId: string;
+        };
+        SourceOrganizationCreate: {
+            /** @description Name of the new organization; the university name of the record when omitted */
+            name?: string | null;
+            /** @description Organization type, UNIVERSITY by default */
+            type?: string | null;
+            /**
+             * Format: uuid
+             * @description Required for ADMIN; a leader creates the organization in the own team
+             */
+            teamId?: string | null;
+        };
+        SourceOrganizationCreated: {
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            result: components["schemas"]["SourceRecordApplyResult"];
+        };
+        SourceMapping: {
+            /** Format: uuid */
+            id: string;
+            source: components["schemas"]["SourceCode"];
+            /** @enum {string} */
+            kind: "ORGANIZATION" | "PROGRAM" | "COURSE" | "GROUP";
+            externalKey: string;
+            label: string;
+            /** Format: uuid */
+            organizationId?: string | null;
+            organizationName?: string | null;
+            /** Format: uuid */
+            programId?: string | null;
+            programName?: string | null;
+            /** Format: date */
+            runStartsOn?: string | null;
+            /**
+             * Format: date
+             * @description Exclusive end
+             */
+            runEndsOn?: string | null;
+            runKind: components["schemas"]["RunKind"];
+            version: number;
+            updatedByName?: string | null;
+            /** Format: date-time */
+            updatedAt?: string | null;
+            participants?: number | null;
+            /** Format: date-time */
+            observedAt?: string | null;
+            /** @description The run has ended; its snapshot is no longer updated */
+            closed: boolean;
+            outdated: boolean;
+        };
+        SourceMappingUpdate: {
+            /** @description Required for PUT */
+            version?: number | null;
+            /** Format: uuid */
+            organizationId?: string | null;
+            /** Format: uuid */
+            programId?: string | null;
+            /** Format: date */
+            runStartsOn?: string | null;
+            /**
+             * Format: date
+             * @description Exclusive end, later than runStartsOn
+             */
+            runEndsOn?: string | null;
+            runKind?: components["schemas"]["RunKind"] | null;
+        };
         SourceMappingOption: {
             /** Format: uuid */
             id: string;
@@ -1831,6 +4132,169 @@ export interface components {
         SourceMappingOptions: {
             organizations: components["schemas"]["SourceMappingOption"][];
             programs: components["schemas"]["SourceMappingOption"][];
+        };
+        ActivationRequest: {
+            /** Format: date-time */
+            requestedAt: string;
+        };
+        /** @enum {string} */
+        AuditCategory: "PROFILE" | "ASSIGNMENT" | "ORGANIZATION" | "TEAM" | "SYNC" | "DOWNLOAD" | "PERSONAL_DATA" | "RETENTION" | "ACCOUNT";
+        AuditEntry: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            occurredAt: string;
+            category: components["schemas"]["AuditCategory"];
+            /** @enum {string} */
+            action: "PROFILE_CHANGED" | "ACTIVATION_REQUESTED" | "KAM_ASSIGNED" | "KAM_CHANGED" | "KAM_UNASSIGNED" | "ORGANIZATION_TEAM_CHANGED" | "TEAM_CREATED" | "TEAM_RENAMED" | "TEAM_ARCHIVED" | "TEAM_RESTORED" | "SYNC_STARTED" | "ATTACHMENT_DOWNLOADED" | "REPORT_DOWNLOADED" | "JOURNAL_EXPORTED" | "SUBJECT_SEARCHED" | "SUBJECT_EXPORTED" | "CONTACT_RECTIFIED" | "CONTACT_RESTRICTED" | "CONTACT_RESTRICTION_LIFTED" | "SUBJECT_ANONYMIZED" | "RETENTION_APPLIED" | "ACCOUNT_DISABLED" | "ACCOUNT_ENABLED" | "ACCOUNT_SYNC_FAILED";
+            actionLabel: string;
+            /**
+             * Format: uuid
+             * @description Null for the nightly retention job
+             */
+            actorProfileId: string | null;
+            actorDisplayName: string;
+            objectType: string | null;
+            /** Format: uuid */
+            objectId: string | null;
+            objectName: string | null;
+            details: string | null;
+            requestId: string | null;
+        };
+        PageAuditEntry: components["schemas"]["PageMeta"] & {
+            items: components["schemas"]["AuditEntry"][];
+        };
+        /**
+         * @description RESTRICTED contacts stay in history but cannot be linked to interactions
+         * @enum {string}
+         */
+        PersonalDataStatus: "ACTIVE" | "RESTRICTED" | "ANONYMIZED";
+        SubjectQuery: {
+            name?: string | null;
+            email?: string | null;
+            /** @description At least 5 digits; spaces, brackets and dashes are ignored */
+            phone?: string | null;
+            /** @description Up to 10 other spellings separated by commas, semicolons or new lines */
+            otherSpellings?: string | null;
+        };
+        /**
+         * @default JSON
+         * @enum {string}
+         */
+        SubjectExportFormat: "JSON" | "PDF";
+        SubjectContact: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            name: string;
+            position: string | null;
+            email: string | null;
+            phone: string | null;
+            status: components["schemas"]["PersonalDataStatus"];
+            version: number;
+            createdByName: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            interactionsCount: number;
+        };
+        SubjectProfile: {
+            /** Format: uuid */
+            id: string;
+            displayName: string;
+            login: string | null;
+            active: boolean;
+            pendingActivation: boolean;
+            anonymized: boolean;
+        };
+        SubjectMention: {
+            /** Format: uuid */
+            interactionId: string;
+            interactionTitle: string;
+            organizationName: string;
+            /** @enum {string} */
+            place: "COMMENT" | "PLAN_HISTORY" | "NEXT_ACTION" | "TITLE";
+            text: string;
+            /** Format: date-time */
+            occurredAt: string | null;
+        };
+        SubjectAttachment: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            interactionId: string;
+            interactionTitle: string;
+            organizationName: string;
+            fileName: string;
+            sizeBytes: number;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        SubjectSourceRecord: {
+            /** Format: uuid */
+            id: string;
+            source: string;
+            recordType: string;
+            externalId: string;
+            status: string;
+            organizationName: string | null;
+            /** Format: date-time */
+            submittedAt: string | null;
+        };
+        SubjectSearchResult: {
+            contacts: components["schemas"]["SubjectContact"][];
+            profiles: components["schemas"]["SubjectProfile"][];
+            mentions: components["schemas"]["SubjectMention"][];
+            attachments: components["schemas"]["SubjectAttachment"][];
+            sourceRecords: components["schemas"]["SubjectSourceRecord"][];
+            /** @description Some lists were cut at the display limit; narrow the search */
+            truncated: boolean;
+        };
+        ContactRectification: {
+            version: number;
+            name: string;
+            position?: string | null;
+            email?: string | null;
+            phone?: string | null;
+        };
+        ContactRestriction: {
+            version: number;
+            restricted: boolean;
+        };
+        AnonymizationRequest: {
+            subject?: components["schemas"]["SubjectQuery"];
+            contactIds?: string[];
+            profileIds?: string[];
+            attachmentIds?: string[];
+        };
+        AnonymizationResult: {
+            contacts: number;
+            profiles: number;
+            mentions: number;
+            sourceRecords: number;
+            technicalRecords: number;
+            attachmentsDeleted: number;
+            reportFilesDeleted: number;
+        };
+        RetentionPolicy: {
+            reportFilesDays: number;
+            inactiveContactsDays: number;
+            dismissedProfilesDays: number;
+            auditEventsDays: number;
+            /** @description Spring cron expression, Moscow time */
+            schedule: string;
+            lastRun: components["schemas"]["AuditEntry"] | null;
+        };
+        RetentionRun: {
+            /** Format: date-time */
+            appliedAt: string;
+            reportFilesDeleted: number;
+            contactsAnonymized: number;
+            profilesAnonymized: number;
+            auditEventsDeleted: number;
         };
     };
     responses: {
@@ -1933,6 +4397,15 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
+        /** @description CONFIRMATION_LIMIT, the selection has more than 500 documents or, for the archive, its CLEAN files exceed app.agreements.archive-max-size; narrow the period, university or kind */
+        ConfirmationLimit: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
         /** @description REPORT_CAPACITY_EXCEEDED, all report slots and the bounded queue are busy; nothing was stored */
         ReportCapacityExceeded: {
             headers: {
@@ -1958,11 +4431,19 @@ export interface components {
         RegistrationId: "keycloak";
         Page: number;
         PageSize: number;
+        /** @description Отбор по архиву; форма нового взаимодействия берёт действующие записи, фильтры отчётов — все с отметкой архива */
+        CatalogLookupState: "ACTIVE" | "ARCHIVED" | "ALL";
         OrganizationSort: "name,asc" | "name,desc" | "updatedAt,asc" | "updatedAt,desc";
         InteractionOrganizationId: string;
         InteractionSort: "createdAt,asc" | "createdAt,desc" | "updatedAt,asc" | "updatedAt,desc" | "nextActionAt,asc";
         WorkflowTemplateSort: "name,asc" | "name,desc" | "version,asc" | "version,desc";
         CrmProfileSort: "displayName,asc" | "displayName,desc" | "role,asc" | "role,desc" | "accessRevision,asc" | "accessRevision,desc";
+        /** @description Visible organization; a hidden one returns 404 */
+        AgreementConfirmationOrganization: string;
+        AgreementConfirmationAgreement: string;
+        AgreementConfirmationKind: string;
+        AgreementConfirmationFrom: string;
+        AgreementConfirmationTo: string;
         /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
         CsrfHeader: string;
         IdempotencyKey: string;
@@ -2069,6 +4550,33 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    requestProfileActivation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Time when the administrator was notified */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivationRequest"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     getCsrfToken: {
         parameters: {
             query?: never;
@@ -2099,8 +4607,10 @@ export interface operations {
                 sort?: components["parameters"]["OrganizationSort"];
                 /** @description Часть названия без учёта регистра */
                 q?: string;
-                /** @description Только вузы без ответственного или с ответственным, который не является активным КАМ команды вуза */
+                /** @description Только вузы без ответственного или с ответственным, который не является активным КАМ или руководителем команды вуза */
                 requiresAssignment?: boolean;
+                /** @description Состояние организации; по умолчанию CURRENT — действующие и ожидающие подтверждения */
+                status?: "CURRENT" | "PENDING" | "ARCHIVED" | "ALL";
             };
             header?: never;
             path?: never;
@@ -2115,6 +4625,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PageOrganization"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createOrganization: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationDetails"];
+            };
+        };
+        responses: {
+            /** @description Организация создана или отправлена на подтверждение */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    findOrganizationDuplicates: {
+        parameters: {
+            query?: {
+                name?: string;
+                exceptId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description До десяти возможных дублей, точные совпадения первыми */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationDuplicate"][];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -2147,6 +4717,78 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["CrmProfileRequired"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateOrganization: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationDetails"];
+            };
+        };
+        responses: {
+            /** @description Организация изменена */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    changeOrganizationStatus: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationStatusChange"];
+            };
+        };
+        responses: {
+            /** @description Состояние изменено */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -2213,6 +4855,71 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    updateOrganizationContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+                contactId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactUpdate"];
+            };
+        };
+        responses: {
+            /** @description Contact after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Contact"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listOrganizationContactEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+                contactId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Contact changes with author, time and previous and new values, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactEvent"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listOrganizationAssignmentOptions: {
         parameters: {
             query?: never;
@@ -2224,7 +4931,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Active USER profiles of the visible organization's team, available only to its LEADER */
+            /** @description Active USER profiles of the visible organization's team and the requesting LEADER himself; available only to a LEADER of that team */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2251,7 +4958,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Immutable owner assignment history of the visible organization, available only to its LEADER */
+            /** @description Immutable owner assignment history of the visible organization with the handover note and the reason of an automatic deassignment; available to the team LEADER and to the USER who currently owns the organization */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2303,11 +5010,141 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
-    listPrograms: {
+    bulkAssignOrganizations: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationBulkAssignment"];
+            };
+        };
+        responses: {
+            /** @description Changed organizations with their assignment events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationBulkAssignmentResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listOrganizationDeputies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deputy periods of the visible organization, newest first, available only to its LEADER */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationDeputy"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    assignOrganizationDeputy: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationDeputyCreate"];
+            };
+        };
+        responses: {
+            /** @description Created deputy period */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationDeputy"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    endOrganizationDeputy: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+                deputyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ended deputy period */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationDeputy"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getTeamIndicators: {
         parameters: {
             query?: {
-                page?: components["parameters"]["Page"];
-                size?: components["parameters"]["PageSize"];
+                /** @description Порог «дольше N дней на этапе»; по умолчанию app.work.stuck-days (30) */
+                stuckDays?: number;
             };
             header?: never;
             path?: never;
@@ -2315,7 +5152,116 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Active programs available in the current business catalog scope */
+            /** @description Indicators per active team manager and for organizations requiring assignment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamIndicators"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getTeamsSummary: {
+        parameters: {
+            query?: {
+                stuckDays?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Summary per team and total */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamsSummary"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getReminders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reminder digest of the current profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReminderDigest"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    saveReminderSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReminderSettings"];
+            };
+        };
+        responses: {
+            /** @description Saved setting */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReminderSettings"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listPrograms: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["PageSize"];
+                /** @description Отбор по архиву; форма нового взаимодействия берёт действующие записи, фильтры отчётов — все с отметкой архива */
+                state?: components["parameters"]["CatalogLookupState"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Programs of the business catalog scope; archived ones only with state ARCHIVED or ALL */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2335,6 +5281,8 @@ export interface operations {
             query?: {
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["PageSize"];
+                /** @description Отбор по архиву; форма нового взаимодействия берёт действующие записи, фильтры отчётов — все с отметкой архива */
+                state?: components["parameters"]["CatalogLookupState"];
             };
             header?: never;
             path?: never;
@@ -2342,7 +5290,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Active products available in the current business catalog scope */
+            /** @description Products of the business catalog scope; archived ones only with state ARCHIVED or ALL */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2362,6 +5310,8 @@ export interface operations {
             query?: {
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["PageSize"];
+                /** @description Отбор по архиву; форма нового взаимодействия берёт действующие записи, фильтры отчётов — все с отметкой архива */
+                state?: components["parameters"]["CatalogLookupState"];
             };
             header?: never;
             path?: never;
@@ -2369,7 +5319,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Active IT directions for report filters; empty for profiles without a business scope */
+            /** @description IT directions for report filters; archived ones only with state ARCHIVED or ALL; empty for profiles without a business scope */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2393,10 +5343,20 @@ export interface operations {
                 sort?: components["parameters"]["InteractionSort"];
                 /** @description Часть названия взаимодействия или вуза без учёта регистра */
                 q?: string;
-                /** @description OVERDUE — шаг и срок заданы, срок прошёл; THIS_WEEK — шаг и срок заданы, срок на текущей неделе по Москве (понедельник–воскресенье); NO_NEXT_STEP — нет текста шага или его срока, такие взаимодействия попадают только сюда */
+                /** @description OVERDUE — срок следующего шага прошёл, даже если текст шага не задан; THIS_WEEK — шаг и срок заданы, срок на текущей неделе по Москве (понедельник–воскресенье); NO_NEXT_STEP — нет текста шага или его срока */
                 due?: "OVERDUE" | "THIS_WEEK" | "NO_NEXT_STEP";
                 /** @description Точное название текущего этапа */
                 stage?: string;
+                /** @description Статус работы; без параметра показываются только активные работы, ALL снимает отбор */
+                status?: "ACTIVE" | "PAUSED" | "COMPLETED" | "ALL";
+                /** @description WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — отмечена проблема; RISK — отмечен риск любого уровня */
+                flag?: components["schemas"]["InteractionFlag"];
+                /** @description Only interactions with a product whose license expiry year is less than or equal to this year */
+                licenseExpiresBy?: number;
+                /** @description Ответственный КАМ вуза (идентификатор профиля) или UNASSIGNED — вузы, требующие назначения */
+                responsible?: string;
+                /** @description Только работы, которые находятся на текущем этапе не меньше указанного числа суток */
+                minDaysOnStage?: number;
             };
             header?: never;
             path?: never;
@@ -2619,6 +5579,282 @@ export interface operations {
             };
         };
     };
+    getInteractionSourceStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Source state of the card */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionSourceStatus"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    refreshInteractionSources: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Outcome per source, the new source state and the snapshots of the card */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcesRefresh"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listTeacherTrainings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Manual records of teacher training, newest first; counts only, no names */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherTraining"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createTeacherTraining: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeacherTrainingCreate"];
+            };
+        };
+        responses: {
+            /** @description Saved record and the interaction after the history event */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherTrainingCreated"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getInteractionCycle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Start of this cycle and links to the previous and the next cycle, if any */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionCycle"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    startInteractionCycle: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CycleStart"];
+            };
+        };
+        responses: {
+            /** @description The new interaction of the next cycle */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Interaction"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listPendingSourceRecords: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Up to 200 records, newest submission first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingSourceRecord"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resolvePendingSourceRecord: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceRecordResolve"];
+            };
+        };
+        responses: {
+            /** @description Record after the new attempt and the number of other records applied thanks to the mapping */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceRecordApplyResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createOrganizationFromSourceRecord: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SourceOrganizationCreate"];
+            };
+        };
+        responses: {
+            /** @description Created organization and the record after the new attempt */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceOrganizationCreated"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     transitionInteraction: {
         parameters: {
             query?: never;
@@ -2691,6 +5927,114 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    completeInteractionStep: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InteractionStepCompletion"];
+            };
+        };
+        responses: {
+            /** @description Updated interaction */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Interaction"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    changeInteractionStatus: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InteractionStatusChange"];
+            };
+        };
+        responses: {
+            /** @description Interaction after the status change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Interaction"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateInteractionFlags: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InteractionFlagsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Interaction after the flags update */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Interaction"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     editInteractionStages: {
         parameters: {
             query?: never;
@@ -2727,6 +6071,77 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    completeInteractionStage: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InteractionStageCompletionRequest"];
+            };
+        };
+        responses: {
+            /** @description Interaction with the stage marked completed; the current stage is unchanged. Any stage except the current one can be marked; a repeated mark replaces the date and comment. Writes one STAGE_COMPLETED history event and binds the selected clean files uploaded to that stage to the event */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Interaction"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    clearInteractionStageCompletion: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+                stageId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Interaction without the completion mark; writes one STAGE_COMPLETION_CLEARED history event */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Interaction"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     uploadInteractionAttachment: {
         parameters: {
             query?: never;
@@ -2743,10 +6158,19 @@ export interface operations {
         requestBody: {
             content: {
                 "multipart/form-data": {
-                    /** Format: binary */
+                    /**
+                     * Format: binary
+                     * @description PNG, JPEG, HEIC/HEIF, PDF, ZIP, GZIP, RAR, DOC, DOCX, XLS or XLSX up to 20 MB; the extension must match the file signature
+                     */
                     file: string;
                     /** Format: uuid */
                     stageId: string;
+                    kind?: components["schemas"]["AttachmentKind"];
+                    /**
+                     * Format: uuid
+                     * @description Uploads a new version of this live attachment of the same interaction; the new version gets revision + 1 and inherits the kind unless kind is given. 409 VERSION_CONFLICT when the attachment already has a live newer version
+                     */
+                    replacesId?: string;
                 };
             };
         };
@@ -2766,6 +6190,80 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteInteractionAttachment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+                attachmentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachmentDeletion"];
+            };
+        };
+        responses: {
+            /** @description Interaction card after the deletion with the incremented version */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Interaction"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateProductAgreement: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+                agreementId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductAgreementUpdate"];
+            };
+        };
+        responses: {
+            /** @description Interaction card with the updated product agreement */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Interaction"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -2796,6 +6294,70 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    updateAttachmentKind: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachmentKindUpdate"];
+            };
+        };
+        responses: {
+            /** @description Attachment with the new kind and incremented version */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attachment"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    previewAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Raw file bytes for inline display */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                    "image/png": string;
+                    "image/jpeg": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     downloadAttachment: {
         parameters: {
             query?: never;
@@ -2807,7 +6369,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Raw file bytes for a CLEAN attachment only */
+            /** @description Raw file bytes for a CLEAN attachment only; the download is written to the security journal */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2820,6 +6382,423 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["CrmProfileRequired"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listAgreementActivityKinds: {
+        parameters: {
+            query?: {
+                includeArchived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Activity kinds ordered by sort order; archived kinds only with includeArchived=true */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementActivityKind"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createAgreementActivityKind: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementActivityKindCreate"];
+            };
+        };
+        responses: {
+            /** @description Activity kind created at the end of the list */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementActivityKind"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateAgreementActivityKind: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementActivityKindUpdate"];
+            };
+        };
+        responses: {
+            /** @description Activity kind updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementActivityKind"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listOrganizationAgreements: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agreements of the visible organization, newest conclusion date first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementSummary"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createOrganizationAgreement: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementInput"];
+            };
+        };
+        responses: {
+            /** @description Agreement created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agreement"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAgreementOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Works and CLEAN documents of the organization and active USER or LEADER profiles of its team */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementOptions"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAgreement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agreement of a visible organization with activities, linked works and confirmations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agreement"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateAgreement: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementInput"];
+            };
+        };
+        responses: {
+            /** @description Agreement updated; version is required */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agreement"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createAgreementActivity: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementActivityInput"];
+            };
+        };
+        responses: {
+            /** @description Activity created with its links */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementActivity"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteAgreementActivity: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Activity deleted; a repeat with the same key returns 204 again */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateAgreementActivity: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementActivityInput"];
+            };
+        };
+        responses: {
+            /** @description Activity updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementActivity"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listAgreementConfirmations: {
+        parameters: {
+            query?: {
+                /** @description Visible organization; a hidden one returns 404 */
+                organizationId?: components["parameters"]["AgreementConfirmationOrganization"];
+                agreementId?: components["parameters"]["AgreementConfirmationAgreement"];
+                kindId?: components["parameters"]["AgreementConfirmationKind"];
+                from?: components["parameters"]["AgreementConfirmationFrom"];
+                to?: components["parameters"]["AgreementConfirmationTo"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Confirmation documents of the selection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementConfirmation"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ConfirmationLimit"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    downloadAgreementConfirmations: {
+        parameters: {
+            query?: {
+                /** @description Visible organization; a hidden one returns 404 */
+                organizationId?: components["parameters"]["AgreementConfirmationOrganization"];
+                agreementId?: components["parameters"]["AgreementConfirmationAgreement"];
+                kindId?: components["parameters"]["AgreementConfirmationKind"];
+                from?: components["parameters"]["AgreementConfirmationFrom"];
+                to?: components["parameters"]["AgreementConfirmationTo"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ZIP archive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ConfirmationLimit"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -3010,7 +6989,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Report file; Content-Disposition carries a UTF-8 filename* */
+            /** @description Report file; Content-Disposition carries a UTF-8 filename*; the download is written to the security journal */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3062,6 +7041,29 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    listReportVendors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All vendors of the catalog, active first, by name */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogReference"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listReportStages: {
         parameters: {
             query?: never;
@@ -3082,6 +7084,130 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSavedReports: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Named report definitions of the current profile ordered by name; other profiles never see them */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedReport"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createSavedReport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedReportRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved report created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedReport"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteSavedReport: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved report deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateSavedReport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedReportRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved report updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedReport"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -3265,6 +7391,42 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    makeWorkflowTemplateDefault: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowTemplateDefault"];
+            };
+        };
+        responses: {
+            /** @description Шаблон по умолчанию изменён */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowTemplate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listCrmProfiles: {
         parameters: {
             query?: {
@@ -3273,6 +7435,8 @@ export interface operations {
                 sort?: components["parameters"]["CrmProfileSort"];
                 /** @description Only profiles created at the first login and waiting for activation */
                 pending?: boolean;
+                /** @description Case-insensitive part of the display name or Keycloak login */
+                q?: string;
             };
             header?: never;
             path?: never;
@@ -3280,7 +7444,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description CRM profiles managed by an administrator */
+            /** @description CRM profiles managed by an administrator; pendingTotal counts all profiles waiting for activation */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3313,7 +7477,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description CRM profile updated; a role, team or activity change increments accessRevision, and every change is written to the profile journal */
+            /** @description CRM profile updated; a role, team or activity change increments accessRevision, and every change is written to the profile journal. Closing or opening access also disables or enables the Keycloak account through the Admin API; when Keycloak is unavailable or the connection is not configured the CRM change is kept, accountSyncRequired is true and accountSyncError explains why the account was not synchronized. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3357,6 +7521,45 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    syncCrmProfileAccount: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Profile with the current synchronization state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrmProfile"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            /** @description ACCOUNT_SYNC_FAILED, Keycloak is unavailable, rejected the request or the service client is not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     listTeams: {
         parameters: {
             query?: never;
@@ -3366,13 +7569,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description All teams ordered by name */
+            /** @description Все команды по названию с составом и числом действующих вузов */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Team"][];
+                    "application/json": components["schemas"]["AdminTeam"][];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -3449,11 +7652,51 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    changeTeamArchived: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamArchive"];
+            };
+        };
+        responses: {
+            /** @description Состояние команды изменено */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Team"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listAdminOrganizations: {
         parameters: {
             query?: {
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["PageSize"];
+                /** @description Часть названия без учёта регистра */
+                q?: string;
+                /** @description Состояние организации; по умолчанию CURRENT — действующие и ожидающие подтверждения */
+                status?: "CURRENT" | "PENDING" | "ARCHIVED" | "ALL";
             };
             header?: never;
             path?: never;
@@ -3473,6 +7716,111 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createAdminOrganization: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationDetails"];
+            };
+        };
+        responses: {
+            /** @description Организация создана без ответственного и видна руководителю команды как требующая назначения */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOrganization"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateAdminOrganization: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationDetails"];
+            };
+        };
+        responses: {
+            /** @description Организация изменена */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOrganization"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    changeAdminOrganizationStatus: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationStatusChange"];
+            };
+        };
+        responses: {
+            /** @description Состояние изменено */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOrganization"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -3509,6 +7857,137 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listAdminCatalogEntries: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["PageSize"];
+                q?: string;
+                state?: "ACTIVE" | "ARCHIVED" | "ALL";
+            };
+            header?: never;
+            path: {
+                kind: components["schemas"]["CatalogKind"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Записи по названию с родительской записью */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageAdminCatalogEntry"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createAdminCatalogEntry: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                kind: components["schemas"]["CatalogKind"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CatalogEntryChange"];
+            };
+        };
+        responses: {
+            /** @description Запись создана и сразу доступна для выбора */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCatalogEntry"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateAdminCatalogEntry: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                kind: components["schemas"]["CatalogKind"];
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CatalogEntryChange"];
+            };
+        };
+        responses: {
+            /** @description Запись изменена */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCatalogEntry"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listCatalogChangeEvents: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["PageSize"];
+                entityType?: components["schemas"]["CatalogEntityType"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Изменения организаций, команд, справочников и договоров, новые первыми */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageCatalogChangeEvent"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -3663,6 +8142,331 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    listAuditEvents: {
+        parameters: {
+            query?: {
+                /** @description First day of the period, Moscow time */
+                from?: string;
+                /** @description Last day of the period inclusive, Moscow time */
+                to?: string;
+                /** @description Part of the author name */
+                actor?: string;
+                /** @description Part of the object name or details */
+                object?: string;
+                category?: components["schemas"]["AuditCategory"];
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Journal page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageAuditEntry"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    exportAuditEvents: {
+        parameters: {
+            query?: {
+                format?: "XLSX" | "CSV";
+                /** @description First day of the period, Moscow time */
+                from?: string;
+                /** @description Last day of the period inclusive, Moscow time */
+                to?: string;
+                /** @description Part of the author name */
+                actor?: string;
+                /** @description Part of the object name or details */
+                object?: string;
+                category?: components["schemas"]["AuditCategory"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Journal file; Content-Disposition carries a UTF-8 filename* */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "text/csv": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    searchPersonalDataSubject: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubjectQuery"];
+            };
+        };
+        responses: {
+            /** @description Everything found for the subject */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubjectSearchResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    exportPersonalDataSubject: {
+        parameters: {
+            query?: {
+                format?: components["schemas"]["SubjectExportFormat"];
+            };
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubjectQuery"];
+            };
+        };
+        responses: {
+            /** @description Subject report; Content-Disposition carries a UTF-8 filename* */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string;
+                    "application/pdf": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    rectifyPersonalDataContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactRectification"];
+            };
+        };
+        responses: {
+            /** @description Updated contact */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubjectContact"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description VERSION_CONFLICT, IDEMPOTENCY_CONFLICT or PERSONAL_DATA_ANONYMIZED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    restrictPersonalDataContact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactRestriction"];
+            };
+        };
+        responses: {
+            /** @description Contact with the new processing status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubjectContact"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description VERSION_CONFLICT, IDEMPOTENCY_CONFLICT or PERSONAL_DATA_ANONYMIZED */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    anonymizePersonalDataSubject: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnonymizationRequest"];
+            };
+        };
+        responses: {
+            /** @description Counts of changed records */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnonymizationResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description IDEMPOTENCY_CONFLICT or PROFILE_ACTIVE when a chosen profile still has access */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getRetentionPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Configured retention periods, schedule and the last run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionPolicy"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    runRetention: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Counts of deleted and anonymized records */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionRun"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description RETENTION_RUNNING, the previous run has not finished */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
     inspectCatalogImport: {
         parameters: {
             query?: never;
@@ -3788,6 +8592,218 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CatalogImportApplyResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSourceSyncRuns: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source: components["schemas"]["SourceCode"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Runs, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncRun"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listSourceMappings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All mappings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceMapping"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateSourceMapping: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceMappingUpdate"];
+            };
+        };
+        responses: {
+            /** @description The mapping after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceMapping"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    removeSourceMapping: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mapping removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    addSourceMappingRun: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceMappingUpdate"];
+            };
+        };
+        responses: {
+            /** @description The new run */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceMapping"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteSourceMappingSnapshot: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Snapshot deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createOrganizationFromAdminSourceRecord: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceOrganizationCreate"];
+            };
+        };
+        responses: {
+            /** @description Created organization and the record after the new attempt */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceOrganizationCreated"];
                 };
             };
             400: components["responses"]["BadRequest"];

@@ -46,6 +46,7 @@ class OrganizationAssignmentServiceTest {
     private static final UUID LEADER_B = UUID.fromString("00000000-0000-0000-0000-000000000014");
     private static final UUID INACTIVE_USER_A = UUID.fromString("00000000-0000-0000-0000-000000000015");
     private static final UUID ADMIN = UUID.fromString("00000000-0000-0000-0000-000000000016");
+    private static final UUID SECOND_LEADER_A = UUID.fromString("00000000-0000-0000-0000-000000000017");
     private static final UUID ORGANIZATION_A = UUID.fromString("00000000-0000-0000-0000-000000000101");
     private static final UUID ORGANIZATION_B = UUID.fromString("00000000-0000-0000-0000-000000000102");
     private static final String REQUEST_ID = "00000000-0000-0000-0000-000000000999";
@@ -59,6 +60,9 @@ class OrganizationAssignmentServiceTest {
     private OrganizationAssignmentService organizationAssignmentService;
 
     @Autowired
+    private OrganizationRepository organizationRepository;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
@@ -67,6 +71,7 @@ class OrganizationAssignmentServiceTest {
     @BeforeEach
     void setUp() {
         createSchema();
+        jdbcTemplate.update("DELETE FROM contacts");
         jdbcTemplate.update("DELETE FROM organization_assignment_events");
         jdbcTemplate.update("DELETE FROM command_idempotency_records");
         jdbcTemplate.update("DELETE FROM organizations");
@@ -83,12 +88,14 @@ class OrganizationAssignmentServiceTest {
     }
 
     @Test
-    void leaderGetsOnlyActiveUsersOfTheOrganizationTeamAndSnapshotsNamesInHistory() {
+    void leaderGetsActiveUsersOfTheOrganizationTeamAndHimselfAndSnapshotsNamesInHistory() {
+        insertProfile(SECOND_LEADER_A, "Жанна Руководитель", "LEADER", TEAM_A, true);
         List<OrganizationAssignmentCandidate> candidates = organizationAssignmentService.options(leaderA, ORGANIZATION_A);
 
         assertThat(candidates).containsExactly(
                 new OrganizationAssignmentCandidate(USER_A, "Анна Менеджер"),
-                new OrganizationAssignmentCandidate(USER_A_NEXT, "Борис Менеджер")
+                new OrganizationAssignmentCandidate(USER_A_NEXT, "Борис Менеджер"),
+                new OrganizationAssignmentCandidate(LEADER_A, "Елена Руководитель")
         );
 
         OrganizationAssignmentResult result = organizationAssignmentService.assign(
@@ -126,11 +133,46 @@ class OrganizationAssignmentServiceTest {
     }
 
     @Test
+    void transferredOrganizationStaysInheritedUntilTheCurrentOwnerConfirmsAContact() {
+        CrmProfile userANext = new CrmProfile(USER_A_NEXT, UserRole.USER, TEAM_A, 0);
+        OffsetDateTime beforeTransfer = OffsetDateTime.now().minusDays(1);
+        insertConfirmedContact(ORGANIZATION_A, USER_A, beforeTransfer);
+        assertThat(organizationRepository.findVisibleById(userA, ORGANIZATION_A)).get()
+                .extracting(Organization::inherited).isEqualTo(false);
+
+        organizationAssignmentService.assign(
+                leaderA, ORGANIZATION_A, new OrganizationAssignmentRequest(0, USER_A_NEXT), "inherit-transfer", REQUEST_ID
+        );
+
+        assertThat(organizationRepository.findVisibleById(userANext, ORGANIZATION_A)).get()
+                .extracting(Organization::inherited).isEqualTo(true);
+        assertThat(organizationRepository.findVisibleById(leaderA, ORGANIZATION_A)).get()
+                .extracting(Organization::inherited).isEqualTo(true);
+        insertConfirmedContact(ORGANIZATION_A, USER_A, OffsetDateTime.now().plusMinutes(1));
+        assertThat(organizationRepository.findVisibleById(leaderA, ORGANIZATION_A)).get()
+                .extracting(Organization::inherited).isEqualTo(true);
+
+        insertConfirmedContact(ORGANIZATION_A, USER_A_NEXT, OffsetDateTime.now().plusMinutes(1));
+        assertThat(organizationRepository.findVisibleById(leaderA, ORGANIZATION_A)).get()
+                .extracting(Organization::inherited).isEqualTo(false);
+        assertThat(organizationRepository.findVisibleById(userB, ORGANIZATION_B)).get()
+                .extracting(Organization::inherited).isEqualTo(false);
+
+        jdbcTemplate.update("DELETE FROM contacts WHERE confirmed_by = ? AND confirmed_at > ?", USER_A, beforeTransfer);
+        organizationAssignmentService.assign(
+                leaderA, ORGANIZATION_A, new OrganizationAssignmentRequest(1, USER_A), "inherit-return", REQUEST_ID
+        );
+        assertThat(organizationRepository.findVisibleById(userA, ORGANIZATION_A)).get()
+                .extracting(Organization::inherited).isEqualTo(true);
+    }
+
+    @Test
     void userIsForbiddenAfterVisibilityWhileForeignAndAdminScopeAreNotFound() {
         assertThatThrownBy(() -> organizationAssignmentService.options(userA, ORGANIZATION_A))
                 .isInstanceOf(OrganizationAssignmentAccessDeniedException.class);
-        assertThatThrownBy(() -> organizationAssignmentService.events(userA, ORGANIZATION_A))
-                .isInstanceOf(OrganizationAssignmentAccessDeniedException.class);
+        assertThat(organizationAssignmentService.events(userA, ORGANIZATION_A)).isEmpty();
+        assertThatThrownBy(() -> organizationAssignmentService.events(userB, ORGANIZATION_A))
+                .isInstanceOf(OrganizationNotFoundException.class);
         assertThatThrownBy(() -> organizationAssignmentService.assign(
                 userA,
                 ORGANIZATION_A,
@@ -147,14 +189,109 @@ class OrganizationAssignmentServiceTest {
     }
 
     @Test
+    void handoverNoteTravelsWithTheTransferAndOnlyTheNewManagerSeesTheHistory() {
+        OrganizationAssignmentRequest request = new OrganizationAssignmentRequest(0, USER_A_NEXT);
+        request.setHandoverNote("  Ждут проект договора до 10.10  ");
+
+        OrganizationAssignmentResult result = organizationAssignmentService.assign(
+                leaderA, ORGANIZATION_A, request, "handover", REQUEST_ID
+        );
+        OrganizationAssignmentResult replay = organizationAssignmentService.assign(
+                leaderA, ORGANIZATION_A, request, "handover", REQUEST_ID
+        );
+
+        assertThat(result.event().handoverNote()).isEqualTo("Ждут проект договора до 10.10");
+        assertThat(replay.event().id()).isEqualTo(result.event().id());
+        assertThat(count("organization_assignment_events")).isEqualTo(1);
+        CrmProfile newOwner = new CrmProfile(USER_A_NEXT, UserRole.USER, TEAM_A, 0);
+        assertThat(organizationAssignmentService.events(newOwner, ORGANIZATION_A)).singleElement().satisfies(event -> {
+            assertThat(event.handoverNote()).isEqualTo("Ждут проект договора до 10.10");
+            assertThat(event.previousOwnerManagerDisplayName()).isEqualTo("Анна Менеджер");
+            assertThat(event.actorDisplayName()).isEqualTo("Елена Руководитель");
+            assertThat(event.reason()).isNull();
+        });
+        assertThatThrownBy(() -> organizationAssignmentService.events(userA, ORGANIZATION_A))
+                .isInstanceOf(OrganizationNotFoundException.class);
+
+        OrganizationAssignmentRequest changedNote = new OrganizationAssignmentRequest(0, USER_A_NEXT);
+        changedNote.setHandoverNote("Другая записка");
+        assertThatThrownBy(() -> organizationAssignmentService.assign(
+                leaderA, ORGANIZATION_A, changedNote, "handover", REQUEST_ID
+        )).isInstanceOfSatisfying(InteractionConflictException.class,
+                exception -> assertThat(exception.code()).isEqualTo("IDEMPOTENCY_CONFLICT"));
+    }
+
+    @Test
     void rejectsInactiveNonUserAndCrossTeamCandidatesWithoutChangingTheOrganization() {
         assertRejectedCandidate(USER_B, "cross-team");
         assertRejectedCandidate(LEADER_B, "non-user");
         assertRejectedCandidate(INACTIVE_USER_A, "inactive");
+        assertRejectedCandidate(ADMIN, "admin");
+        insertProfile(SECOND_LEADER_A, "Жанна Руководитель", "LEADER", TEAM_A, true);
+        assertRejectedCandidate(SECOND_LEADER_A, "other-leader");
 
         assertThat(ownerOf(ORGANIZATION_A)).isEqualTo(USER_A);
         assertThat(versionOf(ORGANIZATION_A)).isZero();
         assertThat(count("organization_assignment_events")).isZero();
+    }
+
+    @Test
+    void leaderAssignsHimselfWithAuditReplayAndHandsTheOrganizationBack() {
+        OrganizationAssignmentRequest request = new OrganizationAssignmentRequest(0, LEADER_A);
+
+        OrganizationAssignmentResult assigned = organizationAssignmentService.assign(
+                leaderA,
+                ORGANIZATION_A,
+                request,
+                "assign-leader-self",
+                REQUEST_ID
+        );
+        OrganizationAssignmentResult replayed = organizationAssignmentService.assign(
+                leaderA,
+                ORGANIZATION_A,
+                request,
+                "assign-leader-self",
+                REQUEST_ID
+        );
+
+        assertThat(replayed).isEqualTo(assigned);
+        assertThat(assigned.organization().ownerManagerId()).isEqualTo(LEADER_A);
+        assertThat(assigned.organization().ownerManagerName()).isEqualTo("Елена Руководитель");
+        assertThat(assigned.organization().requiresAssignment()).isFalse();
+        assertThat(assigned.organization().version()).isEqualTo(1);
+        assertThat(assigned.event()).satisfies(event -> {
+            assertThat(event.previousOwnerManagerId()).isEqualTo(USER_A);
+            assertThat(event.ownerManagerId()).isEqualTo(LEADER_A);
+            assertThat(event.newOwnerManagerDisplayName()).isEqualTo("Елена Руководитель");
+            assertThat(event.actorProfileId()).isEqualTo(LEADER_A);
+        });
+        assertThat(count("organization_assignment_events")).isEqualTo(1);
+        assertThat(organizationRepository.findVisible(leaderA, OrganizationQuery.from(0, 25, "name,asc", null, true)).items())
+                .extracting(Organization::id)
+                .doesNotContain(ORGANIZATION_A);
+        assertThat(organizationRepository.findVisibleById(userA, ORGANIZATION_A)).isEmpty();
+
+        assertThatThrownBy(() -> organizationAssignmentService.assign(
+                leaderA,
+                ORGANIZATION_A,
+                new OrganizationAssignmentRequest(0, USER_A),
+                "assign-after-leader-stale",
+                REQUEST_ID
+        )).isInstanceOfSatisfying(InteractionConflictException.class, exception ->
+                assertThat(exception.code()).isEqualTo("VERSION_CONFLICT"));
+        OrganizationAssignmentResult handedBack = organizationAssignmentService.assign(
+                leaderA,
+                ORGANIZATION_A,
+                new OrganizationAssignmentRequest(1, USER_A),
+                "assign-after-leader",
+                REQUEST_ID
+        );
+
+        assertThat(handedBack.event().previousOwnerManagerId()).isEqualTo(LEADER_A);
+        assertThat(handedBack.event().previousOwnerManagerDisplayName()).isEqualTo("Елена Руководитель");
+        assertThat(ownerOf(ORGANIZATION_A)).isEqualTo(USER_A);
+        assertThat(accessRevision(LEADER_A)).isZero();
+        assertThat(accessRevision(USER_A)).isEqualTo(2);
     }
 
     @Test
@@ -253,6 +390,7 @@ class OrganizationAssignmentServiceTest {
                 REQUEST_ID
         )).isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
             assertThat(exception.field()).isEqualTo("ownerManagerId");
+            assertThat(exception).hasMessage("Выберите нового ответственного или явно снимите назначение");
         });
     }
 
@@ -282,6 +420,7 @@ class OrganizationAssignmentServiceTest {
                 TEAM_A,
                 0,
                 USER_A_NEXT,
+                LEADER_A,
                 OffsetDateTime.parse("2026-09-22T12:30:00+00:00")
         );
 
@@ -307,12 +446,16 @@ class OrganizationAssignmentServiceTest {
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS teams (
                     id UUID PRIMARY KEY,
-                    name VARCHAR(160) NOT NULL
+                    name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL, default_workflow_template_id UUID
                 )
                 """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS crm_user_profiles (
                     id UUID PRIMARY KEY,
+                    login VARCHAR(200),
+                    idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    activation_requested_at TIMESTAMP WITH TIME ZONE,
+                    anonymized_at TIMESTAMP WITH TIME ZONE,
                     display_name VARCHAR(200) NOT NULL,
                     role VARCHAR(16) NOT NULL,
                     team_id UUID,
@@ -329,7 +472,26 @@ class OrganizationAssignmentServiceTest {
                     team_id UUID NOT NULL,
                     owner_manager_id UUID,
                     version INTEGER NOT NULL,
-                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL, status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, city VARCHAR(200), website VARCHAR(300), inn VARCHAR(12)
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id UUID PRIMARY KEY,
+                    organization_id UUID NOT NULL,
+                    name VARCHAR(200) NOT NULL,
+                    confirmed_at TIMESTAMP WITH TIME ZONE,
+                    confirmed_by UUID
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS organization_deputies (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, deputy_profile_id UUID NOT NULL,
+                    deputy_display_name VARCHAR(200) NOT NULL, starts_on DATE NOT NULL, ends_on DATE NOT NULL,
+                    starts_at TIMESTAMP WITH TIME ZONE NOT NULL, ends_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    command_id UUID NOT NULL, actor_profile_id UUID NOT NULL, actor_display_name VARCHAR(200) NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, ended_at TIMESTAMP WITH TIME ZONE,
+                    ended_by_profile_id UUID, ended_by_display_name VARCHAR(200)
                 )
                 """);
         jdbcTemplate.execute("""
@@ -346,6 +508,7 @@ class OrganizationAssignmentServiceTest {
                 """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS organization_assignment_events (
+                    reason VARCHAR(32), handover_note VARCHAR(2000),
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
                     command_id UUID NOT NULL,
@@ -374,6 +537,17 @@ class OrganizationAssignmentServiceTest {
                 role,
                 teamId,
                 active
+        );
+    }
+
+    private void insertConfirmedContact(UUID organizationId, UUID confirmedBy, OffsetDateTime confirmedAt) {
+        jdbcTemplate.update(
+                "INSERT INTO contacts (id, organization_id, name, confirmed_at, confirmed_by) VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(),
+                organizationId,
+                "Контакт вуза",
+                confirmedAt,
+                confirmedBy
         );
     }
 

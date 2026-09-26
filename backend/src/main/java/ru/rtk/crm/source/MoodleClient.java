@@ -206,7 +206,7 @@ public class MoodleClient {
         try {
             response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
         } catch (IOException exception) {
-            throw SourceFetchException.unavailable("Moodle недоступен: " + exception.getClass().getSimpleName());
+            throw SourceFetchException.unreachable("Moodle", exception);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw SourceFetchException.unavailable("Синхронизация прервана");

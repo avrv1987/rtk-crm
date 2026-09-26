@@ -1,10 +1,13 @@
 package ru.rtk.crm.catalog;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,6 +21,9 @@ import ru.rtk.crm.interaction.InteractionValidationException;
 
 @Service
 public class ContactService {
+    private static final TypeReference<List<ContactEvent.Change>> CHANGES = new TypeReference<>() {
+    };
+
     private final OrganizationRepository organizationRepository;
     private final ContactRepository contactRepository;
     private final CommandIdempotencyRepository commandIdempotencyRepository;
@@ -41,6 +47,23 @@ public class ContactService {
         return contactRepository.findByOrganizationId(organizationId);
     }
 
+    @Transactional(readOnly = true)
+    public List<ContactEvent> events(CrmProfile profile, UUID organizationId, UUID contactId) {
+        requireVisibleOrganization(profile, organizationId);
+        contactRepository.findById(organizationId, contactId).orElseThrow(ContactNotFoundException::new);
+        return contactRepository.findEvents(contactId).stream()
+                .map(event -> new ContactEvent(
+                        event.id(),
+                        event.contactId(),
+                        event.actorProfileId(),
+                        event.actorDisplayName(),
+                        readChanges(event.changes()),
+                        event.version(),
+                        event.occurredAt()
+                ))
+                .toList();
+    }
+
     @Transactional
     public Contact create(CrmProfile profile, UUID organizationId, ContactCreateRequest request, String idempotencyKey) {
         requireVisibleOrganization(profile, organizationId);
@@ -51,32 +74,190 @@ public class ContactService {
                 requiredText(request.name(), "name"),
                 nullableText(request.position()),
                 nullableText(request.email()),
-                nullableText(request.phone())
+                nullableText(request.phone()),
+                request.role(),
+                request.primary()
         );
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
         if (!commandIdempotencyRepository.reserve(
                 commandId,
                 profile.id(),
                 CommandOperation.CREATE_CONTACT,
                 normalizedKey,
                 fingerprint,
-                OffsetDateTime.now()
+                now
         )) {
-            return replay(profile.id(), normalizedKey, fingerprint);
+            return replay(profile.id(), CommandOperation.CREATE_CONTACT, normalizedKey, fingerprint);
         }
-        OffsetDateTime now = OffsetDateTime.now();
-        Contact contact = contactRepository.insert(
-                UUID.randomUUID(),
+        UUID contactId = UUID.randomUUID();
+        if (command.primary()) {
+            clearOtherPrimary(organizationId, contactId, profile.id(), commandId, now);
+        }
+        contactRepository.insert(
+                contactId,
                 organizationId,
                 command.name(),
                 command.position(),
                 command.email(),
                 command.phone(),
+                command.role(),
+                command.primary(),
                 profile.id(),
                 now
         );
-        return store(commandId, contact);
+        return store(commandId, contactRepository.findById(organizationId, contactId)
+                .orElseThrow(() -> new IllegalStateException("Created contact is unavailable")));
+    }
+
+    @Transactional
+    public Contact update(
+            CrmProfile profile,
+            UUID organizationId,
+            UUID contactId,
+            ContactUpdateRequest request,
+            String idempotencyKey
+    ) {
+        requireVisibleOrganization(profile, organizationId);
+        ContactInteractionMutationAuthorization.requireCardEditor(profile);
+        int expectedVersion = requiredVersion(request.version());
+        String normalizedKey = requiredKey(idempotencyKey);
+        UpdateContactCommand command = new UpdateContactCommand(
+                organizationId,
+                contactId,
+                expectedVersion,
+                requiredText(request.name(), "name"),
+                nullableText(request.position()),
+                nullableText(request.email()),
+                nullableText(request.phone()),
+                request.role(),
+                request.primary(),
+                request.inactive(),
+                request.confirm()
+        );
+        if (command.primary() && command.inactive()) {
+            throw new InteractionValidationException("primary", "Неактуальный контакт не может быть основным");
+        }
+        String fingerprint = CommandFingerprint.of(objectMapper, command);
+        UUID commandId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
+        if (!commandIdempotencyRepository.reserve(
+                commandId,
+                profile.id(),
+                CommandOperation.UPDATE_CONTACT,
+                normalizedKey,
+                fingerprint,
+                now
+        )) {
+            return replay(profile.id(), CommandOperation.UPDATE_CONTACT, normalizedKey, fingerprint);
+        }
+        if (command.primary()) {
+            contactRepository.lockOrganization(organizationId);
+        }
+        Contact current = contactRepository.findByIdForUpdate(organizationId, contactId)
+                .orElseThrow(ContactNotFoundException::new);
+        if (current.personalDataStatus() != PersonalDataStatus.ACTIVE) {
+            throw new InteractionValidationException(
+                    "id", "Контакт обезличен или его обработка ограничена; уточнение — через «Субъект ПДн»"
+            );
+        }
+        if (current.version() != expectedVersion) {
+            throw InteractionConflictException.contactVersion(current.version());
+        }
+        Contact next = new Contact(
+                current.id(),
+                current.organizationId(),
+                command.name(),
+                command.position(),
+                command.email(),
+                command.phone(),
+                current.version(),
+                current.createdBy(),
+                current.createdAt(),
+                current.updatedAt(),
+                command.role(),
+                command.primary(),
+                command.inactive(),
+                command.confirm() ? now : current.confirmedAt(),
+                command.confirm() ? profile.id() : current.confirmedBy(),
+                null,
+                current.personalDataStatus()
+        );
+        List<ContactEvent.Change> changes = changes(current, next, command.confirm());
+        if (changes.isEmpty()) {
+            return store(commandId, current);
+        }
+        if (command.primary() && !current.primary()) {
+            clearOtherPrimary(organizationId, contactId, profile.id(), commandId, now);
+        }
+        if (!contactRepository.update(next, expectedVersion, now)) {
+            throw InteractionConflictException.contactVersion(current.version());
+        }
+        contactRepository.insertEvent(
+                UUID.randomUUID(),
+                contactId,
+                commandId,
+                profile.id(),
+                writeChanges(changes),
+                expectedVersion + 1,
+                now
+        );
+        return store(commandId, contactRepository.findById(organizationId, contactId)
+                .orElseThrow(ContactNotFoundException::new));
+    }
+
+    private void clearOtherPrimary(UUID organizationId, UUID contactId, UUID actorProfileId, UUID commandId, OffsetDateTime now) {
+        contactRepository.lockOrganization(organizationId);
+        for (Contact previous : contactRepository.findOtherPrimaryForUpdate(organizationId, contactId)) {
+            Contact cleared = new Contact(
+                    previous.id(), previous.organizationId(), previous.name(), previous.position(), previous.email(),
+                    previous.phone(), previous.version(), previous.createdBy(), previous.createdAt(), previous.updatedAt(),
+                    previous.role(), false, previous.inactive(), previous.confirmedAt(), previous.confirmedBy(), null,
+                    previous.personalDataStatus()
+            );
+            if (!contactRepository.update(cleared, previous.version(), now)) {
+                throw new IllegalStateException("Primary contact changed while it was locked");
+            }
+            contactRepository.insertEvent(
+                    UUID.randomUUID(),
+                    previous.id(),
+                    commandId,
+                    actorProfileId,
+                    writeChanges(List.of(new ContactEvent.Change("primary", "true", "false"))),
+                    previous.version() + 1,
+                    now
+            );
+        }
+    }
+
+    private List<ContactEvent.Change> changes(Contact current, Contact next, boolean confirmed) {
+        List<ContactEvent.Change> changes = new ArrayList<>();
+        change(changes, "name", current.name(), next.name());
+        change(changes, "position", current.position(), next.position());
+        change(changes, "email", current.email(), next.email());
+        change(changes, "phone", current.phone(), next.phone());
+        change(changes, "role", roleName(current.role()), roleName(next.role()));
+        change(changes, "primary", Boolean.toString(current.primary()), Boolean.toString(next.primary()));
+        change(changes, "inactive", Boolean.toString(current.inactive()), Boolean.toString(next.inactive()));
+        if (confirmed) {
+            changes.add(new ContactEvent.Change(
+                    "confirmed",
+                    current.confirmedAt() == null ? null : current.confirmedAt().toString(),
+                    next.confirmedAt().toString()
+            ));
+        }
+        return changes;
+    }
+
+    private void change(List<ContactEvent.Change> changes, String field, String previous, String value) {
+        if (!Objects.equals(previous, value)) {
+            changes.add(new ContactEvent.Change(field, previous, value));
+        }
+    }
+
+    private String roleName(ContactRole role) {
+        return role == null ? null : role.name();
     }
 
     private void requireVisibleOrganization(CrmProfile profile, UUID organizationId) {
@@ -84,9 +265,9 @@ public class ContactService {
                 .orElseThrow(OrganizationNotFoundException::new);
     }
 
-    private Contact replay(UUID actorProfileId, String idempotencyKey, String fingerprint) {
+    private Contact replay(UUID actorProfileId, CommandOperation operation, String idempotencyKey, String fingerprint) {
         CommandIdempotencyRepository.CommandRecord command = commandIdempotencyRepository
-                .find(actorProfileId, CommandOperation.CREATE_CONTACT, idempotencyKey)
+                .find(actorProfileId, operation, idempotencyKey)
                 .orElseThrow(() -> new IllegalStateException("Reserved contact command is unavailable"));
         if (!fingerprint.equals(command.requestFingerprint())) {
             throw InteractionConflictException.idempotency();
@@ -119,6 +300,29 @@ public class ContactService {
         }
     }
 
+    private List<ContactEvent.Change> readChanges(String changes) {
+        try {
+            return objectMapper.readValue(changes, CHANGES);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Stored contact changes cannot be read", exception);
+        }
+    }
+
+    private String writeChanges(List<ContactEvent.Change> changes) {
+        try {
+            return objectMapper.writeValueAsString(changes);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Contact changes cannot be stored", exception);
+        }
+    }
+
+    private int requiredVersion(Integer value) {
+        if (value == null || value < 0) {
+            throw new InteractionValidationException("version", "Некорректная версия записи; обновите страницу");
+        }
+        return value;
+    }
+
     private String requiredKey(String value) {
         if (value == null || value.isBlank()) {
             throw new InteractionValidationException("Idempotency-Key", "Не передан ключ повтора запроса Idempotency-Key");
@@ -146,7 +350,24 @@ public class ContactService {
             String name,
             String position,
             String email,
-            String phone
+            String phone,
+            ContactRole role,
+            boolean primary
+    ) {
+    }
+
+    private record UpdateContactCommand(
+            UUID organizationId,
+            UUID contactId,
+            int version,
+            String name,
+            String position,
+            String email,
+            String phone,
+            ContactRole role,
+            boolean primary,
+            boolean inactive,
+            boolean confirm
     ) {
     }
 }

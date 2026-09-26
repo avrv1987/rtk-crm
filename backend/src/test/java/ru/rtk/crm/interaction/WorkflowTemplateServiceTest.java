@@ -52,6 +52,9 @@ class WorkflowTemplateServiceTest {
     private WorkflowTemplateService workflowTemplateService;
 
     @Autowired
+    private WorkflowTemplateRepository workflowTemplateRepository;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
@@ -61,6 +64,8 @@ class WorkflowTemplateServiceTest {
         jdbcTemplate.update("DELETE FROM workflow_template_stages");
         jdbcTemplate.update("DELETE FROM workflow_templates");
         jdbcTemplate.update("DELETE FROM command_idempotency_records");
+        jdbcTemplate.update("DELETE FROM organizations");
+        jdbcTemplate.update("DELETE FROM teams");
     }
 
     @Test
@@ -326,6 +331,62 @@ class WorkflowTemplateServiceTest {
                 .containsExactly(global.id(), copy.id());
     }
 
+    @Test
+    void administratorSwitchesGlobalDefaultAndLeaderChoosesTeamDefaultForNewWork() {
+        UUID organizationA = UUID.fromString("00000000-0000-0000-0000-000000000101");
+        jdbcTemplate.update("INSERT INTO teams (id, name) VALUES (?, 'team-a'), (?, 'team-b')", TEAM_A, TEAM_B);
+        jdbcTemplate.update("INSERT INTO organizations (id, team_id) VALUES (?, ?)", organizationA, TEAM_A);
+        WorkflowTemplate base = workflowTemplateService.create(
+                admin, request("Базовый процесс", List.of(new WorkflowTransitionInput(0, 1, false))), "base-template"
+        );
+        jdbcTemplate.update("UPDATE workflow_templates SET default_template = TRUE WHERE id = ?", base.id());
+        WorkflowTemplate colleges = workflowTemplateService.create(
+                admin, request("Общий шаблон для колледжей", List.of(new WorkflowTransitionInput(0, 1, false))), "college-template"
+        );
+        WorkflowTemplate schools = workflowTemplateService.create(
+                leaderA, request("Школы (Код будущего)", List.of(new WorkflowTransitionInput(0, 1, false))), "school-template"
+        );
+
+        WorkflowTemplate globalDefault = workflowTemplateService.makeDefault(admin, colleges.id(), 0, "global-default");
+        WorkflowTemplate replayed = workflowTemplateService.makeDefault(admin, colleges.id(), 0, "global-default");
+
+        assertThat(globalDefault.defaultTemplate()).isTrue();
+        assertThat(replayed).isEqualTo(globalDefault);
+        assertThat(workflowTemplateService.getManaged(admin, base.id()).defaultTemplate()).isFalse();
+        assertThatThrownBy(() -> workflowTemplateService.makeDefault(admin, base.id(), 0, "global-stale"))
+                .isInstanceOf(InteractionConflictException.class);
+        jdbcTemplate.update("UPDATE workflow_templates SET default_template = FALSE");
+        assertThatThrownBy(() -> workflowTemplateService.makeDefault(admin, base.id(), 1, "global-concurrent"))
+                .isInstanceOfSatisfying(InteractionConflictException.class, exception ->
+                        assertThat(exception.code()).isEqualTo("VERSION_CONFLICT"));
+        jdbcTemplate.update("UPDATE workflow_templates SET default_template = TRUE WHERE id = ?", colleges.id());
+        assertThatThrownBy(() -> workflowTemplateService.makeDefault(admin, schools.id(), 0, "global-team-template"))
+                .isInstanceOf(WorkflowTemplateNotFoundException.class);
+        assertThatThrownBy(() -> workflowTemplateService.makeDefault(userA, schools.id(), 0, "user-default"))
+                .isInstanceOf(WorkflowTemplateAccessDeniedException.class);
+        assertThatThrownBy(() -> workflowTemplateService.makeDefault(leaderB, schools.id(), 0, "foreign-default"))
+                .isInstanceOf(WorkflowTemplateNotFoundException.class);
+
+        workflowTemplateService.makeDefault(leaderA, schools.id(), 0, "team-default");
+
+        assertThat(workflowTemplateService.listAvailable(userA, WorkflowTemplateQuery.from(0, 25, "name,asc")).teamDefaultTemplateId())
+                .isEqualTo(schools.id());
+        assertThat(workflowTemplateService.listAvailable(
+                new CrmProfile(UUID.randomUUID(), UserRole.USER, TEAM_B, 0), WorkflowTemplateQuery.from(0, 25, "name,asc")
+        ).teamDefaultTemplateId()).isNull();
+        assertThat(workflowTemplateRepository.findDefaultForOrganizationForUpdate(organizationA).orElseThrow().id())
+                .isEqualTo(schools.id());
+        assertThatThrownBy(() -> workflowTemplateService.makeDefault(leaderA, schools.id(), 0, "team-default-again"))
+                .isInstanceOf(InteractionValidationException.class);
+
+        workflowTemplateService.makeDefault(leaderA, colleges.id(), 1, "team-reset");
+
+        assertThat(workflowTemplateService.listManaged(leaderA, WorkflowTemplateQuery.from(0, 25, "name,asc")).teamDefaultTemplateId())
+                .isNull();
+        assertThat(workflowTemplateRepository.findDefaultForOrganizationForUpdate(organizationA).orElseThrow().id())
+                .isEqualTo(colleges.id());
+    }
+
     private WorkflowTemplateRequest request(String name, List<WorkflowTransitionInput> transitions) {
         return new WorkflowTemplateRequest(
                 name,
@@ -339,6 +400,13 @@ class WorkflowTemplateServiceTest {
     }
 
     private void createSchema() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS teams (
+                    id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL,
+                    default_workflow_template_id UUID
+                )
+                """);
+        jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS organizations (id UUID PRIMARY KEY, team_id UUID NOT NULL)");
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS workflow_templates (
                     id UUID PRIMARY KEY,

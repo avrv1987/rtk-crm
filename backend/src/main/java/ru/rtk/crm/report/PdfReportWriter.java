@@ -9,13 +9,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class PdfReportWriter {
     public void write(ReportDocument document, OutputStream output) throws IOException {
-        ReportKind kind = document.request().kind();
         List<ReportColumn> columns = document.columns();
         PdfLayout.write(document.title(), document.generatedAt(), document.notes(), output, layout -> {
             layout.paragraph("Строк в отчёте: " + document.rows().size(), PdfLayout.NOTE_SIZE);
             layout.gap(PdfLayout.NOTE_SIZE);
             layout.table(
-                    columns.stream().map(column -> column.title(kind)).toList(),
+                    columns.stream().map(document::columnTitle).toList(),
                     columns.stream().mapToInt(ReportColumn::width).toArray()
             );
             for (ReportRow row : document.rows()) {

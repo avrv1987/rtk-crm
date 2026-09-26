@@ -24,6 +24,7 @@ import ru.rtk.crm.catalog.CatalogRepository;
 import ru.rtk.crm.catalog.ContactRepository;
 import ru.rtk.crm.catalog.Organization;
 import ru.rtk.crm.catalog.OrganizationRepository;
+import ru.rtk.crm.catalog.OrganizationStatus;
 import ru.rtk.crm.catalog.OrganizationType;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
@@ -38,7 +39,7 @@ class InteractionServiceTemplateLockTest {
     void createsSnapshotFromLockedDefaultTemplate() {
         Fixture fixture = fixture();
         WorkflowTemplate template = template(null);
-        when(fixture.workflowTemplateRepository().findDefaultForUpdate()).thenReturn(Optional.of(template));
+        when(fixture.workflowTemplateRepository().findDefaultForOrganizationForUpdate(ORGANIZATION_ID)).thenReturn(Optional.of(template));
 
         Interaction created = fixture.interactionService().create(
                 profile,
@@ -48,7 +49,7 @@ class InteractionServiceTemplateLockTest {
 
         assertThat(created.stages()).extracting(InteractionStage::id)
                 .doesNotContainAnyElementsOf(template.stages().stream().map(WorkflowTemplateStage::id).toList());
-        verify(fixture.workflowTemplateRepository()).findDefaultForUpdate();
+        verify(fixture.workflowTemplateRepository()).findDefaultForOrganizationForUpdate(ORGANIZATION_ID);
         verify(fixture.workflowTemplateRepository(), never()).findDefault();
     }
 
@@ -110,7 +111,14 @@ class InteractionServiceTemplateLockTest {
                 now,
                 "Анна Смирнова",
                 "Команда А",
-                false
+                false,
+                OrganizationStatus.ACTIVE,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null
         );
         AtomicReference<UUID> currentStageId = new AtomicReference<>();
         AtomicReference<List<InteractionStage>> stages = new AtomicReference<>();
@@ -155,7 +163,8 @@ class InteractionServiceTemplateLockTest {
                         0,
                         PROFILE_ID,
                         now,
-                        now
+                        now,
+                        new InteractionMarks(InteractionWorkStatus.ACTIVE, null, null, null, null, null, null)
                 )
         ));
         when(interactionRepository.findStages(any())).thenAnswer(invocation -> stages.get());

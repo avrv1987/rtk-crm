@@ -19,6 +19,12 @@ public class SourceExceptionHandler {
         if (exception.status() == HttpStatus.SERVICE_UNAVAILABLE) {
             response.header(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS);
         }
-        return response.body(ApiError.of(exception.code(), exception.getMessage(), RequestId.from(request)));
+        return response.body(new ApiError(
+                exception.code(),
+                exception.getMessage(),
+                RequestId.from(request),
+                null,
+                exception.currentVersion()
+        ));
     }
 }

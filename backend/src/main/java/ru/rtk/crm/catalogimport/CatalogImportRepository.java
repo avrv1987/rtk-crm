@@ -6,6 +6,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -25,18 +26,19 @@ public class CatalogImportRepository {
     private static final String ORGANIZATION_COLUMNS = """
             SELECT organization.id, organization.external_key, organization.name, organization.type,
                    organization.team_id, organization.owner_manager_id, owner.display_name AS owner_display_name,
-                   organization.version
+                   organization.version, organization.status
             FROM organizations organization
             LEFT JOIN crm_user_profiles owner ON owner.id = organization.owner_manager_id
             """;
     private static final String CONTACT_COLUMNS = """
-            SELECT id, external_key, organization_id, name, position, email, phone, version
+            SELECT id, external_key, organization_id, name, position, email, phone, version, personal_data_status
             FROM contacts
             """;
     private static final String AGREEMENT_COLUMNS = """
             SELECT agreement.id, agreement.external_key, agreement.interaction_id, interaction.organization_id,
                    interaction.title AS interaction_title, agreement.product_id, agreement.contract_number,
-                   agreement.license_signed, agreement.license_expiry_year, agreement.transfer_status, agreement.version
+                   agreement.license_signed, agreement.license_expiry_year, agreement.transfer_status, agreement.version,
+                   agreement.archived_at
             FROM product_agreements agreement
             JOIN interactions interaction ON interaction.id = agreement.interaction_id
             """;
@@ -184,6 +186,80 @@ public class CatalogImportRepository {
                 """)
                 .query(String.class)
                 .list();
+    }
+
+    public List<CatalogImportManagerCandidate> findManagerCandidates(List<UUID> profileIds) {
+        if (profileIds.isEmpty()) {
+            return List.of();
+        }
+        return jdbcClient.sql("""
+                SELECT profile.id, profile.display_name, team.name AS team_name,
+                       (SELECT COUNT(*) FROM organizations organization
+                        WHERE organization.owner_manager_id = profile.id AND organization.status <> 'ARCHIVED')
+                           AS organization_count
+                FROM crm_user_profiles profile
+                LEFT JOIN teams team ON team.id = profile.team_id
+                WHERE profile.id IN (:profileIds)
+                ORDER BY team.name, profile.id
+                """)
+                .param("profileIds", profileIds)
+                .query((resultSet, rowNumber) -> new CatalogImportManagerCandidate(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getString("display_name"),
+                        resultSet.getString("team_name"),
+                        resultSet.getLong("organization_count")
+                ))
+                .list();
+    }
+
+    public boolean activeTeamExists(UUID teamId) {
+        return jdbcClient.sql("SELECT id FROM teams WHERE id = :teamId AND archived = FALSE FOR UPDATE")
+                .param("teamId", teamId)
+                .query(UUID.class)
+                .optional()
+                .isPresent();
+    }
+
+    public List<ImportAgreementLink> findCurrentAgreementLinks(Set<UUID> organizationIds) {
+        if (organizationIds.isEmpty()) {
+            return List.of();
+        }
+        return jdbcClient.sql("""
+                SELECT agreement.id, organization.id AS organization_id, organization.name AS organization_name,
+                       product.id AS product_id, vendor.name AS vendor_name, product.name AS product_name,
+                       agreement.contract_number, interaction.title AS interaction_title
+                FROM product_agreements agreement
+                JOIN interactions interaction ON interaction.id = agreement.interaction_id
+                JOIN organizations organization ON organization.id = interaction.organization_id
+                JOIN products product ON product.id = agreement.product_id
+                JOIN vendors vendor ON vendor.id = product.vendor_id
+                WHERE agreement.archived_at IS NULL AND organization.id IN (:organizationIds)
+                ORDER BY organization.name, product.name, agreement.id
+                """)
+                .param("organizationIds", organizationIds)
+                .query((resultSet, rowNumber) -> new ImportAgreementLink(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getObject("organization_id", UUID.class),
+                        resultSet.getString("organization_name"),
+                        resultSet.getObject("product_id", UUID.class),
+                        resultSet.getString("vendor_name"),
+                        resultSet.getString("product_name"),
+                        resultSet.getString("contract_number"),
+                        resultSet.getString("interaction_title")
+                ))
+                .list();
+    }
+
+    public void changeAgreementArchived(UUID agreementId, boolean archived, OffsetDateTime now) {
+        jdbcClient.sql("""
+                UPDATE product_agreements
+                SET archived_at = :archivedAt, version = version + 1, updated_at = :updatedAt
+                WHERE id = :id
+                """)
+                .param("id", agreementId)
+                .param("archivedAt", archived ? now : null)
+                .param("updatedAt", now)
+                .update();
     }
 
     public List<ImportOrganization> findOrganizations() {
@@ -452,7 +528,7 @@ public class CatalogImportRepository {
                 SET name = :name, position = :position, email = :email, phone = :phone,
                     external_key = COALESCE(external_key, :externalKey),
                     version = version + 1, updated_at = :updatedAt
-                WHERE id = :id AND version = :expectedVersion
+                WHERE id = :id AND version = :expectedVersion AND personal_data_status = 'ACTIVE'
                 """)
                 .param("id", id)
                 .param("externalKey", externalKey)
@@ -712,7 +788,8 @@ public class CatalogImportRepository {
                 resultSet.getObject("team_id", UUID.class),
                 resultSet.getObject("owner_manager_id", UUID.class),
                 resultSet.getString("owner_display_name"),
-                resultSet.getInt("version")
+                resultSet.getInt("version"),
+                "ARCHIVED".equals(resultSet.getString("status"))
         );
     }
 
@@ -727,7 +804,8 @@ public class CatalogImportRepository {
                         resultSet.getString("email"),
                         resultSet.getString("phone")
                 ),
-                resultSet.getInt("version")
+                resultSet.getInt("version"),
+                "ACTIVE".equals(resultSet.getString("personal_data_status"))
         );
     }
 
@@ -745,7 +823,8 @@ public class CatalogImportRepository {
                         resultSet.getObject("license_expiry_year", Integer.class),
                         resultSet.getString("transfer_status")
                 ),
-                resultSet.getInt("version")
+                resultSet.getInt("version"),
+                resultSet.getObject("archived_at") != null
         );
     }
 
@@ -811,7 +890,8 @@ record ImportOrganization(
         UUID teamId,
         UUID ownerManagerId,
         String ownerDisplayName,
-        int version
+        int version,
+        boolean archived
 ) implements ImportKeyed {
 }
 
@@ -823,7 +903,8 @@ record ImportContact(
         String externalKey,
         UUID organizationId,
         ContactValues values,
-        int version
+        int version,
+        boolean personalDataActive
 ) implements ImportKeyed {
 }
 
@@ -838,8 +919,21 @@ record ImportAgreement(
         String interactionTitle,
         UUID productId,
         AgreementValues values,
-        int version
+        int version,
+        boolean archived
 ) implements ImportKeyed {
+}
+
+record ImportAgreementLink(
+        UUID agreementId,
+        UUID organizationId,
+        String organizationName,
+        UUID productId,
+        String vendorName,
+        String productName,
+        String contractNumber,
+        String interactionTitle
+) {
 }
 
 record ImportInteraction(

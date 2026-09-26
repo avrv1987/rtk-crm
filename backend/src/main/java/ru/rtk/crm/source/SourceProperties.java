@@ -7,7 +7,18 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.util.unit.DataSize;
 
 @ConfigurationProperties("app.sources")
-public record SourceProperties(int slots, int queueCapacity, Website website, Moodle moodle) {
+public record SourceProperties(
+        int slots,
+        int queueCapacity,
+        String syncCron,
+        Duration staleAfter,
+        Website website,
+        Moodle moodle
+) {
+    public boolean scheduled() {
+        return syncCron != null && !syncCron.isBlank() && !syncCron.strip().equals("-");
+    }
+
     public record Website(
             String baseUrl,
             String token,

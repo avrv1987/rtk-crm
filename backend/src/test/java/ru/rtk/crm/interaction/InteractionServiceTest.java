@@ -2,13 +2,18 @@ package ru.rtk.crm.interaction;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.ByteArrayInputStream;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,17 +37,29 @@ import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.attachment.Attachment;
 import ru.rtk.crm.attachment.AttachmentContentValidator;
+import ru.rtk.crm.attachment.AttachmentDeletionForbiddenException;
+import ru.rtk.crm.attachment.AttachmentDeletionRequest;
+import ru.rtk.crm.attachment.AttachmentKindUpdateRequest;
+import ru.rtk.crm.attachment.AttachmentNotFoundException;
+import ru.rtk.crm.attachment.AttachmentKind;
 import ru.rtk.crm.attachment.AttachmentRepository;
 import ru.rtk.crm.attachment.AttachmentScanOutcome;
 import ru.rtk.crm.attachment.AttachmentScanner;
 import ru.rtk.crm.attachment.AttachmentService;
 import ru.rtk.crm.attachment.AttachmentStorage;
 import ru.rtk.crm.attachment.AttachmentUploadInspection;
+import ru.rtk.crm.attachment.AttachmentUploadRequest;
+import ru.rtk.crm.attachment.AttachmentValidationException;
 import ru.rtk.crm.catalog.Contact;
 import ru.rtk.crm.catalog.ContactCreateRequest;
+import ru.rtk.crm.catalog.ContactEvent;
+import ru.rtk.crm.catalog.ContactNotFoundException;
+import ru.rtk.crm.catalog.ContactRole;
+import ru.rtk.crm.catalog.ContactUpdateRequest;
 import ru.rtk.crm.catalog.ContactRepository;
 import ru.rtk.crm.catalog.ContactService;
 import ru.rtk.crm.catalog.CatalogLookupService;
+import ru.rtk.crm.catalog.CatalogEntryState;
 import ru.rtk.crm.catalog.CatalogQuery;
 import ru.rtk.crm.catalog.CatalogRepository;
 import ru.rtk.crm.catalog.OrganizationNotFoundException;
@@ -62,6 +79,8 @@ import ru.rtk.crm.catalog.OrganizationRepository;
         InteractionRepository.class,
         WorkflowTemplateRepository.class,
         AttachmentRepository.class,
+        ProductAgreementRepository.class,
+        ProductAgreementService.class,
         CommandIdempotencyRepository.class,
         InteractionService.class,
         InteractionServiceTest.JsonConfiguration.class
@@ -84,6 +103,9 @@ class InteractionServiceTest {
 
     @Autowired
     private InteractionService interactionService;
+
+    @Autowired
+    private ProductAgreementService productAgreementService;
 
     @Autowired
     private ContactService contactService;
@@ -112,10 +134,14 @@ class InteractionServiceTest {
     @BeforeEach
     void setUp() {
         createSchema();
+        jdbcTemplate.update("DELETE FROM interaction_stage_completions");
         jdbcTemplate.update("DELETE FROM attachments");
+        jdbcTemplate.update("DELETE FROM interaction_event_contacts");
+        jdbcTemplate.update("DELETE FROM organization_assignment_events");
         jdbcTemplate.update("DELETE FROM interaction_events");
         jdbcTemplate.update("DELETE FROM command_idempotency_records");
         jdbcTemplate.update("DELETE FROM interaction_contacts");
+        jdbcTemplate.update("DELETE FROM product_transfers");
         jdbcTemplate.update("DELETE FROM product_agreements");
         jdbcTemplate.update("DELETE FROM interaction_stage_transitions");
         jdbcTemplate.update("DELETE FROM interaction_stages");
@@ -123,6 +149,7 @@ class InteractionServiceTest {
         jdbcTemplate.update("DELETE FROM workflow_template_transitions");
         jdbcTemplate.update("DELETE FROM workflow_template_stages");
         jdbcTemplate.update("DELETE FROM workflow_templates");
+        jdbcTemplate.update("DELETE FROM contact_events");
         jdbcTemplate.update("DELETE FROM contacts");
         jdbcTemplate.update("DELETE FROM products");
         jdbcTemplate.update("DELETE FROM vendors");
@@ -265,7 +292,7 @@ class InteractionServiceTest {
         Interaction noActionReloaded = interactionService.get(profileA, withoutNextAction.id());
         InteractionPage page = interactionService.list(
                 profileA,
-                InteractionFilter.from(ORGANIZATION_A, null, null, null),
+                InteractionFilter.from(ORGANIZATION_A, null, null, null, null),
                 InteractionQuery.from(0, 25, "createdAt,asc")
         );
 
@@ -279,6 +306,37 @@ class InteractionServiceTest {
             assertThat(item.nextActionAt()).isEqualTo(dueAt);
             assertThat(item.contactIds()).containsExactly(contact.id());
         });
+    }
+
+    @Test
+    void archivedOrganizationRejectsNewWorkWhilePendingRequestAcceptsIt() {
+        jdbcTemplate.update("UPDATE organizations SET status = 'ARCHIVED' WHERE id = ?", ORGANIZATION_A);
+
+        assertThatThrownBy(() -> interactionService.create(
+                profileA,
+                new InteractionCreateRequest(ORGANIZATION_A, "Работа в архиве", null, null, List.of()),
+                "create-archived"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("organizationId"));
+        assertThatThrownBy(() -> interactionService.createImportedInteraction(
+                ORGANIZATION_A, profileA.id(), "Импорт в архив", profileA.id(), UUID.randomUUID(), OffsetDateTime.now()
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("organizationId"));
+        assertThatThrownBy(() -> interactionService.createSourceInteraction(
+                ORGANIZATION_A, profileA.id(), "Заявка сайта", null, List.of(), List.of(), profileA.id(), UUID.randomUUID(),
+                OffsetDateTime.now()
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("organizationId"));
+        assertThat(count("interactions")).isZero();
+
+        jdbcTemplate.update("UPDATE organizations SET status = 'PENDING' WHERE id = ?", ORGANIZATION_A);
+        Interaction created = interactionService.create(
+                profileA,
+                new InteractionCreateRequest(ORGANIZATION_A, "Первый контакт со школой", null, null, List.of()),
+                "create-pending"
+        );
+
+        assertThat(created.currentStageName()).isEqualTo("Поиск контакта");
     }
 
     @Test
@@ -343,7 +401,7 @@ class InteractionServiceTest {
 
         InteractionPage page = interactionService.list(
                 profileA,
-                InteractionFilter.from(ORGANIZATION_A, null, null, null),
+                InteractionFilter.from(ORGANIZATION_A, null, null, null, null),
                 InteractionQuery.from(0, 1, "createdAt,asc")
         );
 
@@ -352,7 +410,7 @@ class InteractionServiceTest {
         assertThat(page.items()).extracting(InteractionSummary::id).containsAnyOf(first.id(), second.id());
         assertThatThrownBy(() -> interactionService.list(
                 profileA,
-                InteractionFilter.from(ORGANIZATION_B, null, null, null),
+                InteractionFilter.from(ORGANIZATION_B, null, null, null, null),
                 InteractionQuery.from(0, 25, "updatedAt,desc")
         )).isInstanceOf(OrganizationNotFoundException.class);
         assertThatThrownBy(() -> interactionService.get(profileA, foreign.id()))
@@ -453,13 +511,14 @@ class InteractionServiceTest {
                 storage,
                 scanner,
                 commandIdempotencyRepository,
+                interactionService,
                 objectMapper
         );
 
         Attachment uploaded = attachmentService.upload(
                 leaderA,
                 managerInteraction.id(),
-                managerInteraction.currentStageId(),
+                new AttachmentUploadRequest(managerInteraction.currentStageId(), null, null),
                 file,
                 "leader-upload"
         );
@@ -483,7 +542,7 @@ class InteractionServiceTest {
         assertThatThrownBy(() -> attachmentService.upload(
                 leaderB,
                 managerInteraction.id(),
-                managerInteraction.currentStageId(),
+                new AttachmentUploadRequest(managerInteraction.currentStageId(), null, null),
                 file,
                 "foreign-leader-upload"
         )).isInstanceOf(InteractionNotFoundException.class);
@@ -642,6 +701,145 @@ class InteractionServiceTest {
     }
 
     @Test
+    void marksAnotherStageCompletedWithoutMovingTheCurrentStageAndClearsTheMark() {
+        Interaction created = createA("Сопровождение и обучение", "create-stage-completion");
+        InteractionStage teachers = created.stages().get(8);
+        UUID attachmentId = insertCleanAttachment(created.id(), teachers.id());
+        InteractionStageCompletionRequest request = new InteractionStageCompletionRequest(
+                0,
+                teachers.id(),
+                LocalDate.parse("2026-09-20"),
+                "  Обучено 5 преподавателей ",
+                List.of(attachmentId)
+        );
+
+        Interaction completed = interactionService.completeStage(profileA, created.id(), request, "complete-teachers");
+        Interaction replayed = interactionService.completeStage(profileA, created.id(), request, "complete-teachers");
+
+        assertThat(replayed).isEqualTo(completed);
+        assertThat(completed.currentStageId()).isEqualTo(created.currentStageId());
+        assertThat(completed.version()).isEqualTo(1);
+        List<InteractionEvent> history = interactionService.events(profileA, created.id());
+        assertThat(history).hasSize(2);
+        assertThat(history.getLast()).satisfies(event -> {
+            assertThat(event.type()).isEqualTo(InteractionEventType.STAGE_COMPLETED);
+            assertThat(event.stageId()).isEqualTo(teachers.id());
+            assertThat(event.stageNameSnapshot()).isEqualTo("Обучение преподавателей");
+            assertThat(event.comment()).isEqualTo("Дата выполнения: 20.09.2026. Обучено 5 преподавателей");
+            assertThat(event.actorProfileId()).isEqualTo(MANAGER_A);
+        });
+        assertThat(completed.stageCompletions()).singleElement().satisfies(completion -> {
+            assertThat(completion.stageId()).isEqualTo(teachers.id());
+            assertThat(completion.completedOn()).isEqualTo(LocalDate.parse("2026-09-20"));
+            assertThat(completion.comment()).isEqualTo("Обучено 5 преподавателей");
+            assertThat(completion.eventId()).isEqualTo(history.getLast().id());
+            assertThat(completion.actorDisplayName()).isEqualTo("Анна Смирнова");
+        });
+        assertThat(completed.attachments()).singleElement()
+                .satisfies(attachment -> assertThat(attachment.eventId()).isEqualTo(history.getLast().id()));
+
+        assertThatThrownBy(() -> interactionService.completeStage(
+                profileA,
+                created.id(),
+                new InteractionStageCompletionRequest(0, teachers.id(), LocalDate.parse("2026-09-21"), null, List.of()),
+                "complete-teachers"
+        )).isInstanceOfSatisfying(InteractionConflictException.class, exception ->
+                assertThat(exception.code()).isEqualTo("IDEMPOTENCY_CONFLICT"));
+        assertThatThrownBy(() -> interactionService.completeStage(
+                profileA,
+                created.id(),
+                new InteractionStageCompletionRequest(0, created.stages().get(9).id(), LocalDate.parse("2026-09-21"), null, List.of()),
+                "complete-stale"
+        )).isInstanceOfSatisfying(InteractionConflictException.class, exception -> {
+            assertThat(exception.code()).isEqualTo("VERSION_CONFLICT");
+            assertThat(exception.currentVersion()).isEqualTo(1);
+        });
+        assertThatThrownBy(() -> interactionService.completeStage(
+                profileA,
+                created.id(),
+                new InteractionStageCompletionRequest(1, created.currentStageId(), LocalDate.parse("2026-09-21"), null, List.of()),
+                "complete-current"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("stageId"));
+        assertThatThrownBy(() -> interactionService.completeStage(
+                profileA,
+                created.id(),
+                new InteractionStageCompletionRequest(1, teachers.id(), LocalDate.now().plusDays(2), null, List.of()),
+                "complete-future"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("completedOn"));
+        assertThat(interactionService.events(profileA, created.id())).hasSize(2);
+
+        Interaction cleared = interactionService.clearStageCompletion(profileA, created.id(), teachers.id(), 1, "clear-teachers");
+        Interaction clearReplayed = interactionService.clearStageCompletion(profileA, created.id(), teachers.id(), 1, "clear-teachers");
+
+        assertThat(clearReplayed).isEqualTo(cleared);
+        assertThat(cleared.stageCompletions()).isEmpty();
+        assertThat(cleared.version()).isEqualTo(2);
+        assertThat(cleared.currentStageId()).isEqualTo(created.currentStageId());
+        assertThat(interactionService.events(profileA, created.id()).getLast()).satisfies(event -> {
+            assertThat(event.type()).isEqualTo(InteractionEventType.STAGE_COMPLETION_CLEARED);
+            assertThat(event.stageId()).isEqualTo(teachers.id());
+            assertThat(event.comment()).isEqualTo("Снята отметка о выполнении 20.09.2026");
+        });
+        assertThat(cleared.attachments()).singleElement()
+                .satisfies(attachment -> assertThat(attachment.eventId()).isEqualTo(history.getLast().id()));
+        assertThatThrownBy(() -> interactionService.clearStageCompletion(profileA, created.id(), teachers.id(), 2, "clear-again"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
+                    assertThat(exception.field()).isEqualTo("stageId");
+                    assertThat(exception).hasMessage("Этап не отмечен выполненным");
+                });
+    }
+
+    @Test
+    void completedStageStaysReachableByTheGraphAndMarksFollowCardScope() {
+        Interaction created = createA("Отмеченный следующий этап", "create-completed-next");
+        InteractionStage next = created.stages().get(1);
+
+        Interaction leaderMarked = interactionService.completeStage(
+                leaderA,
+                created.id(),
+                new InteractionStageCompletionRequest(0, next.id(), LocalDate.parse("2026-09-19"), null, null),
+                "leader-complete-next"
+        );
+        Interaction remarked = interactionService.completeStage(
+                profileA,
+                created.id(),
+                new InteractionStageCompletionRequest(1, next.id(), LocalDate.parse("2026-09-18"), "Уточнили дату", null),
+                "manager-remark-next"
+        );
+        Interaction moved = interactionService.transition(
+                profileA,
+                created.id(),
+                new InteractionTransitionRequest(2, next.id(), null),
+                "move-to-completed"
+        );
+
+        assertThat(leaderMarked.stageCompletions()).singleElement()
+                .satisfies(completion -> assertThat(completion.actorDisplayName()).isEqualTo("Вера Ковалёва"));
+        assertThat(remarked.stageCompletions()).singleElement().satisfies(completion -> {
+            assertThat(completion.completedOn()).isEqualTo(LocalDate.parse("2026-09-18"));
+            assertThat(completion.comment()).isEqualTo("Уточнили дату");
+            assertThat(completion.actorDisplayName()).isEqualTo("Анна Смирнова");
+        });
+        assertThat(moved.currentStageId()).isEqualTo(next.id());
+        assertThat(moved.stageCompletions()).singleElement()
+                .satisfies(completion -> assertThat(completion.stageId()).isEqualTo(next.id()));
+
+        long eventsBefore = count("interaction_events");
+        assertThatThrownBy(() -> interactionService.completeStage(
+                leaderB,
+                created.id(),
+                new InteractionStageCompletionRequest(3, created.stages().get(5).id(), LocalDate.parse("2026-09-19"), null, null),
+                "foreign-leader-complete"
+        )).isInstanceOf(InteractionNotFoundException.class);
+        assertThatThrownBy(() -> interactionService.clearStageCompletion(profileB, created.id(), next.id(), 3, "foreign-clear"))
+                .isInstanceOf(InteractionNotFoundException.class);
+        assertThat(count("interaction_events")).isEqualTo(eventsBefore);
+        assertThat(count("interaction_stage_completions")).isEqualTo(1);
+    }
+
+    @Test
     void commentIsVersionedAndIdempotentAndContactCreationReplays() {
         Contact first = contactService.create(
                 profileA,
@@ -699,6 +897,9 @@ class InteractionServiceTest {
                 8,
                 UUID.randomUUID(),
                 "0000000000000000000000000000000000000000000000000000000000000000",
+                AttachmentKind.OTHER,
+                1,
+                null,
                 profileA.id(),
                 uploadedAt
         );
@@ -802,7 +1003,7 @@ class InteractionServiceTest {
         Interaction reloaded = interactionService.get(profileA, created.id());
         InteractionPage page = interactionService.list(
                 profileA,
-                InteractionFilter.from(ORGANIZATION_A, null, null, null),
+                InteractionFilter.from(ORGANIZATION_A, null, null, null, null),
                 InteractionQuery.from(0, 25, "createdAt,asc")
         );
         assertThat(reloaded.programId()).isEqualTo(programId);
@@ -904,19 +1105,22 @@ class InteractionServiceTest {
         UUID activeProductId = insertProduct("Активный продукт", false);
         insertProduct("Архивный продукт", true);
 
-        assertThat(catalogLookupService.listPrograms(profileA, CatalogQuery.from(0, 25)))
+        assertThat(catalogLookupService.listPrograms(profileA, CatalogQuery.from(0, 25), CatalogEntryState.ACTIVE))
                 .satisfies(page -> {
                     assertThat(page.total()).isEqualTo(1);
                     assertThat(page.items()).extracting(item -> item.id()).containsExactly(activeProgramId);
                 });
-        assertThat(catalogLookupService.listProducts(leaderA, CatalogQuery.from(0, 25)))
+        assertThat(catalogLookupService.listProducts(leaderA, CatalogQuery.from(0, 25), CatalogEntryState.ACTIVE))
                 .satisfies(page -> {
                     assertThat(page.total()).isEqualTo(1);
                     assertThat(page.items()).extracting(item -> item.id()).containsExactly(activeProductId);
                 });
+        assertThat(catalogLookupService.listProducts(leaderA, CatalogQuery.from(0, 25), CatalogEntryState.ALL).items())
+                .extracting(item -> item.name(), item -> item.archived())
+                .containsExactly(tuple("Активный продукт", false), tuple("Архивный продукт", true));
         CrmProfile admin = new CrmProfile(UUID.randomUUID(), UserRole.ADMIN, null, 0);
-        assertThat(catalogLookupService.listPrograms(admin, CatalogQuery.from(0, 25)).items()).isEmpty();
-        assertThat(catalogLookupService.listProducts(admin, CatalogQuery.from(0, 25)).total()).isZero();
+        assertThat(catalogLookupService.listPrograms(admin, CatalogQuery.from(0, 25), CatalogEntryState.ALL).items()).isEmpty();
+        assertThat(catalogLookupService.listProducts(admin, CatalogQuery.from(0, 25), CatalogEntryState.ACTIVE).total()).isZero();
     }
 
     @Test
@@ -1573,7 +1777,7 @@ class InteractionServiceTest {
 
         Map<UUID, InteractionSummary> items = interactionService.list(
                 profileA,
-                InteractionFilter.from(ORGANIZATION_A, null, null, null),
+                InteractionFilter.from(ORGANIZATION_A, null, null, null, null),
                 InteractionQuery.from(0, 25, "createdAt,asc")
         ).items().stream().collect(Collectors.toMap(InteractionSummary::id, Function.identity()));
 
@@ -1632,7 +1836,7 @@ class InteractionServiceTest {
 
         InteractionPage all = interactionService.list(
                 profileA,
-                InteractionFilter.from(null, null, null, null),
+                InteractionFilter.from(null, null, null, null, null),
                 InteractionQuery.from(0, 25, "nextActionAt,asc")
         );
         assertThat(all.total()).isEqualTo(4);
@@ -1644,41 +1848,41 @@ class InteractionServiceTest {
             assertThat(summary.programName()).isNull();
         });
 
-        assertThat(ids(profileA, InteractionFilter.from(null, null, "OVERDUE", null)))
+        assertThat(ids(profileA, InteractionFilter.from(null, null, "OVERDUE", null, null)))
                 .contains(overdue.id())
                 .doesNotContain(nextWeek.id(), withoutNextStep.id());
-        assertThat(ids(profileA, InteractionFilter.from(null, null, "THIS_WEEK", null))).containsExactly(thisWeek.id());
-        assertThat(ids(profileA, InteractionFilter.from(null, null, "NO_NEXT_STEP", null))).containsExactly(withoutNextStep.id());
-        assertThat(ids(profileA, InteractionFilter.from(null, "колледж", null, null)))
+        assertThat(ids(profileA, InteractionFilter.from(null, null, "THIS_WEEK", null, null))).containsExactly(thisWeek.id());
+        assertThat(ids(profileA, InteractionFilter.from(null, null, "NO_NEXT_STEP", null, null))).containsExactly(withoutNextStep.id());
+        assertThat(ids(profileA, InteractionFilter.from(null, "колледж", null, null, null)))
                 .containsExactlyInAnyOrder(thisWeek.id(), withoutNextStep.id());
-        assertThat(ids(profileA, InteractionFilter.from(null, "ЧЕРЕЗ НЕДЕЛЮ", null, null))).containsExactly(nextWeek.id());
-        assertThat(ids(profileA, InteractionFilter.from(null, "100%", null, null))).isEmpty();
-        assertThat(ids(profileA, InteractionFilter.from(null, null, null, "Поиск контакта"))).hasSize(4);
-        assertThat(ids(profileA, InteractionFilter.from(null, null, null, "Нет такого этапа"))).isEmpty();
-        assertThat(ids(profileA, InteractionFilter.from(ORGANIZATION_A2, null, null, null)))
+        assertThat(ids(profileA, InteractionFilter.from(null, "ЧЕРЕЗ НЕДЕЛЮ", null, null, null))).containsExactly(nextWeek.id());
+        assertThat(ids(profileA, InteractionFilter.from(null, "100%", null, null, null))).isEmpty();
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, "Поиск контакта", null))).hasSize(4);
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, "Нет такого этапа", null))).isEmpty();
+        assertThat(ids(profileA, InteractionFilter.from(ORGANIZATION_A2, null, null, null, null)))
                 .containsExactlyInAnyOrder(thisWeek.id(), withoutNextStep.id());
-        assertThat(ids(leaderA, InteractionFilter.from(null, null, null, null))).hasSize(4);
-        assertThat(ids(leaderB, InteractionFilter.from(null, null, null, null))).hasSize(1);
+        assertThat(ids(leaderA, InteractionFilter.from(null, null, null, null, null))).hasSize(4);
+        assertThat(ids(leaderB, InteractionFilter.from(null, null, null, null, null))).hasSize(1);
         assertThat(interactionService.list(
                 new CrmProfile(UUID.randomUUID(), UserRole.ADMIN, TEAM_A, 0),
-                InteractionFilter.from(null, null, null, null),
+                InteractionFilter.from(null, null, null, null, null),
                 InteractionQuery.from(0, 25, "nextActionAt,asc")
         ).total()).isZero();
         InteractionPage secondPage = interactionService.list(
                 profileA,
-                InteractionFilter.from(null, null, null, null),
+                InteractionFilter.from(null, null, null, null, null),
                 InteractionQuery.from(1, 3, "nextActionAt,asc")
         );
         assertThat(secondPage.total()).isEqualTo(4);
         assertThat(secondPage.items()).extracting(InteractionSummary::id).containsExactly(withoutNextStep.id());
-        assertThatThrownBy(() -> InteractionFilter.from(null, null, "LATER", null))
+        assertThatThrownBy(() -> InteractionFilter.from(null, null, "LATER", null, null))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
                     assertThat(exception.field()).isEqualTo("due");
                 });
     }
 
     @Test
-    void deadlineWithoutNextActionFallsOnlyIntoNoNextStep() {
+    void anyPastDeadlineIsOverdueEvenWithoutNextActionText() {
         OffsetDateTime weekStart = InteractionDue.weekStart(OffsetDateTime.now());
         Interaction pastDeadline = interactionService.create(
                 profileA,
@@ -1697,10 +1901,712 @@ class InteractionServiceTest {
                 "work-week-deadline-without-action"
         );
 
-        assertThat(ids(profileA, InteractionFilter.from(null, null, "OVERDUE", null))).isEmpty();
+        assertThat(ids(profileA, InteractionFilter.from(null, null, "OVERDUE", null))).contains(pastDeadline.id());
         assertThat(ids(profileA, InteractionFilter.from(null, null, "THIS_WEEK", null))).isEmpty();
         assertThat(ids(profileA, InteractionFilter.from(null, null, "NO_NEXT_STEP", null)))
                 .containsExactlyInAnyOrder(pastDeadline.id(), weekDeadline.id());
+    }
+
+    @Test
+    void contactIsEditedWithBeforeAfterHistoryRolePrimaryAndConfirmation() {
+        Contact first = contactService.create(
+                profileA,
+                ORGANIZATION_A,
+                new ContactCreateRequest("Ольга Проректор", "Проректор", "olga@example.test", "+7 000 000-07-07",
+                        ContactRole.SIGNATORY, true),
+                "contact-first"
+        );
+        Contact second = contactService.create(
+                profileA,
+                ORGANIZATION_A,
+                new ContactCreateRequest("Пётр Кафедра", null, null, null),
+                "contact-second"
+        );
+        ContactUpdateRequest edit = new ContactUpdateRequest(
+                0, "Пётр Кафедра", "Заведующий кафедрой", null, "+7 000 000-07-08",
+                ContactRole.IMPLEMENTER, true, false, false
+        );
+
+        Contact edited = contactService.update(profileA, ORGANIZATION_A, second.id(), edit, "contact-edit");
+        Contact replayed = contactService.update(profileA, ORGANIZATION_A, second.id(), edit, "contact-edit");
+
+        assertThat(replayed).isEqualTo(edited);
+        assertThat(edited.version()).isEqualTo(1);
+        assertThat(edited.position()).isEqualTo("Заведующий кафедрой");
+        assertThat(edited.role()).isEqualTo(ContactRole.IMPLEMENTER);
+        assertThat(edited.primary()).isTrue();
+        assertThat(contactService.list(profileA, ORGANIZATION_A))
+                .extracting(Contact::name, Contact::primary)
+                .containsExactly(tuple("Пётр Кафедра", true), tuple("Ольга Проректор", false));
+        assertThat(contactService.events(profileA, ORGANIZATION_A, second.id())).singleElement().satisfies(event -> {
+            assertThat(event.actorDisplayName()).isEqualTo("Анна Смирнова");
+            assertThat(event.version()).isEqualTo(1);
+            assertThat(event.changes()).containsExactly(
+                    new ContactEvent.Change("position", null, "Заведующий кафедрой"),
+                    new ContactEvent.Change("phone", null, "+7 000 000-07-08"),
+                    new ContactEvent.Change("role", null, "IMPLEMENTER"),
+                    new ContactEvent.Change("primary", "false", "true")
+            );
+        });
+        assertThat(contactService.events(profileA, ORGANIZATION_A, first.id())).singleElement()
+                .satisfies(event -> assertThat(event.changes())
+                        .containsExactly(new ContactEvent.Change("primary", "true", "false")));
+
+        Contact confirmed = contactService.update(
+                leaderA,
+                ORGANIZATION_A,
+                first.id(),
+                new ContactUpdateRequest(1, "Ольга Проректор", "Проректор", "olga@example.test", "+7 000 000-07-07",
+                        ContactRole.SIGNATORY, false, false, true),
+                "contact-confirm"
+        );
+        assertThat(confirmed.confirmedBy()).isEqualTo(LEADER_A);
+        assertThat(confirmed.confirmedByName()).isEqualTo("Вера Ковалёва");
+        assertThat(confirmed.confirmedAt()).isNotNull();
+        assertThat(contactService.events(profileA, ORGANIZATION_A, first.id())).last()
+                .satisfies(event -> assertThat(event.changes()).extracting(ContactEvent.Change::field).containsExactly("confirmed"));
+    }
+
+    @Test
+    void contactEditChecksScopeVersionAndPrimaryInactiveRule() {
+        Contact contact = contactService.create(
+                profileA, ORGANIZATION_A, new ContactCreateRequest("Ирина Декан", null, null, null), "contact-rules"
+        );
+        ContactUpdateRequest inactive = new ContactUpdateRequest(
+                0, "Ирина Декан", null, null, null, null, false, true, false
+        );
+
+        assertThatThrownBy(() -> contactService.update(profileB, ORGANIZATION_A, contact.id(), inactive, "foreign"))
+                .isInstanceOf(OrganizationNotFoundException.class);
+        assertThatThrownBy(() -> contactService.update(profileB, ORGANIZATION_B, contact.id(), inactive, "foreign-org"))
+                .isInstanceOf(ContactNotFoundException.class);
+        assertThatThrownBy(() -> contactService.events(profileB, ORGANIZATION_A, contact.id()))
+                .isInstanceOf(OrganizationNotFoundException.class);
+        assertThatThrownBy(() -> contactService.update(
+                profileA,
+                ORGANIZATION_A,
+                contact.id(),
+                new ContactUpdateRequest(0, "Ирина Декан", null, null, null, null, true, true, false),
+                "primary-inactive"
+        )).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("primary"));
+
+        contactService.update(profileA, ORGANIZATION_A, contact.id(), inactive, "inactive");
+
+        assertThatThrownBy(() -> contactService.update(profileA, ORGANIZATION_A, contact.id(), inactive, "stale"))
+                .isInstanceOfSatisfying(InteractionConflictException.class, exception -> {
+                    assertThat(exception.code()).isEqualTo("VERSION_CONFLICT");
+                    assertThat(exception.currentVersion()).isEqualTo(1);
+                });
+        assertThat(contactService.events(profileA, ORGANIZATION_A, contact.id())).hasSize(1);
+        assertThatThrownBy(() -> interactionService.create(
+                profileA,
+                new InteractionCreateRequest(ORGANIZATION_A, "С неактуальным", null, null, List.of(contact.id())),
+                "create-with-inactive"
+        )).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("contactIds"));
+        assertThat(count("interactions")).isZero();
+    }
+
+    @Test
+    void titleLinkedContactsAndLastContactAreEditedWithHistory() {
+        Contact kept = contactService.create(
+                profileA, ORGANIZATION_A, new ContactCreateRequest("Игорь Демонстрационный", null, null, null), "c-kept"
+        );
+        Contact added = contactService.create(
+                profileA, ORGANIZATION_A, new ContactCreateRequest("Александра Демонстрационная", null, null, null), "c-added"
+        );
+        Contact retired = contactService.create(
+                profileA, ORGANIZATION_A, new ContactCreateRequest("Бывший сотрудник", null, null, null), "c-retired"
+        );
+        Interaction created = interactionService.create(
+                profileA,
+                new InteractionCreateRequest(ORGANIZATION_A, "Работа", null, null, List.of(kept.id(), retired.id())),
+                "details-create"
+        );
+        contactService.update(
+                profileA,
+                ORGANIZATION_A,
+                retired.id(),
+                new ContactUpdateRequest(0, "Бывший сотрудник", null, null, null, null, false, true, false),
+                "c-retire"
+        );
+        OffsetDateTime lastContactAt = OffsetDateTime.parse("2026-09-25T10:00:00+03:00");
+        InteractionPlanRequest request = new InteractionPlanRequest(0);
+        request.setTitle("Работа, кафедра ИТ");
+        request.setLastContactAt(lastContactAt);
+        request.setContactIds(List.of(kept.id(), retired.id(), added.id()));
+
+        Interaction updated = interactionService.updatePlan(profileA, created.id(), request, "details-update");
+        Interaction replayed = interactionService.updatePlan(profileA, created.id(), request, "details-update");
+
+        assertThat(replayed).isEqualTo(updated);
+        assertThat(updated.title()).isEqualTo("Работа, кафедра ИТ");
+        assertThat(updated.lastContactAt()).isEqualTo(lastContactAt);
+        assertThat(updated.contactIds()).containsExactlyInAnyOrder(kept.id(), retired.id(), added.id());
+        assertThat(interactionService.events(profileA, created.id()).getLast()).satisfies(event -> {
+            assertThat(event.type()).isEqualTo(InteractionEventType.DETAILS_UPDATED);
+            assertThat(event.actorDisplayName()).isEqualTo("Анна Смирнова");
+            assertThat(event.comment()).isEqualTo(
+                    "Название: «Работа» → «Работа, кафедра ИТ»; "
+                            + "Дата последнего контакта: не указана → 25.09.2026 10:00; "
+                            + "Добавлены контакты: «Александра Демонстрационная»"
+            );
+        });
+
+        InteractionPlanRequest removal = new InteractionPlanRequest(1);
+        removal.setContactIds(List.of(added.id()));
+        Interaction removed = interactionService.updatePlan(profileA, created.id(), removal, "details-remove");
+        assertThat(removed.contactIds()).containsExactly(added.id());
+        assertThat(interactionService.events(profileA, created.id()).getLast().comment())
+                .isEqualTo("Удалены контакты: «Бывший сотрудник», «Игорь Демонстрационный»");
+        assertThat(jdbcTemplate.queryForList("SELECT comment FROM interaction_events WHERE interaction_id = ?", String.class, created.id()))
+                .noneMatch(comment -> comment != null && (comment.contains("Демонстрационн") || comment.contains("Бывший")));
+        jdbcTemplate.update("UPDATE contacts SET name = 'Контакт обезличен' WHERE id = ?", retired.id());
+        assertThat(interactionService.events(profileA, created.id()).getLast().comment())
+                .isEqualTo("Удалены контакты: «Игорь Демонстрационный», «Контакт обезличен»")
+                .doesNotContain("Бывший сотрудник");
+
+        InteractionPlanRequest inactiveAgain = new InteractionPlanRequest(2);
+        inactiveAgain.setContactIds(List.of(added.id(), retired.id()));
+        assertThatThrownBy(() -> interactionService.updatePlan(profileA, created.id(), inactiveAgain, "details-inactive"))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.field()).isEqualTo("contactIds"));
+        InteractionPlanRequest blankTitle = new InteractionPlanRequest(2);
+        blankTitle.setTitle(" ");
+        assertThatThrownBy(() -> interactionService.updatePlan(profileA, created.id(), blankTitle, "details-blank"))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.field()).isEqualTo("title"));
+        InteractionPlanRequest stale = new InteractionPlanRequest(0);
+        stale.setTitle("Устаревшая правка");
+        assertThatThrownBy(() -> interactionService.updatePlan(profileA, created.id(), stale, "details-stale"))
+                .isInstanceOfSatisfying(InteractionConflictException.class,
+                        exception -> assertThat(exception.currentVersion()).isEqualTo(2));
+        assertThatThrownBy(() -> interactionService.updatePlan(profileB, created.id(), stale, "details-foreign"))
+                .isInstanceOf(InteractionNotFoundException.class);
+    }
+
+    @Test
+    void closedWorkLeavesTheDefaultListButKeepsHistoryAndCanBeResumed() {
+        Interaction paused = createA("Приостанавливаемая работа", "status-paused");
+        Interaction completed = createA("Завершаемая работа", "status-completed");
+        Interaction active = createA("Активная работа", "status-active");
+        InteractionStatusRequest pause = new InteractionStatusRequest(
+                0, InteractionWorkStatus.PAUSED, "Вуз перенёс старт на следующий год"
+        );
+
+        Interaction pausedResult = interactionService.changeStatus(profileA, paused.id(), pause, "pause");
+        Interaction pausedReplay = interactionService.changeStatus(profileA, paused.id(), pause, "pause");
+        interactionService.changeStatus(
+                leaderA,
+                completed.id(),
+                new InteractionStatusRequest(0, InteractionWorkStatus.COMPLETED, "Продукт передан, вуз работает самостоятельно"),
+                "complete"
+        );
+
+        assertThat(pausedReplay).isEqualTo(pausedResult);
+        assertThat(pausedResult.marks().status()).isEqualTo(InteractionWorkStatus.PAUSED);
+        assertThat(pausedResult.marks().statusReason()).isEqualTo("Вуз перенёс старт на следующий год");
+        assertThat(pausedResult.version()).isEqualTo(1);
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null))).containsExactly(active.id());
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, "COMPLETED", null)))
+                .containsExactly(completed.id());
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, "PAUSED", null)))
+                .containsExactly(paused.id());
+        assertThat(ids(profileA, InteractionFilter.from(ORGANIZATION_A, null, null, null, "ALL", null)))
+                .containsExactlyInAnyOrder(paused.id(), completed.id(), active.id());
+        assertThat(interactionService.events(profileA, completed.id()).getLast()).satisfies(event -> {
+            assertThat(event.type()).isEqualTo(InteractionEventType.STATUS_CHANGED);
+            assertThat(event.comment()).isEqualTo("Работа завершена. Итог: Продукт передан, вуз работает самостоятельно");
+            assertThat(event.actorDisplayName()).isEqualTo("Вера Ковалёва");
+        });
+
+        assertThatThrownBy(() -> interactionService.changeStatus(
+                profileA, active.id(), new InteractionStatusRequest(0, InteractionWorkStatus.COMPLETED, " "), "no-outcome"
+        )).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("reason"));
+        assertThatThrownBy(() -> interactionService.changeStatus(
+                profileA, paused.id(), new InteractionStatusRequest(0, InteractionWorkStatus.ACTIVE, null), "stale-resume"
+        )).isInstanceOfSatisfying(InteractionConflictException.class,
+                exception -> assertThat(exception.currentVersion()).isEqualTo(1));
+        assertThatThrownBy(() -> interactionService.changeStatus(
+                profileB, paused.id(), new InteractionStatusRequest(1, InteractionWorkStatus.ACTIVE, null), "foreign-resume"
+        )).isInstanceOf(InteractionNotFoundException.class);
+        assertThatThrownBy(() -> interactionService.changeStatus(profileA, paused.id(), pause, "repeat-pause"))
+                .isInstanceOf(InteractionConflictException.class);
+
+        Interaction resumed = interactionService.changeStatus(
+                profileA, paused.id(), new InteractionStatusRequest(1, InteractionWorkStatus.ACTIVE, null), "resume"
+        );
+        assertThat(resumed.marks().status()).isEqualTo(InteractionWorkStatus.ACTIVE);
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null)))
+                .containsExactlyInAnyOrder(active.id(), paused.id());
+    }
+
+    @Test
+    void flagsAreSavedWithHistoryAndSelectWorkInTheList() {
+        Interaction waiting = createA("Ждём доступы", "flags-waiting");
+        Interaction plain = createA("Без признаков", "flags-plain");
+        InteractionFlagsRequest flags = new InteractionFlagsRequest(
+                0,
+                InteractionWaiting.UNIVERSITY,
+                "Ждём доступы для преподавателей",
+                "У преподавателей нет доступа к стенду",
+                InteractionRiskLevel.HIGH,
+                "Вуз не отвечает три недели"
+        );
+
+        Interaction flagged = interactionService.updateFlags(profileA, waiting.id(), flags, "flags");
+        Interaction replayed = interactionService.updateFlags(profileA, waiting.id(), flags, "flags");
+
+        assertThat(replayed).isEqualTo(flagged);
+        assertThat(flagged.marks().waitingOn()).isEqualTo(InteractionWaiting.UNIVERSITY);
+        assertThat(flagged.marks().problem()).isEqualTo("У преподавателей нет доступа к стенду");
+        assertThat(flagged.marks().riskLevel()).isEqualTo(InteractionRiskLevel.HIGH);
+        for (String flag : List.of("WAITING_UNIVERSITY", "PROBLEM", "RISK")) {
+            assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, flag))).containsExactly(waiting.id());
+        }
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, "WAITING_RTK"))).isEmpty();
+        assertThat(interactionService.list(
+                profileA,
+                InteractionFilter.from(null, null, null, null),
+                InteractionQuery.from(0, 25, "createdAt,asc")
+        ).items()).filteredOn(item -> item.id().equals(waiting.id())).singleElement()
+                .satisfies(item -> assertThat(item.marks().riskReason()).isEqualTo("Вуз не отвечает три недели"));
+        assertThat(interactionService.events(profileA, waiting.id()).getLast()).satisfies(event -> {
+            assertThat(event.type()).isEqualTo(InteractionEventType.DETAILS_UPDATED);
+            assertThat(event.comment()).isEqualTo(
+                    "Ждём вуз: «Ждём доступы для преподавателей»; Есть проблема: «У преподавателей нет доступа к стенду»; "
+                            + "Риск высокий: «Вуз не отвечает три недели»"
+            );
+        });
+
+        assertThatThrownBy(() -> interactionService.updateFlags(
+                profileA,
+                plain.id(),
+                new InteractionFlagsRequest(0, null, null, null, InteractionRiskLevel.MEDIUM, null),
+                "no-reason"
+        )).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("riskReason"));
+        assertThatThrownBy(() -> interactionService.updateFlags(
+                profileB, waiting.id(), new InteractionFlagsRequest(1, null, null, null, null, null), "foreign"
+        )).isInstanceOf(InteractionNotFoundException.class);
+
+        Interaction cleared = interactionService.updateFlags(
+                profileA, waiting.id(), new InteractionFlagsRequest(1, null, null, null, null, null), "flags-clear"
+        );
+        assertThat(cleared.marks())
+                .isEqualTo(new InteractionMarks(InteractionWorkStatus.ACTIVE, null, null, null, null, null, null));
+        assertThat(interactionService.events(profileA, waiting.id()).getLast().comment())
+                .isEqualTo("Ожидание снято; Проблема снята; Риск снят");
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, "RISK"))).isEmpty();
+    }
+
+    @Test
+    void documentsCarryKindVersionsAndSoftDeletionByAuthorOrLeaderWithHistory() {
+        Interaction created = createA("Пакет документов", "documents-create");
+        UUID stageId = created.currentStageId();
+        AttachmentStorage storage = mock(AttachmentStorage.class);
+        AttachmentService attachments = attachmentService(storage);
+
+        Attachment contract = attachments.upload(profileA, created.id(),
+                new AttachmentUploadRequest(stageId, AttachmentKind.CONTRACT, null), file("uat-договор.docx"), "doc-v1");
+        Attachment secondVersion = attachments.upload(profileA, created.id(),
+                new AttachmentUploadRequest(stageId, null, contract.id()), file("uat-договор.docx"), "doc-v2");
+        Attachment leaderAct = attachments.upload(leaderA, created.id(),
+                new AttachmentUploadRequest(stageId, AttachmentKind.ACT, null), file("акт.pdf"), "leader-act");
+
+        assertThat(contract.kind()).isEqualTo(AttachmentKind.CONTRACT);
+        assertThat(contract.revision()).isEqualTo(1);
+        assertThat(secondVersion.revision()).isEqualTo(2);
+        assertThat(secondVersion.replacesId()).isEqualTo(contract.id());
+        assertThat(secondVersion.kind()).isEqualTo(AttachmentKind.CONTRACT);
+        assertThat(interactionService.get(profileA, created.id()).attachments()).hasSize(3);
+        assertThatThrownBy(() -> attachments.upload(profileA, created.id(),
+                new AttachmentUploadRequest(stageId, null, contract.id()), file("uat-договор.docx"), "doc-v2-parallel"))
+                .isInstanceOfSatisfying(InteractionConflictException.class,
+                        exception -> assertThat(exception.code()).isEqualTo("VERSION_CONFLICT"));
+        verify(storage, times(3)).store(any(), any(), any());
+
+        Attachment relabeled = attachments.updateKind(profileA, secondVersion.id(),
+                new AttachmentKindUpdateRequest(secondVersion.version(), AttachmentKind.SIGNED_SCAN));
+        assertThat(relabeled.kind()).isEqualTo(AttachmentKind.SIGNED_SCAN);
+        assertThat(relabeled.version()).isEqualTo(secondVersion.version() + 1);
+        assertThatThrownBy(() -> attachments.updateKind(profileA, secondVersion.id(),
+                new AttachmentKindUpdateRequest(secondVersion.version(), AttachmentKind.ACT)))
+                .isInstanceOfSatisfying(InteractionConflictException.class,
+                        exception -> assertThat(exception.currentVersion()).isEqualTo(relabeled.version()));
+        assertThatThrownBy(() -> attachments.updateKind(profileB, secondVersion.id(),
+                new AttachmentKindUpdateRequest(relabeled.version(), AttachmentKind.ACT)))
+                .isInstanceOf(InteractionNotFoundException.class);
+
+        assertThat(attachments.preview(profileA, leaderAct.id()).attachment().mediaType()).isEqualTo("application/pdf");
+        assertThatThrownBy(() -> attachments.preview(profileA, secondVersion.id()))
+                .isInstanceOf(AttachmentValidationException.class);
+
+        assertThatThrownBy(() -> attachments.delete(profileA, created.id(), leaderAct.id(),
+                new AttachmentDeletionRequest(0, null), "kam-deletes-leader-file"))
+                .isInstanceOf(AttachmentDeletionForbiddenException.class);
+        assertThatThrownBy(() -> attachments.delete(leaderB, created.id(), contract.id(),
+                new AttachmentDeletionRequest(0, null), "foreign-leader-delete"))
+                .isInstanceOf(InteractionNotFoundException.class);
+        assertThatThrownBy(() -> attachments.delete(profileA, created.id(), contract.id(),
+                new AttachmentDeletionRequest(7, null), "stale-delete"))
+                .isInstanceOfSatisfying(InteractionConflictException.class,
+                        exception -> assertThat(exception.currentVersion()).isZero());
+
+        AttachmentDeletionRequest deletion = new AttachmentDeletionRequest(0, "приложен по ошибке");
+        Interaction afterDeletion = attachments.delete(profileA, created.id(), contract.id(), deletion, "delete-v1");
+        Interaction replayed = attachments.delete(profileA, created.id(), contract.id(), deletion, "delete-v1");
+
+        assertThat(replayed).isEqualTo(afterDeletion);
+        assertThat(afterDeletion.version()).isEqualTo(1);
+        assertThat(afterDeletion.attachments()).extracting(Attachment::id).containsExactly(secondVersion.id(), leaderAct.id());
+        assertThatThrownBy(() -> attachments.get(profileA, contract.id())).isInstanceOf(AttachmentNotFoundException.class);
+        assertThatThrownBy(() -> attachments.download(profileA, contract.id())).isInstanceOf(AttachmentNotFoundException.class);
+        assertThat(jdbcTemplate.queryForObject("SELECT deleted_by FROM attachments WHERE id = ?", UUID.class, contract.id()))
+                .isEqualTo(MANAGER_A);
+        List<InteractionEvent> history = interactionService.events(profileA, created.id());
+        assertThat(history).filteredOn(event -> event.type() == InteractionEventType.ATTACHMENT_DELETED).singleElement()
+                .satisfies(event -> {
+                    assertThat(event.comment()).contains("«uat-договор.docx»", "версия 1", "Причина: приложен по ошибке");
+                    assertThat(event.actorProfileId()).isEqualTo(MANAGER_A);
+                    assertThat(event.version()).isEqualTo(1);
+                });
+
+        Interaction afterLeaderDeletion = attachments.delete(leaderA, created.id(), secondVersion.id(),
+                new AttachmentDeletionRequest(1, null), "leader-deletes-kam-file");
+        assertThat(afterLeaderDeletion.version()).isEqualTo(2);
+        assertThat(afterLeaderDeletion.attachments()).extracting(Attachment::id).containsExactly(leaderAct.id());
+    }
+
+    @Test
+    void kamRecordsContractLicenseAndTransfersPerProductWithHistoryReplayAndConflicts() {
+        UUID secureId = insertProduct("Защищённая связь", false);
+        UUID cloudId = insertProduct("Облачная платформа", false);
+        Interaction created = interactionService.create(
+                profileA,
+                new InteractionCreateRequest(ORGANIZATION_A, "Договор по продуктам", null, null, List.of(), null,
+                        List.of(secureId, cloudId), null),
+                "agreement-create"
+        );
+        UUID secureAgreementId = agreement(created, secureId).id();
+        AttachmentService attachments = attachmentService();
+        Attachment scan = attachments.upload(profileA, created.id(),
+                new AttachmentUploadRequest(created.currentStageId(), AttachmentKind.SIGNED_SCAN, null),
+                file("uat-скан-лицензии.pdf"), "agreement-scan");
+        ProductAgreementUpdateRequest contract = new ProductAgreementUpdateRequest(
+                0,
+                new ProductAgreementContract(" 007/2026 ", true, 2027, scan.id()),
+                null
+        );
+
+        Interaction updated = productAgreementService.update(profileA, created.id(), secureAgreementId, contract, "contract");
+        Interaction replayed = productAgreementService.update(profileA, created.id(), secureAgreementId, contract, "contract");
+
+        assertThat(replayed).isEqualTo(updated);
+        assertThat(updated.version()).isEqualTo(1);
+        assertThat(agreement(updated, secureId)).satisfies(agreement -> {
+            assertThat(agreement.contractNumber()).isEqualTo("007/2026");
+            assertThat(agreement.licenseSigned()).isTrue();
+            assertThat(agreement.licenseExpiryYear()).isEqualTo(2027);
+            assertThat(agreement.scanAttachmentId()).isEqualTo(scan.id());
+            assertThat(agreement.vendorName()).startsWith("Вендор ");
+        });
+        assertThat(agreement(updated, cloudId)).satisfies(agreement -> {
+            assertThat(agreement.contractNumber()).isNull();
+            assertThat(agreement.licenseSigned()).isNull();
+            assertThat(agreement.scanAttachmentId()).isNull();
+        });
+        assertThat(interactionService.events(profileA, created.id()).getLast()).satisfies(event -> {
+            assertThat(event.type()).isEqualTo(InteractionEventType.AGREEMENT_UPDATED);
+            assertThat(event.actorProfileId()).isEqualTo(MANAGER_A);
+            assertThat(event.comment()).contains(
+                    "«Защищённая связь»",
+                    "номер договора: не указан → 007/2026",
+                    "подписание лицензии: не указано → подписана",
+                    "срок лицензии: не указан → 2027",
+                    "скан: нет → «uat-скан-лицензии.pdf»"
+            );
+        });
+
+        ProductAgreementUpdateRequest correction = new ProductAgreementUpdateRequest(
+                0,
+                new ProductAgreementContract("007/2026", true, 2028, scan.id()),
+                null
+        );
+        assertThatThrownBy(() -> productAgreementService.update(profileA, created.id(), secureAgreementId, correction, "contract"))
+                .isInstanceOfSatisfying(InteractionConflictException.class,
+                        exception -> assertThat(exception.code()).isEqualTo("IDEMPOTENCY_CONFLICT"));
+        assertThatThrownBy(() -> productAgreementService.update(profileA, created.id(), secureAgreementId, correction, "stale"))
+                .isInstanceOfSatisfying(InteractionConflictException.class,
+                        exception -> assertThat(exception.currentVersion()).isEqualTo(1));
+        assertThatThrownBy(() -> productAgreementService.update(leaderB, created.id(), secureAgreementId, correction, "foreign"))
+                .isInstanceOf(InteractionNotFoundException.class);
+        assertThatThrownBy(() -> productAgreementService.update(profileA, created.id(), UUID.randomUUID(),
+                new ProductAgreementUpdateRequest(1, new ProductAgreementContract("1", null, null, null), null), "missing"))
+                .isInstanceOf(ProductAgreementNotFoundException.class);
+        assertThatThrownBy(() -> productAgreementService.update(profileA, created.id(), secureAgreementId,
+                new ProductAgreementUpdateRequest(1, new ProductAgreementContract("1", null, 1999, null), null), "bad-year"))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.field()).isEqualTo("contract.licenseExpiryYear"));
+        assertThatThrownBy(() -> productAgreementService.update(profileA, created.id(), secureAgreementId,
+                new ProductAgreementUpdateRequest(1, new ProductAgreementContract("1", null, null, UUID.randomUUID()), null),
+                "foreign-scan"))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.field()).isEqualTo("contract.scanAttachmentId"));
+        assertThatThrownBy(() -> attachments.delete(profileA, created.id(), scan.id(), new AttachmentDeletionRequest(1, null),
+                "delete-used-scan"))
+                .isInstanceOf(AttachmentValidationException.class);
+
+        LocalDate today = LocalDate.now(ZoneId.of("Europe/Moscow"));
+        assertThatThrownBy(() -> productAgreementService.update(profileA, created.id(), secureAgreementId,
+                new ProductAgreementUpdateRequest(1, null, List.of(
+                        new ProductTransfer(ProductTransferKind.MATERIALS, ProductTransferStatus.TRANSFERRED, today.plusDays(1), null)
+                )), "future-transfer"))
+                .isInstanceOf(InteractionValidationException.class);
+        assertThatThrownBy(() -> productAgreementService.update(profileA, created.id(), secureAgreementId,
+                new ProductAgreementUpdateRequest(1, null, List.of(
+                        new ProductTransfer(ProductTransferKind.DOCUMENTATION, ProductTransferStatus.NOT_TRANSFERRED, today, null)
+                )), "dated-missing-transfer"))
+                .isInstanceOf(InteractionValidationException.class);
+
+        Interaction transferred = productAgreementService.update(profileA, created.id(), secureAgreementId,
+                new ProductAgreementUpdateRequest(1, null, List.of(
+                        new ProductTransfer(ProductTransferKind.DOCUMENTATION, ProductTransferStatus.NOT_TRANSFERRED, null, null),
+                        new ProductTransfer(ProductTransferKind.MATERIALS, ProductTransferStatus.TRANSFERRED, today, scan.id()),
+                        new ProductTransfer(ProductTransferKind.LICENSE, ProductTransferStatus.TRANSFERRED, today, null)
+                )), "transfers");
+
+        assertThat(agreement(transferred, secureId)).satisfies(agreement -> {
+            assertThat(agreement.transferStatus()).isEqualTo("Передано частично");
+            assertThat(agreement.contractNumber()).isEqualTo("007/2026");
+            assertThat(agreement.transfers()).extracting(ProductTransfer::kind).containsExactlyInAnyOrder(
+                    ProductTransferKind.MATERIALS, ProductTransferKind.LICENSE, ProductTransferKind.DOCUMENTATION);
+        });
+        assertThat(agreement(transferred, cloudId).transfers()).isEmpty();
+        assertThat(interactionService.events(profileA, created.id()).getLast().comment())
+                .contains("материалы: не указано → передано", "документация: не указано → не передано",
+                        "статус передачи: не указан → Передано частично");
+        assertThatThrownBy(() -> interactionService.updatePlan(profileA, created.id(),
+                new InteractionPlanRequest(2, null, null, null, Optional.of(List.of(cloudId))), "remove-filled-product"))
+                .isInstanceOf(InteractionValidationException.class);
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, 2027))).containsExactly(created.id());
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, 2026))).isEmpty();
+
+        Interaction cleared = productAgreementService.update(profileA, created.id(), secureAgreementId,
+                new ProductAgreementUpdateRequest(2, new ProductAgreementContract(null, null, null, null), List.of()), "clear");
+        assertThat(agreement(cleared, secureId)).satisfies(agreement -> {
+            assertThat(agreement.contractNumber()).isNull();
+            assertThat(agreement.licenseExpiryYear()).isNull();
+            assertThat(agreement.scanAttachmentId()).isNull();
+            assertThat(agreement.transferStatus()).isNull();
+            assertThat(agreement.transfers()).isEmpty();
+        });
+        assertThat(interactionService.events(profileA, created.id()).getLast().comment())
+                .contains("номер договора: 007/2026 → не указан", "статус передачи: Передано частично → не указан");
+        assertThat(interactionService.updatePlan(profileA, created.id(),
+                new InteractionPlanRequest(3, null, null, null, Optional.of(List.of(cloudId))), "remove-cleared-product")
+                .productIds()).containsExactly(cloudId);
+    }
+
+    private ProductAgreement agreement(Interaction interaction, UUID productId) {
+        return interaction.productAgreements().stream()
+                .filter(agreement -> agreement.productId().equals(productId))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private MockMultipartFile file(String name) {
+        String mediaType = name.endsWith(".pdf") ? "application/pdf"
+                : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        return new MockMultipartFile("file", name, mediaType, new byte[]{1, 2, 3});
+    }
+
+    private AttachmentService attachmentService() {
+        return attachmentService(mock(AttachmentStorage.class));
+    }
+
+    private AttachmentService attachmentService(AttachmentStorage storage) {
+        AttachmentContentValidator contentValidator = mock(AttachmentContentValidator.class);
+        AttachmentScanner scanner = mock(AttachmentScanner.class);
+        when(contentValidator.inspect(any())).thenAnswer(invocation -> {
+            MockMultipartFile uploaded = invocation.getArgument(0);
+            return new AttachmentUploadInspection(uploaded.getOriginalFilename(), uploaded.getContentType(), uploaded.getSize(),
+                    "0".repeat(64));
+        });
+        when(storage.open(any())).thenAnswer(invocation -> new ByteArrayInputStream(new byte[]{1, 2, 3}));
+        when(scanner.scan(any(), anyLong())).thenReturn(AttachmentScanOutcome.CLEAN);
+        return new AttachmentService(
+                organizationRepository,
+                interactionRepository,
+                attachmentRepository,
+                contentValidator,
+                storage,
+                scanner,
+                commandIdempotencyRepository,
+                interactionService,
+                objectMapper
+        );
+    }
+
+    @Test
+    void workRowsShowLastEventAndStageEntryAndFilterByResponsibleStatusAndStageAge() {
+        jdbcTemplate.update("UPDATE crm_user_profiles SET team_id = ? WHERE id = ?", TEAM_A, MANAGER_A);
+        insertOrganization(ORGANIZATION_A2, "Колледж без КАМ", TEAM_A, null);
+        Interaction stalled = interactionService.create(
+                profileA,
+                new InteractionCreateRequest(ORGANIZATION_A, "Застрявшая работа", "Позвонить", null, List.of()),
+                "work-stalled"
+        );
+        Interaction unassigned = interactionService.create(
+                leaderA,
+                new InteractionCreateRequest(ORGANIZATION_A2, "Работа без КАМ", null, null, List.of()),
+                "work-unassigned"
+        );
+        Interaction moved = interactionService.transition(
+                leaderA,
+                unassigned.id(),
+                new InteractionTransitionRequest(0, unassigned.stages().get(1).id(), null, List.of(), null),
+                "work-unassigned-move"
+        );
+        Interaction completed = createA("Завершённая работа", "work-completed");
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'COMPLETED' WHERE id = ?", completed.id());
+        jdbcTemplate.update(
+                "UPDATE interaction_events SET occurred_at = ? WHERE interaction_id = ?",
+                OffsetDateTime.now().minusDays(40),
+                stalled.id()
+        );
+
+        InteractionSummary movedRow = interactionService.list(
+                leaderA,
+                InteractionFilter.from(ORGANIZATION_A2, null, null, null),
+                InteractionQuery.from(0, 25, "nextActionAt,asc")
+        ).items().getFirst();
+        assertThat(movedRow.id()).isEqualTo(moved.id());
+        assertThat(movedRow.lastEventType()).isEqualTo("TRANSITIONED");
+        assertThat(movedRow.lastEventAt()).isNotNull();
+        assertThat(movedRow.stageEnteredAt()).isEqualTo(movedRow.lastEventAt());
+        InteractionSummary stalledRow = interactionService.list(
+                profileA,
+                InteractionFilter.from(null, "Застрявшая", null, null),
+                InteractionQuery.from(0, 25, "nextActionAt,asc")
+        ).items().getFirst();
+        assertThat(stalledRow.lastEventType()).isEqualTo("CREATED");
+        assertThat(stalledRow.stageEnteredAt()).isBefore(OffsetDateTime.now().minusDays(39));
+
+        assertThat(ids(leaderA, filter(MANAGER_A.toString(), null, null))).containsExactly(stalled.id());
+        assertThat(ids(leaderA, filter(MANAGER_A.toString(), "ALL", null)))
+                .containsExactlyInAnyOrder(stalled.id(), completed.id());
+        assertThat(ids(leaderA, filter("UNASSIGNED", null, null))).containsExactly(moved.id());
+        assertThat(ids(leaderA, filter(null, null, null))).containsExactlyInAnyOrder(stalled.id(), moved.id());
+        assertThat(ids(leaderA, filter(null, "COMPLETED", null))).containsExactly(completed.id());
+        assertThat(ids(leaderA, filter(null, "PAUSED", null))).isEmpty();
+        assertThat(ids(leaderA, filter(null, null, "30"))).containsExactly(stalled.id());
+        assertThat(ids(profileB, filter(MANAGER_A.toString(), null, null))).isEmpty();
+        assertThat(ids(new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0), filter(null, "ALL", null)))
+                .contains(stalled.id(), moved.id(), completed.id());
+        assertThatThrownBy(() -> filter("не профиль", null, null))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
+                    assertThat(exception.field()).isEqualTo("responsible");
+                });
+        assertThatThrownBy(() -> filter(null, "ARCHIVED", null))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
+                    assertThat(exception.field()).isEqualTo("status");
+                });
+        assertThatThrownBy(() -> filter(null, null, "0"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
+                    assertThat(exception.field()).isEqualTo("minDaysOnStage");
+                });
+    }
+
+    @Test
+    void completesStepWithHistoryReplayVersionConflictAndScope() {
+        OffsetDateTime dueAt = OffsetDateTime.parse("2026-09-24T10:00:00+03:00");
+        Interaction created = interactionService.create(
+                profileA,
+                new InteractionCreateRequest(ORGANIZATION_A, "Звонок проректору", "Позвонить проректору", dueAt, List.of()),
+                "step-create"
+        );
+        OffsetDateTime nextDueAt = OffsetDateTime.parse("2026-10-01T12:00:00+03:00");
+        InteractionStepCompletionRequest request = new InteractionStepCompletionRequest(
+                0,
+                "Проректор согласен на встречу",
+                new InteractionNextStep("Отправить проект договора", nextDueAt)
+        );
+
+        Interaction completed = interactionService.completeStep(profileA, created.id(), request, "step-complete");
+        Interaction replayed = interactionService.completeStep(profileA, created.id(), request, "step-complete");
+
+        assertThat(completed.version()).isEqualTo(1);
+        assertThat(completed.nextAction()).isEqualTo("Отправить проект договора");
+        assertThat(completed.nextActionAt()).isEqualTo(nextDueAt);
+        assertThat(replayed).isEqualTo(completed);
+        assertThat(interactionService.events(profileA, created.id())).hasSize(2).last().satisfies(event -> {
+            assertThat(event.type()).isEqualTo(InteractionEventType.PLAN_UPDATED);
+            assertThat(event.comment()).isEqualTo(
+                    "Шаг выполнен: «Позвонить проректору» (срок 24.09.2026 10:00). Результат: Проректор согласен на встречу"
+            );
+            assertThat(event.nextStep()).isEqualTo(new InteractionNextStep("Отправить проект договора", nextDueAt));
+            assertThat(event.actorProfileId()).isEqualTo(MANAGER_A);
+        });
+
+        assertThatThrownBy(() -> interactionService.completeStep(
+                profileA,
+                created.id(),
+                new InteractionStepCompletionRequest(0, "Другой результат", null),
+                "step-complete"
+        )).isInstanceOfSatisfying(InteractionConflictException.class, exception -> {
+            assertThat(exception.code()).isEqualTo("IDEMPOTENCY_CONFLICT");
+        });
+        assertThatThrownBy(() -> interactionService.completeStep(
+                profileA,
+                created.id(),
+                new InteractionStepCompletionRequest(0, null, null),
+                "step-stale"
+        )).isInstanceOfSatisfying(InteractionConflictException.class, exception -> {
+            assertThat(exception.code()).isEqualTo("VERSION_CONFLICT");
+            assertThat(exception.currentVersion()).isEqualTo(1);
+        });
+        assertThatThrownBy(() -> interactionService.completeStep(
+                profileB,
+                created.id(),
+                new InteractionStepCompletionRequest(1, null, null),
+                "step-foreign"
+        )).isInstanceOf(InteractionNotFoundException.class);
+        assertThatThrownBy(() -> interactionService.completeStep(
+                new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0),
+                created.id(),
+                new InteractionStepCompletionRequest(1, null, null),
+                "step-management"
+        )).isInstanceOf(ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException.class);
+
+        Interaction cleared = interactionService.completeStep(
+                leaderA,
+                created.id(),
+                new InteractionStepCompletionRequest(1, null, null),
+                "step-clear"
+        );
+        assertThat(cleared.nextAction()).isNull();
+        assertThat(cleared.nextActionAt()).isNull();
+        assertThat(interactionService.events(profileA, created.id()).getLast()).satisfies(event -> {
+            assertThat(event.comment()).isEqualTo("Шаг выполнен: «Отправить проект договора» (срок 01.10.2026 12:00)");
+            assertThat(event.nextStep()).isEqualTo(new InteractionNextStep(null, null));
+            assertThat(event.actorProfileId()).isEqualTo(LEADER_A);
+        });
+        assertThatThrownBy(() -> interactionService.completeStep(
+                profileA,
+                created.id(),
+                new InteractionStepCompletionRequest(2, null, null),
+                "step-nothing"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
+            assertThat(exception.field()).isEqualTo("nextStep");
+        });
+        assertThat(interactionService.get(profileA, created.id()).version()).isEqualTo(2);
+    }
+
+    private InteractionFilter filter(String responsible, String status, String minDaysOnStage) {
+        return InteractionFilter.from(null, null, null, null, status, null, null, responsible, minDaysOnStage);
     }
 
     private List<UUID> ids(CrmProfile profile, InteractionFilter filter) {
@@ -1713,6 +2619,28 @@ class InteractionServiceTest {
 
     private void insertProfile(UUID id, String displayName) {
         jdbcTemplate.update("INSERT INTO crm_user_profiles (id, display_name) VALUES (?, ?)", id, displayName);
+    }
+
+    private UUID insertCleanAttachment(UUID interactionId, UUID stageId) {
+        UUID attachmentId = UUID.randomUUID();
+        OffsetDateTime uploadedAt = OffsetDateTime.parse("2026-09-23T08:00:00Z");
+        attachmentRepository.insert(
+                attachmentId,
+                interactionId,
+                stageId,
+                "report.pdf",
+                "application/pdf",
+                8,
+                UUID.randomUUID(),
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                AttachmentKind.OTHER,
+                1,
+                null,
+                profileA.id(),
+                uploadedAt
+        );
+        attachmentRepository.updateStatus(attachmentId, ru.rtk.crm.attachment.AttachmentStatus.CLEAN, uploadedAt);
+        return attachmentId;
     }
 
     private Interaction createA(String title, String idempotencyKey) {
@@ -1769,12 +2697,16 @@ class InteractionServiceTest {
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS teams (
                     id UUID PRIMARY KEY,
-                    name VARCHAR(160) NOT NULL
+                    name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL, default_workflow_template_id UUID
                 )
                 """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS crm_user_profiles (
                     id UUID PRIMARY KEY,
+                    login VARCHAR(200),
+                    idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    activation_requested_at TIMESTAMP WITH TIME ZONE,
+                    anonymized_at TIMESTAMP WITH TIME ZONE,
                     display_name VARCHAR(200) NOT NULL,
                     role VARCHAR(16) NOT NULL DEFAULT 'USER',
                     team_id UUID,
@@ -1789,12 +2721,24 @@ class InteractionServiceTest {
                     team_id UUID NOT NULL,
                     owner_manager_id UUID,
                     version INTEGER NOT NULL,
-                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL, status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, city VARCHAR(200), website VARCHAR(300), inn VARCHAR(12)
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS organization_deputies (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, deputy_profile_id UUID NOT NULL,
+                    deputy_display_name VARCHAR(200) NOT NULL, starts_on DATE NOT NULL, ends_on DATE NOT NULL,
+                    starts_at TIMESTAMP WITH TIME ZONE NOT NULL, ends_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    command_id UUID NOT NULL, actor_profile_id UUID NOT NULL, actor_display_name VARCHAR(200) NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, ended_at TIMESTAMP WITH TIME ZONE,
+                    ended_by_profile_id UUID, ended_by_display_name VARCHAR(200)
                 )
                 """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS contacts (
+                    decision_role VARCHAR(32), primary_contact BOOLEAN DEFAULT FALSE NOT NULL, inactive BOOLEAN DEFAULT FALSE NOT NULL, confirmed_at TIMESTAMP WITH TIME ZONE, confirmed_by UUID,
                     id UUID PRIMARY KEY,
+                    personal_data_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
                     organization_id UUID NOT NULL,
                     name VARCHAR(200) NOT NULL,
                     position VARCHAR(200),
@@ -1804,6 +2748,17 @@ class InteractionServiceTest {
                     created_by UUID NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS contact_events (
+                    id UUID PRIMARY KEY,
+                    contact_id UUID NOT NULL,
+                    command_id UUID NOT NULL,
+                    actor_profile_id UUID NOT NULL,
+                    changes VARCHAR(10000) NOT NULL,
+                    version INTEGER NOT NULL,
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """);
         jdbcTemplate.execute("""
@@ -1842,6 +2797,7 @@ class InteractionServiceTest {
                 """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS interactions (
+                    work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500), problem VARCHAR(1000), risk_level VARCHAR(16), risk_reason VARCHAR(1000),
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
                     title VARCHAR(200) NOT NULL,
@@ -1865,8 +2821,17 @@ class InteractionServiceTest {
                     license_signed BOOLEAN,
                     license_expiry_year INTEGER,
                     transfer_status VARCHAR(160),
+                    scan_attachment_id UUID,
+                    version INTEGER DEFAULT 0 NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL, archived_at TIMESTAMP WITH TIME ZONE
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS product_transfers (
+                    agreement_id UUID NOT NULL, kind VARCHAR(16) NOT NULL, status VARCHAR(16) NOT NULL,
+                    transferred_on DATE, attachment_id UUID, updated_by UUID NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL, PRIMARY KEY (agreement_id, kind)
                 )
                 """);
         jdbcTemplate.execute("""
@@ -1948,6 +2913,12 @@ class InteractionServiceTest {
                     storage_key UUID NOT NULL,
                     checksum CHAR(64) NOT NULL,
                     status VARCHAR(32) NOT NULL,
+                    kind VARCHAR(32) DEFAULT 'OTHER' NOT NULL,
+                    revision INTEGER DEFAULT 1 NOT NULL,
+                    replaces_id UUID,
+                    version INTEGER DEFAULT 0 NOT NULL,
+                    deleted_at TIMESTAMP WITH TIME ZONE,
+                    deleted_by UUID,
                     created_by UUID NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -1973,6 +2944,34 @@ class InteractionServiceTest {
                     owner_manager_id_snapshot UUID,
                     version INTEGER NOT NULL,
                     occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS interaction_event_contacts (
+                    event_id UUID NOT NULL,
+                    contact_id UUID NOT NULL,
+                    change_type VARCHAR(16) NOT NULL,
+                    PRIMARY KEY (event_id, contact_id)
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS organization_assignment_events (
+                    reason VARCHAR(32), handover_note VARCHAR(2000),
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, command_id UUID NOT NULL,
+                    previous_owner_manager_id UUID, previous_owner_manager_display_name VARCHAR(200),
+                    owner_manager_id UUID, new_owner_manager_display_name VARCHAR(200), actor_profile_id UUID NOT NULL,
+                    actor_display_name VARCHAR(200) NOT NULL, request_id VARCHAR(64) NOT NULL, version INTEGER NOT NULL,
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS interaction_stage_completions (
+                    interaction_id UUID NOT NULL,
+                    stage_id UUID NOT NULL,
+                    completed_on DATE NOT NULL,
+                    comment VARCHAR(4000),
+                    event_id UUID NOT NULL,
+                    PRIMARY KEY (interaction_id, stage_id)
                 )
                 """);
     }

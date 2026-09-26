@@ -15,12 +15,16 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
+import ru.rtk.crm.access.AccountSyncException;
 import ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException;
 import ru.rtk.crm.access.CrmProfileNotFoundException;
 import ru.rtk.crm.access.CrmProfilePendingException;
 import ru.rtk.crm.access.TeamNotFoundException;
 import ru.rtk.crm.access.AdminCrmProfileAccessDeniedException;
 import ru.rtk.crm.access.AdminCrmProfileNotFoundException;
+import ru.rtk.crm.catalog.CatalogChangeAccessDeniedException;
+import ru.rtk.crm.catalog.CatalogEntryNotFoundException;
+import ru.rtk.crm.catalog.ContactNotFoundException;
 import ru.rtk.crm.catalog.InvalidOrganizationQueryException;
 import ru.rtk.crm.catalog.OrganizationAssignmentAccessDeniedException;
 import ru.rtk.crm.catalog.OrganizationNotFoundException;
@@ -28,12 +32,14 @@ import ru.rtk.crm.catalogimport.CatalogImportAccessDeniedException;
 import ru.rtk.crm.catalogimport.CatalogImportJobNotFoundException;
 import ru.rtk.crm.catalogimport.CatalogImportNotFoundException;
 import ru.rtk.crm.attachment.AttachmentBindingException;
+import ru.rtk.crm.attachment.AttachmentDeletionForbiddenException;
 import ru.rtk.crm.attachment.AttachmentNotFoundException;
 import ru.rtk.crm.attachment.AttachmentTooLargeException;
 import ru.rtk.crm.attachment.AttachmentValidationException;
 import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.interaction.ProductAgreementNotFoundException;
 import ru.rtk.crm.interaction.WorkflowTemplateAccessDeniedException;
 import ru.rtk.crm.interaction.WorkflowTemplateNotFoundException;
 import ru.rtk.crm.security.RequestId;
@@ -74,10 +80,22 @@ public class ApiExceptionHandler {
                 .body(ApiError.of("FORBIDDEN", "Доступ запрещён", RequestId.from(request)));
     }
 
+    @ExceptionHandler(AccountSyncException.class)
+    public ResponseEntity<ApiError> accountSyncFailed(AccountSyncException exception, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ApiError.of("ACCOUNT_SYNC_FAILED", exception.getMessage(), RequestId.from(request)));
+    }
+
     @ExceptionHandler(OrganizationNotFoundException.class)
     public ResponseEntity<ApiError> organizationNotFound(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiError.of("NOT_FOUND", "Вуз не найден или недоступен", RequestId.from(request)));
+    }
+
+    @ExceptionHandler(ContactNotFoundException.class)
+    public ResponseEntity<ApiError> contactNotFound(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of("NOT_FOUND", "Контакт не найден или недоступен", RequestId.from(request)));
     }
 
     @ExceptionHandler(OrganizationAssignmentAccessDeniedException.class)
@@ -86,10 +104,28 @@ public class ApiExceptionHandler {
                 .body(ApiError.of("FORBIDDEN", "Доступ запрещён", RequestId.from(request)));
     }
 
+    @ExceptionHandler(CatalogEntryNotFoundException.class)
+    public ResponseEntity<ApiError> catalogEntryNotFound(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of("NOT_FOUND", "Запись справочника не найдена", RequestId.from(request)));
+    }
+
+    @ExceptionHandler(CatalogChangeAccessDeniedException.class)
+    public ResponseEntity<ApiError> catalogChangeAccessDenied(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiError.of("FORBIDDEN", "Доступ запрещён", RequestId.from(request)));
+    }
+
     @ExceptionHandler(InteractionNotFoundException.class)
     public ResponseEntity<ApiError> interactionNotFound(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiError.of("NOT_FOUND", "Взаимодействие не найдено или недоступно", RequestId.from(request)));
+    }
+
+    @ExceptionHandler(ProductAgreementNotFoundException.class)
+    public ResponseEntity<ApiError> productAgreementNotFound(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of("NOT_FOUND", "Продукт не найден в этом взаимодействии", RequestId.from(request)));
     }
 
     @ExceptionHandler(WorkflowTemplateNotFoundException.class)
@@ -120,6 +156,12 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiError> contactInteractionMutationAccessDenied(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiError.of("FORBIDDEN", "Доступ запрещён", RequestId.from(request)));
+    }
+
+    @ExceptionHandler(AttachmentDeletionForbiddenException.class)
+    public ResponseEntity<ApiError> attachmentDeletionForbidden(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiError.of("FORBIDDEN", "Удалить документ может автор или руководитель команды", RequestId.from(request)));
     }
 
     @ExceptionHandler(WorkflowTemplateAccessDeniedException.class)

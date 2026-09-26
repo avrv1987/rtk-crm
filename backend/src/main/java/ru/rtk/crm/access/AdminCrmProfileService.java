@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.AdminCrmProfileRepository.ProfileState;
 import ru.rtk.crm.catalog.OrganizationAssignmentEvent;
+import ru.rtk.crm.catalog.OrganizationAssignmentReason;
 import ru.rtk.crm.catalog.OrganizationAssignmentRepository;
 import ru.rtk.crm.catalog.OrganizationAssignmentTarget;
 import ru.rtk.crm.interaction.CommandFingerprint;
@@ -116,10 +117,10 @@ public class AdminCrmProfileService {
             throw new InteractionValidationException("body", "Профиль уже имеет указанные значения");
         }
         if (next.teamId() != null && !Objects.equals(next.teamId(), previous.teamId())
-                && adminTeamRepository.findById(next.teamId()).isEmpty()) {
-            throw new InteractionValidationException("teamId", "Команда не найдена");
+                && adminTeamRepository.findByIdForUpdate(next.teamId()).filter(team -> !team.archived()).isEmpty()) {
+            throw new InteractionValidationException("teamId", "Команда не найдена или в архиве");
         }
-        if (next.active() && next.role() != UserRole.ADMIN && next.teamId() == null) {
+        if (next.active() && next.role() != UserRole.ADMIN && next.role() != UserRole.MANAGEMENT && next.teamId() == null) {
             throw new InteractionValidationException("teamId", "Менеджер и руководитель без команды не могут быть активны");
         }
         boolean removesAdministrator = previous.active() && previous.role() == UserRole.ADMIN
@@ -139,10 +140,15 @@ public class AdminCrmProfileService {
 
         String actorDisplayName = adminCrmProfileRepository.findDisplayName(actor.id())
                 .orElseThrow(() -> new IllegalStateException("Administrator profile is unavailable for audit"));
-        boolean keepsOwnership = next.active() && next.role() == UserRole.USER
+        boolean keepsOwnership = next.active() && (next.role() == UserRole.USER || next.role() == UserRole.LEADER)
                 && Objects.equals(previous.teamId(), next.teamId());
         if (!keepsOwnership) {
-            unassignOwnedOrganizations(target, actor, actorDisplayName, commandId, auditRequestId, now);
+            OrganizationAssignmentReason reason = !next.active()
+                    ? OrganizationAssignmentReason.PROFILE_BLOCKED
+                    : next.role() != previous.role()
+                            ? OrganizationAssignmentReason.PROFILE_ROLE_CHANGED
+                            : OrganizationAssignmentReason.PROFILE_TEAM_CHANGED;
+            unassignOwnedOrganizations(target, actor, actorDisplayName, commandId, auditRequestId, reason, now);
         }
         AdminCrmProfile updated = adminCrmProfileRepository.findById(profileId)
                 .orElseThrow(AdminCrmProfileNotFoundException::new);
@@ -167,6 +173,7 @@ public class AdminCrmProfileService {
             String actorDisplayName,
             UUID rootCommandId,
             String requestId,
+            OrganizationAssignmentReason reason,
             OffsetDateTime occurredAt
     ) {
         for (OrganizationAssignmentTarget organization : organizationAssignmentRepository.lockOwnedOrganizations(target.id())) {
@@ -189,6 +196,8 @@ public class AdminCrmProfileService {
                     actor.id(),
                     actorDisplayName,
                     requestId,
+                    reason,
+                    null,
                     organization.version() + 1,
                     occurredAt
             );

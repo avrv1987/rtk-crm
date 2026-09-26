@@ -40,38 +40,75 @@ function Invoke-Keycloak([string[]]$Arguments) {
     return $output
 }
 
+function Get-KeycloakUsers([string]$Username) {
+    return @(Invoke-Keycloak @('get', 'users', '-r', 'rtk-crm', '-q', "username=$Username", '-q', 'exact=true') | ConvertFrom-Json)
+}
+
+function New-KeycloakUser([string]$Username, [string]$Definition) {
+    $Definition | & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh create users -r rtk-crm -f -
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot create Keycloak user $Username"
+    }
+    $created = Get-KeycloakUsers $Username
+    if ($created.Count -ne 1) {
+        throw "Cannot resolve Keycloak subject for $Username"
+    }
+    return $created
+}
+
+function Set-KeycloakPassword([string]$Username, [string]$Id, [string]$Password, [bool]$Temporary) {
+    $credential = @{ type = 'password'; value = $Password; temporary = $Temporary } | ConvertTo-Json -Compress
+    $credential | & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh update "users/$Id/reset-password" -r rtk-crm -f -
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot set Keycloak password for $Username"
+    }
+}
+
 function Ensure-KeycloakUser([string]$Username, [string]$FirstName, [string]$Password) {
-    $existing = @(Invoke-Keycloak @('get', 'users', '-r', 'rtk-crm', '-q', "username=$Username", '-q', 'exact=true') | ConvertFrom-Json)
+    $secured = $values['DEMO_ACCOUNTS_SECURED'] -eq 'true'
+    $existing = Get-KeycloakUsers $Username
     $definition = @{
         username = $Username
         firstName = $FirstName
         lastName = 'Demo'
         email = "$Username@demo.rtk.local"
-        enabled = $true
+        enabled = -not $secured
         emailVerified = $true
         requiredActions = @()
     } | ConvertTo-Json -Compress
     if ($existing.Count -eq 0) {
-        $definition | & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh create users -r rtk-crm -f -
-        if ($LASTEXITCODE -ne 0) {
-            throw "Cannot create Keycloak user $Username"
-        }
-        $existing = @(Invoke-Keycloak @('get', 'users', '-r', 'rtk-crm', '-q', "username=$Username", '-q', 'exact=true') | ConvertFrom-Json)
-        if ($existing.Count -ne 1) {
-            throw "Cannot resolve Keycloak subject for $Username"
-        }
+        $existing = New-KeycloakUser $Username $definition
     }
     if ($existing.Count -ne 1) {
         throw "Keycloak user $Username is not unique"
     }
-    $credential = @{ type = 'password'; value = $Password; temporary = $false } | ConvertTo-Json -Compress
-    $credential | & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh update "users/$($existing[0].id)/reset-password" -r rtk-crm -f -
-    if ($LASTEXITCODE -ne 0) {
-        throw "Cannot set Keycloak password for $Username"
+    if (-not $secured) {
+        Set-KeycloakPassword $Username $existing[0].id $Password $false
+        $definition | & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh update "users/$($existing[0].id)" -r rtk-crm -f -
+        if ($LASTEXITCODE -ne 0) {
+            throw "Cannot update Keycloak user $Username"
+        }
     }
-    $definition | & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh update "users/$($existing[0].id)" -r rtk-crm -f -
-    if ($LASTEXITCODE -ne 0) {
-        throw "Cannot update Keycloak user $Username"
+    return $existing[0].id
+}
+
+function Ensure-CrmAdministrator {
+    $username = $values['CRM_ADMIN_USERNAME']
+    $existing = Get-KeycloakUsers $username
+    if ($existing.Count -eq 0) {
+        $definition = @{
+            username = $username
+            firstName = $values['CRM_ADMIN_DISPLAY_NAME']
+            lastName = 'CRM'
+            enabled = $true
+            emailVerified = $true
+            requiredActions = @()
+        } | ConvertTo-Json -Compress
+        $existing = New-KeycloakUser $username $definition
+        Set-KeycloakPassword $username $existing[0].id $values['CRM_ADMIN_PASSWORD'] $true
+    }
+    if ($existing.Count -ne 1) {
+        throw "Keycloak user $username is not unique"
     }
     return $existing[0].id
 }
@@ -130,9 +167,19 @@ function ConvertTo-YamlLiteral([string]$Value) {
 }
 
 $values = Read-EnvironmentFile $envFilePath
-if (-not [string]::IsNullOrWhiteSpace($env:DEMO_LMS)) {
-    $values['DEMO_LMS'] = $env:DEMO_LMS
+foreach ($key in @('DEMO_DATA', 'DEMO_LMS')) {
+    $override = [Environment]::GetEnvironmentVariable($key)
+    if (-not [string]::IsNullOrWhiteSpace($override)) {
+        $values[$key] = $override
+    }
 }
+if ([string]::IsNullOrWhiteSpace($values['DEMO_DATA'])) {
+    $values['DEMO_DATA'] = 'true'
+}
+if ($values['DEMO_DATA'] -cne 'true' -and $values['DEMO_DATA'] -cne 'false') {
+    throw 'DEMO_DATA must be true or false'
+}
+$siteFixtureUrl = 'http://site-fixture:8080'
 $defaults = [ordered]@{
     POSTGRES_SUPERUSER = 'postgres'
     CRM_DB_NAME = 'rtk_crm'
@@ -141,9 +188,9 @@ $defaults = [ordered]@{
     KEYCLOAK_DB_USER = 'keycloak'
     KEYCLOAK_ADMIN_USERNAME = 'bootstrap-admin'
     PUBLIC_ORIGIN = 'http://rtk.localhost:8081'
-    SITE_BASE_URL = 'http://site-fixture:8080'
-    DEMO_LMS = 'true'
     SOURCES_SYNC_CRON = '0 0 * * * *'
+    ENROLMENT_ENABLED = 'false'
+    ENROLMENT_ACTIVE_KEY_VERSION = 'v1'
 }
 $secrets = @(
     'POSTGRES_SUPERUSER_PASSWORD',
@@ -151,9 +198,27 @@ $secrets = @(
     'KEYCLOAK_DB_PASSWORD',
     'KEYCLOAK_ADMIN_PASSWORD',
     'CRM_OIDC_CLIENT_SECRET',
-    'DEMO_USER_PASSWORD',
-    'SITE_TOKEN'
+    'CRM_ACCOUNT_SYNC_CLIENT_SECRET',
+    'ENROLMENT_KEYS_V1',
+    'ENROLMENT_FINGERPRINT_KEY'
 )
+if ($values['DEMO_DATA'] -eq 'true') {
+    $defaults['SITE_BASE_URL'] = $siteFixtureUrl
+    $defaults['DEMO_LMS'] = 'true'
+    $secrets += @('DEMO_USER_PASSWORD', 'SITE_TOKEN')
+}
+else {
+    if ($values['DEMO_LMS'] -eq 'true') {
+        throw 'DEMO_LMS=true requires DEMO_DATA=true'
+    }
+    if ($values['SITE_BASE_URL'] -eq $siteFixtureUrl) {
+        $values['SITE_BASE_URL'] = ''
+    }
+    $defaults['DEMO_LMS'] = 'false'
+    $defaults['CRM_ADMIN_USERNAME'] = 'admin'
+    $defaults['CRM_ADMIN_DISPLAY_NAME'] = 'Администратор'
+    $secrets += @('CRM_ADMIN_PASSWORD')
+}
 foreach ($pair in $defaults.GetEnumerator()) {
     if ([string]::IsNullOrWhiteSpace($values[$pair.Key])) {
         $values[$pair.Key] = $pair.Value
@@ -237,81 +302,134 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw 'Cannot update the CRM OIDC client'
     }
-    $password = $values['DEMO_USER_PASSWORD']
-    $subjects = [ordered]@{
-        'kam-a' = Ensure-KeycloakUser 'kam-a' 'КАМ А' $password
-        'kam-b' = Ensure-KeycloakUser 'kam-b' 'КАМ Б' $password
-        'kam-c' = Ensure-KeycloakUser 'kam-c' 'КАМ В' $password
-        'leader' = Ensure-KeycloakUser 'leader' 'Руководитель' $password
-        'admin' = Ensure-KeycloakUser 'admin' 'Администратор' $password
-        'unprofiled' = Ensure-KeycloakUser 'unprofiled' 'Без профиля CRM' $password
+    $syncClient = @(Invoke-Keycloak @('get', 'clients', '-r', 'rtk-crm', '-q', 'clientId=crm-account-sync') | ConvertFrom-Json)
+    $syncClientDefinition = @{
+        clientId = 'crm-account-sync'
+        enabled = $true
+        protocol = 'openid-connect'
+        publicClient = $false
+        standardFlowEnabled = $false
+        implicitFlowEnabled = $false
+        directAccessGrantsEnabled = $false
+        serviceAccountsEnabled = $true
+        secret = $values['CRM_ACCOUNT_SYNC_CLIENT_SECRET']
+    } | ConvertTo-Json -Compress
+    if ($syncClient.Count -eq 0) {
+        $syncClientDefinition | & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh create clients -r rtk-crm -f -
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Cannot create the CRM account sync client'
+        }
+        $syncClient = @(Invoke-Keycloak @('get', 'clients', '-r', 'rtk-crm', '-q', 'clientId=crm-account-sync') | ConvertFrom-Json)
     }
+    if ($syncClient.Count -ne 1) {
+        throw 'CRM account sync client is not unique'
+    }
+    $syncClientDefinition | & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh update "clients/$($syncClient[0].id)" -r rtk-crm -f -
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Cannot update the CRM account sync client'
+    }
+    Invoke-Keycloak @(
+        'add-roles', '-r', 'rtk-crm',
+        '--uusername', 'service-account-crm-account-sync',
+        '--cclientid', 'realm-management',
+        '--rolename', 'manage-users'
+    ) | Out-Null
     $issuer = "$($values['PUBLIC_ORIGIN'])/idp/realms/rtk-crm"
     $identityFile = Join-Path $projectRoot '.demo-identities.yml'
-    $identityYaml = @(
-        'app:',
-        '  demo-bootstrap:',
-        '    identities:',
-        "      - key: 'kam-a'",
-        "        issuer: $(ConvertTo-YamlLiteral $issuer)",
-        "        subject: $(ConvertTo-YamlLiteral $subjects['kam-a'])",
-        "        display-name: 'КАМ А'",
-        "        role: USER",
-        "        team-key: 'team-a'",
-        "      - key: 'kam-b'",
-        "        issuer: $(ConvertTo-YamlLiteral $issuer)",
-        "        subject: $(ConvertTo-YamlLiteral $subjects['kam-b'])",
-        "        display-name: 'КАМ Б'",
-        "        role: USER",
-        "        team-key: 'team-b'",
-        "      - key: 'kam-c'",
-        "        issuer: $(ConvertTo-YamlLiteral $issuer)",
-        "        subject: $(ConvertTo-YamlLiteral $subjects['kam-c'])",
-        "        display-name: 'КАМ В'",
-        "        role: USER",
-        "        team-key: 'team-a'",
-        "      - key: 'leader'",
-        "        issuer: $(ConvertTo-YamlLiteral $issuer)",
-        "        subject: $(ConvertTo-YamlLiteral $subjects['leader'])",
-        "        display-name: 'Руководитель'",
-        "        role: LEADER",
-        "        team-key: 'team-a'",
-        "      - key: 'admin'",
-        "        issuer: $(ConvertTo-YamlLiteral $issuer)",
-        "        subject: $(ConvertTo-YamlLiteral $subjects['admin'])",
-        "        display-name: 'Администратор'",
-        "        role: ADMIN",
-        "        team-key: 'team-a'",
-        '    organizations:',
-        "      - name: 'Университет А'",
-        "        type: UNIVERSITY",
-        "        team-key: 'team-a'",
-        "        owner-key: 'kam-a'",
-        "      - name: 'Университет Б'",
-        "        type: UNIVERSITY",
-        "        team-key: 'team-b'",
-        "        owner-key: 'kam-b'",
-        "      - name: 'Университет C — требует назначения'",
-        "        type: UNIVERSITY",
-        "        team-key: 'team-a'"
-    )
-    if ($values['MOODLE_BASE_URL'] -eq $moodleDemoUrl -and
-        -not [string]::IsNullOrWhiteSpace($values['MOODLE_DEMO_JAVA_COURSE']) -and
-        -not [string]::IsNullOrWhiteSpace($values['MOODLE_DEMO_DATA_GROUP'])) {
-        $identityYaml += @(
-            '    learning-mappings:',
-            '      - kind: COURSE',
-            "        external-key: $(ConvertTo-YamlLiteral $values['MOODLE_DEMO_JAVA_COURSE'])",
-            "        organization: 'Университет А'",
-            "        program: 'Демо-программа: цифровой университет'",
-            '      - kind: GROUP',
-            "        external-key: $(ConvertTo-YamlLiteral $values['MOODLE_DEMO_DATA_GROUP'])",
-            "        organization: 'Университет Б'",
-            "        program: 'Демо-программа: анализ данных'"
+    $subjects = @{}
+    function ConvertTo-IdentityYaml([string]$Key, [string]$DisplayName, [string]$Role, [string]$TeamKey) {
+        $lines = @(
+            "      - key: $(ConvertTo-YamlLiteral $Key)",
+            "        issuer: $(ConvertTo-YamlLiteral $issuer)",
+            "        subject: $(ConvertTo-YamlLiteral $subjects[$Key])",
+            "        display-name: $(ConvertTo-YamlLiteral $DisplayName)",
+            "        role: $Role"
         )
+        if ($TeamKey) {
+            $lines += "        team-key: $(ConvertTo-YamlLiteral $TeamKey)"
+        }
+        return $lines
+    }
+    if ($values['DEMO_DATA'] -eq 'true') {
+        $demoIdentities = @(
+            @('kam-a', 'КАМ А', 'USER', 'team-a'),
+            @('kam-b', 'КАМ Б', 'USER', 'team-b'),
+            @('kam-c', 'КАМ В', 'USER', 'team-a'),
+            @('kam-d', 'КАМ Г', 'USER', 'team-a'),
+            @('leader', 'Руководитель', 'LEADER', 'team-a'),
+            @('leader-b', 'Руководитель Б', 'LEADER', 'team-b'),
+            @('admin', 'Администратор', 'ADMIN', 'team-a')
+        )
+        $spareAccounts = @(
+            @('unprofiled', 'Без профиля CRM'),
+            @('unprofiled-2', 'Без профиля CRM, запасная')
+        )
+        foreach ($account in $demoIdentities + $spareAccounts) {
+            $subjects[$account[0]] = Ensure-KeycloakUser $account[0] $account[1] $values['DEMO_USER_PASSWORD']
+        }
+        $identityYaml = @(
+            'app:',
+            '  demo-bootstrap:',
+            '    demo-data: true',
+            '    teams:',
+            "      - key: 'team-a'",
+            "        name: 'Команда А'",
+            "      - key: 'team-b'",
+            "        name: 'Команда Б'",
+            '    identities:'
+        )
+        foreach ($identity in $demoIdentities) {
+            $identityYaml += ConvertTo-IdentityYaml $identity[0] $identity[1] $identity[2] $identity[3]
+        }
+        $identityYaml += @(
+            '    organizations:',
+            "      - name: 'Университет А'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-a'",
+            "        owner-key: 'kam-a'",
+            "      - name: 'Университет Б'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-b'",
+            "        owner-key: 'kam-b'",
+            "      - name: 'Университет C — требует назначения'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-a'",
+            "      - name: 'Школа № 1 (демо)'",
+            "        type: SCHOOL",
+            "        team-key: 'team-a'",
+            "        owner-key: 'kam-d'",
+            "      - name: 'Колледж связи (демо)'",
+            "        type: COLLEGE",
+            "        team-key: 'team-b'",
+            "        owner-key: 'kam-b'"
+        )
+        if ($values['MOODLE_BASE_URL'] -eq $moodleDemoUrl -and
+            -not [string]::IsNullOrWhiteSpace($values['MOODLE_DEMO_JAVA_COURSE']) -and
+            -not [string]::IsNullOrWhiteSpace($values['MOODLE_DEMO_DATA_GROUP'])) {
+            $identityYaml += @(
+                '    learning-mappings:',
+                '      - kind: COURSE',
+                "        external-key: $(ConvertTo-YamlLiteral $values['MOODLE_DEMO_JAVA_COURSE'])",
+                "        organization: 'Университет А'",
+                "        program: 'Демо-программа: цифровой университет'",
+                '      - kind: GROUP',
+                "        external-key: $(ConvertTo-YamlLiteral $values['MOODLE_DEMO_DATA_GROUP'])",
+                "        organization: 'Университет Б'",
+                "        program: 'Демо-программа: анализ данных'"
+            )
+        }
+    }
+    else {
+        $subjects[$values['CRM_ADMIN_USERNAME']] = Ensure-CrmAdministrator
+        $identityYaml = @(
+            'app:',
+            '  demo-bootstrap:',
+            '    demo-data: false',
+            '    identities:'
+        ) + (ConvertTo-IdentityYaml $values['CRM_ADMIN_USERNAME'] $values['CRM_ADMIN_DISPLAY_NAME'] 'ADMIN' '')
     }
     Set-Content -LiteralPath $identityFile -Value $identityYaml -Encoding utf8NoBOM
-    if ($values['SITE_BASE_URL'] -eq 'http://site-fixture:8080') {
+    if ($values['SITE_BASE_URL'] -eq $siteFixtureUrl) {
         & docker compose --env-file $envFilePath --profile demo-sources up -d --wait site-fixture
         if ($LASTEXITCODE -ne 0) {
             throw 'Cannot start the demo site fixture'
@@ -341,7 +459,15 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw 'CRM demo bootstrap failed'
     }
-    Write-Output "Demo bootstrap completed. Local credentials are in $envFilePath"
+    if ($values['DEMO_DATA'] -eq 'false') {
+        Write-Output "CRM bootstrap completed without demo data. Administrator $($values['CRM_ADMIN_USERNAME']): initial password CRM_ADMIN_PASSWORD in $envFilePath, it must be changed at first sign-in"
+    }
+    elseif ($values['DEMO_ACCOUNTS_SECURED'] -eq 'true') {
+        Write-Output 'Demo bootstrap completed. Demo accounts stay secured: their passwords and disabled state were not changed'
+    }
+    else {
+        Write-Output "Demo bootstrap completed. Local credentials are in $envFilePath"
+    }
     if ($values['MOODLE_BASE_URL'] -eq $moodleDemoUrl) {
         Write-Output "Demo Moodle: http://localhost:8082, administrator and read-only jury (crm-jury) credentials are in $(Join-Path $projectRoot 'infra/moodle/.env.local')"
     }

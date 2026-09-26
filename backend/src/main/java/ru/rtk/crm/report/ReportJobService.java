@@ -114,10 +114,10 @@ public class ReportJobService {
 
     public ReportResult result(CrmProfile profile, UUID jobId) {
         StoredJob job = requireGrantedJob(profile, jobId);
-        if (job.status() != ReportJobStatus.SUCCEEDED || job.resultStorageKey() == null) {
+        if (job.status() != ReportJobStatus.SUCCEEDED) {
             throw ReportException.notReady();
         }
-        if (!storage.exists(job.resultStorageKey())) {
+        if (job.resultStorageKey() == null || !storage.exists(job.resultStorageKey())) {
             throw ReportException.resultUnavailable();
         }
         return new ReportResult(
@@ -202,11 +202,13 @@ public class ReportJobService {
         StatisticsResult statistics = reportService.statistics(owner, request.statisticsRequest());
         repository.markRowsLoaded(jobId, Math.toIntExact(statistics.total()));
         if (format == ReportFormat.PNG) {
-            chartWriter.writePng(statistics, output);
+            chartWriter.writePng(statistics, request.lineChart(), output);
         } else {
-            chartWriter.writePdf(statistics, output);
+            chartWriter.writePdf(statistics, request.lineChart(), output);
         }
-        String stem = "Диаграмма_" + request.kind().fileStem() + "_" + request.groupBy().title().replace(' ', '_');
+        String stem = (request.lineChart() ? "График_" : "Диаграмма_") + request.kind().fileStem() + "_"
+                + request.groupBy().title().replace(' ', '_')
+                + (request.seriesBy() == null ? "" : "_линии_" + request.seriesBy().title().replace(' ', '_'));
         return fileName(stem, request, statistics.generatedAt(), format);
     }
 
@@ -225,7 +227,7 @@ public class ReportJobService {
 
     private String fileName(String stem, ReportRequest request, OffsetDateTime generatedAt, ReportFormat format) {
         String period = request.from() == null && request.to() == null
-                ? "на_" + FILE_DATE.format(generatedAt.atZoneSameInstant(ReportRequest.ZONE))
+                ? "на_" + FILE_DATE.format(request.asOf() == null ? generatedAt.atZoneSameInstant(ReportRequest.ZONE) : request.asOf())
                 : (request.from() == null ? "начало" : FILE_DATE.format(request.from()))
                         + "_" + (request.to() == null ? "сегодня" : FILE_DATE.format(request.to()));
         return stem + "_" + period + "." + format.extension();

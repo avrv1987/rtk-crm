@@ -96,6 +96,21 @@ public class AdminWorkflowTemplatesApiController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/{id}/default")
+    public WorkflowTemplate makeDefault(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody WorkflowTemplateDefaultRequest request
+    ) {
+        return workflowTemplateService.makeDefault(
+                currentProfileService.requireActiveProfile(user),
+                parseId(id),
+                request == null ? null : request.version(),
+                idempotencyKey
+        );
+    }
+
     private UUID parseId(String value) {
         try {
             return UUID.fromString(value);

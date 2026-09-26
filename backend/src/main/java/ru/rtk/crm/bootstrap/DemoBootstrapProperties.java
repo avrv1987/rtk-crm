@@ -7,12 +7,21 @@ import ru.rtk.crm.access.UserRole;
 
 @ConfigurationProperties("app.demo-bootstrap")
 public record DemoBootstrapProperties(
+        Boolean demoData,
+        boolean reset,
+        List<Team> teams,
         List<Identity> identities,
         List<Organization> organizations,
         List<LearningMapping> learningMappings
 ) {
     public DemoBootstrapProperties {
+        demoData = demoData == null || demoData;
+        teams = teams == null ? List.of() : List.copyOf(teams);
+        organizations = organizations == null ? List.of() : List.copyOf(organizations);
         learningMappings = learningMappings == null ? List.of() : List.copyOf(learningMappings);
+    }
+
+    public record Team(String key, String name) {
     }
 
     public record Identity(String key, String issuer, String subject, String displayName, UserRole role, String teamKey) {

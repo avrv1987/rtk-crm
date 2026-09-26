@@ -1,5 +1,6 @@
 package ru.rtk.crm.source;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -21,6 +22,7 @@ import ru.rtk.crm.source.SourceRepository.ApplyResult;
 import ru.rtk.crm.source.SourceRepository.MappedTarget;
 import ru.rtk.crm.source.SourceRepository.RecordVersion;
 import ru.rtk.crm.source.SourceRepository.RunDates;
+import ru.rtk.crm.source.SourceRepository.StoredMapping;
 import ru.rtk.crm.source.SourceRepository.StoredRecord;
 import ru.rtk.crm.source.SourceRepository.StoredSnapshot;
 
@@ -61,30 +63,70 @@ public class MoodleSnapshotApplier {
         if (stored.status() != SourceRecordStatus.NEEDS_MAPPING && stored.status() != SourceRecordStatus.FAILED) {
             return stored.status();
         }
-        LearningUnit unit = LearningUnit.parseStored(objectMapper, stored.payload());
-        return switch (publish(Optional.of(stored), unit, stored.externalUpdatedAt(), null, actorProfileId)) {
-            case CREATED, UPDATED -> SourceRecordStatus.APPLIED;
-            case NEEDS_MAPPING -> SourceRecordStatus.NEEDS_MAPPING;
-            case FAILED -> SourceRecordStatus.FAILED;
-            case SKIPPED -> repository.findRecord(recordId).map(StoredRecord::status).orElse(SourceRecordStatus.SKIPPED);
-        };
+        return republish(stored, actorProfileId);
     }
 
     @Transactional
-    public void saveMapping(LearningUnit unit, UUID organizationId, UUID programId, RunDates run, UUID actorProfileId,
-                            OffsetDateTime now) {
-        repository.findRecordForUpdate(SOURCE, LearningUnit.COURSE_RECORD, unit.courseKey());
-        if (unit.group() && repository.hasMapping(SOURCE, "COURSE", unit.courseKey())) {
-            throw new InteractionValidationException(
-                    "organizationId", "Курс уже сопоставлен целиком; его группы учитываются в нём и отдельно не сопоставляются"
-            );
+    public void saveMapping(LearningUnit unit, UUID organizationId, UUID programId, RunDates run, RunKind runKind,
+                            UUID actorProfileId, OffsetDateTime now) {
+        requireExclusive(unit.group(), unit.courseKey());
+        List<StoredMapping> mappings = repository.findMappings(SOURCE, unit.mappingKind(), unit.externalId());
+        if (mappings.isEmpty()) {
+            repository.insertMapping(SOURCE, unit.mappingKind(), unit.externalId(), organizationId, programId, run, runKind,
+                    actorProfileId, now);
+        } else if (mappings.size() == 1) {
+            repository.updateMapping(mappings.getFirst().id(), mappings.getFirst().version(), organizationId, programId, run,
+                    runKind, actorProfileId, now);
+        } else {
+            throw new InteractionValidationException("organizationId",
+                    "У курса или группы несколько потоков; измените нужный поток в списке сохранённых сопоставлений");
         }
-        if (!unit.group() && repository.hasMapping(SOURCE, "GROUP", unit.courseKey() + ":%")) {
-            throw new InteractionValidationException(
-                    "organizationId", "Группы курса уже сопоставлены по отдельности; курс целиком одновременно не учитывается"
-            );
+    }
+
+    @Transactional
+    public UUID addRun(StoredMapping template, UUID organizationId, UUID programId, RunDates run, RunKind runKind,
+                       UUID actorProfileId, OffsetDateTime now) {
+        Optional<StoredRecord> record = lockUnit(template);
+        requireFreeInterval(template, run, null);
+        UUID id = repository.insertMapping(SOURCE, template.kind(), template.externalKey(), organizationId, programId, run,
+                runKind, actorProfileId, now);
+        record.ifPresent(stored -> republish(stored, actorProfileId));
+        return id;
+    }
+
+    @Transactional
+    public void updateRun(StoredMapping mapping, UUID organizationId, UUID programId, RunDates run, RunKind runKind,
+                          UUID actorProfileId, OffsetDateTime now) {
+        Optional<StoredRecord> record = lockUnit(mapping);
+        requireFreeInterval(mapping, run, mapping.id());
+        if (!repository.updateMapping(mapping.id(), mapping.version(), organizationId, programId, run, runKind,
+                actorProfileId, now)) {
+            throw SourceException.mappingVersion(repository.findMapping(mapping.id()).map(StoredMapping::version).orElse(0));
         }
-        repository.saveMapping(SOURCE, unit.mappingKind(), unit.externalId(), organizationId, programId, run, actorProfileId, now);
+        Optional<StoredSnapshot> snapshot = repository.findSnapshot(mapping.id());
+        if (snapshot.isPresent()) {
+            boolean insideRun = localDate(snapshot.get().observedAt()).isBefore(run.endsOn());
+            boolean sameTarget = snapshot.get().organizationId().equals(organizationId)
+                    && snapshot.get().programId().equals(programId);
+            boolean latestInsideRun = record.map(stored -> localDate(stored.externalUpdatedAt()).isBefore(run.endsOn()))
+                    .orElse(false);
+            if (!insideRun || (!sameTarget && latestInsideRun)) {
+                repository.deleteSnapshot(mapping.id());
+            } else if (!sameTarget) {
+                repository.moveSnapshot(mapping.id(), organizationId, programId);
+            }
+        }
+        record.ifPresent(stored -> republish(stored, actorProfileId));
+    }
+
+    @Transactional
+    public void removeRun(StoredMapping mapping, UUID actorProfileId) {
+        lockUnit(mapping);
+        repository.deleteMapping(mapping.id());
+        String courseKey = mapping.externalKey().split(":", 2)[0];
+        for (StoredRecord stored : repository.findMoodleRecordsOfCourse(courseKey)) {
+            republish(stored, actorProfileId);
+        }
     }
 
     @Transactional
@@ -110,6 +152,55 @@ public class MoodleSnapshotApplier {
         ));
     }
 
+    private SourceRecordStatus republish(StoredRecord stored, UUID actorProfileId) {
+        LearningUnit unit = LearningUnit.parseStored(objectMapper, stored.payload());
+        return switch (publish(Optional.of(stored), unit, stored.externalUpdatedAt(), null, actorProfileId)) {
+            case CREATED, UPDATED -> SourceRecordStatus.APPLIED;
+            case NEEDS_MAPPING -> SourceRecordStatus.NEEDS_MAPPING;
+            case FAILED -> SourceRecordStatus.FAILED;
+            case SKIPPED -> repository.findRecord(stored.id()).map(StoredRecord::status).orElse(SourceRecordStatus.SKIPPED);
+        };
+    }
+
+    private Optional<StoredRecord> lockUnit(StoredMapping mapping) {
+        String courseKey = mapping.externalKey().split(":", 2)[0];
+        Optional<StoredRecord> course = repository.findRecordForUpdate(SOURCE, LearningUnit.COURSE_RECORD, courseKey);
+        return mapping.kind().equals("GROUP")
+                ? repository.findRecordForUpdate(SOURCE, LearningUnit.GROUP_RECORD, mapping.externalKey())
+                : course;
+    }
+
+    private void requireExclusive(boolean group, String courseKey) {
+        repository.findRecordForUpdate(SOURCE, LearningUnit.COURSE_RECORD, courseKey);
+        if (group && repository.hasMapping(SOURCE, "COURSE", courseKey)) {
+            throw new InteractionValidationException(
+                    "organizationId", "Курс уже сопоставлен целиком; его группы учитываются в нём и отдельно не сопоставляются"
+            );
+        }
+        if (!group && repository.hasMapping(SOURCE, "GROUP", courseKey + ":%")) {
+            throw new InteractionValidationException(
+                    "organizationId", "Группы курса уже сопоставлены по отдельности; курс целиком одновременно не учитывается"
+            );
+        }
+    }
+
+    private void requireFreeInterval(StoredMapping unitMapping, RunDates run, UUID excludedId) {
+        for (StoredMapping other : repository.findMappings(SOURCE, unitMapping.kind(), unitMapping.externalKey())) {
+            if (other.id().equals(excludedId)) {
+                continue;
+            }
+            if (other.run() == null) {
+                throw new InteractionValidationException("runStartsOn",
+                        "У другого потока этого курса или группы не указаны даты; сначала укажите их");
+            }
+            if (other.run().overlaps(run)) {
+                throw new InteractionValidationException("runStartsOn", "Поток пересекается с потоком "
+                        + MOSCOW_DATE.format(other.runStartsOn()) + " – " + MOSCOW_DATE.format(other.runEndsOn().minusDays(1))
+                        + " этого же курса или группы: у одного курса или группы потоки идут по очереди");
+            }
+        }
+    }
+
     private SyncOutcome publish(
             Optional<StoredRecord> existing,
             LearningUnit unit,
@@ -120,38 +211,57 @@ public class MoodleSnapshotApplier {
         OffsetDateTime now = OffsetDateTime.now();
         UUID recordId = existing.map(StoredRecord::id).orElseGet(UUID::randomUUID);
         UUID previousInteractionId = existing.map(StoredRecord::interactionId).orElse(null);
-        Optional<MappedTarget> target = repository.findMappedTarget(SOURCE, unit.mappingKind(), unit.externalId());
+        List<MappedTarget> targets = repository.findLearningTargets(SOURCE, unit.mappingKind(), unit.externalId());
+        List<MappedTarget> dated = targets.stream().filter(target -> target.runStartsOn() != null).toList();
+        LocalDate observedOn = localDate(observedAt);
+        Optional<MappedTarget> upcoming = dated.stream().filter(target -> observedOn.isBefore(target.runStartsOn())).findFirst();
+        Optional<MappedTarget> ended = dated.stream().filter(target -> !observedOn.isBefore(target.runEndsOn()))
+                .reduce((first, second) -> second);
+        Optional<MappedTarget> current = dated.stream()
+                .filter(target -> !observedOn.isBefore(target.runStartsOn()) && observedOn.isBefore(target.runEndsOn()))
+                .findFirst()
+                .or(() -> ended.isPresent() ? Optional.empty() : upcoming);
         ApplyResult result;
         SyncOutcome outcome;
         Optional<StoredSnapshot> previous = Optional.empty();
         boolean changed = false;
-        boolean published = false;
-        if (target.isEmpty()) {
+        UUID snapshotInteractionId = null;
+        if (targets.isEmpty()) {
             result = unmapped(unit, previousInteractionId);
             outcome = result.status() == SourceRecordStatus.SKIPPED ? SyncOutcome.SKIPPED : SyncOutcome.NEEDS_MAPPING;
-        } else if (target.get().runStartsOn() == null) {
+        } else if (dated.isEmpty()) {
             result = new ApplyResult(SourceRecordStatus.NEEDS_MAPPING,
                     "Не указаны даты потока: выберите вуз и программу и укажите начало и окончание потока", null, null, 1,
                     previousInteractionId);
             outcome = SyncOutcome.NEEDS_MAPPING;
-        } else if (!observedAt.atZoneSameInstant(ZONE).toLocalDate().isBefore(target.get().runEndsOn())) {
-            previous = repository.findSnapshot(recordId);
-            result = previous.isPresent()
-                    ? new ApplyResult(SourceRecordStatus.APPLIED, null, target.get().organizationId(), target.get().programId(),
-                            1, previousInteractionId)
+        } else if (current.isEmpty() && upcoming.isPresent()) {
+            result = new ApplyResult(SourceRecordStatus.SKIPPED, "Наблюдение " + MOSCOW_DATE.format(observedOn)
+                    + " между потоками: прошлый поток закончился " + MOSCOW_DATE.format(ended.get().runEndsOn())
+                    + ", следующий начнётся " + MOSCOW_DATE.format(upcoming.get().runStartsOn())
+                    + "; текущий состав курса ни к одному из них не относится", null, null, 1, previousInteractionId);
+            outcome = SyncOutcome.SKIPPED;
+        } else if (current.isEmpty()) {
+            MappedTarget last = dated.getLast();
+            result = repository.hasSnapshotForRecord(recordId)
+                    ? new ApplyResult(SourceRecordStatus.APPLIED, null, last.organizationId(), last.programId(), 1,
+                            previousInteractionId)
                     : new ApplyResult(SourceRecordStatus.SKIPPED, "Поток закончился "
-                            + MOSCOW_DATE.format(target.get().runEndsOn()) + " до первого наблюдения: текущий состав курса"
+                            + MOSCOW_DATE.format(last.runEndsOn()) + " до первого наблюдения: текущий состав курса"
                             + " к нему не относится", null, null, 1, previousInteractionId);
             outcome = SyncOutcome.SKIPPED;
         } else {
-            published = true;
-            previous = repository.findSnapshot(recordId);
-            changed = previous.map(snapshot -> !sameSnapshot(snapshot, unit, target.get())).orElse(true);
-            UUID interactionId = changed
-                    ? appendEvent(recordId, unit, target.get(), previousInteractionId, observedAt, actorProfileId, now)
-                    : previousInteractionId;
-            result = new ApplyResult(SourceRecordStatus.APPLIED, null, target.get().organizationId(),
-                    target.get().programId(), 1, interactionId);
+            MappedTarget target = current.get();
+            previous = repository.findSnapshot(target.mappingId());
+            changed = previous.map(snapshot -> !sameSnapshot(snapshot, unit, target)).orElse(true);
+            UUID interactionId = previous.map(StoredSnapshot::interactionId)
+                    .filter(id -> repository.interactionBelongsTo(id, target.organizationId()))
+                    .orElse(null);
+            if (changed) {
+                interactionId = appendEvent(recordId, unit, target, interactionId, observedAt, actorProfileId, now);
+            }
+            snapshotInteractionId = interactionId;
+            result = new ApplyResult(SourceRecordStatus.APPLIED, null, target.organizationId(), target.programId(), 1,
+                    interactionId == null ? previousInteractionId : interactionId);
             outcome = !changed ? SyncOutcome.SKIPPED : previous.isEmpty() ? SyncOutcome.CREATED : SyncOutcome.UPDATED;
         }
         if (existing.isPresent()) {
@@ -159,9 +269,9 @@ public class MoodleSnapshotApplier {
         } else {
             repository.insertRecord(recordId, SOURCE, version(unit, observedAt), result, runId, now);
         }
-        if (published) {
+        if (current.isPresent()) {
             OffsetDateTime changedAt = changed ? observedAt : previous.get().changedAt();
-            repository.saveSnapshot(recordId, unit, target.get(), observedAt, changedAt, runId);
+            repository.saveSnapshot(recordId, unit, current.get(), observedAt, changedAt, runId, snapshotInteractionId);
         }
         return outcome;
     }
@@ -191,13 +301,18 @@ public class MoodleSnapshotApplier {
             UUID recordId,
             LearningUnit unit,
             MappedTarget target,
-            UUID previousInteractionId,
+            UUID knownInteractionId,
             OffsetDateTime observedAt,
             UUID actorProfileId,
             OffsetDateTime now
     ) {
+        String key = "source:" + SOURCE + ":" + target.mappingId() + ":" + target.organizationId() + ":" + target.programId()
+                + ":" + observedAt.toInstant();
+        Optional<UUID> alreadyApplied = repository.findAppliedInteraction(List.of(key), target.organizationId());
+        if (alreadyApplied.isPresent()) {
+            return alreadyApplied.get();
+        }
         UUID commandId = UUID.randomUUID();
-        String key = "source:" + SOURCE + ":" + recordId + ":" + observedAt.toInstant();
         if (!commandIdempotencyRepository.reserve(
                 commandId,
                 actorProfileId,
@@ -208,15 +323,15 @@ public class MoodleSnapshotApplier {
         )) {
             throw new IllegalStateException("Moodle snapshot was already published for this observation");
         }
-        UUID interactionId = previousInteractionId != null
-                && repository.interactionBelongsTo(previousInteractionId, target.organizationId())
-                ? previousInteractionId
-                : repository.findLatestInteraction(target.organizationId(), target.programId(), null).orElse(null);
+        UUID interactionId = knownInteractionId != null
+                ? knownInteractionId
+                : repository.findCycleInteraction(target.organizationId(), target.programId(), target.runStartsOn()).orElse(null);
         if (interactionId == null) {
             interactionId = interactionService.createSourceInteraction(
                     target.organizationId(),
                     target.ownerManagerId(),
-                    truncate("Обучение в LMS: " + unit.courseName()),
+                    truncate((target.runKind() == RunKind.TEACHERS ? "Обучение преподавателей в LMS: " : "Обучение в LMS: ")
+                            + unit.courseName()),
                     target.programId(),
                     List.of(),
                     List.of(),
@@ -226,18 +341,21 @@ public class MoodleSnapshotApplier {
             );
         }
         interactionService.appendSourceComment(
-                interactionId, eventText(unit, observedAt), List.of(), target.ownerManagerId(), actorProfileId, commandId, now
+                interactionId, eventText(unit, observedAt, target.runKind()), List.of(), target.ownerManagerId(),
+                actorProfileId, commandId, now
         );
         commandIdempotencyRepository.complete(commandId, write(Map.of("recordId", recordId, "interactionId", interactionId)));
         return interactionId;
     }
 
-    static String eventText(LearningUnit unit, OffsetDateTime observedAt) {
-        StringBuilder text = new StringBuilder("Данные LMS: курс «").append(unit.courseName()).append("»");
+    static String eventText(LearningUnit unit, OffsetDateTime observedAt, RunKind runKind) {
+        boolean teachers = runKind == RunKind.TEACHERS;
+        StringBuilder text = new StringBuilder(teachers ? "Данные LMS (обучение преподавателей): курс «" : "Данные LMS: курс «")
+                .append(unit.courseName()).append("»");
         if (unit.group()) {
             text.append(", группа «").append(unit.groupName()).append("»");
         }
-        text.append(", обучающихся ").append(unit.participants());
+        text.append(teachers ? ", записано " : ", обучающихся ").append(unit.participants());
         if (unit.completed() == null) {
             text.append(", завершили: нет данных (завершение курса в Moodle не отслеживается)");
         } else {
@@ -248,9 +366,13 @@ public class MoodleSnapshotApplier {
         if (!unit.group()) {
             text.append(", групп ").append(unit.groupsCount());
         }
-        return text.append(", преподавателей ").append(unit.teachers())
+        return text.append(teachers ? ", ведущих курс " : ", преподавателей ").append(unit.teachers())
                 .append(". Наблюдение ").append(MOSCOW_TIME.format(observedAt.atZoneSameInstant(ZONE))).append(" (МСК)")
                 .toString();
+    }
+
+    private static LocalDate localDate(OffsetDateTime value) {
+        return value.atZoneSameInstant(ZONE).toLocalDate();
     }
 
     private RecordVersion version(LearningUnit unit, OffsetDateTime observedAt) {

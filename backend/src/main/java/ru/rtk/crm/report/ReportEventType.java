@@ -1,0 +1,16 @@
+package ru.rtk.crm.report;
+
+public enum ReportEventType {
+    CREATED,
+    TRANSITIONED,
+    COMMENTED,
+    STAGES_EDITED,
+    PLAN_UPDATED,
+    DETAILS_UPDATED,
+    STATUS_CHANGED,
+    AGREEMENT_UPDATED,
+    ATTACHMENT_DELETED,
+    STAGE_COMPLETED,
+    STAGE_COMPLETION_CLEARED,
+    ASSIGNMENT
+}

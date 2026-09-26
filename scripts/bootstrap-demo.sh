@@ -72,9 +72,16 @@ write_env_file() {
 }
 
 load_env_file
-if [[ -n ${DEMO_LMS-} ]]; then
-    set_value DEMO_LMS "$DEMO_LMS"
+for key in DEMO_DATA DEMO_LMS; do
+    if [[ -n ${!key-} ]]; then
+        set_value "$key" "${!key}"
+    fi
+done
+if is_blank "${values[DEMO_DATA]-}"; then
+    set_value DEMO_DATA true
 fi
+[[ ${values[DEMO_DATA]} == true || ${values[DEMO_DATA]} == false ]] || fail 'DEMO_DATA must be true or false'
+site_fixture_url=http://site-fixture:8080
 
 defaults=(
     POSTGRES_SUPERUSER=postgres
@@ -84,9 +91,9 @@ defaults=(
     KEYCLOAK_DB_USER=keycloak
     KEYCLOAK_ADMIN_USERNAME=bootstrap-admin
     PUBLIC_ORIGIN=http://rtk.localhost:8081
-    SITE_BASE_URL=http://site-fixture:8080
-    DEMO_LMS=true
     'SOURCES_SYNC_CRON=0 0 * * * *'
+    ENROLMENT_ENABLED=false
+    ENROLMENT_ACTIVE_KEY_VERSION=v1
 )
 secrets=(
     POSTGRES_SUPERUSER_PASSWORD
@@ -94,9 +101,19 @@ secrets=(
     KEYCLOAK_DB_PASSWORD
     KEYCLOAK_ADMIN_PASSWORD
     CRM_OIDC_CLIENT_SECRET
-    DEMO_USER_PASSWORD
-    SITE_TOKEN
+    CRM_ACCOUNT_SYNC_CLIENT_SECRET
+    ENROLMENT_KEYS_V1
+    ENROLMENT_FINGERPRINT_KEY
 )
+if [[ ${values[DEMO_DATA]} == true ]]; then
+    defaults+=(SITE_BASE_URL=$site_fixture_url DEMO_LMS=true)
+    secrets+=(DEMO_USER_PASSWORD SITE_TOKEN)
+else
+    [[ ${values[DEMO_LMS]-} != true ]] || fail 'DEMO_LMS=true requires DEMO_DATA=true'
+    [[ ${values[SITE_BASE_URL]-} != "$site_fixture_url" ]] || set_value SITE_BASE_URL ''
+    defaults+=(DEMO_LMS=false CRM_ADMIN_USERNAME=admin 'CRM_ADMIN_DISPLAY_NAME=Администратор')
+    secrets+=(CRM_ADMIN_PASSWORD)
+fi
 for pair in "${defaults[@]}"; do
     if is_blank "${values[${pair%%=*}]-}"; then
         set_value "${pair%%=*}" "${pair#*=}"
@@ -144,19 +161,50 @@ single_id() {
 
 declare -A subjects=()
 
+find_user() {
+    kcadm get users -r rtk-crm -q "username=$1" -q exact=true --fields id --format csv --noquotes
+}
+
+user_definition() {
+    local email=
+    [[ -z $4 ]] || email=",\"email\":$(json_string "$4")"
+    printf '{"username":%s,"firstName":%s,"lastName":%s%s,"enabled":%s,"emailVerified":true,"requiredActions":[]}' \
+        "$(json_string "$1")" "$(json_string "$2")" "$(json_string "$3")" "$email" "$5"
+}
+
+set_password() {
+    printf '{"type":"password","value":%s,"temporary":%s}' "$(json_string "$2")" "$3" \
+        | kcadm update "users/$1/reset-password" -r rtk-crm -f -
+}
+
 ensure_user() {
     local username=$1 first_name=$2 definition id
-    definition=$(printf '{"username":%s,"firstName":%s,"lastName":"Demo","email":%s,"enabled":true,"emailVerified":true,"requiredActions":[]}' \
-        "$(json_string "$username")" "$(json_string "$first_name")" "$(json_string "$username@demo.rtk.local")")
-    id=$(kcadm get users -r rtk-crm -q "username=$username" -q exact=true --fields id --format csv --noquotes)
-    if [[ -z $id ]]; then
-        id=$(printf '%s' "$definition" | kcadm create users -r rtk-crm -f - -i)
+    id=$(find_user "$username")
+    if [[ ${values[DEMO_ACCOUNTS_SECURED]-} == true ]]; then
+        if [[ -z $id ]]; then
+            id=$(user_definition "$username" "$first_name" Demo "$username@demo.rtk.local" false | kcadm create users -r rtk-crm -f - -i)
+        fi
+    else
+        definition=$(user_definition "$username" "$first_name" Demo "$username@demo.rtk.local" true)
+        if [[ -z $id ]]; then
+            id=$(printf '%s' "$definition" | kcadm create users -r rtk-crm -f - -i)
+        fi
+        id=$(single_id "Keycloak user $username" "$id")
+        set_password "$id" "${values[DEMO_USER_PASSWORD]}" false
+        printf '%s' "$definition" | kcadm update "users/$id" -r rtk-crm -f -
     fi
-    id=$(single_id "Keycloak user $username" "$id")
-    printf '{"type":"password","value":%s,"temporary":false}' "$(json_string "${values[DEMO_USER_PASSWORD]}")" \
-        | kcadm update "users/$id/reset-password" -r rtk-crm -f -
-    printf '%s' "$definition" | kcadm update "users/$id" -r rtk-crm -f -
-    subjects[$username]=$id
+    subjects[$username]=$(single_id "Keycloak user $username" "$id")
+}
+
+ensure_administrator() {
+    local username=${values[CRM_ADMIN_USERNAME]} id
+    id=$(find_user "$username")
+    if [[ -z $id ]]; then
+        id=$(user_definition "$username" "${values[CRM_ADMIN_DISPLAY_NAME]}" CRM '' true | kcadm create users -r rtk-crm -f - -i)
+        id=$(single_id "Keycloak user $username" "$id")
+        set_password "$id" "${values[CRM_ADMIN_PASSWORD]}" true
+    fi
+    subjects[$username]=$(single_id "Keycloak user $username" "$id")
 }
 
 compose up -d --wait postgres keycloak
@@ -188,48 +236,60 @@ fi
 client_id=$(single_id 'CRM OIDC client' "$client_id")
 printf '%s' "$client_definition" | kcadm update "clients/$client_id" -r rtk-crm -f -
 
-ensure_user kam-a 'КАМ А'
-ensure_user kam-b 'КАМ Б'
-ensure_user kam-c 'КАМ В'
-ensure_user leader 'Руководитель'
-ensure_user admin 'Администратор'
-ensure_user unprofiled 'Без профиля CRM'
+sync_client_definition=$(printf '{"clientId":"crm-account-sync","enabled":true,"protocol":"openid-connect","publicClient":false,"standardFlowEnabled":false,"implicitFlowEnabled":false,"directAccessGrantsEnabled":false,"serviceAccountsEnabled":true,"secret":%s}' \
+    "$(json_string "${values[CRM_ACCOUNT_SYNC_CLIENT_SECRET]}")")
+sync_client_id=$(kcadm get clients -r rtk-crm -q clientId=crm-account-sync --fields id --format csv --noquotes)
+if [[ -z $sync_client_id ]]; then
+    sync_client_id=$(printf '%s' "$sync_client_definition" | kcadm create clients -r rtk-crm -f - -i)
+fi
+sync_client_id=$(single_id 'CRM account sync client' "$sync_client_id")
+printf '%s' "$sync_client_definition" | kcadm update "clients/$sync_client_id" -r rtk-crm -f -
+kcadm add-roles -r rtk-crm --uusername service-account-crm-account-sync --cclientid realm-management --rolename manage-users
 
+demo_identities=(
+    'kam-a|КАМ А|USER|team-a'
+    'kam-b|КАМ Б|USER|team-b'
+    'kam-c|КАМ В|USER|team-a'
+    'kam-d|КАМ Г|USER|team-a'
+    'leader|Руководитель|LEADER|team-a'
+    'leader-b|Руководитель Б|LEADER|team-b'
+    'admin|Администратор|ADMIN|team-a'
+)
+spare_accounts=(
+    'unprofiled|Без профиля CRM'
+    'unprofiled-2|Без профиля CRM, запасная'
+)
 issuer=$(yaml_literal "$public_origin/idp/realms/rtk-crm")
-cat > "$project_root/.demo-identities.yml" <<YAML
+identity_file=$project_root/.demo-identities.yml
+
+identity_yaml() {
+    printf '      - key: %s\n        issuer: %s\n        subject: %s\n        display-name: %s\n        role: %s\n' \
+        "$(yaml_literal "$1")" "$issuer" "$(yaml_literal "${subjects[$1]}")" "$(yaml_literal "$2")" "$3"
+    [[ -z ${4-} ]] || printf '        team-key: %s\n' "$(yaml_literal "$4")"
+}
+
+if [[ ${values[DEMO_DATA]} == true ]]; then
+    for entry in "${demo_identities[@]}" "${spare_accounts[@]}"; do
+        IFS='|' read -r username display_name _ <<< "$entry"
+        ensure_user "$username" "$display_name"
+    done
+    {
+        cat <<'YAML'
 app:
   demo-bootstrap:
+    demo-data: true
+    teams:
+      - key: 'team-a'
+        name: 'Команда А'
+      - key: 'team-b'
+        name: 'Команда Б'
     identities:
-      - key: 'kam-a'
-        issuer: $issuer
-        subject: $(yaml_literal "${subjects[kam-a]}")
-        display-name: 'КАМ А'
-        role: USER
-        team-key: 'team-a'
-      - key: 'kam-b'
-        issuer: $issuer
-        subject: $(yaml_literal "${subjects[kam-b]}")
-        display-name: 'КАМ Б'
-        role: USER
-        team-key: 'team-b'
-      - key: 'kam-c'
-        issuer: $issuer
-        subject: $(yaml_literal "${subjects[kam-c]}")
-        display-name: 'КАМ В'
-        role: USER
-        team-key: 'team-a'
-      - key: 'leader'
-        issuer: $issuer
-        subject: $(yaml_literal "${subjects[leader]}")
-        display-name: 'Руководитель'
-        role: LEADER
-        team-key: 'team-a'
-      - key: 'admin'
-        issuer: $issuer
-        subject: $(yaml_literal "${subjects[admin]}")
-        display-name: 'Администратор'
-        role: ADMIN
-        team-key: 'team-a'
+YAML
+        for entry in "${demo_identities[@]}"; do
+            IFS='|' read -r username display_name role team <<< "$entry"
+            identity_yaml "$username" "$display_name" "$role" "$team"
+        done
+        cat <<'YAML'
     organizations:
       - name: 'Университет А'
         type: UNIVERSITY
@@ -242,11 +302,18 @@ app:
       - name: 'Университет C — требует назначения'
         type: UNIVERSITY
         team-key: 'team-a'
+      - name: 'Школа № 1 (демо)'
+        type: SCHOOL
+        team-key: 'team-a'
+        owner-key: 'kam-d'
+      - name: 'Колледж связи (демо)'
+        type: COLLEGE
+        team-key: 'team-b'
+        owner-key: 'kam-b'
 YAML
-
-if [[ ${values[MOODLE_BASE_URL]-} == "$moodle_demo_url" ]] \
-    && ! is_blank "${values[MOODLE_DEMO_JAVA_COURSE]-}" && ! is_blank "${values[MOODLE_DEMO_DATA_GROUP]-}"; then
-    cat >> "$project_root/.demo-identities.yml" <<YAML
+        if [[ ${values[MOODLE_BASE_URL]-} == "$moodle_demo_url" ]] \
+            && ! is_blank "${values[MOODLE_DEMO_JAVA_COURSE]-}" && ! is_blank "${values[MOODLE_DEMO_DATA_GROUP]-}"; then
+            cat <<YAML
     learning-mappings:
       - kind: COURSE
         external-key: $(yaml_literal "${values[MOODLE_DEMO_JAVA_COURSE]}")
@@ -257,9 +324,17 @@ if [[ ${values[MOODLE_BASE_URL]-} == "$moodle_demo_url" ]] \
         organization: 'Университет Б'
         program: 'Демо-программа: анализ данных'
 YAML
+        fi
+    } > "$identity_file"
+else
+    ensure_administrator
+    {
+        printf 'app:\n  demo-bootstrap:\n    demo-data: false\n    identities:\n'
+        identity_yaml "${values[CRM_ADMIN_USERNAME]}" "${values[CRM_ADMIN_DISPLAY_NAME]}" ADMIN
+    } > "$identity_file"
 fi
 
-if [[ ${values[SITE_BASE_URL]} == http://site-fixture:8080 ]]; then
+if [[ ${values[SITE_BASE_URL]-} == "$site_fixture_url" ]]; then
     compose --profile demo-sources up -d --wait site-fixture
 fi
 moodle_files=()
@@ -278,7 +353,14 @@ fi
 compose "${moodle_files[@]}" up -d --wait --build backend clamav web
 compose "${moodle_files[@]}" up -d --wait --force-recreate --no-deps web
 compose "${moodle_files[@]}" --profile demo-bootstrap run --rm --build backend-bootstrap
-printf 'Demo bootstrap completed. Local credentials are in %s\n' "$env_file"
+if [[ ${values[DEMO_DATA]} == false ]]; then
+    printf 'CRM bootstrap completed without demo data. Administrator %s: initial password CRM_ADMIN_PASSWORD in %s, it must be changed at first sign-in\n' \
+        "${values[CRM_ADMIN_USERNAME]}" "$env_file"
+elif [[ ${values[DEMO_ACCOUNTS_SECURED]-} == true ]]; then
+    printf 'Demo bootstrap completed. Demo accounts stay secured: their passwords and disabled state were not changed\n'
+else
+    printf 'Demo bootstrap completed. Local credentials are in %s\n' "$env_file"
+fi
 if [[ ${values[MOODLE_BASE_URL]-} == "$moodle_demo_url" ]]; then
     printf 'Demo Moodle: http://localhost:%s, administrator and read-only jury (crm-jury) credentials are in %s\n' \
         "${MOODLE_HTTP_PORT:-8082}" "$project_root/infra/moodle/.env.local"

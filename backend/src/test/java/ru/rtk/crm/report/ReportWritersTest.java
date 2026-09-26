@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.apache.pdfbox.Loader;
+import org.apache.fontbox.ttf.model.GsubData;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
@@ -30,6 +31,8 @@ import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.apache.poi.util.CodePageUtil;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
+import ru.rtk.crm.interaction.InteractionMarks;
+import ru.rtk.crm.interaction.InteractionWorkStatus;
 
 class ReportWritersTest {
     private static final List<ReportColumn> COLUMNS = List.of(
@@ -155,8 +158,8 @@ class ReportWritersTest {
         ReportRequest request = new ReportRequest(ReportKind.DEMAND, null, null, null, null, null, ReportFormat.XLSX, null, null)
                 .normalized();
         ReportRow row = new ReportRow(null, null, null, null, UUID.randomUUID(), "Программирование", UUID.randomUUID(),
-                "Java-разработчик", List.of(), null, null, null, null, null, null, null, null, null, null, null, null,
-                5L, null, null);
+                "Java-разработчик", List.of(), null, null, null, null, null, null, null, null, null, null, null, null, null,
+                5L, null, null, null, List.of(), null, null, null);
         ReportDocument document = new ReportDocument(request, OffsetDateTime.parse("2026-09-24T12:00:00+03:00"),
                 List.of("Сформирован: 24.09.2026 12:00"), List.of(row));
 
@@ -164,12 +167,14 @@ class ReportWritersTest {
             Sheet sheet = workbook.getSheetAt(0);
             int headerIndex = document.notes().size() + 2;
             assertThat(texts(sheet.getRow(headerIndex))).containsExactly(
-                    "ИТ-направление", "ИТ-программа", "Заявки (сайт)", "Обучающиеся (Moodle)", "Параллельные потоки (Moodle)");
+                    "ИТ-направление", "ИТ-программа", "Заявки (сайт)", "Обучающиеся (Moodle)", "Завершили (Moodle)",
+                    "Параллельные потоки (Moodle)");
             Row data = sheet.getRow(headerIndex + 1);
             assertThat(data.getCell(2).getCellType()).isEqualTo(CellType.NUMERIC);
             assertThat(data.getCell(2).getNumericCellValue()).isEqualTo(5.0);
             assertThat(data.getCell(3).getStringCellValue()).isEqualTo("нет данных");
             assertThat(data.getCell(4).getStringCellValue()).isEqualTo("нет данных");
+            assertThat(data.getCell(5).getStringCellValue()).isEqualTo("нет данных");
         }
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -179,7 +184,14 @@ class ReportWritersTest {
         assertThat(json.path("rows").get(0).path("PARTICIPANTS").isNull()).isTrue();
         assertThat(json.path("totals").path("applications").asLong()).isEqualTo(5);
         assertThat(json.path("quality").path("noData")).extracting(JsonNode::asText)
-                .containsExactly("PARTICIPANTS", "PARALLEL_RUNS");
+                .containsExactly("PARTICIPANTS", "LEARNERS_COMPLETED", "PARALLEL_RUNS");
+    }
+
+    @Test
+    void pdfFontSkipsGlyphSubstitutionThatRecompilesPatternsForEveryCell() throws IOException {
+        try (PDDocument pdf = new PDDocument()) {
+            assertThat(PdfLayout.font(pdf).getGsubData()).isSameAs(GsubData.NO_DATA_FOUND);
+        }
     }
 
     private byte[] excel(ReportDocument document, ReportFormat format) throws IOException {
@@ -223,11 +235,17 @@ class ReportWritersTest {
                 null,
                 null,
                 null,
+                null,
                 EVENT_AT,
                 "Комментарий",
                 null,
                 comment,
                 "Анна Кузнецова",
+                null,
+                null,
+                null,
+                new InteractionMarks(InteractionWorkStatus.ACTIVE, null, null, null, null, null, null),
+                List.of(),
                 null,
                 null,
                 null

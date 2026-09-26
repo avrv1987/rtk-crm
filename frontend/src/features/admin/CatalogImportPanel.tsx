@@ -1,8 +1,9 @@
-import { type ChangeEvent, type FormEvent, useRef, useState } from 'react'
+import { type ChangeEvent, type FormEvent, useEffect, useRef, useState } from 'react'
 import {
   ApiError,
   apiClient,
   createIdempotencyKey,
+  type AdminTeam,
   type CatalogImport,
   type CatalogImportJob,
   type CatalogImportMapping,
@@ -94,6 +95,9 @@ const extraLabels: Record<string, string> = {
   rowTargets: 'Явные UUID',
   transferStatuses: 'Словарь статусов',
   confirmedRowIds: 'Выбор строк',
+  agreementArchived: 'Договор в архиве',
+  unassignedTeamId: 'Команда для организаций без КАМ',
+  archiveAgreementIds: 'Записи для архивирования',
   templateId: 'Шаблон процесса',
   body: 'Запрос'
 }
@@ -257,7 +261,24 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
   const [pendingApply, setPendingApply] = useState(false)
   const [busy, setBusy] = useState<BusyAction>(null)
   const [error, setError] = useState<ErrorState | null>(null)
+  const [teams, setTeams] = useState<AdminTeam[]>([])
+  const [unassignedTeamId, setUnassignedTeamId] = useState('')
+  const [archiveAgreementIds, setArchiveAgreementIds] = useState<string[]>([])
   const applyKey = useRef<string | null>(null)
+
+  useEffect(() => {
+    apiClient.listTeams()
+      .then((loaded) => setTeams(loaded.filter((team) => !team.archived)))
+      .catch((failure: unknown) => {
+        if (failure instanceof ApiError && failure.code === 'UNAUTHENTICATED') {
+          onSessionExpired()
+        } else if (failure instanceof ApiError && failure.code === 'CRM_PROFILE_REQUIRED') {
+          onProfileUnavailable(failure.requestId)
+        } else {
+          setTeams([])
+        }
+      })
+  }, [onProfileUnavailable, onSessionExpired])
 
   const selectedSheet = sheets.find((sheet) => sheet.name === sheetName) ?? null
   const mappingFields = fieldsFor(profile)
@@ -273,6 +294,7 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
     setImportPlan(null)
     setJob(null)
     setSelectedRowIds([])
+    setArchiveAgreementIds([])
     setPendingApply(false)
     setTargetsDirty(false)
     setError(null)
@@ -360,8 +382,8 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
     setError(null)
   }
 
-  const preview = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  const preview = async (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault()
     if (file === null || selectedSheet === null || busy !== null) {
       return
     }
@@ -380,7 +402,8 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
     const mapping: CatalogImportMapping = {
       columns: mappedColumns,
       rowTargets: cleanTargets(rowTargets),
-      transferStatuses: transferStatuses.statuses
+      transferStatuses: transferStatuses.statuses,
+      unassignedTeamId: profile === 'AGREEMENT' && unassignedTeamId.length > 0 ? unassignedTeamId : null
     }
     setBusy('preview')
     setError(null)
@@ -394,6 +417,7 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
       setImportPlan(nextPlan)
       setJob(nextJob)
       setSelectedRowIds(nextPlan.rows.filter(eligibleRow).map((row) => row.id))
+      setArchiveAgreementIds([])
       setTargetsDirty(false)
       setPendingApply(false)
     } catch (exception) {
@@ -432,8 +456,15 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
     ))
   }
 
+  const toggleArchive = (agreementId: string) => {
+    applyKey.current = null
+    setArchiveAgreementIds((current) => (
+      current.includes(agreementId) ? current.filter((id) => id !== agreementId) : [...current, agreementId]
+    ))
+  }
+
   const apply = async () => {
-    if (importPlan === null || selectedRowIds.length === 0 || targetsDirty || busy !== null) {
+    if (importPlan === null || (selectedRowIds.length === 0 && archiveAgreementIds.length === 0) || targetsDirty || busy !== null) {
       return
     }
     const idempotencyKey = applyKey.current ?? (applyKey.current = createIdempotencyKey())
@@ -442,7 +473,8 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
     try {
       const result = await apiClient.applyCatalogImport(importPlan.id, {
         version: importPlan.version,
-        confirmedRowIds: selectedRowIds
+        confirmedRowIds: selectedRowIds,
+        archiveAgreementIds
       }, idempotencyKey)
       const [nextPlan, nextJob] = await Promise.all([
         apiClient.getCatalogImport(result.importId),
@@ -452,6 +484,7 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
       setImportPlan(nextPlan)
       setJob(nextJob)
       setSelectedRowIds(nextPlan.rows.filter(eligibleRow).map((row) => row.id))
+      setArchiveAgreementIds([])
       setPendingApply(false)
     } catch (exception) {
       reportError('apply', exception)
@@ -469,7 +502,7 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
         </div>
       </div>
       <p className="catalog-import__intro">
-        Загрузите XLS или XLSX с десятью полями ТЗ: столбцы с привычными названиями сопоставятся сами. ФИО менеджера ищется среди активных КАМ без учёта регистра, пробелов и «ё»; если совпадений несколько, строка остаётся конфликтом до указания UUID в разделе «Дополнительно». Изменения сохраняются только после проверки протокола и подтверждения.
+        Загрузите XLS или XLSX с десятью полями ТЗ: столбцы с привычными названиями сопоставятся сами. ФИО менеджера ищется среди активных КАМ без учёта регистра, пробелов и «ё»; если совпадений несколько, выберите нужного КАМ прямо в строке протокола. Несколько ответственных от вуза в одной ячейке разделяйте «;» или переводом строки — каждый станет отдельным контактом. Изменения сохраняются только после проверки протокола и подтверждения.
       </p>
       <a className="catalog-import__template" href="/catalog-import-template.xlsx" download>
         Скачать шаблон файла (10 полей ТЗ, 3 примера)
@@ -554,6 +587,23 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
               </label>
             </details>
           )}
+          {profile === 'AGREEMENT' && (
+            <label className="catalog-import__unassigned">
+              Команда для новых организаций без КАМ (необязательно)
+              <select
+                value={unassignedTeamId}
+                disabled={busy !== null}
+                onChange={(event) => {
+                  setUnassignedTeamId(event.target.value)
+                  clearPlan()
+                }}
+              >
+                <option value="">Не создавать такие вузы</option>
+                {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+              </select>
+              <span>Новый вуз без ФИО менеджера появится в выбранной команде со статусом «Требует назначения»; КАМ назначит руководитель.</span>
+            </label>
+          )}
           {!mappingComplete && (
             <p className="catalog-import__hint" role="status">Заполните все поля со звёздочкой, чтобы построить предпросмотр.</p>
           )}
@@ -597,7 +647,12 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
             </p>
           )}
           {targetsDirty && (
-            <p className="catalog-import__hint" role="status">Явные UUID изменены. Повторите предпросмотр до применения строк.</p>
+            <div className="catalog-import__hint" role="status">
+              <p>Выбор КАМ или явные UUID изменены. Перестройте предпросмотр до применения строк.</p>
+              <button type="button" disabled={busy !== null || importPlan.status === 'APPLIED'} onClick={() => void preview()}>
+                {busy === 'preview' ? 'Строим предпросмотр…' : 'Перестроить предпросмотр'}
+              </button>
+            </div>
           )}
           <div className="catalog-import__table-scroll">
             <table>
@@ -627,7 +682,26 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
                     </td>
                     <td>{row.sheetName}, {row.rowNumber}</td>
                     <td><span className={`catalog-import__status catalog-import__status--${row.status.toLowerCase()}`}>{rowStatusLabel(row.status)}</span></td>
-                    <td>{Object.entries(row.fieldErrors).length === 0 ? '—' : describeErrors(row.fieldErrors).join('; ')}</td>
+                    <td>
+                      {Object.entries(row.fieldErrors).length === 0 ? '—' : describeErrors(row.fieldErrors).join('; ')}
+                      {row.managerCandidates.length > 0 && importPlan.status === 'PREVIEWED' && (
+                        <label className="catalog-import__candidate">
+                          Выберите КАМ для строки {row.rowNumber}
+                          <select
+                            value={rowTargets[row.rowNumber]?.managerProfileId ?? ''}
+                            disabled={busy !== null}
+                            onChange={(event) => updateTarget(row.rowNumber, 'managerProfileId', event.target.value)}
+                          >
+                            <option value="">Не выбран</option>
+                            {row.managerCandidates.map((candidate) => (
+                              <option key={candidate.profileId} value={candidate.profileId}>
+                                {candidate.displayName} — {candidate.teamName ?? 'без команды'}, вузов: {candidate.organizationCount}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                    </td>
                     <td>{describeValues(row.oldValues)}</td>
                     <td>{describeValues(row.newValues)}</td>
                   </tr>
@@ -661,13 +735,39 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
             </details>
           )}
 
+          {importPlan.status === 'PREVIEWED' && importPlan.missingRecords.length > 0 && (
+            <section className="catalog-import__apply catalog-import__missing" aria-labelledby="catalog-import-missing-title">
+              <h3 id="catalog-import-missing-title">Записи вузов, которых нет в загруженном реестре</h3>
+              <p>По умолчанию записи остаются. Отметьте те, что нужно архивировать: договор скроется из действующих, история сохранится, повторная загрузка с этой записью вернёт её.</p>
+              <ul>
+                {importPlan.missingRecords.map((record) => (
+                  <li key={record.agreementId}>
+                    <label className="checkbox-field">
+                      <input
+                        type="checkbox"
+                        checked={archiveAgreementIds.includes(record.agreementId)}
+                        disabled={busy !== null || targetsDirty}
+                        onChange={() => toggleArchive(record.agreementId)}
+                      />
+                      Архивировать: {record.organizationName} — {record.vendorName}, {record.productName}
+                      {record.contractNumber === null ? '' : `, договор № ${record.contractNumber}`} (взаимодействие «{record.interactionTitle}»)
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {importPlan.status === 'PREVIEWED' && (
             <section className="catalog-import__apply" aria-labelledby="catalog-import-apply-title">
               <h3 id="catalog-import-apply-title">Применение</h3>
-              <p>Выбрано строк: {selectedRowIds.length}. Применяются только строки без ошибок и конфликтов.</p>
+              <p>
+                Выбрано строк: {selectedRowIds.length}. Применяются только строки без ошибок и конфликтов.
+                {archiveAgreementIds.length > 0 ? ` Будет архивировано записей: ${archiveAgreementIds.length}.` : ''}
+              </p>
               <button
                 type="button"
-                disabled={selectedRowIds.length === 0 || targetsDirty || busy !== null}
+                disabled={(selectedRowIds.length === 0 && archiveAgreementIds.length === 0) || targetsDirty || busy !== null}
                 onClick={() => {
                   setPendingApply(true)
                   setError(null)
@@ -683,7 +783,11 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
       {pendingApply && importPlan !== null && (
         <section className="catalog-import__confirmation" role="alertdialog" aria-labelledby="catalog-import-confirmation-title">
           <h3 id="catalog-import-confirmation-title">Применить выбранные строки?</h3>
-          <p>Будет сохранено строк: {selectedRowIds.length}. Сервер повторно проверит версию и ключ операции.</p>
+          <p>
+            Будет сохранено строк: {selectedRowIds.length}.
+            {archiveAgreementIds.length > 0 ? ` Будет архивировано записей, которых нет в реестре: ${archiveAgreementIds.length}.` : ''}
+            {' '}Сервер повторно проверит версию и ключ операции.
+          </p>
           <div>
             {!applyConflict && (
               <button type="button" disabled={busy !== null} onClick={() => void apply()}>

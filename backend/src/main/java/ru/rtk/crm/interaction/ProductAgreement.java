@@ -1,5 +1,6 @@
 package ru.rtk.crm.interaction;
 
+import java.util.List;
 import java.util.UUID;
 
 public record ProductAgreement(
@@ -10,6 +11,10 @@ public record ProductAgreement(
         String contractNumber,
         Boolean licenseSigned,
         Integer licenseExpiryYear,
-        String transferStatus
+        String transferStatus,
+        boolean archived,
+        String vendorName,
+        UUID scanAttachmentId,
+        List<ProductTransfer> transfers
 ) {
 }

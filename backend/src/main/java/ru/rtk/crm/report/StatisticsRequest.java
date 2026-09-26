@@ -8,9 +8,11 @@ public record StatisticsRequest(
         LocalDate from,
         LocalDate to,
         PeriodBasis periodBasis,
-        ReportFilters filters
+        ReportFilters filters,
+        LocalDate asOf,
+        StatisticsGroupBy seriesBy
 ) {
     ReportRequest toReportRequest() {
-        return new ReportRequest(kind, from, to, periodBasis, filters, null, null, groupBy, null);
+        return new ReportRequest(kind, from, to, periodBasis, filters, null, null, groupBy, null, asOf, null, seriesBy);
     }
 }

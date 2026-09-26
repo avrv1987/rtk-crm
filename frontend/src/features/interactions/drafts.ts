@@ -1,3 +1,5 @@
+import { clearUnsavedDrafts } from './unsavedDrafts'
+
 export type InteractionStageEditType = 'RENAME' | 'ADD_AFTER' | 'MOVE_AFTER' | 'DELETE'
 
 export type InteractionDraft = {
@@ -13,6 +15,7 @@ export type InteractionDraft = {
   contactPosition: string
   contactEmail: string
   contactPhone: string
+  contactRole: string
   activeInteractionId: string | null
 }
 
@@ -48,6 +51,7 @@ export type InteractionCardDraft = {
 
 const storagePrefix = 'rtk-crm:interaction-draft:'
 const activeProfileKey = 'rtk-crm:active-profile'
+const returnRouteKey = 'rtk-crm:return-route'
 
 const emptyDraft = (): InteractionDraft => ({
   createTitle: '',
@@ -62,6 +66,7 @@ const emptyDraft = (): InteractionDraft => ({
   contactPosition: '',
   contactEmail: '',
   contactPhone: '',
+  contactRole: '',
   activeInteractionId: null
 })
 
@@ -115,6 +120,7 @@ const normalize = (value: unknown): InteractionDraft | null => {
     contactPosition: stringValue(record.contactPosition),
     contactEmail: stringValue(record.contactEmail),
     contactPhone: stringValue(record.contactPhone),
+    contactRole: stringValue(record.contactRole),
     activeInteractionId: typeof record.activeInteractionId === 'string' ? record.activeInteractionId : null
   }
 }
@@ -261,7 +267,65 @@ export const saveReportSelection = (profileId: string, selection: object) => {
   }
 }
 
+const formKeyFor = (profileId: string, key: string) => `${storagePrefix}${profileId}:form:${key}`
+
+export const loadFormDraft = (profileId: string, key: string): unknown => {
+  const sessionStorage = storage()
+  if (sessionStorage === null) {
+    return null
+  }
+  try {
+    const raw = sessionStorage.getItem(formKeyFor(profileId, key))
+    return raw === null ? null : JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+export const saveFormDraft = (profileId: string, key: string, draft: object | null) => {
+  const sessionStorage = storage()
+  if (sessionStorage === null) {
+    return
+  }
+  try {
+    if (draft === null) {
+      sessionStorage.removeItem(formKeyFor(profileId, key))
+    } else {
+      sessionStorage.setItem(formKeyFor(profileId, key), JSON.stringify(draft))
+    }
+  } catch {
+    return
+  }
+}
+
+export const rememberReturnRoute = () => {
+  const sessionStorage = storage()
+  if (sessionStorage === null || !window.location.hash.startsWith('#/')) {
+    return
+  }
+  try {
+    sessionStorage.setItem(returnRouteKey, window.location.hash)
+  } catch {
+    return
+  }
+}
+
+export const takeReturnRoute = (): string | null => {
+  const sessionStorage = storage()
+  if (sessionStorage === null) {
+    return null
+  }
+  try {
+    const route = sessionStorage.getItem(returnRouteKey)
+    sessionStorage.removeItem(returnRouteKey)
+    return route !== null && route.startsWith('#/') ? route : null
+  } catch {
+    return null
+  }
+}
+
 export const clearDraftsForProfile = (profileId: string) => {
+  clearUnsavedDrafts()
   const sessionStorage = storage()
   if (sessionStorage === null) {
     return
@@ -287,6 +351,11 @@ export const rememberActiveProfile = (profileId: string) => {
     return
   }
   try {
+    const previousProfileId = sessionStorage.getItem(activeProfileKey)
+    if (previousProfileId !== null && previousProfileId.length > 0 && previousProfileId !== profileId) {
+      clearDraftsForProfile(previousProfileId)
+      sessionStorage.removeItem(returnRouteKey)
+    }
     sessionStorage.setItem(activeProfileKey, profileId)
   } catch {
     return

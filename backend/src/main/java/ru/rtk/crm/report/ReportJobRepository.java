@@ -17,8 +17,8 @@ import ru.rtk.crm.access.UserRole;
 public class ReportJobRepository {
     private static final String COLUMNS = """
             id, owner_profile_id, owner_role, owner_team_id, owner_access_revision, request_fingerprint, request_json,
-            kind, format, group_by, status, progress, row_count, error_code, error_message, result_storage_key, result_file_name,
-            result_size_bytes, created_at, started_at, finished_at
+            kind, format, group_by, chart_type, series_by, status, progress, row_count, error_code, error_message,
+            result_storage_key, result_file_name, result_size_bytes, created_at, started_at, finished_at
             """;
 
     private final JdbcClient jdbcClient;
@@ -39,10 +39,12 @@ public class ReportJobRepository {
         jdbcClient.sql("""
                 INSERT INTO report_jobs (
                     id, owner_profile_id, owner_role, owner_team_id, owner_access_revision, idempotency_key,
-                    request_fingerprint, request_json, kind, format, group_by, status, progress, created_at
+                    request_fingerprint, request_json, kind, format, group_by, chart_type, series_by, status, progress,
+                    created_at
                 ) VALUES (
                     :id, :ownerProfileId, :ownerRole, :ownerTeamId, :ownerAccessRevision, :idempotencyKey,
-                    :requestFingerprint, :requestJson, :kind, :format, :groupBy, 'PENDING', 0, :createdAt
+                    :requestFingerprint, :requestJson, :kind, :format, :groupBy, :chartType, :seriesBy, 'PENDING', 0,
+                    :createdAt
                 )
                 """)
                 .param("id", jobId)
@@ -56,6 +58,9 @@ public class ReportJobRepository {
                 .param("kind", request.kind().name())
                 .param("format", request.format().name())
                 .param("groupBy", request.groupBy() == null ? null : request.groupBy().name())
+                .param("chartType", request.groupBy() == null ? null
+                        : (request.lineChart() ? ChartType.LINE : ChartType.BAR).name())
+                .param("seriesBy", request.seriesBy() == null ? null : request.seriesBy().name())
                 .param("createdAt", createdAt)
                 .update();
     }
@@ -193,6 +198,8 @@ public class ReportJobRepository {
                 ReportKind.valueOf(resultSet.getString("kind")),
                 ReportFormat.valueOf(resultSet.getString("format")),
                 resultSet.getString("group_by") == null ? null : StatisticsGroupBy.valueOf(resultSet.getString("group_by")),
+                resultSet.getString("chart_type") == null ? null : ChartType.valueOf(resultSet.getString("chart_type")),
+                resultSet.getString("series_by") == null ? null : StatisticsGroupBy.valueOf(resultSet.getString("series_by")),
                 ReportJobStatus.valueOf(resultSet.getString("status")),
                 resultSet.getInt("progress"),
                 resultSet.getObject("row_count", Integer.class),
@@ -218,6 +225,8 @@ public class ReportJobRepository {
             ReportKind kind,
             ReportFormat format,
             StatisticsGroupBy groupBy,
+            ChartType chartType,
+            StatisticsGroupBy seriesBy,
             ReportJobStatus status,
             int progress,
             Integer rowCount,
@@ -243,6 +252,8 @@ public class ReportJobRepository {
                     kind,
                     format,
                     groupBy,
+                    chartType,
+                    seriesBy,
                     status,
                     progress,
                     status == ReportJobStatus.SUCCEEDED && resultStorageKey != null,

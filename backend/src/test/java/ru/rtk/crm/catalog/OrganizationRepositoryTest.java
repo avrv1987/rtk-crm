@@ -38,12 +38,16 @@ class OrganizationRepositoryTest {
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS teams (
                     id UUID PRIMARY KEY,
-                    name VARCHAR(160) NOT NULL
+                    name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL, default_workflow_template_id UUID
                 )
                 """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS crm_user_profiles (
                     id UUID PRIMARY KEY,
+                    login VARCHAR(200),
+                    idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    activation_requested_at TIMESTAMP WITH TIME ZONE,
+                    anonymized_at TIMESTAMP WITH TIME ZONE,
                     display_name VARCHAR(200) NOT NULL,
                     role VARCHAR(16) NOT NULL,
                     team_id UUID,
@@ -58,7 +62,36 @@ class OrganizationRepositoryTest {
                     team_id UUID NOT NULL,
                     owner_manager_id UUID,
                     version INTEGER NOT NULL,
-                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL, status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, city VARCHAR(200), website VARCHAR(300), inn VARCHAR(12)
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id UUID PRIMARY KEY,
+                    organization_id UUID NOT NULL,
+                    name VARCHAR(200) NOT NULL,
+                    confirmed_at TIMESTAMP WITH TIME ZONE,
+                    confirmed_by UUID
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS organization_assignment_events (
+                    reason VARCHAR(32), handover_note VARCHAR(2000),
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, command_id UUID NOT NULL,
+                    previous_owner_manager_id UUID, previous_owner_manager_display_name VARCHAR(200),
+                    owner_manager_id UUID, new_owner_manager_display_name VARCHAR(200), actor_profile_id UUID NOT NULL,
+                    actor_display_name VARCHAR(200) NOT NULL, request_id VARCHAR(64) NOT NULL, version INTEGER NOT NULL,
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS organization_deputies (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, deputy_profile_id UUID NOT NULL,
+                    deputy_display_name VARCHAR(200) NOT NULL, starts_on DATE NOT NULL, ends_on DATE NOT NULL,
+                    starts_at TIMESTAMP WITH TIME ZONE NOT NULL, ends_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    command_id UUID NOT NULL, actor_profile_id UUID NOT NULL, actor_display_name VARCHAR(200) NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, ended_at TIMESTAMP WITH TIME ZONE,
+                    ended_by_profile_id UUID, ended_by_display_name VARCHAR(200)
                 )
                 """);
         jdbcTemplate.update("DELETE FROM organizations");

@@ -3,12 +3,17 @@ import {
   ApiError,
   apiClient,
   type DataSource,
+  type RunKind,
   type SourceCode,
   type SourceMappingOptions,
   type SourceRecord,
   type SourceRecordApplyResult,
-  type SyncRun
+  type SyncRun,
+  type Team
 } from '../../shared/api/client'
+import { SourceMappingsList } from '../sources/SourceMappingsList'
+import { SourceRunHistory } from '../sources/SourceRunHistory'
+import '../sources/sources.css'
 
 type SourcesPanelProps = {
   onSessionExpired: () => void
@@ -17,7 +22,7 @@ type SourcesPanelProps = {
 
 type PanelState =
   | { kind: 'loading' }
-  | { kind: 'ready'; sources: DataSource[]; records: SourceRecord[]; options: SourceMappingOptions }
+  | { kind: 'ready'; sources: DataSource[]; records: SourceRecord[]; options: SourceMappingOptions; teams: Team[] }
   | { kind: 'failed'; error: unknown }
 
 type CommandState =
@@ -25,12 +30,16 @@ type CommandState =
   | { kind: 'running'; target: string }
   | { kind: 'failed'; target: string; error: unknown }
   | { kind: 'applied'; target: string; result: SourceRecordApplyResult }
+  | { kind: 'created'; target: string; message: string }
 
 type Mapping = {
   organizationId: string
   programId: string
   runStartsOn: string
   runLastDay: string
+  runKind: RunKind
+  newOrganizationName: string
+  newOrganizationTeamId: string
 }
 
 const pollIntervalMs = 2000
@@ -64,6 +73,19 @@ const formatDateTime = (value: string | null | undefined) => {
   }
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : dateTime.format(date)
+}
+
+const scheduleLabel = (cron: string) => {
+  const [second, minute, hour, day, month, weekday] = cron.split(/\s+/)
+  if (second === '0' && day === '*' && month === '*' && weekday === '*') {
+    if (hour === '*' && /^\d+$/.test(minute)) {
+      return `каждый час в ${minute.padStart(2, '0')} мин.`
+    }
+    if (/^\d+$/.test(hour) && /^\d+$/.test(minute)) {
+      return `ежедневно в ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`
+    }
+  }
+  return `по расписанию «${cron}»`
 }
 
 const isActive = (run: SyncRun | null | undefined) => run?.status === 'PENDING' || run?.status === 'RUNNING'
@@ -137,6 +159,7 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable }: Sources
   const [state, setState] = useState<PanelState>({ kind: 'loading' })
   const [command, setCommand] = useState<CommandState>({ kind: 'idle' })
   const [mappings, setMappings] = useState<Record<string, Mapping>>({})
+  const [reloadToken, setReloadToken] = useState(0)
   const loadVersion = useRef(0)
 
   const handleAccessError = useCallback((error: unknown) => {
@@ -157,13 +180,15 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable }: Sources
       setState({ kind: 'loading' })
     }
     try {
-      const [sources, records, options] = await Promise.all([
+      const [sources, records, options, teams] = await Promise.all([
         apiClient.listDataSources(),
         apiClient.listSourceProblemRecords(),
-        apiClient.listSourceMappingOptions()
+        apiClient.listSourceMappingOptions(),
+        apiClient.listTeams()
       ])
       if (version === loadVersion.current) {
-        setState({ kind: 'ready', sources, records, options })
+        setState({ kind: 'ready', sources, records, options, teams })
+        setReloadToken((token) => token + 1)
       }
     } catch (error) {
       if (version === loadVersion.current && !handleAccessError(error)) {
@@ -201,7 +226,15 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable }: Sources
   }
 
   const mappingOf = (record: SourceRecord): Mapping => (
-    mappings[record.id] ?? { organizationId: '', programId: '', runStartsOn: '', runLastDay: '' }
+    mappings[record.id] ?? {
+      organizationId: '',
+      programId: '',
+      runStartsOn: '',
+      runLastDay: '',
+      runKind: 'STUDENTS',
+      newOrganizationName: record.organizationName ?? '',
+      newOrganizationTeamId: ''
+    }
   )
 
   const updateMapping = (record: SourceRecord, patch: Partial<Mapping>) => {
@@ -216,9 +249,33 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable }: Sources
         organizationId: mapping.organizationId === '' ? null : mapping.organizationId,
         programId: mapping.programId === '' ? null : mapping.programId,
         runStartsOn: needsRun(record) && mapping.runStartsOn !== '' ? mapping.runStartsOn : null,
-        runEndsOn: needsRun(record) && mapping.runLastDay !== '' ? nextDay(mapping.runLastDay) : null
+        runEndsOn: needsRun(record) && mapping.runLastDay !== '' ? nextDay(mapping.runLastDay) : null,
+        runKind: needsRun(record) ? mapping.runKind : null
       })
       setCommand({ kind: 'applied', target: record.id, result })
+    } catch (error) {
+      if (!handleAccessError(error)) {
+        setCommand({ kind: 'failed', target: record.id, error })
+      }
+    }
+    await load(false)
+  }
+
+  const createOrganization = async (record: SourceRecord) => {
+    const mapping = mappingOf(record)
+    setCommand({ kind: 'running', target: record.id })
+    try {
+      const created = await apiClient.createOrganizationFromAdminSourceRecord(record.id, {
+        name: mapping.newOrganizationName,
+        teamId: mapping.newOrganizationTeamId === '' ? null : mapping.newOrganizationTeamId
+      })
+      setCommand({
+        kind: 'created',
+        target: record.id,
+        message: `Организация «${created.organizationName}» создана со статусом «Требует назначения»; запись ${created.result.record.externalId}: `
+          + `${recordStatusLabels[created.result.record.status].toLowerCase()}.`
+          + (created.result.reappliedCount > 0 ? ` Применено ещё записей этого вуза: ${created.result.reappliedCount}.` : '')
+      })
     } catch (error) {
       if (!handleAccessError(error)) {
         setCommand({ kind: 'failed', target: record.id, error })
@@ -272,7 +329,23 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable }: Sources
                     {source.adapterAvailable && `. Последняя успешная синхронизация: ${formatDateTime(source.lastSuccessAt)}`}
                     {source.updatedSince && `. Изменения запрашиваются с ${formatDateTime(source.updatedSince)}`}
                   </p>
+                  {source.configured && (
+                    <p>
+                      {source.schedule ? `Плановая синхронизация: ${scheduleLabel(source.schedule)} (МСК)` : 'Плановая синхронизация выключена (SOURCES_SYNC_CRON)'}
+                      {source.schedule && (source.nextRunAt
+                        ? `; следующий запуск — ${formatDateTime(source.nextRunAt)}`
+                        : '; начнётся после первого ручного запуска администратором')}
+                      {source.stale && <> <span className="source-badge">данные устарели</span></>}
+                    </p>
+                  )}
                   {source.lastRun ? <RunSummary run={source.lastRun} /> : source.adapterAvailable && <p>Синхронизация ещё не запускалась.</p>}
+                  {source.adapterAvailable && (
+                    <SourceRunHistory
+                      source={source.source}
+                      onSessionExpired={onSessionExpired}
+                      onProfileUnavailable={onProfileUnavailable}
+                    />
+                  )}
                   {source.problemCount > 0 && <p>Записей для разбора: {source.problemCount}</p>}
                   {source.adapterAvailable && (
                     <div className="data-sources__actions">
@@ -365,6 +438,16 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable }: Sources
                               {needsRun(record) && (
                                 <>
                                   <label>
+                                    Вид потока
+                                    <select
+                                      value={mapping.runKind}
+                                      onChange={(event) => updateMapping(record, { runKind: event.target.value as RunKind })}
+                                    >
+                                      <option value="STUDENTS">Занятия студентов</option>
+                                      <option value="TEACHERS">Обучение преподавателей</option>
+                                    </select>
+                                  </label>
+                                  <label>
                                     Начало потока
                                     <input
                                       type="date"
@@ -397,6 +480,37 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable }: Sources
                                     : 'Выберите вуз, чтобы применить запись.'}
                                 </p>
                               )}
+                              {needsOrganization(record) && !isMoodle(record) && (
+                                <details>
+                                  <summary>Вуза нет в CRM — создать организацию</summary>
+                                  <label>
+                                    Название
+                                    <input
+                                      maxLength={300}
+                                      value={mapping.newOrganizationName}
+                                      onChange={(event) => updateMapping(record, { newOrganizationName: event.target.value })}
+                                    />
+                                  </label>
+                                  <label>
+                                    Команда
+                                    <select
+                                      value={mapping.newOrganizationTeamId}
+                                      onChange={(event) => updateMapping(record, { newOrganizationTeamId: event.target.value })}
+                                    >
+                                      <option value="">Выберите команду</option>
+                                      {state.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+                                    </select>
+                                  </label>
+                                  <button
+                                    type="button"
+                                    className="button--secondary"
+                                    onClick={() => void createOrganization(record)}
+                                    disabled={busy || mapping.newOrganizationName.trim() === '' || mapping.newOrganizationTeamId === ''}
+                                  >
+                                    Создать организацию
+                                  </button>
+                                </details>
+                              )}
                               {command.kind === 'failed' && command.target === record.id && (
                                 <ErrorDetails error={command.error} message="Запись не применена." />
                               )}
@@ -417,7 +531,16 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable }: Sources
                 {command.result.reappliedCount > 0 && ` Сопоставление применило ещё записей: ${command.result.reappliedCount}.`}
               </p>
             )}
+            {command.kind === 'created' && <p role="status">{command.message}</p>}
           </section>
+
+          <SourceMappingsList
+            options={state.options}
+            reloadToken={reloadToken}
+            onChanged={() => void load(false)}
+            onSessionExpired={onSessionExpired}
+            onProfileUnavailable={onProfileUnavailable}
+          />
         </>
       )}
     </section>

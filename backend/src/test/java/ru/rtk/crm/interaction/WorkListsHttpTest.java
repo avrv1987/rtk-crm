@@ -26,10 +26,12 @@ import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.CurrentProfileService;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.catalog.Organization;
+import ru.rtk.crm.catalog.OrganizationListStatus;
 import ru.rtk.crm.catalog.OrganizationPage;
 import ru.rtk.crm.catalog.OrganizationQuery;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationSort;
+import ru.rtk.crm.catalog.OrganizationStatus;
 import ru.rtk.crm.catalog.OrganizationType;
 
 @SpringBootTest(properties = {
@@ -92,7 +94,21 @@ class WorkListsHttpTest {
                 changedAt,
                 "Колледж А2",
                 null,
-                "Анна Смирнова"
+                "Анна Смирнова",
+                new InteractionMarks(
+                        InteractionWorkStatus.PAUSED,
+                        "Вуз перенёс старт",
+                        InteractionWaiting.UNIVERSITY,
+                        "Ждём доступы",
+                        null,
+                        InteractionRiskLevel.HIGH,
+                        "Вуз не отвечает три недели"
+                ),
+                "COMMENTED",
+                changedAt,
+                changedAt,
+                null,
+                null
         );
         when(interactionService.list(any(), any(), any())).thenReturn(new InteractionPage(List.of(summary), 1, 10, 11));
 
@@ -101,6 +117,8 @@ class WorkListsHttpTest {
                         .param("q", " Колледж ")
                         .param("due", "OVERDUE")
                         .param("stage", "Первичный контакт")
+                        .param("status", "PAUSED")
+                        .param("flag", "WAITING_UNIVERSITY")
                         .param("sort", "nextActionAt,asc")
                         .param("page", "1")
                         .param("size", "10"))
@@ -110,13 +128,87 @@ class WorkListsHttpTest {
                 .andExpect(jsonPath("$.items[0].organizationName").value("Колледж А2"))
                 .andExpect(jsonPath("$.items[0].currentStageName").value("Первичный контакт"))
                 .andExpect(jsonPath("$.items[0].ownerManagerName").value("Анна Смирнова"))
-                .andExpect(jsonPath("$.items[0].programName").doesNotExist());
+                .andExpect(jsonPath("$.items[0].programName").doesNotExist())
+                .andExpect(jsonPath("$.items[0].marks.status").value("PAUSED"))
+                .andExpect(jsonPath("$.items[0].marks.waitingOn").value("UNIVERSITY"))
+                .andExpect(jsonPath("$.items[0].marks.riskLevel").value("HIGH"));
 
         verify(interactionService).list(
                 eq(PROFILE),
-                eq(new InteractionFilter(null, "Колледж", InteractionDue.OVERDUE, "Первичный контакт")),
+                eq(new InteractionFilter(
+                        null,
+                        "Колледж",
+                        InteractionDue.OVERDUE,
+                        "Первичный контакт",
+                        InteractionWorkStatus.PAUSED,
+                        InteractionFlag.WAITING_UNIVERSITY,
+                        null,
+                        null,
+                        false,
+                        null
+                )),
                 eq(new InteractionQuery(1, 10, InteractionSort.NEXT_ACTION_AT_ASC))
         );
+    }
+
+    @Test
+    void listWithoutStatusShowsOnlyActiveWorkAndAllStatusRemovesTheFilter() throws Exception {
+        when(interactionService.list(any(), any(), any())).thenReturn(new InteractionPage(List.of(), 0, 25, 0));
+
+        mockMvc.perform(get("/api/interactions").with(oidcLogin())).andExpect(status().isOk());
+        mockMvc.perform(get("/api/interactions").with(oidcLogin()).param("status", "ALL")).andExpect(status().isOk());
+
+        verify(interactionService).list(
+                eq(PROFILE),
+                eq(new InteractionFilter(null, null, null, null, InteractionWorkStatus.ACTIVE, null, null, null, false, null)),
+                any()
+        );
+        verify(interactionService).list(
+                eq(PROFILE),
+                eq(new InteractionFilter(null, null, null, null, null, null, null, null, false, null)),
+                any()
+        );
+    }
+
+    @Test
+    void workListPassesResponsibleStatusAndStageAgeToService() throws Exception {
+        when(interactionService.list(any(), any(), any())).thenReturn(new InteractionPage(List.of(), 0, 25, 0));
+        UUID responsible = UUID.randomUUID();
+
+        mockMvc.perform(get("/api/interactions")
+                        .with(oidcLogin())
+                        .param("responsible", "UNASSIGNED")
+                        .param("status", "ALL")
+                        .param("minDaysOnStage", "30"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/interactions")
+                        .with(oidcLogin())
+                        .param("responsible", responsible.toString())
+                        .param("status", "COMPLETED"))
+                .andExpect(status().isOk());
+
+        verify(interactionService).list(
+                eq(PROFILE),
+                eq(new InteractionFilter(null, null, null, null, null, null, null, null, true, 30)),
+                eq(new InteractionQuery(0, 25, InteractionSort.UPDATED_DESC))
+        );
+        verify(interactionService).list(
+                eq(PROFILE),
+                eq(new InteractionFilter(null, null, null, null, InteractionWorkStatus.COMPLETED, null, null, responsible, false, null)),
+                eq(new InteractionQuery(0, 25, InteractionSort.UPDATED_DESC))
+        );
+    }
+
+    @Test
+    void unknownFlagAndStatusAreValidationErrorsOfTheirFields() throws Exception {
+        mockMvc.perform(get("/api/interactions").with(oidcLogin()).param("flag", "LATE"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.flag").value("Такой признак не поддерживается"));
+        mockMvc.perform(get("/api/interactions").with(oidcLogin()).param("status", "CLOSED"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.status").value("Такой статус работы не поддерживается"));
+
+        verifyNoInteractions(interactionService);
     }
 
     @Test
@@ -142,7 +234,14 @@ class WorkListsHttpTest {
                 OffsetDateTime.parse("2026-09-20T10:00:00+03:00"),
                 null,
                 "Команда А",
-                true
+                true,
+                OrganizationStatus.ACTIVE,
+                null,
+                null,
+                null,
+                false,
+                null,
+                null
         );
         when(organizationRepository.findVisible(any(), any())).thenReturn(new OrganizationPage(List.of(organization), 0, 25, 1));
 
@@ -159,7 +258,7 @@ class WorkListsHttpTest {
 
         verify(organizationRepository).findVisible(
                 eq(PROFILE),
-                eq(new OrganizationQuery(0, 25, OrganizationSort.NAME_ASC, "Колледж", true))
+                eq(new OrganizationQuery(0, 25, OrganizationSort.NAME_ASC, "Колледж", true, OrganizationListStatus.CURRENT))
         );
     }
 

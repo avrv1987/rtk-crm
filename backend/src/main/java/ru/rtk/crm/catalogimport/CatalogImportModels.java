@@ -36,7 +36,8 @@ enum CatalogImportJobStatus {
 record CatalogImportMapping(
         Map<String, String> columns,
         Map<Integer, CatalogImportRowTarget> rowTargets,
-        Map<String, String> transferStatuses
+        Map<String, String> transferStatuses,
+        UUID unassignedTeamId
 ) {
 }
 
@@ -57,7 +58,7 @@ record CatalogImportSheet(String name, List<String> headers) {
 record CatalogImportPreviewResponse(UUID jobId, UUID importId) {
 }
 
-record CatalogImportApplyRequest(Integer version, List<UUID> confirmedRowIds) {
+record CatalogImportApplyRequest(Integer version, List<UUID> confirmedRowIds, List<UUID> archiveAgreementIds) {
 }
 
 record CatalogImportApplyResponse(UUID jobId, UUID importId) {
@@ -70,7 +71,8 @@ record CatalogImportView(
         int version,
         List<CatalogImportRowView> rows,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt
+        OffsetDateTime updatedAt,
+        List<CatalogImportMissingRecord> missingRecords
 ) {
 }
 
@@ -82,7 +84,21 @@ record CatalogImportRowView(
         Map<String, String> fieldErrors,
         Map<String, String> oldValues,
         Map<String, String> newValues,
-        boolean applied
+        boolean applied,
+        List<CatalogImportManagerCandidate> managerCandidates
+) {
+}
+
+record CatalogImportManagerCandidate(UUID profileId, String displayName, String teamName, long organizationCount) {
+}
+
+record CatalogImportMissingRecord(
+        UUID agreementId,
+        String organizationName,
+        String vendorName,
+        String productName,
+        String contractNumber,
+        String interactionTitle
 ) {
 }
 
@@ -102,7 +118,8 @@ record CatalogImportPlan(
         CatalogImportRowTarget target,
         Map<String, Integer> expectedVersions,
         Map<String, String> oldValues,
-        Map<String, String> newValues
+        Map<String, String> newValues,
+        List<UUID> managerCandidateIds
 ) {
 }
 

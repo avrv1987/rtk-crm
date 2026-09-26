@@ -1,5 +1,6 @@
 package ru.rtk.crm.interaction;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -22,6 +23,12 @@ public record InteractionSummary(
         OffsetDateTime updatedAt,
         String organizationName,
         String programName,
-        String ownerManagerName
+        String ownerManagerName,
+        InteractionMarks marks,
+        String lastEventType,
+        OffsetDateTime lastEventAt,
+        OffsetDateTime stageEnteredAt,
+        String deputyManagerName,
+        LocalDate deputyEndsOn
 ) {
 }

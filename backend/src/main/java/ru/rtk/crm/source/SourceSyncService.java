@@ -1,10 +1,14 @@
 package ru.rtk.crm.source;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -15,6 +19,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.core.task.TaskRejectedException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 import ru.rtk.crm.access.ContactInteractionMutationAuthorization;
 import ru.rtk.crm.access.CrmProfile;
@@ -31,8 +36,10 @@ import ru.rtk.crm.source.SourceRepository.SyncTotals;
 @Service
 public class SourceSyncService {
     private static final Logger log = LoggerFactory.getLogger(SourceSyncService.class);
+    private static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
     private static final int PROBLEM_RECORDS_LIMIT = 200;
     private static final int REAPPLY_LIMIT = 500;
+    private static final int RUN_HISTORY_LIMIT = 50;
 
     private final SourceRepository repository;
     private final SiteRecordApplier applier;
@@ -40,6 +47,7 @@ public class SourceSyncService {
     private final MoodleSnapshotApplier moodleApplier;
     private final MoodleClient moodleClient;
     private final SourceSyncExecutor executor;
+    private final SourceProperties properties;
     private final ObjectMapper objectMapper;
     private final OffsetDateTime processStartedAt = OffsetDateTime.now();
 
@@ -50,6 +58,7 @@ public class SourceSyncService {
             MoodleSnapshotApplier moodleApplier,
             MoodleClient moodleClient,
             SourceSyncExecutor executor,
+            SourceProperties properties,
             ObjectMapper objectMapper
     ) {
         this.repository = repository;
@@ -58,6 +67,7 @@ public class SourceSyncService {
         this.moodleApplier = moodleApplier;
         this.moodleClient = moodleClient;
         this.executor = executor;
+        this.properties = properties;
         this.objectMapper = objectMapper;
     }
 
@@ -66,9 +76,14 @@ public class SourceSyncService {
         return Arrays.stream(SourceCode.values()).map(this::view).toList();
     }
 
+    public List<SyncRunView> runs(CrmProfile profile, SourceCode source) {
+        requireAdmin(profile);
+        return repository.findRuns(source, RUN_HISTORY_LIMIT);
+    }
+
     public SyncRunCreated start(CrmProfile profile, SourceCode source) {
         requireAdmin(profile);
-        return enqueue(source, profile.id());
+        return enqueue(source, profile.id(), SyncTrigger.MANUAL);
     }
 
     @Scheduled(cron = "${app.sources.sync-cron}", zone = "Europe/Moscow")
@@ -83,7 +98,7 @@ public class SourceSyncService {
                 continue;
             }
             try {
-                enqueue(source, actor.get());
+                enqueue(source, actor.get(), SyncTrigger.SCHEDULE);
             } catch (SourceException exception) {
                 log.info("Scheduled sync of {} skipped: {}", source, exception.code());
             }
@@ -91,11 +106,11 @@ public class SourceSyncService {
     }
 
     Optional<SyncRunView> synchronizeIfNeverSucceeded(UUID actorProfileId, SourceCode source) {
-        if (!configured(source) || repository.findLastSuccessAt(source).isPresent()) {
+        if (!configured(source) || repository.findLastFullSuccessAt(source).isPresent()) {
             return Optional.empty();
         }
-        UUID runId = insertRun(source, actorProfileId);
-        run(runId, null);
+        UUID runId = insertRun(source, actorProfileId, SyncTrigger.BOOTSTRAP, null);
+        run(runId, null, null);
         return repository.findRun(runId).map(StoredRun::run);
     }
 
@@ -116,8 +131,8 @@ public class SourceSyncService {
         if (!configured(SourceCode.MOODLE)) {
             throw SourceException.notConfigured(SourceCode.MOODLE);
         }
-        UUID runId = insertRun(SourceCode.MOODLE, profile.id());
-        run(runId, new LearningScope(target.organizationId(), target.programId(), courseIds));
+        UUID runId = insertRun(SourceCode.MOODLE, profile.id(), SyncTrigger.CARD, target.organizationId());
+        run(runId, new LearningScope(target.organizationId(), target.programId(), courseIds), null);
         SyncRunView run = repository.findRun(runId).map(StoredRun::run).orElseThrow(SourceException::recordNotFound);
         if (run.status() != SyncRunStatus.SUCCEEDED) {
             throw SourceException.learningSyncFailed(run.errorMessage());
@@ -125,11 +140,34 @@ public class SourceSyncService {
         return run;
     }
 
-    private SyncRunCreated enqueue(SourceCode source, UUID actorProfileId) {
+    SyncRunView refreshSite(CrmProfile profile, VisibilityScope scope, UUID interactionId) {
+        if (!repository.interactionVisible(interactionId, scope)) {
+            throw new InteractionNotFoundException();
+        }
+        ContactInteractionMutationAuthorization.requireCardEditor(profile);
+        if (!configured(SourceCode.WEBSITE)) {
+            throw SourceException.notConfigured(SourceCode.WEBSITE);
+        }
+        UUID organizationId = repository.findInteractionOrganizationId(interactionId).orElseThrow(InteractionNotFoundException::new);
+        UUID runId = insertRun(SourceCode.WEBSITE, profile.id(), SyncTrigger.CARD, organizationId);
+        run(runId, null, organizationId);
+        return repository.findRun(runId).map(StoredRun::run).orElseThrow(SourceException::recordNotFound);
+    }
+
+    boolean configured(SourceCode source) {
+        return source == SourceCode.MOODLE ? moodleClient.configured() : siteApiClient.configured();
+    }
+
+    boolean stale(SourceCode source, OffsetDateTime lastSuccessAt) {
+        return configured(source)
+                && (lastSuccessAt == null || lastSuccessAt.isBefore(OffsetDateTime.now().minus(properties.staleAfter())));
+    }
+
+    private SyncRunCreated enqueue(SourceCode source, UUID actorProfileId, SyncTrigger trigger) {
         if (!configured(source)) {
             throw SourceException.notConfigured(source);
         }
-        UUID runId = insertRun(source, actorProfileId);
+        UUID runId = insertRun(source, actorProfileId, trigger, null);
         try {
             executor.execute(() -> run(runId));
         } catch (TaskRejectedException exception) {
@@ -139,13 +177,13 @@ public class SourceSyncService {
         return new SyncRunCreated(runId);
     }
 
-    private UUID insertRun(SourceCode source, UUID actorProfileId) {
+    private UUID insertRun(SourceCode source, UUID actorProfileId, SyncTrigger trigger, UUID organizationId) {
         if (repository.hasActiveRun(source)) {
             throw SourceException.alreadyRunning();
         }
         UUID runId = UUID.randomUUID();
         try {
-            repository.insertRun(runId, source, actorProfileId, OffsetDateTime.now());
+            repository.insertRun(runId, source, actorProfileId, trigger, organizationId, OffsetDateTime.now());
         } catch (DuplicateKeyException exception) {
             throw SourceException.alreadyRunning();
         }
@@ -182,6 +220,35 @@ public class SourceSyncService {
         return new SourceRecordApplyResult(recordView(updated), reapplied);
     }
 
+    SourceRecordApplyResult applyWebsiteMatching(UUID recordId, Predicate<SiteRecord> sameReference, UUID actorProfileId) {
+        reapply(SourceCode.WEBSITE, recordId, actorProfileId);
+        int reapplied = 0;
+        for (UUID otherId : repository.findNeedsMappingIds(SourceCode.WEBSITE, REAPPLY_LIMIT)) {
+            StoredRecord other = repository.findRecord(otherId).orElse(null);
+            if (other != null && !otherId.equals(recordId)
+                    && sameReference.test(SiteRecord.parseStored(objectMapper, other.payload()))
+                    && reapply(SourceCode.WEBSITE, otherId, actorProfileId) == SourceRecordStatus.APPLIED) {
+                reapplied++;
+            }
+        }
+        StoredRecord updated = repository.findRecord(recordId).orElseThrow(SourceException::recordNotFound);
+        return new SourceRecordApplyResult(recordView(updated), reapplied);
+    }
+
+    void reresolveWebsiteLinked(String column, UUID targetId, Predicate<SiteRecord> sameReference, UUID actorProfileId) {
+        for (StoredRecord stored : repository.findWebsiteRecordsLinkedTo(column, targetId, REAPPLY_LIMIT)) {
+            if (!sameReference.test(SiteRecord.parseStored(objectMapper, stored.payload()))) {
+                continue;
+            }
+            try {
+                applier.reresolve(stored.id(), actorProfileId);
+            } catch (RuntimeException exception) {
+                log.warn("Source record {} was not resolved again after a mapping change", stored.id(), exception);
+                applier.markFailed(stored.id(), failureMessage(exception));
+            }
+        }
+    }
+
     private void saveSiteMappings(CrmProfile profile, StoredRecord stored, SourceRecordApplyRequest request, OffsetDateTime now) {
         SiteRecord item = SiteRecord.parseStored(objectMapper, stored.payload());
         if (request != null && request.organizationId() != null) {
@@ -214,26 +281,34 @@ public class SourceSyncService {
         if (request == null || request.organizationId() == null) {
             throw new InteractionValidationException("organizationId", "Выберите вуз для курса или группы Moodle");
         }
-        if (request.programId() == null) {
+        RunDates run = validatedRun(request.organizationId(), request.programId(), request.runStartsOn(), request.runEndsOn());
+        moodleApplier.saveMapping(LearningUnit.parseStored(objectMapper, stored.payload()), request.organizationId(),
+                request.programId(), run, request.runKind(), profile.id(), now);
+    }
+
+    RunDates validatedRun(UUID organizationId, UUID programId, LocalDate startsOn, LocalDate endsOn) {
+        if (organizationId == null) {
+            throw new InteractionValidationException("organizationId", "Выберите вуз для курса или группы Moodle");
+        }
+        if (programId == null) {
             throw new InteractionValidationException("programId", "Выберите программу для курса или группы Moodle");
         }
-        if (repository.findOrganizationById(request.organizationId()).isEmpty()) {
+        if (repository.findOrganizationById(organizationId).isEmpty()) {
             throw new InteractionValidationException("organizationId", "Организация не найдена");
         }
-        if (!repository.activeProgramExists(request.programId())) {
+        if (!repository.activeProgramExists(programId)) {
             throw new InteractionValidationException("programId", "Программа не найдена или в архиве");
         }
-        if (request.runStartsOn() == null) {
+        if (startsOn == null) {
             throw new InteractionValidationException("runStartsOn", "Укажите дату начала потока");
         }
-        if (request.runEndsOn() == null) {
+        if (endsOn == null) {
             throw new InteractionValidationException("runEndsOn", "Укажите дату окончания потока");
         }
-        if (!request.runStartsOn().isBefore(request.runEndsOn())) {
+        if (!startsOn.isBefore(endsOn)) {
             throw new InteractionValidationException("runEndsOn", "Дата окончания потока должна быть позже даты начала");
         }
-        moodleApplier.saveMapping(LearningUnit.parseStored(objectMapper, stored.payload()), request.organizationId(),
-                request.programId(), new RunDates(request.runStartsOn(), request.runEndsOn()), profile.id(), now);
+        return new RunDates(startsOn, endsOn);
     }
 
     @EventListener
@@ -251,10 +326,10 @@ public class SourceSyncService {
     }
 
     void run(UUID runId) {
-        run(runId, null);
+        run(runId, null, null);
     }
 
-    private void run(UUID runId, LearningScope scope) {
+    private void run(UUID runId, LearningScope scope, UUID siteOrganizationId) {
         StoredRun stored = repository.findRun(runId).orElse(null);
         if (stored == null) {
             return;
@@ -268,9 +343,10 @@ public class SourceSyncService {
             if (source == SourceCode.MOODLE) {
                 runMoodle(runId, stored.startedBy(), scope);
             } else {
-                runWebsite(runId, source, updatedSince, stored.startedBy());
+                runWebsite(runId, source, updatedSince, stored.startedBy(), siteOrganizationId);
             }
         } catch (SourceFetchException exception) {
+            log.warn("Source sync run {} of {} failed: {}", runId, source, exception.code());
             repository.failRun(runId, exception.code(), exception.getMessage(), OffsetDateTime.now());
         } catch (RuntimeException exception) {
             log.error("Source sync run {} failed", runId, exception);
@@ -283,8 +359,15 @@ public class SourceSyncService {
         }
     }
 
-    private void runWebsite(UUID runId, SourceCode source, OffsetDateTime updatedSince, UUID actorProfileId) {
-        List<SiteRecord> items = siteApiClient.fetch(updatedSince);
+    private void runWebsite(UUID runId, SourceCode source, OffsetDateTime updatedSince, UUID actorProfileId,
+                            UUID organizationId) {
+        List<SiteRecord> fetched = siteApiClient.fetch(updatedSince);
+        List<SiteRecord> items = organizationId == null
+                ? fetched
+                : fetched.stream()
+                        .filter(SiteRecord::storable)
+                        .filter(item -> applier.resolvedOrganizationId(item).filter(organizationId::equals).isPresent())
+                        .toList();
         SyncTotals totals = applyAll(items, runId, actorProfileId);
         int unstorable = (int) items.stream().filter(item -> !item.storable()).count();
         repository.completeRun(
@@ -293,6 +376,9 @@ public class SourceSyncService {
                 unstorable == 0 ? null : "Записей без externalId, type или updatedAt: " + unstorable + "; они не сохранены",
                 OffsetDateTime.now()
         );
+        if (organizationId != null) {
+            return;
+        }
         items.stream()
                 .filter(SiteRecord::storable)
                 .map(SiteRecord::updatedAt)
@@ -371,11 +457,14 @@ public class SourceSyncService {
                 : "Запись не применена из-за внутренней ошибки; подробности в журнале сервера";
     }
 
-    private boolean configured(SourceCode source) {
-        return source == SourceCode.MOODLE ? moodleClient.configured() : siteApiClient.configured();
-    }
-
     private SourceView view(SourceCode source) {
+        OffsetDateTime lastSuccessAt = repository.findLastFullSuccessAt(source).orElse(null);
+        String schedule = properties.scheduled() ? properties.syncCron().strip() : null;
+        OffsetDateTime nextRunAt = schedule != null && configured(source) && repository.findScheduleActor(source).isPresent()
+                ? Optional.ofNullable(CronExpression.parse(schedule).next(ZonedDateTime.now(ZONE)))
+                        .map(ZonedDateTime::toOffsetDateTime)
+                        .orElse(null)
+                : null;
         return new SourceView(
                 source,
                 source.title(),
@@ -383,13 +472,16 @@ public class SourceSyncService {
                 configured(source),
                 source == SourceCode.WEBSITE,
                 repository.findUpdatedSince(source).orElse(null),
-                repository.findLastSuccessAt(source).orElse(null),
+                lastSuccessAt,
                 repository.countProblems(source),
-                repository.findLatestRun(source).orElse(null)
+                repository.findLatestFullRun(source).orElse(null),
+                schedule,
+                nextRunAt,
+                stale(source, lastSuccessAt)
         );
     }
 
-    private SourceRecordView recordView(StoredRecord stored) {
+    SourceRecordView recordView(StoredRecord stored) {
         String organizationExternalId = null;
         String organizationName;
         String programName = null;
@@ -422,13 +514,12 @@ public class SourceSyncService {
 
     private record LearningScope(UUID organizationId, UUID programId, List<Long> courseIds) {
         boolean covers(SourceRepository repository, LearningUnit unit) {
-            return repository.findMappedTarget(SourceCode.MOODLE, unit.mappingKind(), unit.externalId())
-                    .filter(target -> target.organizationId().equals(organizationId) && target.programId().equals(programId))
-                    .isPresent();
+            return repository.findLearningTargets(SourceCode.MOODLE, unit.mappingKind(), unit.externalId()).stream()
+                    .anyMatch(target -> target.organizationId().equals(organizationId) && target.programId().equals(programId));
         }
     }
 
-    private static void requireAdmin(CrmProfile profile) {
+    static void requireAdmin(CrmProfile profile) {
         if (profile.role() != UserRole.ADMIN) {
             throw SourceException.adminRequired();
         }
