@@ -98,9 +98,13 @@ const fillFields = async (page, scope, values) => {
 }
 
 const checkOption = async (page, legend, label) => {
-  const option = `[...([...document.querySelectorAll('fieldset.report-filter')].find((item) => item.querySelector('legend')?.textContent === ${JSON.stringify(legend)})?.querySelectorAll('label') ?? [])].find((item) => item.textContent.trim() === ${JSON.stringify(label)})?.querySelector('input')`
+  const chip = `[...document.querySelectorAll('details.report-chip')].find((item) => item.querySelector('.report-chip__label')?.textContent === ${JSON.stringify(legend + ':')})`
+  const option = `[...(${chip}?.querySelectorAll('label') ?? [])].find((item) => item.textContent.trim() === ${JSON.stringify(label)})?.querySelector('input')`
+  await page.waitFor(() => page.evaluate(`Boolean(${chip})`), 'Filter is absent: ' + legend)
+  await page.evaluate(`${chip}.open = true`)
   await page.waitFor(() => page.evaluate(`Boolean(${option})`), 'Filter option is absent: ' + label)
   await page.evaluate(`${option}.checked || ${option}.click()`)
+  await page.evaluate(`${chip}.open = false`)
   await pause(100)
 }
 
@@ -162,8 +166,8 @@ try {
   await shoot(kam, 'attachments', attachmentsReady, '.interaction-attachments')
 
   phase = 'reports'
-  const reportsReady = "Boolean(document.querySelector('.reports__form')) && document.body.innerText.includes('Заказанные файлы')"
-  await navigate(kam, '#/reports', reportsReady)
+  const reportsReady = "Boolean(document.querySelector('.reports__form .report-chip')) && document.body.innerText.includes('Мои выгрузки')"
+  await navigate(kam, '#/reports/portfolio', reportsReady)
   for (const stage of baseStages) {
     await checkOption(kam, 'Этап', stage)
   }
@@ -171,10 +175,10 @@ try {
   await clickButton(kam, 'Показать')
   const previewReady = reportsReady + " && Boolean(document.querySelector('.reports__table-scroll'))"
   await shoot(kam, 'reports-preview', previewReady, '.reports__preview')
-  await clickButton(kam, 'Построить диаграмму')
-  await shoot(kam, 'statistics', previewReady + " && Boolean(document.querySelector('.reports__statistics svg'))", '.reports__statistics')
-  await clickButton(kam, 'Сформировать файл')
-  await shoot(kam, 'report-files', reportsReady + " && Boolean(document.querySelector('.reports__jobs li'))", '.reports__files')
+  await kam.evaluate("document.querySelector('#report-result-tab-chart').click()")
+  await shoot(kam, 'statistics', reportsReady + " && Boolean(document.querySelector('.reports__statistics svg'))", '.reports__statistics')
+  await clickButton(kam, 'Выгрузить XLSX')
+  await shoot(kam, 'report-files', reportsReady + " && Boolean(document.querySelector('.report-jobs li'))", '.report-jobs')
 
   phase = 'kam-mobile'
   await setViewport(kam, phone)

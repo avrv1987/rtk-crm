@@ -42,10 +42,13 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.jdbc.JdbcTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -133,6 +136,9 @@ import ru.rtk.crm.training.TrainingService;
         MoodleSnapshotApplier.class,
         MoodleClient.class,
         SourceSyncService.class,
+        SourceSettingsService.class,
+        SourceSettingsRepository.class,
+        SourceTokenCipher.class,
         CardSourcesService.class,
         SourceMappingService.class,
         SourceReviewService.class,
@@ -152,6 +158,7 @@ class SourceSyncServiceTest {
     private static final List<String> QUERIES = new CopyOnWriteArrayList<>();
     private static final List<String> AUTHORIZATIONS = new CopyOnWriteArrayList<>();
     private static final String MOODLE_TOKEN = "moodle-test-token";
+    private static final String SETTINGS_KEY = Base64.getEncoder().encodeToString("s".repeat(32).getBytes(StandardCharsets.UTF_8));
     private static final String MOODLE_FIXTURES = "/ru/rtk/crm/source/moodle/";
     private static final long JAVA_COURSE = 2;
     private static final long DATA_COURSE = 3;
@@ -264,6 +271,15 @@ class SourceSyncServiceTest {
     private SourceSyncExecutor sourceSyncExecutor;
 
     @Autowired
+    private SourceSettingsService settingsService;
+
+    @Autowired
+    private SourceSettingsRepository sourceSettingsRepository;
+
+    @Autowired
+    private AuditJournalRepository auditJournalRepository;
+
+    @Autowired
     private ObjectMapper objectMapper;
 
     @Autowired
@@ -307,8 +323,8 @@ class SourceSyncServiceTest {
     void setUp() {
         createSchema();
         for (String table : List.of(
-                "catalog_change_events", "learner_enrolments", "learners", "enrolment_streams", "audit_events",
-                "teacher_trainings", "attachments", "interaction_cycles", "learning_snapshots", "source_mappings", "source_records", "sync_runs", "sources",
+                "source_settings", "catalog_change_events", "learner_enrolments", "learners", "enrolment_streams", "audit_events",
+                "teacher_trainings", "attachments", "interaction_cycles", "learning_observations", "learning_snapshots", "source_mappings", "source_records", "sync_runs", "sources",
                 "interaction_events",
                 "command_idempotency_records", "interaction_contacts", "product_agreements", "interaction_stage_transitions",
                 "interaction_stages", "interactions", "workflow_template_transitions", "workflow_template_stages",
@@ -570,6 +586,40 @@ class SourceSyncServiceTest {
                 + " OR name = 'Абитуриент Демонстрационный'", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT payload FROM source_records WHERE external_id = 'la-demo-110'", String.class))
                 .contains("site-college-1").doesNotContain("applicant.demo", "Абитуриент", "00-21");
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void savedSettingsOverrideEnvironmentWithoutRestartAndTokenStaysOutOfLogs(CapturedOutput output) {
+        String baseUrl = "http://127.0.0.1:" + SITE.getAddress().getPort() + "/";
+        String savedToken = "saved-moodle-token-" + UUID.randomUUID();
+        settingsService.update(admin, new SourceSettingsRequest(baseUrl, savedToken, List.of(JAVA_COURSE), List.of("student"),
+                List.of("editingteacher", "teacher"), baseUrl, null, null), "settings-request");
+
+        SyncRunView saved = syncMoodle();
+
+        assertThat(saved.status()).as(saved.errorMessage()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(MOODLE_REQUESTS).extracting(form -> form.get("wstoken")).containsOnly(savedToken);
+        assertThat(MOODLE_REQUESTS).extracting(form -> form.get("courseid")).filteredOn(value -> value != null)
+                .containsOnly(Long.toString(JAVA_COURSE));
+        assertThat(service.sources(admin)).extracting(SourceView::schedule).containsOnly((String) null);
+
+        MOODLE_STATUS.set(401);
+        SyncRunView failed = syncMoodle();
+        assertThat(failed.status()).isEqualTo(SyncRunStatus.FAILED);
+        assertThat(failed.errorMessage()).doesNotContain(savedToken);
+        assertThat(output.getAll()).doesNotContain(savedToken);
+        assertThat(jdbcTemplate.queryForList("SELECT details FROM audit_events", String.class))
+                .singleElement().asString().contains("токен Moodle заменён").doesNotContain(savedToken);
+
+        settingsService.reset(admin, "reset-request");
+        MOODLE_STATUS.set(200);
+        MOODLE_REQUESTS.clear();
+        SyncRunView restored = syncMoodle();
+
+        assertThat(restored.status()).as(restored.errorMessage()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(MOODLE_REQUESTS).extracting(form -> form.get("wstoken")).containsOnly(MOODLE_TOKEN);
+        assertThat(service.sources(admin)).extracting(SourceView::schedule).containsOnly("0 0 * * * *");
     }
 
     @Test
@@ -977,6 +1027,64 @@ class SourceSyncServiceTest {
     }
 
     @Test
+    void learningHistoryAddsRowOnlyOnChangeAndDemandTakesObservationInForceOnDate() throws IOException {
+        syncMoodle();
+        UUID javaRecord = moodleRecordId("moodle_course", Long.toString(JAVA_COURSE));
+        service.apply(admin, javaRecord, moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
+        UUID run = jdbcTemplate.queryForObject("SELECT id FROM source_mappings WHERE kind = 'COURSE' AND external_key = ?",
+                UUID.class, Long.toString(JAVA_COURSE));
+        Map<String, Object> first = jdbcTemplate.queryForMap("SELECT * FROM learning_observations WHERE mapping_id = ?", run);
+        assertThat(first).containsEntry("PARTICIPANTS_COUNT", 6).containsEntry("COMPLETED_COUNT", 3).containsEntry("DEMO", false);
+
+        syncMoodle();
+        syncMoodle();
+
+        assertThat(history(run)).containsExactly(tuple(6, 3));
+        Map<String, Object> confirmed = jdbcTemplate.queryForMap("SELECT * FROM learning_observations WHERE mapping_id = ?", run);
+        assertThat(confirmed.get("OBSERVED_FROM")).isEqualTo(first.get("OBSERVED_FROM"));
+        assertThat(((OffsetDateTime) confirmed.get("CONFIRMED_AT"))).isAfter((OffsetDateTime) first.get("CONFIRMED_AT"));
+
+        COMPLETION_OVERRIDES.put(completionUser(false), completionResponse(true));
+        syncMoodle();
+        syncMoodle();
+
+        assertThat(history(run)).containsExactly(tuple(6, 3), tuple(6, 4));
+
+        jdbcTemplate.update("""
+                UPDATE learning_observations SET observed_from = ?, confirmed_at = ? WHERE mapping_id = ? AND completed_count = 3
+                """, OffsetDateTime.now().minusDays(20), OffsetDateTime.now().minusDays(6), run);
+        jdbcTemplate.update("""
+                UPDATE learning_observations SET observed_from = ? WHERE mapping_id = ? AND completed_count = 4
+                """, OffsetDateTime.now().minusDays(5), run);
+
+        assertThat(demandOn(TODAY.minusDays(10)))
+                .containsExactly(tuple("Java-разработчик", 6L, 3L, 1L));
+        assertThat(demandOn(TODAY)).containsExactly(tuple("Java-разработчик", 6L, 4L, 1L));
+        assertThat(demandOn(TODAY.minusDays(25))).containsExactly(tuple("Java-разработчик", null, null, 1L));
+        assertThat(reportService.document(kamA, new ReportRequest(ReportKind.DEMAND, null, TODAY.minusDays(10), null,
+                ReportFilters.none(), null, null, null, null)).columnTitles())
+                .containsEntry(ReportColumn.PARTICIPANTS, "Обучающиеся (Moodle, на "
+                        + TODAY.minusDays(10).format(DateTimeFormatter.ofPattern("dd.MM.yyyy")) + ")");
+
+        mappingService.deleteSnapshot(admin, run);
+
+        assertThat(history(run)).isEmpty();
+    }
+
+    private List<Tuple> history(UUID run) {
+        return jdbcTemplate.query("SELECT participants_count, completed_count FROM learning_observations WHERE mapping_id = ?"
+                        + " ORDER BY observed_from", (resultSet, rowNumber) -> tuple(resultSet.getInt(1), resultSet.getObject(2)), run);
+    }
+
+    private List<Tuple> demandOn(LocalDate day) {
+        return reportService.document(kamA, new ReportRequest(ReportKind.DEMAND, null, day, null, ReportFilters.none(), null,
+                        null, null, null)).rows().stream()
+                .filter(row -> row.programName() != null)
+                .map(row -> tuple(row.programName(), row.participants(), row.completed(), row.parallelRuns()))
+                .toList();
+    }
+
+    @Test
     void teacherRunIsCountedSeparatelyFromStudentsInCardAndDemand() {
         syncMoodle();
         service.apply(admin, moodleRecordId("moodle_course", Long.toString(JAVA_COURSE)), moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
@@ -995,6 +1103,22 @@ class SourceSyncServiceTest {
     }
 
     @Test
+    void directlySavedMappingDefaultsToStudentsAndCanBeSeededAsTeacherRun() {
+        SourceRepository.RunDates run = new SourceRepository.RunDates(RUN_STARTS, RUN_ENDS);
+        repository.saveMapping(SourceCode.MOODLE, "COURSE", Long.toString(JAVA_COURSE), ORGANIZATION_A, PROGRAM_JAVA, run,
+                ADMIN, OffsetDateTime.now());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT run_kind FROM source_mappings WHERE kind = 'COURSE' AND external_key = ?", String.class,
+                Long.toString(JAVA_COURSE))).isEqualTo("STUDENTS");
+
+        repository.saveMapping(SourceCode.MOODLE, "COURSE", Long.toString(DATA_COURSE), ORGANIZATION_A, PROGRAM_JAVA, run,
+                RunKind.TEACHERS, ADMIN, OffsetDateTime.now());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT run_kind FROM source_mappings WHERE kind = 'COURSE' AND external_key = ?", String.class,
+                Long.toString(DATA_COURSE))).isEqualTo("TEACHERS");
+    }
+
+    @Test
     void newCycleGetsItsOwnRunOnTheSameCourseAndThePreviousRunStaysFrozen() {
         syncMoodle();
         UUID javaRecord = moodleRecordId("moodle_course", Long.toString(JAVA_COURSE));
@@ -1005,6 +1129,8 @@ class SourceSyncServiceTest {
                 TODAY.minusDays(120), TODAY.minusDays(5), firstRun);
         jdbcTemplate.update("UPDATE learning_snapshots SET observed_at = ? WHERE mapping_id = ?",
                 OffsetDateTime.now().minusDays(10), firstRun);
+        jdbcTemplate.update("UPDATE learning_observations SET observed_from = ?, confirmed_at = ? WHERE mapping_id = ?",
+                OffsetDateTime.now().minusDays(30), OffsetDateTime.now().minusDays(10), firstRun);
         Map<String, Object> frozen = snapshotOfRun(firstRun);
         List<String> previousEvents = events(existingInteractionA);
         CycleStartRequest cycle = new CycleStartRequest("Курс Java: повторный цикл", null, TODAY.minusDays(5), null, null);
@@ -1682,11 +1808,14 @@ class SourceSyncServiceTest {
     }
 
     private SourceSyncService liveService(String token, List<Long> courses) {
-        SourceProperties properties = new SourceProperties(1, 1, "-", Duration.ofHours(26), null, new SourceProperties.Moodle(
+        SourceProperties properties = new SourceProperties(1, 1, "-", Duration.ofHours(26), null, null, new SourceProperties.Moodle(
                 System.getenv("MOODLE_TEST_URL"), token, courses, List.of("student"), List.of("editingteacher", "teacher"),
                 Duration.ofSeconds(5), Duration.ofSeconds(20), DataSize.ofMegabytes(5)));
+        MoodleClient moodleClient = new MoodleClient(properties, objectMapper);
+        SourceSettingsService settings = new SourceSettingsService(properties, sourceSettingsRepository,
+                new SourceTokenCipher(properties), auditJournalRepository, moodleClient, siteApiClient, event -> { });
         return new SourceSyncService(repository, siteRecordApplier, paidOrderEnrolment, siteApiClient, moodleSnapshotApplier,
-                new MoodleClient(properties, objectMapper), sourceSyncExecutor, properties, objectMapper);
+                moodleClient, sourceSyncExecutor, properties, settings, objectMapper);
     }
 
     private SyncRunView sync() {
@@ -1919,7 +2048,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, login VARCHAR(200), idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     activation_requested_at TIMESTAMP WITH TIME ZONE, anonymized_at TIMESTAMP WITH TIME ZONE, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL, access_revision INTEGER NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -1985,7 +2114,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (
+                CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500), problem VARCHAR(1000), risk_level VARCHAR(16), risk_reason VARCHAR(1000),
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL,
                     current_stage_id UUID NOT NULL, next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE,
@@ -2083,7 +2212,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS attachments (
+                CREATE TABLE IF NOT EXISTS attachments (partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_id UUID NOT NULL, event_id UUID,
                     original_name VARCHAR(255) NOT NULL, media_type VARCHAR(160) NOT NULL, size_bytes BIGINT NOT NULL,
                     storage_key UUID NOT NULL, checksum CHAR(64) NOT NULL, status VARCHAR(32) NOT NULL,
@@ -2150,11 +2279,30 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS learning_observations (
+                    mapping_id UUID NOT NULL, observed_from TIMESTAMP WITH TIME ZONE NOT NULL,
+                    confirmed_at TIMESTAMP WITH TIME ZONE NOT NULL, participants_count INTEGER NOT NULL,
+                    teachers_count INTEGER NOT NULL, completed_count INTEGER, not_completed_count INTEGER,
+                    unknown_count INTEGER NOT NULL, groups_count INTEGER NOT NULL, demo BOOLEAN NOT NULL DEFAULT FALSE,
+                    PRIMARY KEY (mapping_id, observed_from)
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS teacher_trainings (
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, event_id UUID NOT NULL UNIQUE, trained_on DATE NOT NULL,
                     course_name VARCHAR(300) NOT NULL, enrolled_count INTEGER NOT NULL, completed_count INTEGER,
                     attachment_id UUID, next_cycle_on DATE, created_by UUID NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS source_settings (
+                    id SMALLINT PRIMARY KEY, moodle_base_url VARCHAR(500), moodle_token_encrypted VARCHAR(2000),
+                    moodle_token_changed_at TIMESTAMP WITH TIME ZONE, moodle_course_ids VARCHAR(2000) NOT NULL,
+                    moodle_student_roles VARCHAR(500) NOT NULL, moodle_teacher_roles VARCHAR(500) NOT NULL,
+                    website_base_url VARCHAR(500), website_token_encrypted VARCHAR(2000),
+                    website_token_changed_at TIMESTAMP WITH TIME ZONE, sync_cron VARCHAR(100), updated_by UUID NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
                 """
@@ -2217,6 +2365,7 @@ class SourceSyncServiceTest {
                     1,
                     "0 0 * * * *",
                     Duration.ofHours(26),
+                    SETTINGS_KEY,
                     new SourceProperties.Website(baseUrl, TOKEN, Duration.ofSeconds(2), Duration.ofSeconds(5), 10,
                             DataSize.ofMegabytes(1)),
                     new SourceProperties.Moodle(baseUrl, MOODLE_TOKEN, List.of(JAVA_COURSE, DATA_COURSE), List.of("student"),

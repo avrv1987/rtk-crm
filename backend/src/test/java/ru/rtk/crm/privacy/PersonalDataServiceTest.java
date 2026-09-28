@@ -694,7 +694,7 @@ class PersonalDataServiceTest {
     private void createSchema() {
         for (String statement : List.of(
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, issuer VARCHAR(512) NOT NULL, subject VARCHAR(512) NOT NULL,
                     display_name VARCHAR(200) NOT NULL, login VARCHAR(200), role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL, pending_activation BOOLEAN NOT NULL DEFAULT FALSE,
@@ -721,7 +721,7 @@ class PersonalDataServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (
+                CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL, next_action VARCHAR(500),
                     version INTEGER NOT NULL, created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
@@ -739,7 +739,7 @@ class PersonalDataServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS attachments (
+                CREATE TABLE IF NOT EXISTS attachments (partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, original_name VARCHAR(255) NOT NULL,
                     size_bytes BIGINT NOT NULL, storage_key UUID NOT NULL, status VARCHAR(32) NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL

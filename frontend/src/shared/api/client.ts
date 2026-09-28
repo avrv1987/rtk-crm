@@ -81,8 +81,29 @@ export type TeamIndicators = components['schemas']['TeamIndicators']
 export type ManagerIndicators = components['schemas']['ManagerIndicators']
 export type TeamsSummary = components['schemas']['TeamsSummary']
 export type TeamSummary = components['schemas']['TeamSummary']
+export type LearningTrend = components['schemas']['LearningTrend']
+export type LearningTrendItem = components['schemas']['LearningTrendItem']
+export type LearningDynamics = components['schemas']['LearningDynamics']
+export type LearningDynamicsQuery = {
+  from?: string
+  to?: string
+  seriesBy?: LearningDynamics['seriesBy']
+  organizationIds?: string[]
+  programIds?: string[]
+}
+const learningDynamicsQuery = (query: LearningDynamicsQuery, extra: Record<string, string> = {}) => {
+  const searchParams = new URLSearchParams(extra)
+  if (query.from) searchParams.set('from', query.from)
+  if (query.to) searchParams.set('to', query.to)
+  if (query.seriesBy) searchParams.set('seriesBy', query.seriesBy)
+  query.organizationIds?.forEach((id) => searchParams.append('organizationIds', id))
+  query.programIds?.forEach((id) => searchParams.append('programIds', id))
+  return searchParams.size === 0 ? '' : `?${searchParams.toString()}`
+}
 export type ReminderDigest = components['schemas']['ReminderDigest']
 export type ReminderSettings = components['schemas']['ReminderSettings']
+export type LmsSignals = components['schemas']['LmsSignals']
+export type LmsSignal = components['schemas']['LmsSignal']
 export type WorkflowStageInput = components['schemas']['WorkflowStageInput']
 export type WorkflowTransitionInput = components['schemas']['WorkflowTransitionInput']
 export type WorkflowTemplate = components['schemas']['WorkflowTemplate']
@@ -148,6 +169,9 @@ export type RunKind = components['schemas']['RunKind']
 export type SourceMapping = components['schemas']['SourceMapping']
 export type SourceMappingUpdate = components['schemas']['SourceMappingUpdate']
 export type PendingSourceRecord = components['schemas']['PendingSourceRecord']
+export type SourceSettings = components['schemas']['SourceSettings']
+export type SourceSettingsUpdate = components['schemas']['SourceSettingsUpdate']
+export type SourceConnectionCheck = components['schemas']['SourceConnectionCheck']
 export type SourceOrganizationCreate = components['schemas']['SourceOrganizationCreate']
 export type SourceOrganizationCreated = components['schemas']['SourceOrganizationCreated']
 export type InteractionSourceStatus = components['schemas']['InteractionSourceStatus']
@@ -278,6 +302,15 @@ export type RosterFileDownload = {
   blob: Blob
   fileName: string
   exportId: string
+}
+export type TeacherRoster = components['schemas']['TeacherRoster']
+export type TeacherRosterMember = components['schemas']['TeacherRosterMember']
+export type TeacherRosterCreate = components['schemas']['TeacherRosterCreate']
+export type TeacherRosterFileRequest = components['schemas']['TeacherRosterFileRequest']
+export type TeacherRosterMarked = components['schemas']['TeacherRosterMarked']
+export type TeacherRosterFileDownload = RosterFileDownload & {
+  rows: number
+  skipped: number
 }
 
 const querySuffix = (query: Record<string, string | number | boolean | null | undefined>) => {
@@ -1248,6 +1281,18 @@ export class ApiClient {
     return this.request<TeamsSummary>(`/api/work/teams-summary${suffix}`)
   }
 
+  async getLearningTrend(days?: number): Promise<LearningTrend> {
+    return this.request<LearningTrend>(`/api/work/learning-trend${querySuffix({ days })}`)
+  }
+
+  async getLearningDynamics(query: LearningDynamicsQuery): Promise<LearningDynamics> {
+    return this.request<LearningDynamics>(`/api/reports/learning-dynamics${learningDynamicsQuery(query)}`)
+  }
+
+  async downloadLearningDynamics(query: LearningDynamicsQuery, format: 'XLSX' | 'PDF'): Promise<Blob> {
+    return this.download(`/api/reports/learning-dynamics/file${learningDynamicsQuery({ ...query, seriesBy: undefined }, { format })}`)
+  }
+
   async getReminders(): Promise<ReminderDigest> {
     return this.request<ReminderDigest>('/api/reminders')
   }
@@ -1264,6 +1309,21 @@ export class ApiClient {
       },
       body: JSON.stringify(payload)
     })
+  }
+
+  async listLmsSignals(): Promise<LmsSignals> {
+    return this.request<LmsSignals>('/api/lms-signals')
+  }
+
+  async listInteractionLmsSignals(id: Interaction['id']): Promise<LmsSignals> {
+    return this.request<LmsSignals>(`/api/interactions/${encodeURIComponent(id)}/lms-signals`)
+  }
+
+  async dismissInteractionLmsSignal(
+    id: Interaction['id'],
+    payload: components['schemas']['LmsSignalDismissal']
+  ): Promise<LmsSignals> {
+    return this.post<LmsSignals>(`/api/interactions/${encodeURIComponent(id)}/lms-signals/dismissals`, payload)
   }
 
   async createOrganizationFromAdminSourceRecord(
@@ -1287,6 +1347,22 @@ export class ApiClient {
 
   async removeSourceMapping(id: SourceMapping['id'], version: number): Promise<void> {
     return this.send<void>(`/api/admin/source-mappings/${encodeURIComponent(id)}?version=${version}`, 'DELETE')
+  }
+
+  async getSourceSettings(): Promise<SourceSettings> {
+    return this.request<SourceSettings>('/api/admin/source-settings')
+  }
+
+  async updateSourceSettings(payload: SourceSettingsUpdate): Promise<SourceSettings> {
+    return this.send<SourceSettings>('/api/admin/source-settings', 'PUT', payload)
+  }
+
+  async resetSourceSettings(): Promise<void> {
+    return this.send<void>('/api/admin/source-settings', 'DELETE')
+  }
+
+  async checkSourceConnection(source: SourceCode, payload: SourceSettingsUpdate): Promise<SourceConnectionCheck> {
+    return this.post<SourceConnectionCheck>(`/api/admin/sources/${encodeURIComponent(source)}/check`, payload)
   }
 
   async addSourceMappingRun(id: SourceMapping['id'], payload: SourceMappingUpdate): Promise<SourceMapping> {
@@ -1330,6 +1406,62 @@ export class ApiClient {
     idempotencyKey: string
   ): Promise<TeacherTrainingCreated> {
     return this.command<TeacherTrainingCreated>(`/api/interactions/${encodeURIComponent(id)}/teacher-trainings`, payload, idempotencyKey)
+  }
+
+  async listTeacherRosters(id: Interaction['id']): Promise<TeacherRoster[]> {
+    return this.request<TeacherRoster[]>(`/api/interactions/${encodeURIComponent(id)}/teacher-rosters`)
+  }
+
+  async createTeacherRoster(id: Interaction['id'], payload: TeacherRosterCreate): Promise<TeacherRoster> {
+    return this.post<TeacherRoster>(`/api/interactions/${encodeURIComponent(id)}/teacher-rosters`, payload)
+  }
+
+  async deleteTeacherRoster(rosterId: TeacherRoster['id']): Promise<void> {
+    return this.send<void>(`/api/teacher-rosters/${encodeURIComponent(rosterId)}`, 'DELETE')
+  }
+
+  async addTeacherRosterMember(rosterId: TeacherRoster['id'], contactId: string): Promise<TeacherRoster> {
+    return this.send<TeacherRoster>(
+      `/api/teacher-rosters/${encodeURIComponent(rosterId)}/members/${encodeURIComponent(contactId)}`,
+      'PUT'
+    )
+  }
+
+  async removeTeacherRosterMember(rosterId: TeacherRoster['id'], contactId: string): Promise<TeacherRoster> {
+    return this.send<TeacherRoster>(
+      `/api/teacher-rosters/${encodeURIComponent(rosterId)}/members/${encodeURIComponent(contactId)}`,
+      'DELETE'
+    )
+  }
+
+  async exportTeacherRoster(rosterId: TeacherRoster['id'], payload: TeacherRosterFileRequest): Promise<TeacherRosterFileDownload> {
+    if (this.csrf === null) {
+      await this.refreshCsrf()
+    }
+    const response = await fetch(`/api/teacher-rosters/${encodeURIComponent(rosterId)}/lms-file`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/json',
+        [this.csrf!.headerName]: this.csrf!.token
+      },
+      body: JSON.stringify(payload)
+    })
+    if (!response.ok) {
+      return this.throwResponseError(response)
+    }
+    return {
+      blob: await response.blob(),
+      fileName: fileNameFromContentDisposition(response.headers.get('Content-Disposition')),
+      exportId: response.headers.get('X-Roster-Export-Id') ?? '',
+      rows: Number(response.headers.get('X-Roster-Rows') ?? 0),
+      skipped: Number(response.headers.get('X-Roster-Skipped') ?? 0)
+    }
+  }
+
+  async markTeacherRosterExportTransferred(exportId: string): Promise<TeacherRosterMarked> {
+    return this.post<TeacherRosterMarked>(`/api/teacher-roster-exports/${encodeURIComponent(exportId)}/transferred`)
   }
 
   async getInteractionCycle(id: Interaction['id']): Promise<InteractionCycle> {

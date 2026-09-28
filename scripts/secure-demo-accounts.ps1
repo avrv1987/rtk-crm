@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $envFilePath = [System.IO.Path]::GetFullPath($EnvFile)
 $accountsFile = Join-Path $projectRoot '.demo-accounts.local'
-$demoAccounts = @('kam-a', 'kam-b', 'kam-c', 'kam-d', 'leader', 'leader-b', 'admin', 'management', 'enrol', 'unprofiled', 'unprofiled-2')
+$demoAccounts = @('kam-a', 'kam-b', 'kam-c', 'kam-d', 'leader', 'leader-b', 'admin', 'management', 'enrol', 'partner', 'unprofiled', 'unprofiled-2')
 
 if (-not (Test-Path -LiteralPath $envFilePath)) {
     throw "$envFilePath not found"

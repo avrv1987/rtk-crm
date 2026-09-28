@@ -474,11 +474,11 @@ class ReportServiceTest {
                 tuple(ReportColumn.PARALLEL_RUNS, ReportColumn.NO_DATA)
         );
         assertThat(preview.columns()).extracting(ReportColumnView::title).contains("Заявки (сайт, весь период)")
-                .anyMatch(title -> title.startsWith("Обучающиеся (Moodle, снимок "));
+                .anyMatch(title -> title.startsWith("Обучающиеся (Moodle, на "));
         assertThat(reportService.preview(LEADER_A_PROFILE, demand(SEPTEMBER_FIRST, SEPTEMBER_LAST, filters(), null), 0, 50)
                 .columns()).extracting(ReportColumnView::title)
                 .contains("Заявки (сайт, 01.09.2026–30.09.2026)", "Параллельные потоки (Moodle, на 30.09.2026)");
-        assertThat(preview.notes()).anyMatch(note -> note.startsWith("Снимок Moodle: последнее наблюдение")
+        assertThat(preview.notes()).anyMatch(note -> note.startsWith("Данные Moodle: наблюдения потоков, действовавшие на")
                 && note.contains("период заявок: весь период"));
         assertThat(preview.notes()).anyMatch(note -> note.contains("нет данных") && note.contains("сортировка: заявки"));
 

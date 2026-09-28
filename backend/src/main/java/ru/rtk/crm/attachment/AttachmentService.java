@@ -157,16 +157,18 @@ public class AttachmentService {
     public Attachment updateKind(CrmProfile profile, UUID attachmentId, AttachmentKindUpdateRequest request) {
         AttachmentRepository.AttachmentRow attachment = requireVisibleAttachment(profile, attachmentId);
         ContactInteractionMutationAuthorization.requireCardEditor(profile);
-        if (request == null || request.kind() == null) {
+        if (request == null || request.kind() == null && request.partnerVisible() == null) {
             throw new AttachmentValidationException("kind", "Выберите вид документа");
         }
         if (request.version() == null || request.version() < 0) {
             throw new InteractionValidationException("version", "Укажите версию сведений о документе");
         }
-        if (attachment.kind() == request.kind()) {
+        AttachmentKind kind = request.kind() == null ? attachment.kind() : request.kind();
+        boolean partnerVisible = request.partnerVisible() == null ? attachment.partnerVisible() : request.partnerVisible();
+        if (attachment.kind() == kind && attachment.partnerVisible() == partnerVisible) {
             return attachment.attachment();
         }
-        if (!attachmentRepository.updateKind(attachmentId, request.kind(), request.version(), OffsetDateTime.now())) {
+        if (!attachmentRepository.updateKind(attachmentId, kind, partnerVisible, request.version(), OffsetDateTime.now())) {
             throw InteractionConflictException.attachmentVersion(attachment.version());
         }
         return attachmentRepository.findById(attachmentId)

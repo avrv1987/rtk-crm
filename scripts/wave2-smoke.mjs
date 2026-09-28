@@ -484,7 +484,7 @@ try {
   const website = await syncSource(admin, 'WEBSITE')
   const moodle = await syncSource(admin, 'MOODLE')
   assert(website.status === 'SUCCEEDED' && website.fetchedCount === 17 && website.createdCount === 0 && website.updatedCount === 0 && website.failedCount === 0, 'Website repeat sync changed data')
-  assert(moodle.status === 'SUCCEEDED' && moodle.fetchedCount === 5 && moodle.createdCount === 0 && moodle.updatedCount === 0 && moodle.failedCount === 0, 'Moodle repeat sync changed data')
+  assert(moodle.status === 'SUCCEEDED' && moodle.fetchedCount === 7 && moodle.createdCount === 0 && moodle.updatedCount === 0 && moodle.failedCount === 0, 'Moodle repeat sync changed data')
   const demoEventsAfter = requireStatus(await eventsOf(kamA, demoInteraction.id), 200, 'Demo history is unavailable').length
   assert(demoEventsAfter === demoEventsBefore, 'Repeat sync added events')
   const counters = (run) => [run.fetchedCount, run.createdCount, run.updatedCount, run.skippedCount, run.needsMappingCount, run.failedCount]

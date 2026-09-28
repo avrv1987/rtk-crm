@@ -3,7 +3,6 @@ import type {
   PeriodBasis,
   ReportColumn,
   ReportEventType,
-  ReportFormat,
   ReportKind,
   ReportPreviewRequest,
   StatisticsGroupBy,
@@ -19,6 +18,7 @@ import {
   toAgreementFilters,
   type AgreementSelection
 } from './reportAgreement'
+import { periodPresets } from './reportPeriods'
 
 export type DemandSort = 'APPLICATIONS' | 'PAID_ORDERS' | 'PAID_STREAMS' | 'PARTICIPANTS' | 'LEARNERS_COMPLETED' | 'PARALLEL_RUNS'
 
@@ -70,7 +70,6 @@ export type ReportSelection = {
   eventTypes: ReportEventType[]
   minDaysOnStage: string
   columns: Record<ReportKind, ReportColumn[]>
-  format: ReportFormat
   groupBy: StatisticsGroupBy
   chartType: ChartType
   seriesBy: StatisticsGroupBy | null
@@ -83,7 +82,16 @@ export const demandSorts: readonly DemandSort[] = [
   'APPLICATIONS', 'PAID_ORDERS', 'PAID_STREAMS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'PARALLEL_RUNS'
 ]
 
-export const reportFormats: readonly ReportFormat[] = ['XLSX', 'XLS', 'PDF', 'JSON']
+export const kindLabels: Record<ReportKind, string> = {
+  PORTFOLIO: 'Портфель взаимодействий',
+  EVENTS: 'События за период',
+  SNAPSHOT: 'Состояние портфеля на дату',
+  DURATION: 'Длительность этапов и цикла',
+  DEMAND: 'Востребованность программ',
+  AGREEMENTS: 'Реализация соглашений'
+}
+
+export const chartKinds: readonly ReportKind[] = ['PORTFOLIO', 'EVENTS', 'SNAPSHOT', 'DEMAND']
 
 export const statisticsGroupings: readonly StatisticsGroupBy[] = [
   'STAGE', 'ORGANIZATION', 'DIRECTION', 'PROGRAM', 'PRODUCT', 'MANAGER', 'MONTH'
@@ -212,22 +220,15 @@ export const columnTitle = (kind: ReportKind, column: ReportColumn) => (
   kindColumnTitles[kind]?.[column] ?? columnTitles[column]
 )
 
-export const isoDate = (date: Date) => [
-  date.getFullYear().toString(),
-  (date.getMonth() + 1).toString().padStart(2, '0'),
-  date.getDate().toString().padStart(2, '0')
-].join('-')
-
-/** @deprecated используйте todayInMoscow из shared/format/datetime — оставлено для совместимости импортов. */
-export const moscowToday = todayInMoscow
-
 export const maxDaysOnStage = 3650
+
+const currentMonth = (today: Date) => periodPresets(todayInMoscow(today))[1]
 
 export const defaultSelection = (today: Date = new Date()): ReportSelection => ({
   kind: 'PORTFOLIO',
-  from: isoDate(new Date(today.getFullYear(), today.getMonth(), 1)),
-  to: isoDate(new Date(today.getFullYear(), today.getMonth() + 1, 0)),
-  asOf: moscowToday(today),
+  from: currentMonth(today).from,
+  to: currentMonth(today).to,
+  asOf: todayInMoscow(today),
   periodBasis: 'CREATED',
   organizationIds: [],
   directionIds: [],
@@ -253,7 +254,6 @@ export const defaultSelection = (today: Date = new Date()): ReportSelection => (
     DURATION: [...reportColumns.DURATION],
     AGREEMENTS: [...reportColumns.AGREEMENTS]
   },
-  format: 'XLSX',
   groupBy: 'STAGE',
   chartType: 'BAR',
   seriesBy: null,
@@ -324,7 +324,6 @@ export const normalizeSelection = (value: unknown, today: Date = new Date()): Re
       DURATION: columnList(columns.DURATION, 'DURATION'),
       AGREEMENTS: columnList(columns.AGREEMENTS, 'AGREEMENTS')
     },
-    format: oneOf(record.format, reportFormats, defaults.format),
     groupBy: oneOf(record.groupBy, statisticsGroupings, defaults.groupBy),
     chartType: oneOf(record.chartType, chartTypes, defaults.chartType),
     seriesBy: statisticsGroupings.find((groupBy) => groupBy === record.seriesBy && groupBy !== 'MONTH') ?? null,
@@ -351,7 +350,7 @@ export const applyDefinition = (selection: ReportSelection, definition: ReportPr
     kind: definition.kind,
     from: definition.from ?? '',
     to: definition.to ?? '',
-    asOf: definition.asOf ?? moscowToday(),
+    asOf: definition.asOf ?? todayInMoscow(),
     periodBasis: definition.periodBasis ?? 'CREATED',
     organizationIds: filters.organizationIds ?? [],
     directionIds: filters.directionIds ?? [],
@@ -428,7 +427,7 @@ const baseRequest = (selection: ReportSelection) => {
     kind: selection.kind,
     from: snapshot || selection.from === '' ? null : selection.from,
     to: snapshot || selection.to === '' ? null : selection.to,
-    asOf: snapshot && selection.asOf !== '' && selection.asOf !== moscowToday() ? selection.asOf : null,
+    asOf: snapshot && selection.asOf !== '' && selection.asOf !== todayInMoscow() ? selection.asOf : null,
     periodBasis: selection.kind === 'PORTFOLIO' ? selection.periodBasis : null,
     filters: {
       organizationIds: selection.organizationIds,

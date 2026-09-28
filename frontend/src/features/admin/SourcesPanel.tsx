@@ -12,9 +12,10 @@ import {
   type Team
 } from '../../shared/api/client'
 import { shiftCalendarDate } from '../../shared/format/datetime'
-import { formatDateTime } from '../sources/sourceFormat'
+import { formatDateTime, scheduleLabel } from '../sources/sourceFormat'
 import { SourceMappingsList } from '../sources/SourceMappingsList'
 import { SourceRunHistory } from '../sources/SourceRunHistory'
+import { SourceConnectionSettings } from '../sources/SourceConnectionSettings'
 import '../sources/sources.css'
 
 type SourcesPanelProps = {
@@ -69,19 +70,6 @@ const recordStatusLabels: Record<SourceRecord['status'], string> = {
   SKIPPED: 'Пропущена'
 }
 
-const scheduleLabel = (cron: string) => {
-  const [second, minute, hour, day, month, weekday] = cron.split(/\s+/)
-  if (second === '0' && day === '*' && month === '*' && weekday === '*') {
-    if (hour === '*' && /^\d+$/.test(minute)) {
-      return `каждый час в ${minute.padStart(2, '0')} мин.`
-    }
-    if (/^\d+$/.test(hour) && /^\d+$/.test(minute)) {
-      return `ежедневно в ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`
-    }
-  }
-  return `по расписанию «${cron}»`
-}
-
 const isActive = (run: SyncRun | null | undefined) => run?.status === 'PENDING' || run?.status === 'RUNNING'
 
 const syncBlocker = (source: DataSource) => {
@@ -90,8 +78,8 @@ const syncBlocker = (source: DataSource) => {
   }
   if (!source.configured) {
     return source.source === 'MOODLE'
-      ? 'Источник не настроен: задайте MOODLE_BASE_URL, MOODLE_TOKEN и MOODLE_COURSE_IDS в конфигурации развёртывания.'
-      : 'Источник не настроен: задайте SITE_BASE_URL и SITE_TOKEN в конфигурации развёртывания.'
+      ? 'Источник не настроен: задайте адрес, токен и курсы Moodle в блоке «Подключение».'
+      : 'Источник не настроен: задайте адрес сайта в блоке «Подключение».'
   }
   if (isActive(source.lastRun)) {
     return 'Синхронизация уже выполняется.'
@@ -296,7 +284,8 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable, onSynced 
         остаются только названия курсов и групп и числа; ФИО, которые Moodle отдаёт вместе со списком участников, CRM
         не сохраняет, оценки не запрашиваются. Курс или его группы сопоставляются здесь с вузом, программой и датами потока
         обучения: параллельные потоки в отчёте считаются только по потокам с датами. Адреса,
-        токены и список курсов задаются только в конфигурации развёртывания. Повторная синхронизация не создаёт
+        токены, список курсов и расписание задаются в блоке «Подключение»; начальные значения берутся из конфигурации
+        развёртывания. Повторная синхронизация не создаёт
         дублей, ошибка источника не меняет уже загруженные данные.
       </p>
 
@@ -310,6 +299,11 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable, onSynced 
 
       {state.kind === 'ready' && (
         <>
+          <SourceConnectionSettings
+            onChanged={() => void load(false)}
+            onSessionExpired={onSessionExpired}
+            onProfileUnavailable={onProfileUnavailable}
+          />
           <ul className="data-sources__list">
             {state.sources.map((source) => {
               const blocker = syncBlocker(source)
@@ -326,7 +320,7 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable, onSynced 
                   </p>
                   {source.configured && (
                     <p>
-                      {source.schedule ? `Плановая синхронизация: ${scheduleLabel(source.schedule)} (МСК)` : 'Плановая синхронизация выключена (SOURCES_SYNC_CRON)'}
+                      {source.schedule ? `Плановая синхронизация: ${scheduleLabel(source.schedule)} (МСК)` : 'Плановая синхронизация выключена'}
                       {source.schedule && (source.nextRunAt
                         ? `; следующий запуск — ${formatDateTime(source.nextRunAt)}`
                         : '; начнётся после первого ручного запуска администратором')}

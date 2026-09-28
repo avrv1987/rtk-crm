@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$EnvFile = (Join-Path $PSScriptRoot '..\.env.local')
 )
@@ -163,11 +163,11 @@ function Invoke-MoodleDemo {
     }
     $reported = @{}
     foreach ($line in $setupOutput) {
-        if ($line -match '^(COURSE_IDS|TOKEN|DEMO_JAVA_COURSE|DEMO_DATA_GROUP)=(.+)$') {
+        if ($line -match '^(COURSE_IDS|TOKEN|DEMO_JAVA_COURSE|DEMO_DATA_GROUP|DEMO_TEACH_COURSE|DEMO_WEB_COURSE|DEMO_EMPTY_COURSE)=(.+)$') {
             $reported[$matches[1]] = $matches[2].Trim()
         }
     }
-    foreach ($key in @('COURSE_IDS', 'TOKEN', 'DEMO_JAVA_COURSE', 'DEMO_DATA_GROUP')) {
+    foreach ($key in @('COURSE_IDS', 'TOKEN', 'DEMO_JAVA_COURSE', 'DEMO_DATA_GROUP', 'DEMO_TEACH_COURSE', 'DEMO_WEB_COURSE', 'DEMO_EMPTY_COURSE')) {
         if ([string]::IsNullOrWhiteSpace($reported[$key])) {
             throw 'Moodle demo setup did not report course ids, demo mapping keys and token'
         }
@@ -177,6 +177,9 @@ function Invoke-MoodleDemo {
     $values['MOODLE_COURSE_IDS'] = $reported['COURSE_IDS']
     $values['MOODLE_DEMO_JAVA_COURSE'] = $reported['DEMO_JAVA_COURSE']
     $values['MOODLE_DEMO_DATA_GROUP'] = $reported['DEMO_DATA_GROUP']
+    $values['MOODLE_DEMO_TEACH_COURSE'] = $reported['DEMO_TEACH_COURSE']
+    $values['MOODLE_DEMO_WEB_COURSE'] = $reported['DEMO_WEB_COURSE']
+    $values['MOODLE_DEMO_EMPTY_COURSE'] = $reported['DEMO_EMPTY_COURSE']
 }
 
 function ConvertTo-YamlLiteral([string]$Value) {
@@ -216,7 +219,8 @@ $secrets = @(
     'CRM_OIDC_CLIENT_SECRET',
     'CRM_ACCOUNT_SYNC_CLIENT_SECRET',
     'ENROLMENT_KEYS_V1',
-    'ENROLMENT_FINGERPRINT_KEY'
+    'ENROLMENT_FINGERPRINT_KEY',
+    'SOURCES_SETTINGS_KEY'
 )
 if ($values['DEMO_DATA'] -eq 'true') {
     $defaults['SITE_BASE_URL'] = $siteFixtureUrl
@@ -264,7 +268,8 @@ if ($values['DEMO_LMS'] -eq 'true') {
     }
 }
 elseif ($values['MOODLE_BASE_URL'] -eq $moodleDemoUrl) {
-    foreach ($key in @('MOODLE_BASE_URL', 'MOODLE_TOKEN', 'MOODLE_COURSE_IDS', 'MOODLE_DEMO_JAVA_COURSE', 'MOODLE_DEMO_DATA_GROUP')) {
+    foreach ($key in @('MOODLE_BASE_URL', 'MOODLE_TOKEN', 'MOODLE_COURSE_IDS', 'MOODLE_DEMO_JAVA_COURSE', 'MOODLE_DEMO_DATA_GROUP',
+            'MOODLE_DEMO_TEACH_COURSE', 'MOODLE_DEMO_WEB_COURSE', 'MOODLE_DEMO_EMPTY_COURSE')) {
         $values[$key] = ''
     }
 }
@@ -371,6 +376,10 @@ try {
         if ($EnrolmentOperator) {
             $lines += "        enrolment-operator: true"
         }
+        if ($Role -eq 'PARTNER') {
+            $lines += "        organization: 'Университет А'"
+            $lines += "        contact: 'Александра Демонстрационная'"
+        }
         return $lines
     }
     if ($values['DEMO_DATA'] -eq 'true') {
@@ -383,7 +392,8 @@ try {
             @('leader-b', 'Руководитель Б', 'LEADER', 'team-b'),
             @('admin', 'Администратор', 'ADMIN', 'team-a'),
             @('management', 'Руководство', 'MANAGEMENT', $null),
-            @('enrol', 'Оператор зачисления', 'USER', 'open-enrolment', $true)
+            @('enrol', 'Оператор зачисления', 'USER', 'open-enrolment', $true),
+            @('partner', 'Представитель вуза', 'PARTNER', '')
         )
         $spareAccounts = @(
             @('unprofiled', 'Без профиля CRM'),
@@ -444,6 +454,32 @@ try {
                 "        organization: 'Университет Б'",
                 "        program: 'Демо-программа: анализ данных'"
             )
+            if (-not [string]::IsNullOrWhiteSpace($values['MOODLE_DEMO_TEACH_COURSE'])) {
+                $identityYaml += @(
+                    '      - kind: COURSE',
+                    "        external-key: $(ConvertTo-YamlLiteral $values['MOODLE_DEMO_TEACH_COURSE'])",
+                    "        organization: 'Университет А'",
+                    "        program: 'Демо-программа: цифровой университет'",
+                    '        run-kind: TEACHERS'
+                )
+            }
+            if (-not [string]::IsNullOrWhiteSpace($values['MOODLE_DEMO_WEB_COURSE']) -and
+                -not [string]::IsNullOrWhiteSpace($values['MOODLE_DEMO_EMPTY_COURSE'])) {
+                $identityYaml += @(
+                    '      - kind: COURSE',
+                    "        external-key: $(ConvertTo-YamlLiteral $values['MOODLE_DEMO_WEB_COURSE'])",
+                    "        organization: 'Школа № 1 (демо)'",
+                    "        program: 'Демо-программа: цифровой университет'",
+                    '        run-started-days-ago: 60',
+                    '        run-ends-in-days: 4',
+                    '      - kind: COURSE',
+                    "        external-key: $(ConvertTo-YamlLiteral $values['MOODLE_DEMO_EMPTY_COURSE'])",
+                    "        organization: 'Школа № 1 (демо)'",
+                    "        program: 'Демо-программа: цифровой университет'",
+                    '        run-started-days-ago: 30',
+                    '        run-ends-in-days: 90'
+                )
+            }
         }
     }
     else {

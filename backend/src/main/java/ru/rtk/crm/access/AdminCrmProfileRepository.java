@@ -16,7 +16,9 @@ public class AdminCrmProfileRepository {
     private static final String PROFILE_COLUMNS = """
             profile.id, profile.display_name, profile.role, profile.team_id, team.name AS team_name,
             profile.active, profile.enrolment_operator, profile.pending_activation, profile.access_revision, profile.version,
-            profile.login, profile.activation_requested_at, profile.idp_enabled
+            profile.login, profile.activation_requested_at, profile.idp_enabled,
+            (SELECT partner_organization.name FROM organizations partner_organization
+             WHERE partner_organization.id = profile.partner_organization_id) AS partner_organization_name
             """;
 
     private final JdbcClient jdbcClient;
@@ -204,7 +206,8 @@ public class AdminCrmProfileRepository {
                 resultSet.getString("login"),
                 resultSet.getObject("activation_requested_at", OffsetDateTime.class),
                 !pendingActivation && active != resultSet.getBoolean("idp_enabled"),
-                null
+                null,
+                resultSet.getString("partner_organization_name")
         );
     }
 

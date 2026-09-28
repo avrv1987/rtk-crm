@@ -90,11 +90,15 @@ course_ids=$(printf '%s\n' "$setup_output" | sed -n 's/^COURSE_IDS=//p' | tr -d 
 token=$(printf '%s\n' "$setup_output" | sed -n 's/^TOKEN=//p' | tr -d '\r')
 java_course=$(printf '%s\n' "$setup_output" | sed -n 's/^DEMO_JAVA_COURSE=//p' | tr -d '\r')
 data_group=$(printf '%s\n' "$setup_output" | sed -n 's/^DEMO_DATA_GROUP=//p' | tr -d '\r')
-[[ -n $course_ids && -n $token && -n $java_course && -n $data_group ]] \
+teach_course=$(printf '%s\n' "$setup_output" | sed -n 's/^DEMO_TEACH_COURSE=//p' | tr -d '\r')
+web_course=$(printf '%s\n' "$setup_output" | sed -n 's/^DEMO_WEB_COURSE=//p' | tr -d '\r')
+empty_course=$(printf '%s\n' "$setup_output" | sed -n 's/^DEMO_EMPTY_COURSE=//p' | tr -d '\r')
+[[ -n $course_ids && -n $token && -n $java_course && -n $data_group && -n $teach_course && -n $web_course && -n $empty_course ]] \
     || fail 'Moodle demo setup did not report course ids, demo mapping keys and token'
 
 write_env "$crm_env_file" "MOODLE_BASE_URL=$crm_moodle_url" "MOODLE_TOKEN=$token" "MOODLE_COURSE_IDS=$course_ids" \
-    "MOODLE_DEMO_JAVA_COURSE=$java_course" "MOODLE_DEMO_DATA_GROUP=$data_group"
+    "MOODLE_DEMO_JAVA_COURSE=$java_course" "MOODLE_DEMO_DATA_GROUP=$data_group" "MOODLE_DEMO_TEACH_COURSE=$teach_course" \
+    "MOODLE_DEMO_WEB_COURSE=$web_course" "MOODLE_DEMO_EMPTY_COURSE=$empty_course"
 printf 'Moodle demo is ready at http://localhost:%s (compose project %s), courses %s.\n' \
     "${MOODLE_HTTP_PORT:-8082}" "$compose_project" "$course_ids"
 printf 'MOODLE_BASE_URL, MOODLE_TOKEN and MOODLE_COURSE_IDS are written to %s; Moodle credentials are in %s\n' \

@@ -45,7 +45,7 @@ final class ReportTestData {
 
     static void createSchema(JdbcTemplate jdbc) {
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -121,7 +121,7 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interactions (
+                CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500), problem VARCHAR(1000), risk_level VARCHAR(16), risk_reason VARCHAR(1000),
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
@@ -310,6 +310,15 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS learning_observations (
+                    mapping_id UUID NOT NULL, observed_from TIMESTAMP WITH TIME ZONE NOT NULL,
+                    confirmed_at TIMESTAMP WITH TIME ZONE NOT NULL, participants_count INTEGER NOT NULL,
+                    teachers_count INTEGER NOT NULL, completed_count INTEGER, not_completed_count INTEGER,
+                    unknown_count INTEGER NOT NULL, groups_count INTEGER NOT NULL, demo BOOLEAN NOT NULL DEFAULT FALSE,
+                    PRIMARY KEY (mapping_id, observed_from)
+                )
+                """);
+        jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS source_mappings (
                     id UUID PRIMARY KEY,
                     source VARCHAR(16) NOT NULL,
@@ -323,7 +332,7 @@ final class ReportTestData {
                 )
                 """);
         for (String table : new String[]{
-                "learning_snapshots", "source_mappings", "source_records", "report_jobs", "interaction_event_contacts", "contacts", "interaction_events", "product_transfers", "product_agreements", "interaction_stages",
+                "learning_observations", "learning_snapshots", "source_mappings", "source_records", "report_jobs", "interaction_event_contacts", "contacts", "interaction_events", "product_transfers", "product_agreements", "interaction_stages",
                 "interactions", "products", "vendors", "programs", "directions", "organizations", "crm_user_profiles", "teams", "organization_assignment_events",
                 "command_idempotency_records", "saved_reports"
         }) {
@@ -429,6 +438,11 @@ final class ReportTestData {
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """, mappingId, recordId, organizationId, programId, courseId, groupId, "Курс " + courseId, participants,
                 participants);
+        jdbc.update("""
+                INSERT INTO learning_observations (
+                    mapping_id, observed_from, confirmed_at, participants_count, teachers_count, unknown_count, groups_count
+                ) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, 1, ?, 0)
+                """, mappingId, participants, participants);
     }
 
     private static void demand(

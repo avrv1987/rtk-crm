@@ -191,6 +191,44 @@ foreach ([7, 8, 9, 10] as $number) {
     groups_add_member($datagroup, $students[$number]->id);
 }
 
+$teach = crm_demo_course('CRM-DEMO-TEACH', 'Демо: обучение преподавателей', 1);
+if (!$DB->record_exists('course_completion_criteria', ['course' => $teach->id, 'criteriatype' => COMPLETION_CRITERIA_TYPE_SELF])) {
+    $criterion = new completion_criteria_self();
+    $criteriadata = (object) ['id' => $teach->id, 'criteria_self' => 1];
+    $criterion->update_config($criteriadata);
+}
+crm_demo_enrol($teach, $teacher, 'editingteacher');
+$trainees = [];
+foreach (range(1, 4) as $number) {
+    $suffix = sprintf('%02d', $number);
+    $trainees[$number] = crm_demo_user('crm-demo-tt' . $suffix, 'Слушатель ПК', 'Демо ' . $suffix);
+    crm_demo_enrol($teach, $trainees[$number], 'student');
+}
+foreach ([1, 2, 3] as $number) {
+    $completion = new completion_completion(['userid' => $trainees[$number]->id, 'course' => $teach->id]);
+    if (!$completion->is_complete()) {
+        $completion->mark_complete();
+    }
+}
+
+$web = crm_demo_course('CRM-DEMO-WEB', 'Демо: веб-разработка', 1);
+if (!$DB->record_exists('course_completion_criteria', ['course' => $web->id, 'criteriatype' => COMPLETION_CRITERIA_TYPE_SELF])) {
+    $criterion = new completion_criteria_self();
+    $criteriadata = (object) ['id' => $web->id, 'criteria_self' => 1];
+    $criterion->update_config($criteriadata);
+}
+crm_demo_enrol($web, $teacher, 'editingteacher');
+foreach ([8, 9, 10] as $number) {
+    crm_demo_enrol($web, $students[$number], 'student');
+}
+$completion = new completion_completion(['userid' => $students[8]->id, 'course' => $web->id]);
+if (!$completion->is_complete()) {
+    $completion->mark_complete();
+}
+
+$empty = crm_demo_course('CRM-DEMO-SEC', 'Демо: информационная безопасность', 0);
+crm_demo_enrol($empty, $teacher, 'editingteacher');
+
 $jury = crm_demo_user(CRM_JURY_USERNAME, 'Жюри', 'Демо');
 update_internal_user_password($jury, $jurypassword);
 $juryroleid = (int) $DB->get_field('role', 'id', ['shortname' => CRM_JURY_ROLE_SHORTNAME]);
@@ -213,7 +251,10 @@ role_assign($juryroleid, $jury->id, context_coursecat::instance($java->category)
 
 purge_caches();
 
-echo 'COURSE_IDS=' . $java->id . ',' . $data->id . PHP_EOL;
+echo 'COURSE_IDS=' . $java->id . ',' . $data->id . ',' . $teach->id . ',' . $web->id . ',' . $empty->id . PHP_EOL;
 echo 'DEMO_JAVA_COURSE=' . $java->id . PHP_EOL;
 echo 'DEMO_DATA_GROUP=' . $data->id . ':' . $datagroup . PHP_EOL;
+echo 'DEMO_TEACH_COURSE=' . $teach->id . PHP_EOL;
+echo 'DEMO_WEB_COURSE=' . $web->id . PHP_EOL;
+echo 'DEMO_EMPTY_COURSE=' . $empty->id . PHP_EOL;
 echo 'TOKEN=' . $token . PHP_EOL;

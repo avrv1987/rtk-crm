@@ -668,8 +668,11 @@ public class InteractionService {
         List<UUID> requestedContactIds = request.contactIds() == null
                 ? null
                 : validatedContactIds(visible.row().organizationId(), request.contactIds().orElse(List.of()));
+        Boolean requestedPartnerVisible = request.nextStepPartnerVisible() == null
+                ? null
+                : request.nextStepPartnerVisible().orElse(false);
         if (!nextStep.nextActionSet() && !nextStep.nextActionAtSet() && !programSet && requestedProductIds == null
-                && requestedTitle == null && !lastContactAtSet && requestedContactIds == null) {
+                && requestedTitle == null && !lastContactAtSet && requestedContactIds == null && requestedPartnerVisible == null) {
             throw new InteractionValidationException("body", "Измените хотя бы одно поле плана");
         }
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
@@ -683,7 +686,8 @@ public class InteractionService {
                 requestedTitle,
                 lastContactAtSet,
                 requestedLastContactAt,
-                requestedContactIds
+                requestedContactIds,
+                requestedPartnerVisible
         );
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
@@ -718,6 +722,13 @@ public class InteractionService {
         requireRemovableProducts(interactionId, removedProductIds);
         InteractionNextStep resolvedNextStep = resolveNextStep(row, nextStep);
         boolean nextStepChanged = !sameNextStep(row, resolvedNextStep);
+        if (Boolean.TRUE.equals(requestedPartnerVisible) && resolvedNextStep.nextAction() == null) {
+            throw new InteractionValidationException("nextStepPartnerVisible", "Сначала укажите следующий шаг, затем покажите его вузу");
+        }
+        boolean partnerVisible = requestedPartnerVisible != null
+                ? requestedPartnerVisible
+                : !nextStepChanged && row.nextStepPartnerVisible();
+        boolean partnerVisibilityChanged = partnerVisible != row.nextStepPartnerVisible();
         boolean titleChanged = requestedTitle != null && !requestedTitle.equals(row.title());
         boolean lastContactChanged = lastContactAtSet && !sameInstant(row.lastContactAt(), requestedLastContactAt);
         List<UUID> currentContactIds = interactionRepository.findContactIds(interactionId);
@@ -729,7 +740,8 @@ public class InteractionService {
                 : currentContactIds.stream().filter(id -> !requestedContactIds.contains(id)).toList();
         requireActiveContacts(row.organizationId(), addedContactIds);
         boolean detailsChanged = titleChanged || lastContactChanged || !addedContactIds.isEmpty() || !removedContactIds.isEmpty();
-        if (!nextStepChanged && !programChanged && addedProductIds.isEmpty() && removedProductIds.isEmpty() && !detailsChanged) {
+        if (!nextStepChanged && !programChanged && addedProductIds.isEmpty() && removedProductIds.isEmpty() && !detailsChanged
+                && !partnerVisibilityChanged) {
             return storeInteraction(commandId, toInteraction(row));
         }
         if (!interactionRepository.touchVersion(interactionId, expectedVersion, now)) {
@@ -759,6 +771,9 @@ public class InteractionService {
                 resolvedNextStep.nextActionAt(),
                 programId
         );
+        if (requestedPartnerVisible != null) {
+            interactionRepository.updateNextStepPartnerVisible(interactionId, partnerVisible);
+        }
         interactionRepository.deleteEmptyProductAgreements(interactionId, removedProductIds);
         requireRemovableProducts(interactionId, removedProductIds);
         interactionRepository.insertProductAgreements(interactionId, addedProductIds, now);
@@ -778,6 +793,9 @@ public class InteractionService {
         }
         if (!removedProductIds.isEmpty()) {
             changes.add("Удалены продукты: " + productNames(previousAgreements, removedProductIds));
+        }
+        if (partnerVisibilityChanged) {
+            changes.add(partnerVisible ? "Следующий шаг показан вузу" : "Следующий шаг больше не показан вузу");
         }
         UUID eventId = UUID.randomUUID();
         interactionRepository.insertEvent(
@@ -1474,7 +1492,8 @@ public class InteractionService {
                 row.createdBy(),
                 row.createdAt(),
                 row.updatedAt(),
-                row.marks()
+                row.marks(),
+                row.nextStepPartnerVisible()
         );
     }
 
@@ -1757,7 +1776,8 @@ public class InteractionService {
             String title,
             boolean lastContactAtSet,
             OffsetDateTime lastContactAt,
-            List<UUID> contactIds
+            List<UUID> contactIds,
+            Boolean nextStepPartnerVisible
     ) {
     }
 

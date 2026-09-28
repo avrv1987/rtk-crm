@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiClient, type InteractionListItem, type InteractionListParams } from '../../shared/api/client'
+import { apiClient, type InteractionListItem, type InteractionListParams, type LmsSignal } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { type DeadlineGroup, deadlineGroup } from './deadlines'
+import { LmsSignalList, lmsSignalsSectionId } from './LmsSignals'
 import { StepCompletion } from './StepCompletion'
 import { type AccessHandlers, formatDateTime, handledAccessError, requestIdOf } from './workShared'
 import './workControl.css'
@@ -16,7 +17,7 @@ type Tile = { key: string; label: string; href: string; count: number | null; to
 
 type DeskState =
   | { kind: 'loading' }
-  | { kind: 'ready'; tiles: Tile[]; feed: InteractionListItem[] }
+  | { kind: 'ready'; tiles: Tile[]; feed: InteractionListItem[]; signals: LmsSignal[] | null }
   | { kind: 'failed'; requestId?: string }
 
 const feedLimit = 5
@@ -39,12 +40,13 @@ export const KamDesk = ({ activeQuery, refreshKey, onChanged, onSessionExpired, 
   const load = useCallback(async () => {
     const version = ++requestVersion.current
     try {
-      const [digest, overdue, week, noStep, feed] = await Promise.all([
+      const [digest, overdue, week, noStep, feed, signals] = await Promise.all([
         apiClient.getReminders(),
         total({ due: 'OVERDUE' }),
         total({ due: 'THIS_WEEK' }),
         total({ due: 'NO_NEXT_STEP' }),
-        apiClient.listInteractions({ size: 100, sort: 'nextActionAt,asc' })
+        apiClient.listInteractions({ size: 100, sort: 'nextActionAt,asc' }),
+        apiClient.listLmsSignals().then((result) => result.items, () => null)
       ])
       const licenses = await total({ licenseExpiresBy: digest.licenseExpiresBy, status: 'ALL' })
       if (version !== requestVersion.current) {
@@ -64,7 +66,8 @@ export const KamDesk = ({ activeQuery, refreshKey, onChanged, onSessionExpired, 
             tone: 'warning'
           }
         ],
-        feed: feed.items.filter((item) => item.nextActionAt !== null)
+        feed: feed.items.filter((item) => item.nextActionAt !== null),
+        signals
       })
     } catch (error) {
       if (version !== requestVersion.current || handledAccessError(error, { onSessionExpired, onProfileUnavailable })) {
@@ -116,6 +119,16 @@ export const KamDesk = ({ activeQuery, refreshKey, onChanged, onSessionExpired, 
             </a>
           </li>
         ))}
+        <li>
+          <button
+            type="button"
+            className={`desk-tile${state.signals?.length ? ' desk-tile--warning' : ''}`}
+            onClick={() => document.getElementById(lmsSignalsSectionId)?.scrollIntoView({ block: 'start' })}
+          >
+            <span className="desk-tile__value">{state.signals === null ? '—' : state.signals.length}</span>
+            <span className="desk-tile__label">{state.signals === null ? 'Сигналы LMS недоступны' : 'Сигналы LMS'}</span>
+          </button>
+        </li>
       </ul>
 
       <section className="desk-feed" aria-labelledby="desk-feed-title">
@@ -131,6 +144,12 @@ export const KamDesk = ({ activeQuery, refreshKey, onChanged, onSessionExpired, 
         </div>
         <p className="step-completion__done" role="status">{message}</p>
         {state.feed.length === 0 && <p className="work-control__message">Шагов со сроком нет. Задайте следующий шаг в карточке работы.</p>}
+        {state.signals !== null && state.signals.length > 0 && (
+          <section id={lmsSignalsSectionId} className="desk-feed__group" aria-labelledby="desk-feed-lms">
+            <h3 id="desk-feed-lms">Сигналы LMS <span className="desk-feed__count">{state.signals.length}</span></h3>
+            <LmsSignalList signals={state.signals} limit={feedLimit} />
+          </section>
+        )}
         {groups.map((group) => {
           const items = grouped.get(group.key) ?? []
           if (items.length === 0) {

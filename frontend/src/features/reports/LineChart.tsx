@@ -2,7 +2,6 @@ import { useId } from 'react'
 import type { StatisticsResult } from '../../shared/api/client'
 import { axisStep, countTitles, kindTitles, monthTitles, unspecifiedLabel } from './StatisticsChart'
 import { groupingTitles } from './reportSelection'
-import './reportExtras.css'
 
 type Line = {
   key: string

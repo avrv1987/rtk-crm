@@ -24,35 +24,36 @@ import ru.rtk.crm.interaction.InteractionValidationException;
 public class SiteApiClient {
     static final String RECORDS_PATH = "/api/crm/records";
 
-    private final SourceProperties.Website properties;
     private final ObjectMapper objectMapper;
     private final PaidOrderParser paidOrderParser;
     private final HttpClient httpClient;
 
     public SiteApiClient(SourceProperties properties, ObjectMapper objectMapper, PaidOrderParser paidOrderParser) {
-        this.properties = properties.website();
         this.objectMapper = objectMapper;
         this.paidOrderParser = paidOrderParser;
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(this.properties.connectTimeout())
+                .connectTimeout(properties.website().connectTimeout())
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
     }
 
-    boolean configured() {
-        return properties.configured();
+    void check(SourceProperties.Website settings) {
+        JsonNode body = json(get(settings, recordsUri(settings, OffsetDateTime.now(), 1)));
+        if (!body.isArray() && !body.path("items").isArray()) {
+            throw SourceFetchException.invalidResponse("Ответ сайта не содержит массив items и не является массивом оплат");
+        }
     }
 
-    SiteResponse fetch(OffsetDateTime updatedSince) {
+    SiteResponse fetch(SourceProperties.Website settings, OffsetDateTime updatedSince) {
         List<SiteRecord> records = new ArrayList<>();
         int page = 1;
         for (int loaded = 0; ; loaded++) {
-            if (loaded == properties.maxPages()) {
+            if (loaded == settings.maxPages()) {
                 throw SourceFetchException.invalidResponse(
-                        "Сайт вернул больше " + properties.maxPages() + " страниц; синхронизация остановлена без изменений"
+                        "Сайт вернул больше " + settings.maxPages() + " страниц; синхронизация остановлена без изменений"
                 );
             }
-            byte[] bytes = get(recordsUri(updatedSince, page));
+            byte[] bytes = get(settings, recordsUri(settings, updatedSince, page));
             JsonNode body = json(bytes);
             if (body.isArray() && page == 1) {
                 return new SiteResponse(List.of(), paidOrders(bytes));
@@ -97,13 +98,13 @@ public class SiteApiClient {
         return json;
     }
 
-    private byte[] get(URI uri) {
+    private byte[] get(SourceProperties.Website settings, URI uri) {
         HttpRequest.Builder request = HttpRequest.newBuilder(uri)
-                .timeout(properties.readTimeout())
+                .timeout(settings.readTimeout())
                 .header("Accept", "application/json")
                 .GET();
-        if (properties.token() != null && !properties.token().isBlank()) {
-            request.header("Authorization", "Bearer " + properties.token());
+        if (settings.token() != null && !settings.token().isBlank()) {
+            request.header("Authorization", "Bearer " + settings.token());
         }
         HttpResponse<InputStream> response;
         try {
@@ -116,15 +117,15 @@ public class SiteApiClient {
         }
         try (InputStream body = response.body()) {
             if (response.statusCode() == 401 || response.statusCode() == 403) {
-                throw SourceFetchException.unauthorized("Сайт отклонил токен доступа; проверьте SITE_TOKEN в конфигурации развёртывания");
+                throw SourceFetchException.unauthorized("Сайт отклонил токен доступа; проверьте токен сайта");
             }
             if (response.statusCode() != 200) {
                 throw SourceFetchException.unavailable("Сайт ответил HTTP " + response.statusCode());
             }
-            long limit = properties.maxPageSize().toBytes();
+            long limit = settings.maxPageSize().toBytes();
             byte[] bytes = body.readNBytes(Math.toIntExact(limit + 1));
             if (bytes.length > limit) {
-                throw SourceFetchException.invalidResponse("Страница ответа сайта больше " + properties.maxPageSize());
+                throw SourceFetchException.invalidResponse("Страница ответа сайта больше " + settings.maxPageSize());
             }
             return bytes;
         } catch (IOException exception) {
@@ -132,8 +133,8 @@ public class SiteApiClient {
         }
     }
 
-    private URI recordsUri(OffsetDateTime updatedSince, int page) {
-        String base = properties.baseUrl().strip();
+    private static URI recordsUri(SourceProperties.Website settings, OffsetDateTime updatedSince, int page) {
+        String base = settings.baseUrl().strip();
         StringBuilder uri = new StringBuilder(base.endsWith("/") ? base.substring(0, base.length() - 1) : base)
                 .append(RECORDS_PATH)
                 .append("?page=").append(page);
@@ -146,9 +147,9 @@ public class SiteApiClient {
                 return result;
             }
         } catch (IllegalArgumentException exception) {
-            throw SourceFetchException.unavailable("Адрес сайта в конфигурации развёртывания некорректен");
+            throw SourceFetchException.unavailable("Адрес сайта некорректен");
         }
-        throw SourceFetchException.unavailable("Адрес сайта в конфигурации развёртывания должен начинаться с http:// или https://");
+        throw SourceFetchException.unavailable("Адрес сайта должен начинаться с http:// или https://");
     }
 
     record SiteResponse(List<SiteRecord> records, PaidOrderBatch paidOrders) {

@@ -50,8 +50,8 @@ public class SourceException extends RuntimeException {
                 HttpStatus.CONFLICT,
                 "SOURCE_NOT_CONFIGURED",
                 source == SourceCode.MOODLE
-                        ? "Moodle не настроен: задайте MOODLE_BASE_URL, MOODLE_TOKEN и MOODLE_COURSE_IDS в конфигурации развёртывания"
-                        : "Адрес сайта не задан в конфигурации развёртывания (SITE_BASE_URL)"
+                        ? "Moodle не настроен: задайте адрес, токен и курсы в разделе «Источники данных»"
+                        : "Адрес сайта не задан: укажите его в разделе «Источники данных»"
         );
     }
 

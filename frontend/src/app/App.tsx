@@ -3,7 +3,6 @@ import { ApiError, apiClient, type Me } from '../shared/api/client'
 import { AdminCatalogsPanel } from '../features/admin/AdminCatalogsPanel'
 import { AdminSectionNav, resolveAdminSection } from '../features/admin/AdminSectionNav'
 import { ActivityKindsPanel } from '../features/agreements/ActivityKindsPanel'
-import { AgreementConfirmationsPanel } from '../features/agreements/AgreementConfirmationsPanel'
 import { CatalogImportPanel } from '../features/admin/CatalogImportPanel'
 import { AdminProfilesScreen } from '../features/admin/AdminProfilesScreen'
 import { SourcesPanel } from '../features/admin/SourcesPanel'
@@ -28,7 +27,7 @@ import { HelpScreen } from '../features/help/HelpScreen'
 import { isSameRouteClick } from './routing'
 import { LandingPage } from '../features/landing/LandingPage'
 import { OrganizationsScreen } from '../features/organizations/OrganizationsScreen'
-import { KamReviewPanel } from '../features/reports/KamReviewPanel'
+import { PartnerCabinet } from '../features/partner/PartnerCabinet'
 import { ReportsScreen } from '../features/reports/ReportsScreen'
 import { ProfileSummary, SessionScreen } from '../features/session/SessionScreen'
 import { ReminderCenter } from '../features/work/ReminderCenter'
@@ -43,7 +42,7 @@ type SessionState =
   | { kind: 'failed' }
   | { kind: 'logoutFailed' }
 
-type Section = 'work' | 'organizations' | 'reports' | 'admin' | 'enrolment' | 'help'
+type Section = 'work' | 'organizations' | 'reports' | 'admin' | 'enrolment' | 'partner' | 'help'
 
 const sectionTitles: Record<Section, string> = {
   work: 'Моя работа',
@@ -51,6 +50,7 @@ const sectionTitles: Record<Section, string> = {
   reports: 'Отчёты и статистика',
   admin: 'Администрирование',
   enrolment: 'Зачисление',
+  partner: 'Кабинет вуза',
   help: 'Справка'
 }
 
@@ -61,6 +61,9 @@ const sectionTitle = (section: Section, profile: Me): string => (
 const sectionsFor = (profile: Me): Section[] => {
   if (profile.role === 'ADMIN') {
     return ['admin', 'help']
+  }
+  if (profile.role === 'PARTNER') {
+    return ['partner', 'help']
   }
   const sections: Section[] = ['work', 'organizations', 'reports']
   if (profile.enrolmentOperator) {
@@ -356,24 +359,19 @@ export const App = () => {
             </>
           )}
           {section === 'reports' && (
-            <>
-              <ReportsScreen
-                profileId={state.profile.id}
-                role={state.profile.role}
-                onSessionExpired={handleSessionExpired}
-                onProfileUnavailable={handleProfileUnavailable}
-              />
-              <AgreementConfirmationsPanel
-                onSessionExpired={handleSessionExpired}
-                onProfileUnavailable={handleProfileUnavailable}
-              />
-            </>
-          )}
-          {section === 'reports' && state.profile.role !== 'USER' && (
-            <KamReviewPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
+            <ReportsScreen
+              profileId={state.profile.id}
+              role={state.profile.role}
+              view={route.organizationId}
+              onSessionExpired={handleSessionExpired}
+              onProfileUnavailable={handleProfileUnavailable}
+            />
           )}
           {section === 'enrolment' && (
             <EnrolmentScreen onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
+          )}
+          {section === 'partner' && (
+            <PartnerCabinet onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
           )}
           {section === 'help' && <HelpScreen initialQuery={route.query} />}
         </div>

@@ -268,7 +268,7 @@ scenario('UAT-КАМ-05', 'Новая школа и колледж, сразу �
     const names = [...new Set(report.items.map((row) => row.ORGANIZATION))]
     const types = new Map([...await listAll(kamA, '/api/organizations', 'Вузы'), ...await listAll(kamA, '/api/organizations?status=ARCHIVED', 'Архив')].map((item) => [item.name, item.type]))
     assert(names.includes('UAT Школа № 1 ' + nonce) && names.every((name) => types.get(name) === 'SCHOOL'), 'Организации: ' + names.join(','))
-    await screenTexts(kamA, '/#/reports', ['Тип организации'], 'Фильтр типа на экране')
+    await screenTexts(kamA, '/#/reports/portfolio', ['Тип организации'], 'Фильтр типа на экране')
     return names.length === 1 ? names[0] : 'только школы: ' + names.length + ', тестовая среди них'
   })
   await step(9, 'Возврат: архивирование, архивная не принимает работы', async () => {

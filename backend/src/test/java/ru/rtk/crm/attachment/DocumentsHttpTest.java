@@ -88,7 +88,7 @@ class DocumentsHttpTest {
     void previewIsInlineWithRestrictivePolicyAndWithoutCaching() throws Exception {
         Attachment attachment = new Attachment(ATTACHMENT_ID, INTERACTION_ID, UUID.randomUUID(), null, "скан лицензии.pdf",
                 "application/pdf", 4, AttachmentStatus.CLEAN, AttachmentKind.SIGNED_SCAN, 1, null, PROFILE.id(), 0,
-                OffsetDateTime.parse("2026-09-25T10:00:00+03:00"));
+                OffsetDateTime.parse("2026-09-25T10:00:00+03:00"), false);
         when(attachmentService.preview(PROFILE, ATTACHMENT_ID)).thenReturn(new AttachmentService.DownloadedAttachment(
                 attachment,
                 new ByteArrayInputStream("%PDF".getBytes())

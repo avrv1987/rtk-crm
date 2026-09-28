@@ -21,6 +21,7 @@ tags:
   - name: Administration
   - name: Work
   - name: Enrolment
+  - name: Partner
 paths:
   /api/auth/login:
     get:
@@ -504,6 +505,107 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/partner-access:
+    get:
+      tags: [Partner]
+      summary: Доступы представителей вуза в кабинет
+      operationId: listPartnerAccess
+      description: >-
+        Кому из контактов вуза открыт кабинет. Видят все, кому виден вуз (КАМ, заместитель, руководитель команды, «Руководство»), и администратор. Временный пароль здесь никогда не возвращается.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Доступы, сначала по имени контакта
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PartnerAccess'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/contacts/{contactId}/partner-access:
+    post:
+      tags: [Partner]
+      summary: Открыть доступ в кабинет вуза
+      operationId: openPartnerAccess
+      description: >-
+        Ответственный КАМ, руководитель команды вуза или администратор. CRM создаёт пользователя Keycloak клиентом crm-account-sync (или включает прежнего) с временным паролем и обязательной сменой пароля при первом входе. Пароль возвращается один раз в этом ответе, в журнал и другие ответы не попадает. Вуз должен быть действующим, контакт — актуальным. Повтор для контакта с открытым доступом — 409 PARTNER_ACCESS_EXISTS.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - name: contactId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '201':
+          description: Доступ открыт; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerAccessGranted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: PARTNER_ACCESS_EXISTS — доступ уже открыт; PARTNER_ACCOUNT_CONFLICT — в Keycloak уже есть учётная запись с таким логином или почтой
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+    delete:
+      tags: [Partner]
+      summary: Закрыть доступ в кабинет вуза
+      operationId: closePartnerAccess
+      description: >-
+        Блокирует профиль представителя и отключает учётную запись Keycloak с завершением сеансов. Если Keycloak недоступен, доступ в CRM всё равно закрыт, ответ содержит accountSyncError, а профиль — отметку accountSyncRequired. Повтор для закрытого доступа возвращает его без изменений. Архив контакта или вуза закрывает доступ так же.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - name: contactId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Доступ закрыт
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerAccess'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/organizations/{id}/assignment-options:
     get:
       tags: [Catalog]
@@ -782,6 +884,112 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/reports/learning-dynamics:
+    get:
+      tags: [Reports]
+      summary: Динамика обучения по вузам и ИТ-программам
+      operationId: getLearningDynamics
+      description: >-
+        Обучающиеся и завершившие по месяцам из истории наблюдений Moodle. В месяц входят потоки занятий студентов,
+        которые шли в нём хотя бы один день; число потока — наблюдение, действовавшее на конец последнего дня месяца
+        (у последнего месяца — на конец дня to). Область данных та же, что у отчётов; администратор получает пустой ответ.
+      parameters:
+        - $ref: '#/components/parameters/LearningDynamicsFrom'
+        - $ref: '#/components/parameters/LearningDynamicsTo'
+        - name: seriesBy
+          in: query
+          required: false
+          description: Линии графика — по вузам (по умолчанию) или по ИТ-программам
+          schema:
+            type: string
+            enum: [ORGANIZATION, PROGRAM]
+        - $ref: '#/components/parameters/LearningDynamicsOrganizations'
+        - $ref: '#/components/parameters/LearningDynamicsPrograms'
+      responses:
+        '200':
+          description: Месяцы, линии графика и строки таблицы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LearningDynamics'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/reports/learning-dynamics/file:
+    get:
+      tags: [Reports]
+      summary: Скачать динамику обучения в XLSX или PDF
+      operationId: downloadLearningDynamics
+      description: Те же строки, что в ответе getLearningDynamics; файл строится в запросе, скачивание записывается в журнал безопасности.
+      parameters:
+        - name: format
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [XLSX, PDF]
+        - $ref: '#/components/parameters/LearningDynamicsFrom'
+        - $ref: '#/components/parameters/LearningDynamicsTo'
+        - $ref: '#/components/parameters/LearningDynamicsOrganizations'
+        - $ref: '#/components/parameters/LearningDynamicsPrograms'
+      responses:
+        '200':
+          description: Файл; Content-Disposition содержит имя файла в UTF-8 (filename*)
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/work/learning-trend:
+    get:
+      tags: [Work]
+      summary: Тренд числа обучающихся для сводки руководства
+      operationId: getLearningTrend
+      description: >-
+        Только роль MANAGEMENT. Сравнивает обучающихся на начало и конец периода (последние days дней) по истории
+        наблюдений Moodle: по командам, ИТ-программам и вузам (до пяти растущих и падающих). Поток, у которого на одну из
+        дат нет наблюдения, в сравнение не входит и считается в runsWithoutData.
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 7
+            maximum: 730
+            default: 90
+      responses:
+        '200':
+          description: Тренд по командам, программам и вузам
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LearningTrend'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/reminders:
     get:
       tags: [Work]
@@ -827,6 +1035,92 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/lms-signals:
+    get:
+      tags: [Work]
+      summary: Сигналы LMS по работам в области пользователя
+      operationId: listLmsSignals
+      description: >
+        КАМ — свои вузы (включая действующее замещение), руководитель — вузы команды, «Руководство» — все вузы, только чтение;
+        администратору — 403. Сигналы считаются по последним снимкам потоков Moodle вида «Занятия студентов», сопоставленных
+        той же паре вуз–программа, что и незавершённая работа, в окне её цикла. Скрытые до изменения данных сигналы в список
+        не входят. Правила и пороги (app.lms-signals) описаны в docs/integrations.md.
+      responses:
+        '200':
+          description: Действующие нескрытые сигналы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LmsSignals'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/lms-signals:
+    get:
+      tags: [Work]
+      summary: Сигналы LMS карточки работы
+      operationId: listInteractionLmsSignals
+      description: >
+        Сигналы одной работы, включая скрытые (dismissed = true). Работа проверяется по области видимости в том же запросе;
+        чужая или неизвестная — 404.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Сигналы работы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LmsSignals'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/lms-signals/dismissals:
+    post:
+      tags: [Work]
+      summary: Скрыть сигнал LMS до изменения данных
+      operationId: dismissInteractionLmsSignal
+      description: >
+        USER или LEADER области работы; «Руководство» — 403. Отметка общая для работы и хранится на сервере вместе с версией
+        данных (время последнего изменения снимка и версия сопоставления потока): как только числа LMS или сопоставление
+        меняются, сигнал снова показывается. Повторное скрытие того же сигнала ничего не меняет. Сигнал, который уже не
+        действует, — 400 VALIDATION_ERROR с полем mappingId. Этап работы не меняется.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LmsSignalDismissal'
+      responses:
+        '200':
+          description: Сигналы работы после скрытия
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LmsSignals'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/programs:
@@ -1465,6 +1759,236 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/teacher-rosters:
+    get:
+      tags: [Interaction]
+      summary: Списки преподавателей вуза на курсы повышения квалификации в LMS
+      operationId: listTeacherRosters
+      x-implementation-stage: 8
+      description: >
+        Списки работы по парам «курс LMS + группа LMS»: преподаватели — ссылки на контакты организации с разбором ФИО
+        на колонки шаблона и перечнем причин, по которым контакт не попадёт в файл; выгрузки с отметкой «передано».
+        USER и LEADER — в своей области, MANAGEMENT — просмотр, ADMIN — 404. Ответ с Cache-Control no-store.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Списки преподавателей работы
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TeacherRoster'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Interaction]
+      summary: Создать список преподавателей на курс и группу LMS
+      operationId: createTeacherRoster
+      x-implementation-stage: 8
+      description: >
+        USER или LEADER области работы; организация не в архиве. Курс обязателен, группа нет; пара курс + группа
+        в работе уникальна без учёта регистра (иначе 400).
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeacherRosterCreate'
+      responses:
+        '201':
+          description: Созданный список
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherRoster'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/teacher-rosters/{rosterId}:
+    delete:
+      tags: [Interaction]
+      summary: Удалить список преподавателей, по которому файл не выгружался
+      operationId: deleteTeacherRoster
+      x-implementation-stage: 8
+      description: USER или LEADER области работы. Список с выгрузками не удаляется (400), история передачи сохраняется.
+      parameters:
+        - $ref: '#/components/parameters/TeacherRosterId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Список удалён
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/teacher-rosters/{rosterId}/members/{contactId}:
+    put:
+      tags: [Interaction]
+      summary: Добавить контакт вуза в список преподавателей
+      operationId: addTeacherRosterMember
+      x-implementation-stage: 8
+      description: >
+        Контакт той же организации, действующий, обработка не ограничена и не обезличен (иначе 400). Повтор не
+        создаёт второй строки. Не больше 500 преподавателей в списке.
+      parameters:
+        - $ref: '#/components/parameters/TeacherRosterId'
+        - $ref: '#/components/parameters/TeacherRosterContactId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Список после изменения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherRoster'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Interaction]
+      summary: Исключить преподавателя из списка
+      operationId: removeTeacherRosterMember
+      x-implementation-stage: 8
+      description: Преподаватель с отметкой «передано» не исключается (400). Повтор для уже исключённого — тот же список.
+      parameters:
+        - $ref: '#/components/parameters/TeacherRosterId'
+        - $ref: '#/components/parameters/TeacherRosterContactId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Список после изменения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherRoster'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/teacher-rosters/{rosterId}/lms-file:
+    post:
+      tags: [Interaction]
+      summary: Скачать файл «Загрузка пользователей» с преподавателями для LMS-команды
+      operationId: exportTeacherRoster
+      x-implementation-stage: 8
+      description: >
+        XLSX по шаблону организатора тем же писателем, что у открытых курсов: Лист1 — 30 заголовков дословно, Лист2
+        и проверки данных. Заполнены только Фамилия, Имя, Отчество (если есть) и Email; телефон, документы, адрес
+        и образование не заполняются. mode PENDING — преподаватели без отметки «передано», ALL — все. В файл идут
+        только готовые (без причин в problems); число неготовых в выбранном круге — X-Roster-Skipped. Не переданным
+        ставится идентификатор выгрузки (X-Roster-Export-Id). Нет строк — 400. Журнал — TEACHER_ROSTER_EXPORTED
+        без ПДн. Файл не хранится, повторный запрос создаёт новую выгрузку. Имя файла — курс, группа и дата.
+      parameters:
+        - $ref: '#/components/parameters/TeacherRosterId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeacherRosterFileRequest'
+      responses:
+        '200':
+          description: Файл для LMS
+          headers:
+            X-Roster-Export-Id:
+              schema:
+                type: string
+                format: uuid
+            X-Roster-Rows:
+              schema:
+                type: integer
+            X-Roster-Skipped:
+              schema:
+                type: integer
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/teacher-roster-exports/{exportId}/transferred:
+    post:
+      tags: [Interaction]
+      summary: Отметить преподавателей выгрузки переданными LMS-команде
+      operationId: markTeacherRosterExportTransferred
+      x-implementation-stage: 8
+      description: >
+        Отметка ровно у преподавателей этой выгрузки, ещё не отмеченных; повтор даёт marked = 0 и не пишет журнал.
+        Журнал — TEACHER_ROSTER_MARKED. Неизвестная или чужая выгрузка — 404.
+      parameters:
+        - name: exportId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Число отмеченных и список после отметки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeacherRosterMarked'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/interactions/{id}/transitions:
@@ -3751,7 +4275,7 @@ paths:
       operationId: listDataSources
       x-implementation-stage: 4
       description: >
-        Только ADMIN. WEBSITE — адаптер предложенного контракта сайта (docs/integrations/site-api.yaml), а не подтверждённый API заказчика; MOODLE читает агрегированные данные курсов и групп через ограниченный веб-сервис Moodle (docs/integrations.md). Base URL, токен и список разрешённых курсов берутся только из конфигурации развёртывания и никогда не возвращаются.
+        Только ADMIN. WEBSITE — адаптер предложенного контракта сайта (docs/integrations/site-api.yaml), а не подтверждённый API заказчика; MOODLE читает агрегированные данные курсов и групп через ограниченный веб-сервис Moodle (docs/integrations.md). Адреса, токены и список курсов задаются на экране (GET/PUT /api/admin/source-settings), начальные значения — конфигурация развёртывания; токены никогда не возвращаются.
       responses:
         '200':
           description: Источники с флагом настройки, последним запуском со счётчиками, последним успехом и числом записей на проверку
@@ -3761,6 +4285,122 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/DataSource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/source-settings:
+    get:
+      tags: [Administration]
+      summary: Настройки подключения источников
+      operationId: getSourceSettings
+      x-implementation-stage: 8
+      description: >
+        Только ADMIN. Действующие адреса, курсы и роли Moodle, адрес сайта и расписание: сохранённые на экране, а если
+        их нет — значения конфигурации развёртывания (.env.local). Токены никогда не возвращаются: только откуда токен
+        взят и когда его сменили на экране.
+      responses:
+        '200':
+          description: Действующие настройки без значений токенов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Administration]
+      summary: Сохранить настройки подключения источников
+      operationId: updateSourceSettings
+      x-implementation-stage: 8
+      description: >
+        Только ADMIN. Сохраняет все поля, кроме токенов, как переданы; пустой токен оставляет прежний. Токен шифруется
+        AES-256-GCM ключом SOURCES_SETTINGS_KEY; без ключа токен не сохраняется (400). Адрес — https:// без логина,
+        параметров и якоря (адрес из конфигурации развёртывания принимается как есть); курсы — целые положительные числа;
+        расписание — cron Spring из шести полей по Москве, не чаще раза в 5 минут, пустое значение выключает плановую
+        синхронизацию. Изменения действуют без перезапуска backend и пишутся в журнал администратора
+        (SOURCE_SETTINGS_CHANGED) без значений токенов.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceSettingsUpdate'
+      responses:
+        '200':
+          description: Действующие настройки после сохранения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Administration]
+      summary: Вернуть настройки источников из конфигурации развёртывания
+      operationId: resetSourceSettings
+      x-implementation-stage: 8
+      description: >
+        Только ADMIN. Удаляет сохранённые на экране настройки и токены; снова действуют значения .env.local. Пишется в
+        журнал администратора.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Настройки сброшены
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/sources/{source}/check:
+    post:
+      tags: [Administration]
+      summary: Проверить связь с источником
+      operationId: checkSourceConnection
+      x-implementation-stage: 8
+      description: >
+        Только ADMIN. Пробный вызов по значениям формы без сохранения и без изменения данных CRM: для MOODLE —
+        core_course_get_courses_by_field по списку курсов, для WEBSITE — первая страница записей с updated_since = сейчас.
+        Пустой токен в форме заменяется действующим. Ошибка связи возвращается как ok=false с понятным сообщением,
+        а не как ошибка HTTP.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/SourceCode'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceSettingsUpdate'
+      responses:
+        '200':
+          description: Результат проверки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceConnectionCheck'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -5199,6 +5839,53 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/partner/cabinet:
+    get:
+      tags: [Partner]
+      summary: Кабинет вуза
+      operationId: getPartnerCabinet
+      description: >-
+        Только для роли PARTNER. Область — вуз профиля; проверяется в каждом запросе: профиль активен, вуз действующий, контакт актуален, иначе 403. Возвращает название и тип вуза, работы (программа, продукты, текущий и пройденные этапы с датами, статус), следующий шаг только с флагом «Показывать вузу», документы только с флагом «Доступен вузу», соглашения и имя ответственного КАМ. Комментарии, история, контакты и отметки не возвращаются.
+      responses:
+        '200':
+          description: Кабинет; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerCabinet'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/partner/documents/{id}/download:
+    get:
+      tags: [Partner]
+      summary: Скачать документ, открытый вузу
+      operationId: downloadPartnerDocument
+      description: >-
+        Только для роли PARTNER. Документ своего вуза с флагом «Доступен вузу» и статусом CLEAN; иначе 404. Скачивание записывается в журнал безопасности.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Файл
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
   securitySchemes:
     cookieAuth:
@@ -5207,6 +5894,54 @@ components:
       name: SESSION
       description: Серверная сессия BFF, созданная входом через GET /api/auth/login. Swagger UI на том же origin использует сессию браузера.
   parameters:
+    LearningDynamicsFrom:
+      name: from
+      in: query
+      required: false
+      description: Начало периода (по умолчанию — первое число месяца 11 месяцев назад); не больше 60 месяцев
+      schema:
+        type: string
+        format: date
+    LearningDynamicsTo:
+      name: to
+      in: query
+      required: false
+      description: Конец периода включительно, не позже сегодняшней даты (по умолчанию — сегодня)
+      schema:
+        type: string
+        format: date
+    LearningDynamicsOrganizations:
+      name: organizationIds
+      in: query
+      required: false
+      schema:
+        type: array
+        items:
+          type: string
+          format: uuid
+    LearningDynamicsPrograms:
+      name: programIds
+      in: query
+      required: false
+      schema:
+        type: array
+        items:
+          type: string
+          format: uuid
+    TeacherRosterId:
+      name: rosterId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TeacherRosterContactId:
+      name: contactId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     UuidId:
       name: id
       in: path
@@ -6409,6 +7144,172 @@ components:
           format: date-time
         interactionTitle:
           type: string
+    PartnerAccess:
+      type: object
+      required: [profileId, contactId, contactName, login, active, accountSyncRequired, updatedAt]
+      properties:
+        profileId:
+          type: string
+          format: uuid
+        contactId:
+          type: string
+          format: uuid
+        contactName:
+          type: string
+        login:
+          type: [string, 'null']
+        active:
+          type: boolean
+        accountSyncRequired:
+          type: boolean
+          description: Учётная запись Keycloak ещё не отключена для закрытого доступа
+        updatedAt:
+          type: string
+          format: date-time
+        accountSyncError:
+          type: [string, 'null']
+    PartnerAccessGranted:
+      type: object
+      required: [access, login, temporaryPassword]
+      properties:
+        access:
+          $ref: '#/components/schemas/PartnerAccess'
+        login:
+          type: string
+        temporaryPassword:
+          type: string
+          description: Показывается один раз; при первом входе Keycloak потребует сменить пароль
+    PartnerCabinet:
+      type: object
+      required: [organization, manager, works, documents, agreements]
+      properties:
+        organization:
+          type: object
+          required: [id, name, type]
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+            type:
+              type: string
+              enum: [UNIVERSITY, SCHOOL, COLLEGE, OPEN_ENROLLMENT]
+        manager:
+          description: Ответственный КАМ; null, если не назначен. Почты и телефона в профиле CRM нет
+          anyOf:
+            - type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+            - type: 'null'
+        works:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartnerWork'
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartnerDocument'
+        agreements:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartnerAgreement'
+    PartnerWork:
+      type: object
+      required: [id, title, programName, productNames, currentStageName, status, passedStages, nextStep]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        programName:
+          type: [string, 'null']
+        productNames:
+          type: array
+          items:
+            type: string
+        currentStageName:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, PAUSED, COMPLETED]
+        passedStages:
+          type: array
+          description: Этапы до текущего, по которым есть отметка выполнения или переход дальше; дата — отметка, иначе день перехода (МСК)
+          items:
+            type: object
+            required: [name, passedOn]
+            properties:
+              name:
+                type: string
+              passedOn:
+                type: string
+                format: date
+        nextStep:
+          description: Только если КАМ включил «Показывать вузу»
+          anyOf:
+            - type: object
+              required: [action, dueAt]
+              properties:
+                action:
+                  type: string
+                dueAt:
+                  type: [string, 'null']
+                  format: date-time
+            - type: 'null'
+    PartnerDocument:
+      type: object
+      required: [id, workId, workTitle, name, kind, mediaType, sizeBytes, downloadable, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workId:
+          type: string
+          format: uuid
+        workTitle:
+          type: string
+        name:
+          type: string
+        kind:
+          $ref: '#/components/schemas/AttachmentKind'
+        mediaType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        downloadable:
+          type: boolean
+          description: false, пока антивирусная проверка не завершена успешно
+        createdAt:
+          type: string
+          format: date-time
+    PartnerAgreement:
+      type: object
+      required: [id, number, subject, concludedOn, validUntil, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+        subject:
+          type: array
+          description: Мероприятия плана соглашения, кроме отменённых
+          items:
+            type: string
+        concludedOn:
+          type: [string, 'null']
+          format: date
+        validUntil:
+          type: [string, 'null']
+          format: date
+        status:
+          type: string
+          enum: [DRAFT, ACTIVE, COMPLETED, TERMINATED]
     Me:
       type: object
       required: [id, role, teamId, teamName, accessRevision, enrolmentOperator]
@@ -6418,7 +7319,8 @@ components:
           format: uuid
         role:
           type: string
-          enum: [USER, LEADER, ADMIN, MANAGEMENT]
+          enum: [USER, LEADER, ADMIN, MANAGEMENT, PARTNER]
+          description: PARTNER — представитель вуза; ему доступны только /api/me и /api/partner/**, остальные операции отвечают 403
         teamId:
           type: [string, 'null']
           format: uuid
@@ -6490,6 +7392,8 @@ components:
             - RETENTION_RUNNING
             - CONFIRMATION_LIMIT
             - PERSONAL_DATA_RESTRICTED
+            - PARTNER_ACCESS_EXISTS
+            - PARTNER_ACCOUNT_CONFLICT
         message:
           type: string
         requestId:
@@ -7077,8 +7981,11 @@ components:
       allOf:
         - $ref: '#/components/schemas/InteractionSummary'
         - type: object
-          required: [stages, transitions, allowedTransitions, program, productAgreements, attachments, stageCompletions]
+          required: [stages, transitions, allowedTransitions, program, productAgreements, attachments, stageCompletions, nextStepPartnerVisible]
           properties:
+            nextStepPartnerVisible:
+              type: boolean
+              description: «Показывать вузу» — следующий шаг виден в кабинете вуза; сбрасывается, когда шаг или срок меняются без явного флага
             stages:
               type: array
               minItems: 1
@@ -7440,6 +8347,163 @@ components:
             $ref: '#/components/schemas/TeamSummary'
         total:
           $ref: '#/components/schemas/TeamSummary'
+    LearningDynamics:
+      type: object
+      required: [generatedAt, from, to, timezone, seriesBy, notes, months, series, totalParticipants, totalCompleted, rows]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        timezone:
+          type: string
+        seriesBy:
+          type: string
+          enum: [ORGANIZATION, PROGRAM]
+        notes:
+          type: array
+          items:
+            type: string
+        months:
+          type: array
+          items:
+            $ref: '#/components/schemas/LearningDynamicsMonth'
+        series:
+          type: array
+          description: Линии по вузам или программам, по убыванию обучающихся в последнем месяце
+          items:
+            $ref: '#/components/schemas/LearningDynamicsSeries'
+        totalParticipants:
+          type: array
+          items:
+            type: integer
+            format: int64
+        totalCompleted:
+          type: array
+          description: null — ни один поток месяца не отслеживает завершение («нет данных»)
+          items:
+            type: [integer, 'null']
+            format: int64
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/LearningDynamicsRow'
+    LearningDynamicsMonth:
+      type: object
+      required: [key, label, asOf]
+      properties:
+        key:
+          type: string
+          example: '2026-09'
+        label:
+          type: string
+        asOf:
+          type: string
+          format: date
+          description: Дата, на конец которой берутся наблюдения
+    LearningDynamicsSeries:
+      type: object
+      required: [key, label, participants, completed]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        participants:
+          type: array
+          items:
+            type: integer
+            format: int64
+        completed:
+          type: array
+          items:
+            type: [integer, 'null']
+            format: int64
+    LearningDynamicsRow:
+      type: object
+      required: [month, monthLabel, organizationId, organizationName, programId, programName, runs, participants]
+      properties:
+        month:
+          type: string
+        monthLabel:
+          type: string
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        programId:
+          type: string
+          format: uuid
+        programName:
+          type: string
+        runs:
+          type: integer
+          format: int64
+        participants:
+          type: integer
+          format: int64
+        completed:
+          type: [integer, 'null']
+          format: int64
+    LearningTrend:
+      type: object
+      required: [calculatedAt, from, to, days, total, teams, programs, growing, falling, runsWithoutData]
+      properties:
+        calculatedAt:
+          type: string
+          format: date-time
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        days:
+          type: integer
+        total:
+          $ref: '#/components/schemas/LearningTrendItem'
+        teams:
+          type: array
+          items:
+            $ref: '#/components/schemas/LearningTrendItem'
+        programs:
+          type: array
+          items:
+            $ref: '#/components/schemas/LearningTrendItem'
+        growing:
+          type: array
+          items:
+            $ref: '#/components/schemas/LearningTrendItem'
+        falling:
+          type: array
+          items:
+            $ref: '#/components/schemas/LearningTrendItem'
+        runsWithoutData:
+          type: integer
+    LearningTrendItem:
+      type: object
+      required: [start, end, change]
+      properties:
+        id:
+          type: [string, 'null']
+          format: uuid
+        name:
+          type: [string, 'null']
+        start:
+          type: integer
+          format: int64
+        end:
+          type: integer
+          format: int64
+        change:
+          type: integer
+          format: int64
     ReminderStep:
       type: object
       required: [interactionId, organizationId, title, organizationName, nextAction, nextActionAt, ownerManagerName]
@@ -7548,6 +8612,108 @@ components:
         licenseExpiresBy:
           type: integer
           description: Год, до которого включительно лицензия считается истекающей; тот же год принимает отбор licenseExpiresBy списка взаимодействий
+    LmsSignals:
+      type: object
+      required: [calculatedAt, items]
+      properties:
+        calculatedAt:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LmsSignal'
+    LmsSignal:
+      type: object
+      required: [id, type, title, message, interactionId, interactionTitle, organizationId, organizationName, currentStageName,
+        mappingId, courseName, runStartsOn, runEndsOn, participants, observedAt, dismissed]
+      properties:
+        id:
+          type: string
+          description: Работа, поток и вид сигнала
+        type:
+          type: string
+          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION]
+          description: >
+            STUDENTS_APPEARED — в идущем потоке есть обучающиеся, а текущий этап маршрута раньше этапа «Занятия»;
+            NO_STUDENTS — поток идёт дольше app.lms-signals.no-students-after-days дней, обучающихся 0;
+            LOW_COMPLETION — поток закрыт или до его конца не больше app.lms-signals.completion-window-days дней,
+            отслеживание завершения включено, доля завершивших ниже app.lms-signals.low-completion-percent
+        title:
+          type: string
+        message:
+          type: string
+        interactionId:
+          type: string
+          format: uuid
+        interactionTitle:
+          type: string
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        ownerManagerId:
+          type: [string, 'null']
+          format: uuid
+        ownerManagerName:
+          type: [string, 'null']
+        currentStageName:
+          type: string
+        mappingId:
+          type: string
+          format: uuid
+          description: Поток обучения (сопоставление курса или группы Moodle)
+        courseName:
+          type: string
+        groupName:
+          type: [string, 'null']
+        runStartsOn:
+          type: string
+          format: date
+        runEndsOn:
+          type: string
+          format: date
+          description: День после последнего дня потока
+        participants:
+          type: integer
+        completed:
+          type: [integer, 'null']
+          description: null — завершение курса в Moodle не отслеживается
+        observedAt:
+          type: string
+          format: date-time
+        action:
+          oneOf:
+            - $ref: '#/components/schemas/LmsSignalAction'
+            - type: 'null'
+          description: Переход к этапу «Занятия», разрешённый маршрутом из текущего этапа; выполняется только существующим API перехода
+        actionHint:
+          type: [string, 'null']
+          description: Почему кнопки перехода нет
+        dismissed:
+          type: boolean
+    LmsSignalAction:
+      type: object
+      required: [stageId, stageName, commentRequired]
+      properties:
+        stageId:
+          type: string
+          format: uuid
+        stageName:
+          type: string
+        commentRequired:
+          type: boolean
+    LmsSignalDismissal:
+      type: object
+      required: [type, mappingId]
+      properties:
+        type:
+          type: string
+          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION]
+        mappingId:
+          type: string
+          format: uuid
     ReminderSettings:
       type: object
       required: [enabled]
@@ -7601,6 +8767,10 @@ components:
           items:
             type: string
             format: uuid
+        nextStepPartnerVisible:
+          type: [boolean, 'null']
+          description: >-
+            «Показывать вузу» для следующего шага; true без шага — 400. Если поле не передано, флаг сохраняется, пока шаг и срок не меняются, и снимается при их изменении
     InteractionStatusChange:
       type: object
       required: [version, status]
@@ -7673,13 +8843,18 @@ components:
       enum: [CONTRACT, LICENSE_AGREEMENT, APPENDIX, ACT, SIGNED_SCAN, MATERIALS, DOCUMENTATION, CURRICULUM, QUALIFICATION, OTHER]
     AttachmentKindUpdate:
       type: object
-      required: [version, kind]
+      required: [version]
+      minProperties: 2
+      description: Меняет вид документа и (или) флаг «Доступен вузу»; хотя бы одно из полей kind и partnerVisible обязательно
       properties:
         version:
           type: integer
           minimum: 0
         kind:
           $ref: '#/components/schemas/AttachmentKind'
+        partnerVisible:
+          type: boolean
+          description: «Доступен вузу» — документ виден в кабинете вуза и скачивается там после антивирусной проверки
     AttachmentDeletion:
       type: object
       required: [version]
@@ -7693,7 +8868,7 @@ components:
           maxLength: 500
     Attachment:
       type: object
-      required: [id, interactionId, stageId, eventId, originalName, mediaType, sizeBytes, status, kind, revision, replacesId, createdBy, version, createdAt]
+      required: [id, interactionId, stageId, eventId, originalName, mediaType, sizeBytes, status, kind, revision, replacesId, createdBy, version, createdAt, partnerVisible]
       properties:
         id:
           type: string
@@ -7738,6 +8913,9 @@ components:
         createdAt:
           type: string
           format: date-time
+        partnerVisible:
+          type: boolean
+          description: «Доступен вузу»; по умолчанию false, новая версия документа флаг не наследует
     InteractionStageCompletion:
       type: object
       required: [stageId, completedOn, comment, eventId, actorDisplayName, markedAt]
@@ -7981,7 +9159,7 @@ components:
           type: string
         role:
           type: string
-          enum: [USER, LEADER, ADMIN, MANAGEMENT]
+          enum: [USER, LEADER, ADMIN, MANAGEMENT, PARTNER]
         teamId:
           type: [string, 'null']
           format: uuid
@@ -8015,12 +9193,15 @@ components:
           type: [string, 'null']
           description: >-
             Почему учётная запись Keycloak не была синхронизирована сразу после этого изменения; возвращается только при обновлении профиля, null, если учётная запись синхронизирована или синхронизация не требовалась
+        partnerOrganizationName:
+          type: [string, 'null']
+          description: Вуз представителя (роль PARTNER); у сотрудников null
     CrmProfileUpdate:
       type: object
       additionalProperties: false
       required: [version]
       minProperties: 2
-      description: Изменяет только перечисленные поля. Администратор не может изменить собственную роль, команду или активность; активному USER или LEADER нужна команда, MANAGEMENT (доступ на чтение ко всем командам) и ADMIN — нет; последнего активного ADMIN нельзя понизить или заблокировать (409 LAST_ACTIVE_ADMIN). enrolmentOperator разрешён только для USER и LEADER; смена роли на ADMIN или MANAGEMENT сбрасывает его в том же изменении
+      description: Изменяет только перечисленные поля. Профиль PARTNER здесь можно только переименовать или заблокировать, роль PARTNER не назначается и не снимается (400); доступ представителя вуза открывают в карточке вуза. Администратор не может изменить собственную роль, команду или активность; активному USER или LEADER нужна команда, MANAGEMENT (доступ на чтение ко всем командам) и ADMIN — нет; последнего активного ADMIN нельзя понизить или заблокировать (409 LAST_ACTIVE_ADMIN). enrolmentOperator разрешён только для USER и LEADER; смена роли на ADMIN или MANAGEMENT сбрасывает его в том же изменении
       properties:
         version:
           type: integer
@@ -8064,10 +9245,10 @@ components:
           type: string
         previousRole:
           type: string
-          enum: [USER, LEADER, ADMIN, MANAGEMENT]
+          enum: [USER, LEADER, ADMIN, MANAGEMENT, PARTNER]
         role:
           type: string
-          enum: [USER, LEADER, ADMIN, MANAGEMENT]
+          enum: [USER, LEADER, ADMIN, MANAGEMENT, PARTNER]
         previousTeamId:
           type: [string, 'null']
           format: uuid
@@ -9323,7 +10504,7 @@ components:
           type: boolean
         configured:
           type: boolean
-          description: Конфигурация развёртывания задаёт base URL источника (для MOODLE также токен и разрешённые курсы)
+          description: Задан адрес источника (для MOODLE также токен и разрешённые курсы) на экране или в конфигурации развёртывания
         proposedContract:
           type: boolean
           description: Адаптер следует предложенному контракту, а не контракту, подтверждённому заказчиком
@@ -9343,7 +10524,7 @@ components:
             - type: 'null'
         schedule:
           type: [string, 'null']
-          description: Spring cron-выражение SOURCES_SYNC_CRON (московское время); null, если расписание отключено
+          description: Spring cron-выражение из настроек источников (начальное значение SOURCES_SYNC_CRON, московское время); null, если расписание отключено
         nextRunAt:
           type: [string, 'null']
           format: date-time
@@ -9351,6 +10532,111 @@ components:
         stale:
           type: boolean
           description: Настроенный источник без успешного запуска за период SOURCES_STALE_AFTER
+    SourceTokenState:
+      type: object
+      required: [origin, changedAt]
+      properties:
+        origin:
+          type: string
+          enum: [NONE, ENVIRONMENT, SCREEN, UNREADABLE]
+          description: >
+            NONE — токена нет; ENVIRONMENT — из конфигурации развёртывания; SCREEN — сохранён на экране;
+            UNREADABLE — сохранён, но не расшифровывается текущим ключом SOURCES_SETTINGS_KEY (задайте токен заново)
+        changedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Когда токен сменили на экране
+    SourceSettings:
+      type: object
+      required: [moodleBaseUrl, moodleCourseIds, moodleStudentRoles, moodleTeacherRoles, moodleToken, websiteBaseUrl,
+                 websiteToken, syncCron, saved, updatedAt, updatedByName, encryptionAvailable]
+      properties:
+        moodleBaseUrl:
+          type: [string, 'null']
+        moodleCourseIds:
+          type: array
+          items:
+            type: integer
+            format: int64
+        moodleStudentRoles:
+          type: array
+          items:
+            type: string
+        moodleTeacherRoles:
+          type: array
+          items:
+            type: string
+        moodleToken:
+          $ref: '#/components/schemas/SourceTokenState'
+        websiteBaseUrl:
+          type: [string, 'null']
+        websiteToken:
+          $ref: '#/components/schemas/SourceTokenState'
+        syncCron:
+          type: [string, 'null']
+          description: Cron Spring по Москве; null — плановая синхронизация выключена
+        saved:
+          type: boolean
+          description: true — действуют значения, сохранённые на экране; false — значения конфигурации развёртывания
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+        updatedByName:
+          type: [string, 'null']
+        encryptionAvailable:
+          type: boolean
+          description: Задан ключ SOURCES_SETTINGS_KEY, и токены можно сохранять на экране
+    SourceSettingsUpdate:
+      type: object
+      properties:
+        moodleBaseUrl:
+          type: [string, 'null']
+          maxLength: 500
+        moodleToken:
+          type: [string, 'null']
+          maxLength: 500
+          description: Новый токен; пустое значение оставляет прежний
+        moodleCourseIds:
+          type: array
+          maxItems: 100
+          items:
+            type: integer
+            format: int64
+            minimum: 1
+        moodleStudentRoles:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            pattern: '^[a-z0-9_]{1,100}$'
+        moodleTeacherRoles:
+          type: array
+          items:
+            type: string
+            pattern: '^[a-z0-9_]{1,100}$'
+        websiteBaseUrl:
+          type: [string, 'null']
+          maxLength: 500
+        websiteToken:
+          type: [string, 'null']
+          maxLength: 500
+          description: Новый токен; пустое значение оставляет прежний
+        syncCron:
+          type: [string, 'null']
+          description: Пустое значение выключает плановую синхронизацию
+    SourceConnectionCheck:
+      type: object
+      required: [ok, message, details]
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: string
+          description: Для Moodle — найденные курсы «номер «название»»
     SourceRecord:
       type: object
       required: [id, source, recordType, externalId, externalUpdatedAt, status, updatedAt]
@@ -9566,6 +10852,132 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LearningSnapshot'
+    TeacherRoster:
+      type: object
+      required: [id, interactionId, lmsCourse, createdAt, readyCount, pendingCount, transferredCount, members, exports]
+      properties:
+        id:
+          type: string
+          format: uuid
+        interactionId:
+          type: string
+          format: uuid
+        lmsCourse:
+          type: string
+        lmsGroup:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        createdByName:
+          type: [string, 'null']
+        readyCount:
+          type: integer
+          minimum: 0
+          description: Готовые к файлу и ещё не переданные
+        pendingCount:
+          type: integer
+          minimum: 0
+          description: Без отметки «передано»
+        transferredCount:
+          type: integer
+          minimum: 0
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeacherRosterMember'
+        exports:
+          type: array
+          description: Выгрузки, сначала новые
+          items:
+            $ref: '#/components/schemas/TeacherRosterExport'
+    TeacherRosterMember:
+      type: object
+      required: [contactId, name, lastName, problems, status]
+      properties:
+        contactId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: ФИО контакта как в CRM
+        position:
+          type: [string, 'null']
+        email:
+          type: [string, 'null']
+        role:
+          oneOf:
+            - $ref: '#/components/schemas/ContactRole'
+            - type: 'null'
+        lastName:
+          type: string
+          description: Колонка A — первое слово ФИО
+        firstName:
+          type: [string, 'null']
+          description: Колонка B — второе слово ФИО
+        middleName:
+          type: [string, 'null']
+          description: Колонка C — остальные слова ФИО
+        problems:
+          type: array
+          description: Причины, по которым преподаватель не попадёт в файл; пусто — готов
+          items:
+            type: string
+        status:
+          type: string
+          enum: [LISTED, EXPORTED, TRANSFERRED]
+        exportedAt:
+          type: [string, 'null']
+          format: date-time
+        transferredAt:
+          type: [string, 'null']
+          format: date-time
+    TeacherRosterExport:
+      type: object
+      required: [id, rows, exportedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        rows:
+          type: integer
+          minimum: 1
+        exportedByName:
+          type: [string, 'null']
+        exportedAt:
+          type: string
+          format: date-time
+        transferredByName:
+          type: [string, 'null']
+        transferredAt:
+          type: [string, 'null']
+          format: date-time
+    TeacherRosterCreate:
+      type: object
+      required: [lmsCourse]
+      properties:
+        lmsCourse:
+          type: string
+          maxLength: 300
+        lmsGroup:
+          type: [string, 'null']
+          maxLength: 300
+    TeacherRosterFileRequest:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [PENDING, ALL]
+    TeacherRosterMarked:
+      type: object
+      required: [marked, roster]
+      properties:
+        marked:
+          type: integer
+          minimum: 0
+        roster:
+          $ref: '#/components/schemas/TeacherRoster'
     TeacherTraining:
       type: object
       required: [id, interactionId, eventId, trainedOn, courseName, enrolledCount, createdAt]
@@ -9890,14 +11302,14 @@ components:
           type: string
           enum: [PROFILE_CHANGED, ACTIVATION_REQUESTED, KAM_ASSIGNED, KAM_CHANGED, KAM_UNASSIGNED,
                  ORGANIZATION_TEAM_CHANGED, TEAM_CREATED, TEAM_RENAMED, TEAM_ARCHIVED, TEAM_RESTORED,
-                 SYNC_STARTED, ATTACHMENT_DOWNLOADED, ATTACHMENT_PREVIEWED, ENROLMENT_OPERATOR_CHANGED,
+                 SYNC_STARTED, SOURCE_SETTINGS_CHANGED, ATTACHMENT_DOWNLOADED, ATTACHMENT_PREVIEWED, ENROLMENT_OPERATOR_CHANGED,
                  REPORT_DOWNLOADED, JOURNAL_EXPORTED, CONFIRMATIONS_DOWNLOADED, SUBJECT_SEARCHED, SUBJECT_EXPORTED, CONTACT_RECTIFIED,
                  CONTACT_RESTRICTED, CONTACT_RESTRICTION_LIFTED, SUBJECT_ANONYMIZED, RETENTION_APPLIED,
-                 ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_SYNC_FAILED,
+                 ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_SYNC_FAILED, ACCOUNT_CREATED,
                  LEARNER_RESTRICTED, LEARNER_RESTRICTION_LIFTED, PAID_ORDERS_UPLOADED, LEARNERS_SYNCED,
                  LEARNER_LIST_VIEWED, LEARNER_SEARCHED, LEARNER_VIEWED, LEARNER_FIELDS_REVEALED, LEARNER_CHANGED,
                  LEARNER_ENROLMENTS_MOVED, LEARNER_TEMPLATE_PREVIEWED, LEARNER_TEMPLATE_IMPORTED, LMS_ROSTER_EXPORTED,
-                 LMS_ROSTER_MARKED, STREAM_END_DATE_CHANGED]
+                 LMS_ROSTER_MARKED, STREAM_END_DATE_CHANGED, TEACHER_ROSTER_EXPORTED, TEACHER_ROSTER_MARKED]
         actionLabel:
           type: string
         actorProfileId:

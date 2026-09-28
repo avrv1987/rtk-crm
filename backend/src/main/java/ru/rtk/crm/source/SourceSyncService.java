@@ -19,7 +19,6 @@ import org.springframework.boot.web.context.WebServerApplicationContext;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.task.TaskRejectedException;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 import ru.rtk.crm.access.ContactInteractionMutationAuthorization;
@@ -56,6 +55,7 @@ public class SourceSyncService {
     private final MoodleClient moodleClient;
     private final SourceSyncExecutor executor;
     private final SourceProperties properties;
+    private final SourceSettingsService settings;
     private final ObjectMapper objectMapper;
     private final OffsetDateTime processStartedAt = OffsetDateTime.now();
 
@@ -68,6 +68,7 @@ public class SourceSyncService {
             MoodleClient moodleClient,
             SourceSyncExecutor executor,
             SourceProperties properties,
+            SourceSettingsService settings,
             ObjectMapper objectMapper
     ) {
         this.repository = repository;
@@ -78,6 +79,7 @@ public class SourceSyncService {
         this.moodleClient = moodleClient;
         this.executor = executor;
         this.properties = properties;
+        this.settings = settings;
         this.objectMapper = objectMapper;
     }
 
@@ -96,7 +98,6 @@ public class SourceSyncService {
         return enqueue(source, profile.id(), SyncTrigger.MANUAL);
     }
 
-    @Scheduled(cron = "${app.sources.sync-cron}", zone = "Europe/Moscow")
     public void startScheduled() {
         for (SourceCode source : SourceCode.values()) {
             if (!configured(source)) {
@@ -116,7 +117,14 @@ public class SourceSyncService {
     }
 
     Optional<SyncRunView> synchronizeIfNeverSucceeded(UUID actorProfileId, SourceCode source) {
-        if (!configured(source) || repository.findLastFullSuccessAt(source).isPresent()) {
+        if (repository.findLastFullSuccessAt(source).isPresent()) {
+            return Optional.empty();
+        }
+        return synchronizeNow(actorProfileId, source);
+    }
+
+    Optional<SyncRunView> synchronizeNow(UUID actorProfileId, SourceCode source) {
+        if (!configured(source)) {
             return Optional.empty();
         }
         UUID runId = insertRun(source, actorProfileId, SyncTrigger.BOOTSTRAP, null);
@@ -133,7 +141,7 @@ public class SourceSyncService {
         List<Long> courseIds = repository.findLearningMappingKeys(target.organizationId(), target.programId()).stream()
                 .map(key -> Long.valueOf(key.split(":", 2)[0]))
                 .distinct()
-                .filter(moodleClient.courseIds()::contains)
+                .filter(settings.moodle().courseIds()::contains)
                 .toList();
         if (courseIds.isEmpty()) {
             throw SourceException.learningNotMapped();
@@ -165,7 +173,7 @@ public class SourceSyncService {
     }
 
     boolean configured(SourceCode source) {
-        return source == SourceCode.MOODLE ? moodleClient.configured() : siteApiClient.configured();
+        return source == SourceCode.MOODLE ? settings.moodle().configured() : settings.website().configured();
     }
 
     boolean stale(SourceCode source, OffsetDateTime lastSuccessAt) {
@@ -395,7 +403,7 @@ public class SourceSyncService {
 
     private void runWebsite(UUID runId, SourceCode source, OffsetDateTime updatedSince, UUID actorProfileId,
                             UUID organizationId) {
-        SiteResponse response = siteApiClient.fetch(updatedSince);
+        SiteResponse response = siteApiClient.fetch(settings.website(), updatedSince);
         if (response.paidOrders() != null) {
             PaidOrderBatch batch = response.paidOrders();
             if (organizationId == null) {
@@ -436,9 +444,10 @@ public class SourceSyncService {
     }
 
     private void runMoodle(UUID runId, UUID actorProfileId, LearningScope scope) {
+        SourceProperties.Moodle moodle = settings.moodle();
         List<LearningUnit> units = scope == null
-                ? moodleClient.fetch(moodleClient.courseIds())
-                : moodleClient.fetch(scope.courseIds()).stream().filter(unit -> scope.covers(repository, unit)).toList();
+                ? moodleClient.fetch(moodle, moodle.courseIds())
+                : moodleClient.fetch(moodle, scope.courseIds()).stream().filter(unit -> scope.covers(repository, unit)).toList();
         OffsetDateTime observedAt = OffsetDateTime.now();
         int[] counts = new int[SyncOutcome.values().length];
         for (LearningUnit unit : units) {
@@ -547,7 +556,7 @@ public class SourceSyncService {
 
     private SourceView view(SourceCode source) {
         OffsetDateTime lastSuccessAt = repository.findLastFullSuccessAt(source).orElse(null);
-        String schedule = properties.scheduled() ? properties.syncCron().strip() : null;
+        String schedule = settings.syncCron();
         OffsetDateTime nextRunAt = schedule != null && configured(source) && repository.findScheduleActor(source).isPresent()
                 ? Optional.ofNullable(CronExpression.parse(schedule).next(ZonedDateTime.now(ZONE)))
                         .map(ZonedDateTime::toOffsetDateTime)

@@ -571,6 +571,10 @@ export const OrganizationsScreen = ({
                     organizationId={detailState.organization.id}
                     profileId={profileId}
                     role={role}
+                    partnerAccess={{
+                      canManage: role === 'LEADER' || role === 'USER' && detailState.organization.ownerManagerId === profileId,
+                      canOpen: detailState.organization.status === 'ACTIVE' && detailState.organization.type !== 'OPEN_ENROLLMENT'
+                    }}
                     onContactsChanged={() => void refreshOrganization(detailState.organization.id)}
                     onSessionExpired={onSessionExpired}
                     onProfileUnavailable={onProfileUnavailable}

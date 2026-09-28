@@ -127,7 +127,7 @@ public class SourcesApiController {
         return ResponseEntity.noContent().build();
     }
 
-    private static SourceCode parseSource(String value) {
+    static SourceCode parseSource(String value) {
         try {
             return SourceCode.valueOf(value);
         } catch (IllegalArgumentException exception) {

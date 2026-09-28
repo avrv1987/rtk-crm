@@ -27,7 +27,7 @@ public class SessionApiController {
 
     @GetMapping("/api/me")
     public MeResponse me(@AuthenticationPrincipal OidcUser user) {
-        var profile = currentProfileService.requireActiveProfile(user);
+        var profile = currentProfileService.requireSessionProfile(user);
         String teamName = profile.teamId() == null
                 ? null
                 : userProfileRepository.findTeamName(profile.teamId()).orElse(null);

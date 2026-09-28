@@ -30,6 +30,7 @@ public record Interaction(
         UUID createdBy,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
-        InteractionMarks marks
+        InteractionMarks marks,
+        boolean nextStepPartnerVisible
 ) {
 }

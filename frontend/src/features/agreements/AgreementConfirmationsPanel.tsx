@@ -10,6 +10,8 @@ import {
   type ConfirmationQuery
 } from './agreementsApi'
 import { CommandError, useAccessErrorHandler } from './agreementUi'
+import { todayInMoscow } from '../../shared/format/datetime'
+import { PeriodPicker } from '../reports/ReportControls'
 import './agreements.css'
 
 type AgreementConfirmationsPanelProps = {
@@ -28,7 +30,7 @@ type ResultState =
   | { kind: 'ready'; query: ConfirmationQuery; items: AgreementConfirmation[] }
   | { kind: 'failed'; error: unknown }
 
-const currentYear = new Date().getFullYear()
+const currentYear = todayInMoscow().slice(0, 4)
 
 const loadOrganizations = async () => {
   const items: Organization[] = []
@@ -62,7 +64,8 @@ export const AgreementConfirmationsPanel = ({ onSessionExpired, onProfileUnavail
   const [result, setResult] = useState<ResultState>({ kind: 'idle' })
   const [archiving, setArchiving] = useState(false)
   const [actionError, setActionError] = useState<unknown>(null)
-  const titleId = useId()
+  const organizationFieldId = useId()
+  const kindFieldId = useId()
 
   const loadOptions = useCallback(async () => {
     setOptionsError(null)
@@ -135,45 +138,45 @@ export const AgreementConfirmationsPanel = ({ onSessionExpired, onProfileUnavail
   const outdated = result.kind === 'ready' && JSON.stringify(result.query) !== JSON.stringify(query)
 
   return (
-    <section className="agreement-confirmations" aria-labelledby={titleId}>
-      <h2 id={titleId} className="reports__title">Подтверждения по соглашениям</h2>
-      <p className="agreements__hint">
-        Документы, привязанные к мероприятиям соглашений: отбор по вузу, виду мероприятия и периоду мероприятия (фактические сроки, иначе плановые, иначе срок соглашения). Архив содержит проверенные файлы по папкам видов мероприятий и опись.
-      </p>
+    <div className="agreement-confirmations">
       {optionsError !== null && (
         <CommandError error={optionsError} fallback="Не удалось загрузить вузы и виды мероприятий." onRetry={() => void loadOptions()} />
       )}
-      <form className="agreement-confirmations__form" onSubmit={(event) => void show(event)}>
-        <label>
-          Вуз
-          <select value={organizationId} onChange={(event) => setOrganizationId(event.target.value)} disabled={options === null}>
-            <option value="">Все доступные</option>
-            {options?.organizations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
-        </label>
-        <label>
-          Вид мероприятия
-          <select value={kindId} onChange={(event) => setKindId(event.target.value)} disabled={options === null}>
-            <option value="">Все виды</option>
-            {options?.kinds.map((item) => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (в архиве)' : ''}</option>)}
-          </select>
-        </label>
-        <label>
-          Период с
-          <input type="date" value={from} max={to || undefined} onChange={(event) => setFrom(event.target.value)} />
-        </label>
-        <label>
-          по
-          <input type="date" value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} />
-        </label>
-        <div className="agreement-form__actions">
+      <form className="report-builder__panel agreement-confirmations__form" onSubmit={(event) => void show(event)}>
+        <div className="report-builder__main">
+          <div className="report-field">
+            <label htmlFor={organizationFieldId}>Вуз</label>
+            <select id={organizationFieldId} value={organizationId} onChange={(event) => setOrganizationId(event.target.value)} disabled={options === null}>
+              <option value="">Все доступные</option>
+              {options?.organizations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </div>
+          <div className="report-field">
+            <label htmlFor={kindFieldId}>Вид мероприятия</label>
+            <select id={kindFieldId} value={kindId} onChange={(event) => setKindId(event.target.value)} disabled={options === null}>
+              <option value="">Все виды</option>
+              {options?.kinds.map((item) => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (в архиве)' : ''}</option>)}
+            </select>
+          </div>
+          <PeriodPicker
+            from={from}
+            to={to}
+            hint="Период мероприятия: фактические сроки, иначе плановые, иначе срок соглашения. Даты включительно; пустая дата снимает ограничение."
+            onChange={(nextFrom, nextTo) => {
+              setFrom(nextFrom)
+              setTo(nextTo)
+            }}
+          />
+        </div>
+        <div className="report-actions reports__actions">
           <button type="submit" disabled={periodInvalid || result.kind === 'loading'}>
             {result.kind === 'loading' ? 'Отбираем…' : 'Показать подтверждения'}
           </button>
         </div>
       </form>
       {periodInvalid && <p className="reports__problem" role="alert">Дата начала периода позже даты окончания.</p>}
-      {result.kind === 'loading' && <p role="status">Отбираем подтверждения…</p>}
+      {result.kind === 'idle' && <p className="report-empty">Выберите вуз, вид мероприятия и период и нажмите «Показать подтверждения».</p>}
+      {result.kind === 'loading' && <p className="report-empty report-loading" role="status">Отбираем подтверждения…</p>}
       {result.kind === 'failed' && <CommandError error={result.error} fallback="Не удалось отобрать подтверждения." />}
       {actionError !== null && <CommandError error={actionError} fallback="Файл не скачан." />}
       {result.kind === 'ready' && (
@@ -185,7 +188,7 @@ export const AgreementConfirmationsPanel = ({ onSessionExpired, onProfileUnavail
               {archiving ? 'Готовим архив…' : 'Скачать архивом'}
             </button>
           </div>
-          {result.items.length === 0 && <p>По выбранному отбору подтверждений нет.</p>}
+          {result.items.length === 0 && <p className="report-empty">По выбранному отбору подтверждений нет.</p>}
           {groupByKind(result.items).map(([id, group]) => (
             <section key={id} className="agreement-confirmations__group" aria-label={group.name}>
               <h3>{group.name} <span className="agreement-confirmations__count">({group.items.length})</span></h3>
@@ -203,6 +206,6 @@ export const AgreementConfirmationsPanel = ({ onSessionExpired, onProfileUnavail
           ))}
         </>
       )}
-    </section>
+    </div>
   )
 }

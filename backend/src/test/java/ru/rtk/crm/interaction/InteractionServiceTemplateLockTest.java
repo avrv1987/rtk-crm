@@ -164,7 +164,8 @@ class InteractionServiceTemplateLockTest {
                         PROFILE_ID,
                         now,
                         now,
-                        new InteractionMarks(InteractionWorkStatus.ACTIVE, null, null, null, null, null, null)
+                        new InteractionMarks(InteractionWorkStatus.ACTIVE, null, null, null, null, null, null),
+                        false
                 )
         ));
         when(interactionRepository.findStages(any())).thenAnswer(invocation -> stages.get());

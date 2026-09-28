@@ -94,7 +94,7 @@ const updateOf = (profile: CrmProfile, draft: ProfileDraft): CrmProfileUpdate =>
   if (displayName !== profile.displayName) {
     update.displayName = displayName
   }
-  if (draft.role !== profile.role) {
+  if (draft.role !== profile.role && draft.role !== 'PARTNER') {
     update.role = draft.role
   }
   if (draft.teamId !== (profile.teamId ?? '')) {
@@ -401,6 +401,7 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
     const update = updateOf(profile, edit.draft)
     const hasChanges = Object.keys(update).length > 1
     const nameInvalid = edit.draft.displayName.trim().length === 0
+    const partner = profile.role === 'PARTNER'
     const teamOptions = teamsState.kind === 'ready'
       ? teamsState.teams.filter((team) => !team.archived || team.id === profile.teamId)
       : []
@@ -420,20 +421,21 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
           Роль
           <select
             value={edit.draft.role}
-            disabled={isCurrentProfile || edit.saving}
+            disabled={isCurrentProfile || partner || edit.saving}
             onChange={(event) => changeDraft({ role: event.target.value as CrmProfile['role'] })}
           >
             <option value="USER">{roleLabels.USER}</option>
             <option value="LEADER">{roleLabels.LEADER}</option>
             <option value="ADMIN">{roleLabels.ADMIN}</option>
             <option value="MANAGEMENT">{roleLabels.MANAGEMENT}</option>
+            {partner && <option value="PARTNER">{roleLabels.PARTNER}</option>}
           </select>
         </label>
         <label>
           Команда
           <select
             value={edit.draft.teamId}
-            disabled={isCurrentProfile || edit.saving || teamsState.kind !== 'ready'}
+            disabled={isCurrentProfile || partner || edit.saving || teamsState.kind !== 'ready'}
             onChange={(event) => changeDraft({ teamId: event.target.value })}
           >
             <option value="">Без команды</option>
@@ -446,11 +448,17 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
           <input
             type="checkbox"
             checked={edit.draft.active}
-            disabled={isCurrentProfile || edit.saving}
+            disabled={isCurrentProfile || (partner && !profile.active) || edit.saving}
             onChange={(event) => changeDraft({ active: event.target.checked })}
           />
-          Доступ к CRM открыт
+          {partner ? 'Доступ в кабинет вуза открыт' : 'Доступ к CRM открыт'}
         </label>
+        {partner && (
+          <p className="admin-profile-form__hint">
+            Представитель вуза «{profile.partnerOrganizationName}». Здесь доступ можно только закрыть; открывают его
+            ответственный КАМ или руководитель команды в карточке вуза, во вкладке «Контакты».
+          </p>
+        )}
         <label className="admin-profile-form__checkbox">
           <input
             type="checkbox"
@@ -652,8 +660,8 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
                             <dd>{roleLabels[profile.role]}</dd>
                           </div>
                           <div>
-                            <dt>Команда</dt>
-                            <dd>{teamLabel(profile.teamName)}</dd>
+                            <dt>{profile.role === 'PARTNER' ? 'Вуз' : 'Команда'}</dt>
+                            <dd>{profile.role === 'PARTNER' ? profile.partnerOrganizationName : teamLabel(profile.teamName)}</dd>
                           </div>
                           <div>
                             <dt>Ревизия доступа</dt>

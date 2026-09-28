@@ -27,6 +27,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import ru.rtk.crm.access.UserProfileRepository;
 import ru.rtk.crm.access.UserRole;
+import org.springframework.web.multipart.MultipartFile;
+import ru.rtk.crm.attachment.AttachmentService;
 import ru.rtk.crm.catalog.Contact;
 import ru.rtk.crm.catalog.ContactCreateRequest;
 import ru.rtk.crm.catalog.ContactService;
@@ -70,21 +72,35 @@ class DemoBootstrapCommandTest {
 
     private final ContactService contactService = mock(ContactService.class);
     private final InteractionService interactionService = mock(InteractionService.class);
+    private final AttachmentService attachmentService = mock(AttachmentService.class);
 
     @BeforeEach
     void setUp() {
         createSchema();
-        for (String table : List.of("interactions", "products", "vendors", "programs", "directions", "organizations",
-                "crm_user_profiles", "teams")) {
+        for (String table : List.of("attachments", "contacts", "interactions", "products", "vendors", "programs", "directions",
+                "organizations", "crm_user_profiles", "teams")) {
             jdbcTemplate.update("DELETE FROM " + table);
         }
-        when(contactService.create(any(), any(), any(ContactCreateRequest.class), anyString())).thenAnswer(invocation -> new Contact(
-                UUID.randomUUID(), invocation.getArgument(1), "Контакт", null, null, null, 0, null,
-                OffsetDateTime.now(), OffsetDateTime.now(), null, false, false, null, null, null, PersonalDataStatus.ACTIVE));
+        when(contactService.create(any(), any(), any(ContactCreateRequest.class), anyString())).thenAnswer(invocation -> {
+            ContactCreateRequest request = invocation.getArgument(2);
+            UUID id = UUID.randomUUID();
+            jdbcTemplate.update("INSERT INTO contacts (id, organization_id, name) VALUES (?, ?, ?)",
+                    id, invocation.getArgument(1), request.name());
+            return new Contact(id, invocation.getArgument(1), request.name(), null, null, null, 0, null,
+                    OffsetDateTime.now(), OffsetDateTime.now(), null, false, false, null, null, null, PersonalDataStatus.ACTIVE);
+        });
         when(interactionService.create(any(), any(InteractionCreateRequest.class), anyString())).thenAnswer(invocation -> {
             InteractionCreateRequest request = invocation.getArgument(1);
-            jdbcTemplate.update("INSERT INTO interactions (id, organization_id, title) VALUES (?, ?, ?)",
-                    UUID.randomUUID(), request.organizationId(), request.title());
+            jdbcTemplate.update(
+                    "INSERT INTO interactions (id, organization_id, title, next_action, current_stage_id) VALUES (?, ?, ?, ?, ?)",
+                    UUID.randomUUID(), request.organizationId(), request.title(), request.nextAction(), UUID.randomUUID());
+            return null;
+        });
+        when(attachmentService.upload(any(), any(), any(), any(), anyString())).thenAnswer(invocation -> {
+            MultipartFile file = invocation.getArgument(3);
+            assertThat(new String(file.getBytes(), 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+            jdbcTemplate.update("INSERT INTO attachments (id, interaction_id, original_name) VALUES (?, ?, ?)",
+                    UUID.randomUUID(), invocation.getArgument(1), file.getOriginalFilename());
             return null;
         });
     }
@@ -119,6 +135,39 @@ class DemoBootstrapCommandTest {
     }
 
     @Test
+    void partnerRepresentsUniversityAWithSharedDemoDocumentsAndVisibleStepAndRepeatsWithoutDuplicates() {
+        List<DemoBootstrapProperties.Identity> identities = new ArrayList<>(DEMO_IDENTITIES);
+        identities.add(new DemoBootstrapProperties.Identity("partner", ISSUER, "subject-partner", "Представитель вуза",
+                UserRole.PARTNER, null, null, "Университет А", "Александра Демонстрационная"));
+        DemoBootstrapCommand command = command(new DemoBootstrapProperties(true, false, TEAMS, identities, DEMO_ORGANIZATIONS, null));
+
+        command.run(null);
+        command.run(null);
+
+        assertThat(jdbcTemplate.queryForMap("""
+                SELECT p.role, p.team_id, p.active, o.name AS organization, c.name AS contact
+                FROM crm_user_profiles p
+                JOIN organizations o ON o.id = p.partner_organization_id
+                JOIN contacts c ON c.id = p.partner_contact_id
+                WHERE p.subject = 'subject-partner'
+                """))
+                .containsEntry("ROLE", "PARTNER")
+                .containsEntry("TEAM_ID", null)
+                .containsEntry("ACTIVE", true)
+                .containsEntry("ORGANIZATION", "Университет А")
+                .containsEntry("CONTACT", "Александра Демонстрационная");
+        verify(attachmentService, times(2)).upload(any(), any(), any(), any(), anyString());
+        assertThat(jdbcTemplate.queryForList("SELECT original_name FROM attachments WHERE partner_visible ORDER BY original_name",
+                String.class)).containsExactly("Демо: план сотрудничества.pdf", "Демо: рабочая программа.pdf");
+        assertThat(jdbcTemplate.queryForObject("SELECT next_step_partner_visible FROM interactions", Boolean.class)).isTrue();
+
+        identities.set(identities.size() - 1, new DemoBootstrapProperties.Identity("partner", ISSUER, "subject-partner",
+                "Представитель вуза", UserRole.PARTNER, "team-a", null, "Университет А", "Александра Демонстрационная"));
+        assertThatThrownBy(() -> command(new DemoBootstrapProperties(true, false, TEAMS, identities, DEMO_ORGANIZATIONS, null))
+                .run(null)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void enrolmentOperatorJoinsTheOpenEnrolmentTeamOfTheMigrationAndCoursesOfTheSiteFixtureHavePrograms() {
         UUID openEnrolment = UUID.fromString("0e7e0000-0000-4000-8000-000000000001");
         jdbcTemplate.update("INSERT INTO teams (id, name) VALUES (?, 'Открытый набор')", openEnrolment);
@@ -126,7 +175,7 @@ class DemoBootstrapCommandTest {
         teams.add(new DemoBootstrapProperties.Team("open-enrolment", "Открытый набор"));
         List<DemoBootstrapProperties.Identity> identities = new ArrayList<>(DEMO_IDENTITIES);
         identities.add(new DemoBootstrapProperties.Identity("enrol", ISSUER, "subject-enrol", "Оператор зачисления", UserRole.USER,
-                "open-enrolment", true));
+                "open-enrolment", true, null, null));
         DemoBootstrapCommand command = command(new DemoBootstrapProperties(true, false, teams, identities, DEMO_ORGANIZATIONS, null));
 
         command.run(null);
@@ -223,7 +272,7 @@ class DemoBootstrapCommandTest {
 
     private DemoBootstrapCommand command(DemoBootstrapProperties properties) {
         return new DemoBootstrapCommand(properties, jdbcClient, new UserProfileRepository(jdbcClient), contactService,
-                interactionService);
+                interactionService, attachmentService);
     }
 
     private static DemoBootstrapProperties demo() {
@@ -231,7 +280,7 @@ class DemoBootstrapCommandTest {
     }
 
     private static DemoBootstrapProperties.Identity identity(String key, String displayName, UserRole role, String teamKey) {
-        return new DemoBootstrapProperties.Identity(key, ISSUER, "subject-" + key, displayName, role, teamKey, null);
+        return new DemoBootstrapProperties.Identity(key, ISSUER, "subject-" + key, displayName, role, teamKey, null, null, null);
     }
 
     private void insertTeam(String key, String name) {
@@ -249,7 +298,7 @@ class DemoBootstrapCommandTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, issuer VARCHAR(512) NOT NULL, subject VARCHAR(512) NOT NULL,
                     display_name VARCHAR(200) NOT NULL, login VARCHAR(200), role VARCHAR(16) NOT NULL, team_id UUID,
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE, activation_requested_at TIMESTAMP WITH TIME ZONE,
@@ -301,8 +350,21 @@ class DemoBootstrapCommandTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (
-                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL
+                CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL, current_stage_id UUID,
+                    next_action VARCHAR(500), created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, name VARCHAR(200) NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS attachments (
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, original_name VARCHAR(255) NOT NULL,
+                    partner_visible BOOLEAN DEFAULT FALSE NOT NULL
                 )
                 """
         )) {

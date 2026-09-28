@@ -18,6 +18,7 @@ import {
   handledAccessError,
   previewUrl,
   updateAttachmentKind,
+  updateAttachmentPartnerVisible,
   type AccessHandlers,
   type AttachmentKind
 } from './documentsApi'
@@ -90,6 +91,16 @@ export const AttachmentExtras = ({
     }
   }
 
+  const changePartnerVisible = async (partnerVisible: boolean) => {
+    setState({ kind: 'saving' })
+    try {
+      onAttachment(await updateAttachmentPartnerVisible(attachment.id, attachment.version, partnerVisible))
+      setState({ kind: 'idle' })
+    } catch (error) {
+      fail(error)
+    }
+  }
+
   const submitVersion = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (versionFile === null) {
@@ -145,6 +156,22 @@ export const AttachmentExtras = ({
             <strong>{attachmentKindLabels[attachment.kind]}</strong>
           )}
         </label>
+        {canEdit ? (
+          <label className="document-extras__partner">
+            <input
+              type="checkbox"
+              checked={attachment.partnerVisible}
+              disabled={busy}
+              onChange={(event) => void changePartnerVisible(event.target.checked)}
+            />
+            Доступен вузу
+            <span className="interaction-field-hint">
+              {attachment.status === 'CLEAN'
+                ? 'Представитель вуза увидит и скачает файл в кабинете.'
+                : 'В кабинете вуза файл можно будет скачать после проверки антивирусом.'}
+            </span>
+          </label>
+        ) : attachment.partnerVisible && <p className="document-extras__revision">Доступен вузу</p>}
         <p className="document-extras__revision">
           Версия {attachment.revision}
           {previous !== undefined && <span> · заменяет версию {previous.revision}</span>}

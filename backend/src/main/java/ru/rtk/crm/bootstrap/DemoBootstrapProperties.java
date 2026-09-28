@@ -31,13 +31,23 @@ public record DemoBootstrapProperties(
             String displayName,
             UserRole role,
             String teamKey,
-            Boolean enrolmentOperator
+            Boolean enrolmentOperator,
+            String organization,
+            String contact
     ) {
     }
 
     public record Organization(String name, String type, String teamKey, String ownerKey) {
     }
 
-    public record LearningMapping(String kind, String externalKey, String organization, String program) {
+    public record LearningMapping(
+            String kind,
+            String externalKey,
+            String organization,
+            String program,
+            String runKind,
+            Integer runStartedDaysAgo,
+            Integer runEndsInDays
+    ) {
     }
 }

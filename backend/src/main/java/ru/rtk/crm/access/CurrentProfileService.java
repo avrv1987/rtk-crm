@@ -17,6 +17,22 @@ public class CurrentProfileService {
     }
 
     public CrmProfile requireActiveProfile(OidcUser user) {
+        CrmProfile profile = requireSessionProfile(user);
+        if (profile.role() == UserRole.PARTNER) {
+            throw new AdminCrmProfileAccessDeniedException();
+        }
+        return profile;
+    }
+
+    public CrmProfile requirePartnerProfile(OidcUser user) {
+        CrmProfile profile = requireSessionProfile(user);
+        if (profile.role() != UserRole.PARTNER) {
+            throw new AdminCrmProfileAccessDeniedException();
+        }
+        return profile;
+    }
+
+    public CrmProfile requireSessionProfile(OidcUser user) {
         String issuer = user.getIdToken().getIssuer().toString();
         String subject = user.getSubject();
         return userProfileRepository.findActiveByIdentity(issuer, subject)

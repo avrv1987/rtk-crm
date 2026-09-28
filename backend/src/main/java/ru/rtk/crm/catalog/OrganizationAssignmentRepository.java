@@ -271,7 +271,7 @@ public class OrganizationAssignmentRepository {
                        request_id, reason, handover_note, version, occurred_at
                 FROM organization_assignment_events
                 WHERE organization_id = :organizationId
-                ORDER BY occurred_at ASC, id ASC
+                ORDER BY occurred_at ASC, version ASC, id ASC
                 """)
                 .param("organizationId", organizationId)
                 .query(this::mapEvent)

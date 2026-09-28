@@ -416,7 +416,7 @@ class LearnerStorageTest {
 
     private void createSchema() {
         for (String statement : List.of(
-                "CREATE TABLE IF NOT EXISTS crm_user_profiles (id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL)",
+                "CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL)",
                 "CREATE TABLE IF NOT EXISTS source_records (id UUID PRIMARY KEY, external_id VARCHAR(200))",
                 """
                 CREATE TABLE IF NOT EXISTS audit_events (

@@ -94,7 +94,7 @@ public class InteractionRepository {
         return jdbcClient.sql("""
                 SELECT i.id, i.organization_id, i.title, i.current_stage_id, current_stage.name AS current_stage_name,
                        i.next_action, i.next_action_at, i.program_id, i.last_contact_at,
-                       i.version, i.created_by, i.created_at, i.updated_at,
+                       i.version, i.created_by, i.created_at, i.updated_at, i.next_step_partner_visible,
                        i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note, i.problem, i.risk_level, i.risk_reason,
                        o.name AS organization_name, program.name AS program_name,
                        owner_profile.display_name AS owner_manager_name,
@@ -586,13 +586,23 @@ public class InteractionRepository {
     public void updatePlan(UUID interactionId, String nextAction, OffsetDateTime nextActionAt, UUID programId) {
         jdbcClient.sql("""
                 UPDATE interactions
-                SET next_action = :nextAction, next_action_at = :nextActionAt, program_id = :programId
+                SET next_step_partner_visible = CASE
+                        WHEN next_action IS NOT DISTINCT FROM :nextAction AND next_action_at IS NOT DISTINCT FROM :nextActionAt
+                        THEN next_step_partner_visible ELSE FALSE END,
+                    next_action = :nextAction, next_action_at = :nextActionAt, program_id = :programId
                 WHERE id = :interactionId
                 """)
                 .param("interactionId", interactionId)
                 .param("nextAction", nextAction)
                 .param("nextActionAt", nextActionAt)
                 .param("programId", programId)
+                .update();
+    }
+
+    public void updateNextStepPartnerVisible(UUID interactionId, boolean visible) {
+        jdbcClient.sql("UPDATE interactions SET next_step_partner_visible = :visible WHERE id = :interactionId")
+                .param("interactionId", interactionId)
+                .param("visible", visible)
                 .update();
     }
 
@@ -819,7 +829,7 @@ public class InteractionRepository {
         return jdbcClient.sql(("""
                 SELECT i.id, i.organization_id, i.title, i.current_stage_id, current_stage.name AS current_stage_name,
                        i.next_action, i.next_action_at, i.program_id, i.last_contact_at,
-                       i.version, i.created_by, i.created_at, i.updated_at,
+                       i.version, i.created_by, i.created_at, i.updated_at, i.next_step_partner_visible,
                        i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note, i.problem, i.risk_level, i.risk_reason
                 FROM interactions i
                 JOIN interaction_stages current_stage
@@ -846,7 +856,8 @@ public class InteractionRepository {
                 resultSet.getObject("created_by", UUID.class),
                 resultSet.getObject("created_at", OffsetDateTime.class),
                 resultSet.getObject("updated_at", OffsetDateTime.class),
-                mapMarks(resultSet)
+                mapMarks(resultSet),
+                resultSet.getBoolean("next_step_partner_visible")
         );
     }
 
@@ -920,7 +931,8 @@ public class InteractionRepository {
             UUID createdBy,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
-            InteractionMarks marks
+            InteractionMarks marks,
+            boolean nextStepPartnerVisible
     ) {
     }
 }

@@ -103,6 +103,7 @@ secrets=(
     CRM_ACCOUNT_SYNC_CLIENT_SECRET
     ENROLMENT_KEYS_V1
     ENROLMENT_FINGERPRINT_KEY
+    SOURCES_SETTINGS_KEY
 )
 if [[ ${values[DEMO_DATA]} == true ]]; then
     defaults+=(SITE_BASE_URL=$site_fixture_url DEMO_LMS=true ENROLMENT_ENABLED=true)
@@ -128,7 +129,8 @@ done
 write_env_file
 
 moodle_demo_url=http://moodle:8080
-moodle_demo_keys=(MOODLE_BASE_URL MOODLE_TOKEN MOODLE_COURSE_IDS MOODLE_DEMO_JAVA_COURSE MOODLE_DEMO_DATA_GROUP)
+moodle_demo_keys=(MOODLE_BASE_URL MOODLE_TOKEN MOODLE_COURSE_IDS MOODLE_DEMO_JAVA_COURSE MOODLE_DEMO_DATA_GROUP
+    MOODLE_DEMO_TEACH_COURSE MOODLE_DEMO_WEB_COURSE MOODLE_DEMO_EMPTY_COURSE)
 if [[ ${values[DEMO_LMS]} == true ]]; then
     if is_blank "${values[MOODLE_BASE_URL]-}" || [[ ${values[MOODLE_BASE_URL]} == "$moodle_demo_url" ]]; then
         MOODLE_CRM_URL=$moodle_demo_url bash "$project_root/scripts/moodle-demo.sh" "$env_file"
@@ -260,6 +262,7 @@ demo_identities=(
     'admin|Администратор|ADMIN|team-a'
     'management|Руководство|MANAGEMENT'
     'enrol|Оператор зачисления|USER|open-enrolment|operator'
+    'partner|Представитель вуза|PARTNER|'
 )
 spare_accounts=(
     'unprofiled|Без профиля CRM'
@@ -273,6 +276,7 @@ identity_yaml() {
         "$(yaml_literal "$1")" "$issuer" "$(yaml_literal "${subjects[$1]}")" "$(yaml_literal "$2")" "$3"
     [[ -z ${4-} ]] || printf '        team-key: %s\n' "$(yaml_literal "$4")"
     [[ ${5-} != operator ]] || printf '        enrolment-operator: true\n'
+    [[ $3 != PARTNER ]] || printf "        organization: 'Университет А'\n        contact: 'Александра Демонстрационная'\n"
 }
 
 if [[ ${values[DEMO_DATA]} == true ]]; then
@@ -333,6 +337,31 @@ YAML
         organization: 'Университет Б'
         program: 'Демо-программа: анализ данных'
 YAML
+            if ! is_blank "${values[MOODLE_DEMO_TEACH_COURSE]-}"; then
+                cat <<YAML
+      - kind: COURSE
+        external-key: $(yaml_literal "${values[MOODLE_DEMO_TEACH_COURSE]}")
+        organization: 'Университет А'
+        program: 'Демо-программа: цифровой университет'
+        run-kind: TEACHERS
+YAML
+            fi
+            if ! is_blank "${values[MOODLE_DEMO_WEB_COURSE]-}" && ! is_blank "${values[MOODLE_DEMO_EMPTY_COURSE]-}"; then
+                cat <<YAML
+      - kind: COURSE
+        external-key: $(yaml_literal "${values[MOODLE_DEMO_WEB_COURSE]}")
+        organization: 'Школа № 1 (демо)'
+        program: 'Демо-программа: цифровой университет'
+        run-started-days-ago: 60
+        run-ends-in-days: 4
+      - kind: COURSE
+        external-key: $(yaml_literal "${values[MOODLE_DEMO_EMPTY_COURSE]}")
+        organization: 'Школа № 1 (демо)'
+        program: 'Демо-программа: цифровой университет'
+        run-started-days-ago: 30
+        run-ends-in-days: 90
+YAML
+            fi
         fi
     } > "$identity_file"
 else

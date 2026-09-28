@@ -504,6 +504,7 @@ public class SourceRepository {
     }
 
     void deleteMapping(UUID id) {
+        jdbcClient.sql("DELETE FROM learning_observations WHERE mapping_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM learning_snapshots WHERE mapping_id = :id").param("id", id).update();
         jdbcClient.sql("DELETE FROM source_mappings WHERE id = :id").param("id", id).update();
     }
@@ -623,6 +624,7 @@ public class SourceRepository {
     }
 
     int deleteSnapshot(UUID mappingId) {
+        jdbcClient.sql("DELETE FROM learning_observations WHERE mapping_id = :mappingId").param("mappingId", mappingId).update();
         return jdbcClient.sql("DELETE FROM learning_snapshots WHERE mapping_id = :mappingId")
                 .param("mappingId", mappingId)
                 .update();
@@ -687,6 +689,72 @@ public class SourceRepository {
                     .params(parameters)
                     .update();
         }
+        saveObservation(parameters, observedAt.isAfter(changedAt) ? observedAt : changedAt, false);
+    }
+
+    Optional<OffsetDateTime> findFirstObservation(UUID mappingId) {
+        return jdbcClient.sql("SELECT MIN(observed_from) FROM learning_observations WHERE mapping_id = :mappingId")
+                .param("mappingId", mappingId)
+                .query((resultSet, rowNumber) -> resultSet.getObject(1, OffsetDateTime.class))
+                .optional();
+    }
+
+    boolean hasDemoObservations(UUID mappingId) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM learning_observations WHERE mapping_id = :mappingId AND demo = TRUE")
+                .param("mappingId", mappingId)
+                .query(Long.class)
+                .single() > 0;
+    }
+
+    void saveDemoObservation(UUID mappingId, LearningUnit counts, OffsetDateTime observedFrom, OffsetDateTime confirmedAt) {
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("mappingId", mappingId);
+        parameters.put("changedAt", observedFrom);
+        parameters.put("participants", counts.participants());
+        parameters.put("teachers", counts.teachers());
+        parameters.put("completed", counts.completed());
+        parameters.put("notCompleted", counts.notCompleted());
+        parameters.put("unknown", counts.unknown());
+        parameters.put("groupsCount", counts.groupsCount());
+        saveObservation(parameters, confirmedAt, true);
+    }
+
+    void moveDemoRunStart(UUID mappingId, LocalDate startsOn, OffsetDateTime now) {
+        jdbcClient.sql("""
+                UPDATE source_mappings SET run_starts_on = :startsOn, version = version + 1, updated_at = :now
+                WHERE id = :mappingId AND run_starts_on > :startsOn
+                """)
+                .param("mappingId", mappingId)
+                .param("startsOn", startsOn)
+                .param("now", now)
+                .update();
+    }
+
+    private void saveObservation(Map<String, Object> parameters, OffsetDateTime confirmedAt, boolean demo) {
+        parameters.put("confirmedAt", confirmedAt);
+        parameters.put("demo", demo);
+        int confirmed = jdbcClient.sql("""
+                UPDATE learning_observations
+                SET participants_count = :participants, teachers_count = :teachers, completed_count = :completed,
+                    not_completed_count = :notCompleted, unknown_count = :unknown, groups_count = :groupsCount,
+                    confirmed_at = CASE WHEN confirmed_at > :confirmedAt THEN confirmed_at ELSE :confirmedAt END
+                WHERE mapping_id = :mappingId AND observed_from = :changedAt
+                """)
+                .params(parameters)
+                .update();
+        if (confirmed == 0) {
+            jdbcClient.sql("""
+                    INSERT INTO learning_observations (
+                        mapping_id, observed_from, confirmed_at, participants_count, teachers_count, completed_count,
+                        not_completed_count, unknown_count, groups_count, demo
+                    ) VALUES (
+                        :mappingId, :changedAt, :confirmedAt, :participants, :teachers, :completed,
+                        :notCompleted, :unknown, :groupsCount, :demo
+                    )
+                    """)
+                    .params(parameters)
+                    .update();
+        }
     }
 
     boolean interactionVisible(UUID interactionId, VisibilityScope scope) {
@@ -740,6 +808,11 @@ public class SourceRepository {
 
     void saveMapping(SourceCode source, String kind, String externalKey, UUID organizationId, UUID programId,
                      RunDates run, UUID actorProfileId, OffsetDateTime now) {
+        saveMapping(source, kind, externalKey, organizationId, programId, run, null, actorProfileId, now);
+    }
+
+    void saveMapping(SourceCode source, String kind, String externalKey, UUID organizationId, UUID programId,
+                     RunDates run, RunKind runKind, UUID actorProfileId, OffsetDateTime now) {
         Map<String, Object> parameters = new HashMap<>();
         parameters.put("source", source.name());
         parameters.put("kind", kind);
@@ -748,12 +821,14 @@ public class SourceRepository {
         parameters.put("programId", programId);
         parameters.put("runStartsOn", run == null ? null : run.startsOn());
         parameters.put("runEndsOn", run == null ? null : run.endsOn());
+        parameters.put("runKind", (runKind == null ? RunKind.STUDENTS : runKind).name());
         parameters.put("actorProfileId", actorProfileId);
         parameters.put("now", now);
         int updated = jdbcClient.sql("""
                 UPDATE source_mappings
                 SET organization_id = :organizationId, program_id = :programId, run_starts_on = :runStartsOn,
-                    run_ends_on = :runEndsOn, version = version + 1, created_by = :actorProfileId, updated_at = :now
+                    run_ends_on = :runEndsOn, run_kind = :runKind, version = version + 1, created_by = :actorProfileId,
+                    updated_at = :now
                 WHERE source = :source AND kind = :kind AND external_key = :externalKey
                 """)
                 .params(parameters)
@@ -761,10 +836,10 @@ public class SourceRepository {
         if (updated == 0) {
             jdbcClient.sql("""
                     INSERT INTO source_mappings (
-                        id, source, kind, external_key, organization_id, program_id, run_starts_on, run_ends_on,
+                        id, source, kind, external_key, organization_id, program_id, run_starts_on, run_ends_on, run_kind,
                         created_by, created_at, updated_at
                     ) VALUES (
-                        :id, :source, :kind, :externalKey, :organizationId, :programId, :runStartsOn, :runEndsOn,
+                        :id, :source, :kind, :externalKey, :organizationId, :programId, :runStartsOn, :runEndsOn, :runKind,
                         :actorProfileId, :now, :now
                     )
                     """)

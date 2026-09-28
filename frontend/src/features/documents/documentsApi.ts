@@ -46,6 +46,10 @@ export const updateAttachmentKind = (id: Attachment['id'], version: number, kind
   apiClient.command<Attachment>(`/api/attachments/${encodeURIComponent(id)}`, { version, kind }, createIdempotencyKey(), 'PATCH')
 )
 
+export const updateAttachmentPartnerVisible = (id: Attachment['id'], version: number, partnerVisible: boolean) => (
+  apiClient.command<Attachment>(`/api/attachments/${encodeURIComponent(id)}`, { version, partnerVisible }, createIdempotencyKey(), 'PATCH')
+)
+
 export const deleteAttachment = (
   interactionId: Interaction['id'],
   attachmentId: Attachment['id'],

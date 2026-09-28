@@ -19,7 +19,7 @@ public class AuditJournalRepository {
     public static final String SYSTEM_ACTOR = "Система";
 
     private static final String ROLE_LABEL = """
-            CASE %s WHEN 'USER' THEN 'КАМ' WHEN 'LEADER' THEN 'руководитель' WHEN 'MANAGEMENT' THEN 'руководство' ELSE 'администратор' END""";
+            CASE %s WHEN 'USER' THEN 'КАМ' WHEN 'LEADER' THEN 'руководитель' WHEN 'MANAGEMENT' THEN 'руководство' WHEN 'PARTNER' THEN 'представитель вуза' ELSE 'администратор' END""";
 
     private static final String JOURNAL = """
             SELECT a.id, a.occurred_at, a.category, a.action, a.actor_profile_id, a.actor_display_name,
@@ -166,6 +166,28 @@ public class AuditJournalRepository {
                 .param("action", AuditAction.REPORT_DOWNLOADED.name())
                 .param("actorProfileId", actorProfileId)
                 .param("jobId", jobId)
+                .param("requestId", requestId)
+                .param("occurredAt", OffsetDateTime.now())
+                .update();
+    }
+
+    public void recordReportFileDownload(UUID actorProfileId, String fileName, String details, String requestId) {
+        jdbcClient.sql("""
+                INSERT INTO audit_events (
+                    id, category, action, actor_profile_id, actor_display_name,
+                    object_type, object_id, object_name, details, request_id, occurred_at
+                )
+                SELECT :id, :category, :action, p.id, p.display_name, 'REPORT', CAST(NULL AS UUID), :fileName, :details,
+                       :requestId, :occurredAt
+                FROM crm_user_profiles p
+                WHERE p.id = :actorProfileId
+                """)
+                .param("id", UUID.randomUUID())
+                .param("category", AuditAction.REPORT_DOWNLOADED.category().name())
+                .param("action", AuditAction.REPORT_DOWNLOADED.name())
+                .param("actorProfileId", actorProfileId)
+                .param("fileName", fileName)
+                .param("details", details)
                 .param("requestId", requestId)
                 .param("occurredAt", OffsetDateTime.now())
                 .update();

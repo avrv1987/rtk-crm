@@ -40,3 +40,16 @@ export const accessHandled = (
   }
   return false
 }
+
+export const scheduleLabel = (cron: string) => {
+  const [second, minute, hour, day, month, weekday] = cron.split(/\s+/)
+  if (second === '0' && day === '*' && month === '*' && weekday === '*') {
+    if (hour === '*' && /^\d+$/.test(minute)) {
+      return `каждый час в ${minute.padStart(2, '0')} мин.`
+    }
+    if (/^\d+$/.test(hour) && /^\d+$/.test(minute)) {
+      return `ежедневно в ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`
+    }
+  }
+  return `по расписанию «${cron}»`
+}

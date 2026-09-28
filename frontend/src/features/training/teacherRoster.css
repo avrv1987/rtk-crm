@@ -1,0 +1,66 @@
+.teacher-roster__card {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.teacher-roster__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.teacher-roster__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+}
+
+.teacher-roster__stats > span {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--color-surface-muted);
+  color: var(--color-text-body);
+  font-size: var(--font-size-sm);
+}
+
+.teacher-roster__members > li {
+  overflow-wrap: anywhere;
+}
+
+.teacher-roster__problems {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--color-danger);
+}
+
+.teacher-roster__notice {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--color-success-surface);
+  color: var(--color-success);
+}
+
+.teacher-roster__mode {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.teacher-roster__contacts > summary {
+  cursor: pointer;
+  color: var(--color-action);
+}
+
+.teacher-roster__create {
+  margin-top: 16px;
+}

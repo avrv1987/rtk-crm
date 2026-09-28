@@ -1,15 +1,15 @@
-import { type FormEvent, useCallback, useEffect, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useId, useState } from 'react'
 import {
-  ApiError,
   apiClient,
   type ReportColumn,
   type ReportManagerOption,
   type ReportPreview
 } from '../../shared/api/client'
-import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { formatCalendarDate, formatMoscowDateTime, todayInMoscow } from '../../shared/format/datetime'
+import { CardTabPanel, CardTabs } from '../interactions/cardUi'
 import { handledAccessError } from '../interactions/workMarks'
-import './kamReview.css'
+import { PeriodPicker } from './ReportControls'
+import { ErrorNotice } from './ReportErrorNotice'
 
 type KamReviewPanelProps = {
   onSessionExpired: () => void
@@ -36,6 +36,8 @@ type ReviewState =
   | { kind: 'failed'; error: unknown }
 
 type Row = ReportPreview['items'][number]
+
+type ReviewTab = 'events' | 'steps' | 'marks'
 
 const previewSize = 200
 const eventColumns: ReportColumn[] = ['EVENT_AT', 'ORGANIZATION', 'INTERACTION', 'EVENT_TYPE', 'STAGE', 'COMMENT', 'AUTHOR']
@@ -82,9 +84,9 @@ const ReviewTable = ({ preview, rows, columns, label }: { preview: ReportPreview
   </div>
 )
 
-const Truncated = ({ preview, what }: { preview: ReportPreview; what: string }) => (
+const Truncated = ({ preview, what, source }: { preview: ReportPreview; what: string; source: string }) => (
   preview.total > preview.items.length
-    ? <p className="reports__hint">Показаны первые {preview.items.length} из {preview.total} {what}; полный список — в отчёте выше.</p>
+    ? <p className="reports__hint">Показаны первые {preview.items.length} из {preview.total} {what}; полный список — в отчёте «{source}».</p>
     : null
 )
 
@@ -94,6 +96,8 @@ export const KamReviewPanel = ({ onSessionExpired, onProfileUnavailable }: KamRe
   const [from, setFrom] = useState(defaultFrom)
   const [to, setTo] = useState(defaultTo)
   const [reviewState, setReviewState] = useState<ReviewState>({ kind: 'idle' })
+  const [tab, setTab] = useState<ReviewTab>('events')
+  const managerFieldId = useId()
 
   const loadManagers = useCallback(async () => {
     setManagersState({ kind: 'loading' })
@@ -139,75 +143,92 @@ export const KamReviewPanel = ({ onSessionExpired, onProfileUnavailable }: KamRe
   const markedWorks = review?.works.items.filter(hasMark) ?? []
 
   return (
-    <section className="reports__preview kam-review" aria-labelledby="kam-review-title">
-      <h3 id="kam-review-title">Разбор КАМ</h3>
-      <p>События за период, открытые шаги и отмеченные риски одного КАМ на одной странице — для регулярного разбора с руководителем.</p>
+    <div className="kam-review">
       {managersState.kind === 'failed' && (
-        <div className="interaction-command-error" role="alert">
-          <p>Не удалось загрузить список КАМ.</p>
-          {managersState.error instanceof ApiError && <SupportDetails requestId={managersState.error.requestId} code={managersState.error.code} />}
-          <button type="button" onClick={() => void loadManagers()}>Повторить</button>
-        </div>
+        <ErrorNotice error={managersState.error} message="Не удалось загрузить список КАМ." onRetry={() => void loadManagers()} />
       )}
-      <form className="reports__settings" onSubmit={(event) => void submit(event)}>
-        <label>
-          КАМ
-          <select value={managerId} disabled={managers.length === 0} onChange={(event) => setManagerId(event.target.value)}>
-            {managers.length === 0 && <option value="">{managersState.kind === 'loading' ? 'Загружаем…' : 'Нет доступных КАМ'}</option>}
-            {managers.map((manager) => (
-              <option key={manager.id} value={manager.id}>{manager.displayName}{manager.active ? '' : ' (не активен)'}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Период с *
-          <input type="date" required value={from} max={to || undefined} onChange={(event) => setFrom(event.target.value)} />
-        </label>
-        <label>
-          по *
-          <input type="date" required value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} />
-        </label>
-        <div className="reports__actions">
-          <button type="submit" disabled={managerId === '' || reviewState.kind === 'loading'}>
+      <form className="report-builder__panel kam-review__form" onSubmit={(event) => void submit(event)}>
+        <div className="report-builder__main">
+          <div className="report-field">
+            <label htmlFor={managerFieldId}>КАМ</label>
+            <select id={managerFieldId} value={managerId} disabled={managers.length === 0} onChange={(event) => setManagerId(event.target.value)}>
+              {managers.length === 0 && <option value="">{managersState.kind === 'loading' ? 'Загружаем…' : 'Нет доступных КАМ'}</option>}
+              {managers.map((manager) => (
+                <option key={manager.id} value={manager.id}>{manager.displayName}{manager.active ? '' : ' (не активен)'}</option>
+              ))}
+            </select>
+          </div>
+          <PeriodPicker
+            from={from}
+            to={to}
+            required
+            hint="Даты включительно, по московскому времени. Для разбора нужны обе даты."
+            onChange={(nextFrom, nextTo) => {
+              setFrom(nextFrom)
+              setTo(nextTo)
+            }}
+          />
+        </div>
+        {(from === '' || to === '' || from > to) && (
+          <p className="reports__problem" role="alert">Укажите обе даты периода; дата начала не может быть позже даты окончания.</p>
+        )}
+        <div className="report-actions reports__actions">
+          <button type="submit" disabled={managerId === '' || from === '' || to === '' || from > to || reviewState.kind === 'loading'}>
             {reviewState.kind === 'loading' ? 'Собираем разбор…' : 'Показать разбор'}
           </button>
         </div>
       </form>
+      {reviewState.kind === 'idle' && <p className="report-empty">Выберите КАМ и период и нажмите «Показать разбор».</p>}
+      {reviewState.kind === 'loading' && <p className="report-empty report-loading" role="status">Собираем разбор…</p>}
       {reviewState.kind === 'failed' && (
-        <div className="interaction-command-error" role="alert">
-          <p>Не удалось собрать разбор. Повторите попытку.</p>
-          {reviewState.error instanceof ApiError && <SupportDetails requestId={reviewState.error.requestId} code={reviewState.error.code} />}
-        </div>
+        <ErrorNotice error={reviewState.error} message="Не удалось собрать разбор. Повторите попытку." />
       )}
       {review !== null && (
         <div className="kam-review__result" aria-live="polite">
           <p className="kam-review__summary">
-            <strong>{review.managerName}</strong>, {formatCalendarDate(review.from)} —{' '}
-            {formatCalendarDate(review.to)}: событий {review.events.total}, активных работ {review.works.total},
-            {' '}с отметками ожидания, проблемы или риска {markedWorks.length}.
+            <strong>{review.managerName}</strong>, {formatCalendarDate(review.from)} — {formatCalendarDate(review.to)}
           </p>
-          <section aria-labelledby="kam-review-events">
-            <h4 id="kam-review-events">События за период</h4>
-            {review.events.total === 0
-              ? <p>За период событий нет.</p>
-              : <ReviewTable preview={review.events} rows={review.events.items} columns={eventColumns} label="События КАМ за период" />}
-            <Truncated preview={review.events} what="событий" />
-          </section>
-          <section aria-labelledby="kam-review-steps">
-            <h4 id="kam-review-steps">Открытые шаги</h4>
-            {review.works.total === 0
-              ? <p>Активных работ нет.</p>
-              : <ReviewTable preview={review.works} rows={review.works.items} columns={stepColumns} label="Открытые шаги КАМ" />}
-            <Truncated preview={review.works} what="работ" />
-          </section>
-          <section aria-labelledby="kam-review-marks">
-            <h4 id="kam-review-marks">Риски, проблемы и ожидания</h4>
-            {markedWorks.length === 0
-              ? <p>Отмеченных рисков, проблем и ожиданий нет.</p>
-              : <ReviewTable preview={review.works} rows={markedWorks} columns={markColumns} label="Отмеченные риски КАМ" />}
-          </section>
+          <ul className="kam-review__tiles">
+            <li><strong>{review.events.total}</strong> событий за период</li>
+            <li><strong>{review.works.total}</strong> активных работ</li>
+            <li><strong>{markedWorks.length}</strong> с отметками ожидания, проблемы или риска</li>
+          </ul>
+          <CardTabs
+            label="Разделы разбора КАМ"
+            idPrefix="kam-review"
+            tabs={[
+              { id: 'events', label: 'События за период', count: review.events.total },
+              { id: 'steps', label: 'Открытые шаги', count: review.works.total },
+              { id: 'marks', label: 'Риски, проблемы и ожидания', count: markedWorks.length }
+            ]}
+            active={tab}
+            onChange={setTab}
+          />
+          <CardTabPanel idPrefix="kam-review" active={tab}>
+            {tab === 'events' && (
+              <>
+                {review.events.total === 0
+                  ? <p className="report-empty">За период событий нет.</p>
+                  : <ReviewTable preview={review.events} rows={review.events.items} columns={eventColumns} label="События КАМ за период" />}
+                <Truncated preview={review.events} what="событий" source="События за период" />
+              </>
+            )}
+            {tab === 'steps' && (
+              <>
+                {review.works.total === 0
+                  ? <p className="report-empty">Активных работ нет.</p>
+                  : <ReviewTable preview={review.works} rows={review.works.items} columns={stepColumns} label="Открытые шаги КАМ" />}
+                <Truncated preview={review.works} what="работ" source="Портфель взаимодействий" />
+              </>
+            )}
+            {tab === 'marks' && (
+              markedWorks.length === 0
+                ? <p className="report-empty">Отмеченных рисков, проблем и ожиданий нет.</p>
+                : <ReviewTable preview={review.works} rows={markedWorks} columns={markColumns} label="Отмеченные риски КАМ" />
+            )}
+          </CardTabPanel>
         </div>
       )}
-    </section>
+    </div>
   )
 }

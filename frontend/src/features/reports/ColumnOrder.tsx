@@ -1,7 +1,6 @@
 import { useId } from 'react'
 import type { ReportColumn, ReportKind } from '../../shared/api/client'
 import { columnTitle, moveColumn } from './reportSelection'
-import './reportExtras.css'
 
 type ColumnOrderProps = {
   kind: ReportKind

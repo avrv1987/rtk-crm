@@ -9,6 +9,7 @@ import java.util.UUID;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.ContactInteractionMutationAuthorization;
@@ -28,17 +29,20 @@ public class ContactService {
     private final ContactRepository contactRepository;
     private final CommandIdempotencyRepository commandIdempotencyRepository;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     public ContactService(
             OrganizationRepository organizationRepository,
             ContactRepository contactRepository,
             CommandIdempotencyRepository commandIdempotencyRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ApplicationEventPublisher eventPublisher
     ) {
         this.organizationRepository = organizationRepository;
         this.contactRepository = contactRepository;
         this.commandIdempotencyRepository = commandIdempotencyRepository;
         this.objectMapper = objectMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(readOnly = true)
@@ -203,6 +207,9 @@ public class ContactService {
                 expectedVersion + 1,
                 now
         );
+        if (next.inactive() && !current.inactive()) {
+            eventPublisher.publishEvent(new CatalogArchivedEvent(organizationId, contactId, profile.id(), null));
+        }
         return store(commandId, contactRepository.findById(organizationId, contactId)
                 .orElseThrow(ContactNotFoundException::new));
     }

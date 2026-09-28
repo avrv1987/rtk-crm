@@ -1356,6 +1356,36 @@ class InteractionServiceTest {
     }
 
     @Test
+    void nextStepIsShownToUniversityOnlyByExplicitFlagAndHiddenAgainWhenTheStepChanges() {
+        Interaction created = createA("Шаг для вуза", "partner-step-create");
+        assertThat(created.nextStepPartnerVisible()).isFalse();
+        InteractionPlanRequest early = new InteractionPlanRequest(created.version());
+        early.setNextStepPartnerVisible(true);
+        assertThatThrownBy(() -> interactionService.updatePlan(profileA, created.id(), early, "partner-step-empty"))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.field()).isEqualTo("nextStepPartnerVisible"));
+
+        InteractionPlanRequest show = new InteractionPlanRequest(created.version());
+        show.setNextAction("Прислать список преподавателей");
+        show.setNextStepPartnerVisible(true);
+        Interaction shown = interactionService.updatePlan(profileA, created.id(), show, "partner-step-show");
+        assertThat(shown.nextStepPartnerVisible()).isTrue();
+        assertThat(interactionService.events(profileA, created.id()).getLast().comment()).contains("Следующий шаг показан вузу");
+
+        InteractionPlanRequest renamed = new InteractionPlanRequest(shown.version());
+        renamed.setTitle("Шаг для вуза, уточнено");
+        assertThat(interactionService.updatePlan(profileA, created.id(), renamed, "partner-step-title").nextStepPartnerVisible())
+                .isTrue();
+
+        InteractionPlanRequest changed = new InteractionPlanRequest(shown.version() + 1);
+        changed.setNextAction("Согласовать расписание");
+        Interaction hidden = interactionService.updatePlan(profileA, created.id(), changed, "partner-step-change");
+        assertThat(hidden.nextStepPartnerVisible()).isFalse();
+        assertThat(interactionService.events(profileA, created.id()).getLast().comment())
+                .contains("Следующий шаг больше не показан вузу");
+    }
+
+    @Test
     void updatesPlanWithHistoryReplayVersionConflictAndScope() {
         UUID programId = insertProgram("Программа плана", false);
         UUID keptProductId = insertProduct("Сохраняемый продукт", false);
@@ -2248,16 +2278,24 @@ class InteractionServiceTest {
         verify(storage, times(3)).store(any(), any(), any());
 
         Attachment relabeled = attachments.updateKind(profileA, secondVersion.id(),
-                new AttachmentKindUpdateRequest(secondVersion.version(), AttachmentKind.SIGNED_SCAN));
+                new AttachmentKindUpdateRequest(secondVersion.version(), AttachmentKind.SIGNED_SCAN, null));
         assertThat(relabeled.kind()).isEqualTo(AttachmentKind.SIGNED_SCAN);
         assertThat(relabeled.version()).isEqualTo(secondVersion.version() + 1);
         assertThatThrownBy(() -> attachments.updateKind(profileA, secondVersion.id(),
-                new AttachmentKindUpdateRequest(secondVersion.version(), AttachmentKind.ACT)))
+                new AttachmentKindUpdateRequest(secondVersion.version(), AttachmentKind.ACT, null)))
                 .isInstanceOfSatisfying(InteractionConflictException.class,
                         exception -> assertThat(exception.currentVersion()).isEqualTo(relabeled.version()));
         assertThatThrownBy(() -> attachments.updateKind(profileB, secondVersion.id(),
-                new AttachmentKindUpdateRequest(relabeled.version(), AttachmentKind.ACT)))
+                new AttachmentKindUpdateRequest(relabeled.version(), AttachmentKind.ACT, null)))
                 .isInstanceOf(InteractionNotFoundException.class);
+        assertThat(relabeled.partnerVisible()).isFalse();
+        Attachment shared = attachments.updateKind(profileA, secondVersion.id(),
+                new AttachmentKindUpdateRequest(relabeled.version(), null, true));
+        assertThat(shared.partnerVisible()).isTrue();
+        assertThat(shared.kind()).isEqualTo(AttachmentKind.SIGNED_SCAN);
+        assertThatThrownBy(() -> attachments.updateKind(new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0),
+                secondVersion.id(), new AttachmentKindUpdateRequest(shared.version(), null, false)))
+                .isInstanceOf(ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException.class);
 
         assertThat(attachments.preview(profileA, leaderAct.id()).attachment().mediaType()).isEqualTo("application/pdf");
         assertThatThrownBy(() -> attachments.preview(profileA, secondVersion.id()))
@@ -2731,7 +2769,7 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -2836,7 +2874,7 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS interactions (
+                CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500), problem VARCHAR(1000), risk_level VARCHAR(16), risk_reason VARCHAR(1000),
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
@@ -2942,7 +2980,7 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS attachments (
+                CREATE TABLE IF NOT EXISTS attachments (partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
                     stage_id UUID NOT NULL,

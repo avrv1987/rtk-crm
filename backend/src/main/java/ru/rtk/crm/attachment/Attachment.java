@@ -17,6 +17,7 @@ public record Attachment(
         UUID replacesId,
         UUID createdBy,
         int version,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        boolean partnerVisible
 ) {
 }

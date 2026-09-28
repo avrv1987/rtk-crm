@@ -80,6 +80,40 @@ class KeycloakAccountClientTest {
     }
 
     @Test
+    void partnerAccountGetsTemporaryPasswordAndMustChangeItAtFirstSignIn() {
+        userStatus = 201;
+
+        String userId = client("sync-secret").createPartnerUser(
+                "rector@example.test", "rector@example.test", "Проректор", "Университет А", "TemporaryPass42"
+        );
+
+        assertThat(userId).isEqualTo("new-user-id");
+        assertThat(requests).hasSize(2);
+        assertThat(requests.get(1))
+                .startsWith("POST /admin/realms/rtk-crm/users Bearer service-token {\"username\":\"rector@example.test\"")
+                .contains("\"enabled\":true", "\"requiredActions\":[\"UPDATE_PASSWORD\"]", "\"temporary\":true");
+
+        userStatus = 409;
+        assertThatThrownBy(() -> client("sync-secret").createPartnerUser("rector@example.test", null, "Проректор", "Вуз", "x"))
+                .isInstanceOf(KeycloakAccountConflictException.class);
+    }
+
+    @Test
+    void reopenedPartnerAccountGetsNewTemporaryPasswordAndIsEnabled() {
+        client("sync-secret").enableWithTemporaryPassword(USER, "TemporaryPass42");
+
+        assertThat(requests).hasSize(3);
+        assertThat(requests.get(1)).startsWith("PUT /admin/realms/rtk-crm/users/" + USER + "/reset-password ")
+                .contains("\"temporary\":true");
+        assertThat(requests.get(2)).startsWith("PUT /admin/realms/rtk-crm/users/" + USER + " ")
+                .contains("\"enabled\":true", "UPDATE_PASSWORD");
+
+        assertThatThrownBy(() -> client("").enableWithTemporaryPassword(USER, "TemporaryPass42"))
+                .isInstanceOf(AccountSyncException.class)
+                .hasMessageContaining("доступ в кабинет вуза не открыт");
+    }
+
+    @Test
     void unreachableKeycloakIsReportedAsUnavailable() {
         server.stop(0);
 
@@ -107,6 +141,9 @@ class KeycloakAccountClientTest {
             exchange.sendResponseHeaders(200, token.length);
             exchange.getResponseBody().write(token);
         } else {
+            if (path.endsWith("/users")) {
+                exchange.getResponseHeaders().add("Location", "http://keycloak.test/admin/realms/rtk-crm/users/new-user-id");
+            }
             exchange.sendResponseHeaders(path.endsWith("/logout") ? 204 : userStatus, -1);
         }
         exchange.close();

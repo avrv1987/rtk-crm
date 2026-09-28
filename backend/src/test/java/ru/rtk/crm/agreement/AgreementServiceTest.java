@@ -101,6 +101,7 @@ class AgreementServiceTest {
     private static final UUID KIND_TRAINING = UUID.fromString("7c2f0a10-0000-4000-8000-000000000040");
     private static final UUID KIND_OTHER = UUID.fromString("7c2f0a10-0000-4000-8000-000000000070");
     private static final LocalDate YEAR_START = LocalDate.parse("2026-01-01");
+    private static final OffsetDateTime OBSERVED_AT = OffsetDateTime.parse("2026-01-15T10:00:00+03:00");
     private static final LocalDate YEAR_END = LocalDate.parse("2026-12-31");
 
     private final CrmProfile managerA = new CrmProfile(MANAGER_A, UserRole.USER, TEAM_A, 0);
@@ -123,7 +124,7 @@ class AgreementServiceTest {
         createSchema();
         for (String table : List.of(
                 "agreement_activity_attachments", "agreement_activity_interactions", "agreement_activities", "agreements",
-                "audit_events", "agreement_activity_kinds", "learning_snapshots", "source_mappings", "source_records", "attachments", "interaction_stages", "interactions",
+                "audit_events", "agreement_activity_kinds", "learning_observations", "learning_snapshots", "source_mappings", "source_records", "attachments", "interaction_stages", "interactions",
                 "command_idempotency_records", "organizations", "crm_user_profiles", "teams"
         )) {
             jdbc.update("DELETE FROM " + table);
@@ -508,14 +509,18 @@ class AgreementServiceTest {
             String runKind
     ) {
         jdbc.update("INSERT INTO source_records (id, source, external_id) VALUES (?, 'MOODLE', ?)", recordId, externalId);
+        UUID mappingId = UUID.randomUUID();
         jdbc.update("""
-                INSERT INTO source_mappings (id, source, kind, external_key, run_starts_on, run_ends_on, run_kind)
-                VALUES (?, 'MOODLE', ?, ?, ?, ?, ?)
-                """, UUID.randomUUID(), groupId == null ? "COURSE" : "GROUP", externalId, runStartsOn, runEndsOn, runKind);
+                INSERT INTO source_mappings (
+                    id, source, kind, external_key, organization_id, program_id, run_starts_on, run_ends_on, run_kind
+                ) VALUES (?, 'MOODLE', ?, ?, ?, ?, ?, ?, ?)
+                """, mappingId, groupId == null ? "COURSE" : "GROUP", externalId, ORGANIZATION_A, PROGRAM, runStartsOn, runEndsOn,
+                runKind);
         jdbc.update("""
-                INSERT INTO learning_snapshots (source_record_id, organization_id, program_id, group_id, participants_count)
-                VALUES (?, ?, ?, ?, ?)
-                """, recordId, ORGANIZATION_A, PROGRAM, groupId, participants);
+                INSERT INTO learning_observations (
+                    mapping_id, observed_from, confirmed_at, participants_count, teachers_count, unknown_count, groups_count
+                ) VALUES (?, ?, ?, ?, 0, ?, 0)
+                """, mappingId, OBSERVED_AT, OBSERVED_AT, participants, participants);
     }
 
     private void createSchema() {
@@ -529,7 +534,7 @@ class AgreementServiceTest {
                 """);
         jdbc.execute("CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL)");
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     display_name VARCHAR(200) NOT NULL,
                     role VARCHAR(16) NOT NULL,
@@ -585,7 +590,7 @@ class AgreementServiceTest {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interactions (
+                CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
                     title VARCHAR(200) NOT NULL,
@@ -603,7 +608,7 @@ class AgreementServiceTest {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS attachments (
+                CREATE TABLE IF NOT EXISTS attachments (partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
                     stage_id UUID NOT NULL,
@@ -638,9 +643,20 @@ class AgreementServiceTest {
                     source VARCHAR(16) NOT NULL,
                     kind VARCHAR(16) NOT NULL,
                     external_key VARCHAR(310) NOT NULL,
+                    organization_id UUID,
+                    program_id UUID,
                     run_starts_on DATE,
                     run_ends_on DATE,
                     run_kind VARCHAR(16) NOT NULL DEFAULT 'STUDENTS'
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS learning_observations (
+                    mapping_id UUID NOT NULL, observed_from TIMESTAMP WITH TIME ZONE NOT NULL,
+                    confirmed_at TIMESTAMP WITH TIME ZONE NOT NULL, participants_count INTEGER NOT NULL,
+                    teachers_count INTEGER NOT NULL, completed_count INTEGER, not_completed_count INTEGER,
+                    unknown_count INTEGER NOT NULL, groups_count INTEGER NOT NULL, demo BOOLEAN NOT NULL DEFAULT FALSE,
+                    PRIMARY KEY (mapping_id, observed_from)
                 )
                 """);
         jdbc.execute("""

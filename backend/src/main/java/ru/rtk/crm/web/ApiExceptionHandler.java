@@ -19,6 +19,7 @@ import ru.rtk.crm.access.AccountSyncException;
 import ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException;
 import ru.rtk.crm.access.CrmProfileNotFoundException;
 import ru.rtk.crm.access.CrmProfilePendingException;
+import ru.rtk.crm.access.KeycloakAccountConflictException;
 import ru.rtk.crm.access.TeamNotFoundException;
 import ru.rtk.crm.access.AdminCrmProfileAccessDeniedException;
 import ru.rtk.crm.access.AdminCrmProfileNotFoundException;
@@ -89,6 +90,12 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiError> accountSyncFailed(AccountSyncException exception, HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(ApiError.of("ACCOUNT_SYNC_FAILED", exception.getMessage(), RequestId.from(request)));
+    }
+
+    @ExceptionHandler(KeycloakAccountConflictException.class)
+    public ResponseEntity<ApiError> keycloakAccountConflict(KeycloakAccountConflictException exception, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of("PARTNER_ACCOUNT_CONFLICT", exception.getMessage(), RequestId.from(request)));
     }
 
     @ExceptionHandler(OrganizationNotFoundException.class)

@@ -3,8 +3,10 @@ package ru.rtk.crm.enrolment;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.time.LocalDate;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -42,7 +44,15 @@ public class LmsRosterWorkbookWriter {
             LearnerField.PASSPORT_ISSUE_DATE, LearnerField.BIRTH_DATE, LearnerField.DIPLOMA_ISSUE_DATE
     );
 
-    public void write(List<LearnerProfile> profiles, OutputStream output) throws IOException {
+    public void writeTeachers(List<Teacher> teachers, OutputStream output) throws IOException {
+        write(teachers.stream().map(Teacher::profile).toList(), output);
+    }
+
+    public static boolean acceptsEmail(String email) {
+        return LearnerRules.isEmail(email);
+    }
+
+    void write(List<LearnerProfile> profiles, OutputStream output) throws IOException {
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
             XSSFSheet sheet = workbook.createSheet(DATA_SHEET);
             XSSFSheet lists = workbook.createSheet(LISTS_SHEET);
@@ -156,6 +166,22 @@ public class LmsRosterWorkbookWriter {
             date.setDataFormat(format.getFormat(DATE_FORMAT));
             phone = workbook.createCellStyle();
             phone.setDataFormat(format.getFormat("0"));
+        }
+    }
+
+    public record Teacher(String lastName, String firstName, String middleName, String email) {
+        private LearnerProfile profile() {
+            Map<LearnerField, String> values = new EnumMap<>(LearnerField.class);
+            values.put(LearnerField.LAST_NAME, lastName);
+            values.put(LearnerField.FIRST_NAME, firstName);
+            values.put(LearnerField.MIDDLE_NAME, middleName);
+            values.put(LearnerField.EMAIL, email);
+            return LearnerProfile.fromStored(values);
+        }
+
+        @Override
+        public String toString() {
+            return "Teacher[masked]";
         }
     }
 }

@@ -32,52 +32,57 @@ public class MoodleClient {
     );
     private static final Set<String> UNKNOWN_USER_COMPLETION = Set.of("usernotenroled", "notenroled");
 
-    private final SourceProperties.Moodle properties;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
     public MoodleClient(SourceProperties properties, ObjectMapper objectMapper) {
-        this.properties = properties.moodle();
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(this.properties.connectTimeout())
+                .connectTimeout(properties.moodle().connectTimeout())
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
     }
 
-    boolean configured() {
-        return properties.configured();
+    List<LearningUnit> fetch(SourceProperties.Moodle settings, List<Long> courseIds) {
+        Map<Long, JsonNode> courses = courses(settings, courseIds);
+        List<LearningUnit> units = new ArrayList<>();
+        for (Long courseId : courseIds) {
+            units.addAll(courseUnits(settings, courseId, courses.get(courseId)));
+        }
+        return units;
     }
 
-    List<Long> courseIds() {
-        return properties.courseIds();
+    List<String> check(SourceProperties.Moodle settings) {
+        Map<Long, JsonNode> courses = courses(settings, settings.courseIds());
+        return settings.courseIds().stream()
+                .map(courseId -> courseId + " «" + courses.get(courseId).path("fullname").asText() + "»")
+                .toList();
     }
 
-    List<LearningUnit> fetch(List<Long> courseIds) {
+    private Map<Long, JsonNode> courses(SourceProperties.Moodle settings, List<Long> courseIds) {
         String ids = courseIds.stream().map(String::valueOf).collect(Collectors.joining(","));
-        JsonNode courses = call("core_course_get_courses_by_field", params("field", "ids", "value", ids)).path("courses");
+        JsonNode courses = call(settings, "core_course_get_courses_by_field", params("field", "ids", "value", ids)).path("courses");
         if (!courses.isArray()) {
             throw SourceFetchException.invalidResponse("Ответ core_course_get_courses_by_field не содержит массив courses");
         }
         Map<Long, JsonNode> byId = new HashMap<>();
         courses.forEach(course -> byId.put(course.path("id").asLong(), course));
-        List<LearningUnit> units = new ArrayList<>();
-        for (Long courseId : courseIds) {
-            JsonNode course = byId.get(courseId);
-            if (course == null) {
-                throw SourceFetchException.invalidResponse(
-                        "Курс " + courseId + " из MOODLE_COURSE_IDS не найден в Moodle или недоступен сервису CRM"
-                );
-            }
-            units.addAll(courseUnits(courseId, course));
+        List<Long> missing = courseIds.stream().filter(courseId -> !byId.containsKey(courseId)).toList();
+        if (!missing.isEmpty()) {
+            throw SourceFetchException.invalidResponse(
+                    (missing.size() == 1 ? "Курс " : "Курсы ")
+                            + missing.stream().map(String::valueOf).collect(Collectors.joining(", "))
+                            + " из списка курсов CRM не найден в Moodle или недоступен сервису CRM"
+            );
         }
-        return units;
+        return byId;
     }
 
-    private List<LearningUnit> courseUnits(long courseId, JsonNode course) {
+    private List<LearningUnit> courseUnits(SourceProperties.Moodle settings, long courseId, JsonNode course) {
         String id = Long.toString(courseId);
-        JsonNode groups = array(call("core_group_get_course_groups", params("courseid", id)), "core_group_get_course_groups");
-        JsonNode users = array(call("core_enrol_get_enrolled_users", params(
+        JsonNode groups = array(call(settings, "core_group_get_course_groups", params("courseid", id)),
+                "core_group_get_course_groups");
+        JsonNode users = array(call(settings, "core_enrol_get_enrolled_users", params(
                 "courseid", id,
                 "options[0][name]", "onlyactive",
                 "options[0][value]", "1",
@@ -101,16 +106,16 @@ public class MoodleClient {
             }
             for (JsonNode role : roles) {
                 String shortname = role.path("shortname").asText();
-                if (properties.studentRoles().contains(shortname)) {
+                if (settings.studentRoles().contains(shortname)) {
                     students.add(userId);
                 }
-                if (properties.teacherRoles().contains(shortname)) {
+                if (settings.teacherRoles().contains(shortname)) {
                     teachers.add(userId);
                 }
             }
             user.path("groups").forEach(group -> members.computeIfAbsent(group.path("id").asLong(), key -> new HashSet<>()).add(userId));
         }
-        Map<Long, Boolean> completion = course.path("enablecompletion").asInt() == 1 ? completion(courseId, students) : null;
+        Map<Long, Boolean> completion = course.path("enablecompletion").asInt() == 1 ? completion(settings, courseId, students) : null;
         String shortname = course.path("shortname").asText();
         String fullname = course.path("fullname").asText();
         List<LearningUnit> groupUnits = new ArrayList<>();
@@ -131,11 +136,11 @@ public class MoodleClient {
         return units;
     }
 
-    private Map<Long, Boolean> completion(long courseId, Set<Long> students) {
+    private Map<Long, Boolean> completion(SourceProperties.Moodle settings, long courseId, Set<Long> students) {
         Map<Long, Boolean> result = new HashMap<>();
         for (Long userId : students) {
             String function = "core_completion_get_course_completion_status";
-            JsonNode body = post(function, params("courseid", Long.toString(courseId), "userid", Long.toString(userId)));
+            JsonNode body = post(settings, function, params("courseid", Long.toString(courseId), "userid", Long.toString(userId)));
             String error = errorCode(body);
             if ("nocriteriaset".equals(error)) {
                 return null;
@@ -179,8 +184,8 @@ public class MoodleClient {
                 completed, notCompleted, unknown, groupsCount);
     }
 
-    private JsonNode call(String function, Map<String, String> parameters) {
-        JsonNode body = post(function, parameters);
+    private JsonNode call(SourceProperties.Moodle settings, String function, Map<String, String> parameters) {
+        JsonNode body = post(settings, function, parameters);
         String error = errorCode(body);
         if (error != null) {
             throw moodleError(function, error);
@@ -188,16 +193,16 @@ public class MoodleClient {
         return body;
     }
 
-    private JsonNode post(String function, Map<String, String> parameters) {
+    private JsonNode post(SourceProperties.Moodle settings, String function, Map<String, String> parameters) {
         StringJoiner form = new StringJoiner("&");
         Map<String, String> fields = new LinkedHashMap<>();
-        fields.put("wstoken", properties.token());
+        fields.put("wstoken", settings.token());
         fields.put("wsfunction", function);
         fields.put("moodlewsrestformat", "json");
         fields.putAll(parameters);
         fields.forEach((name, value) -> form.add(encode(name) + "=" + encode(value)));
-        HttpRequest request = HttpRequest.newBuilder(endpoint())
-                .timeout(properties.readTimeout())
+        HttpRequest request = HttpRequest.newBuilder(endpoint(settings))
+                .timeout(settings.readTimeout())
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(form.toString()))
@@ -214,20 +219,20 @@ public class MoodleClient {
         try (InputStream body = response.body()) {
             int status = response.statusCode();
             if (status == 401 || status == 403) {
-                throw SourceFetchException.unauthorized("Moodle ответил HTTP " + status + "; проверьте MOODLE_TOKEN и внешний сервис");
+                throw SourceFetchException.unauthorized("Moodle ответил HTTP " + status + "; проверьте токен Moodle и внешний сервис");
             }
             if (status >= 300 && status < 400) {
                 throw SourceFetchException.unavailable(
-                        "Moodle ответил переадресацией HTTP " + status + "; MOODLE_BASE_URL должен совпадать с адресом Moodle (wwwroot)"
+                        "Moodle ответил переадресацией HTTP " + status + "; адрес Moodle должен совпадать с его wwwroot"
                 );
             }
             if (status != 200) {
                 throw SourceFetchException.unavailable("Moodle ответил HTTP " + status);
             }
-            long limit = properties.maxResponseSize().toBytes();
+            long limit = settings.maxResponseSize().toBytes();
             byte[] bytes = body.readNBytes(Math.toIntExact(limit + 1));
             if (bytes.length > limit) {
-                throw SourceFetchException.invalidResponse("Ответ Moodle на " + function + " больше " + properties.maxResponseSize());
+                throw SourceFetchException.invalidResponse("Ответ Moodle на " + function + " больше " + settings.maxResponseSize());
             }
             JsonNode json = objectMapper.readTree(bytes);
             if (json == null || json.isMissingNode()) {
@@ -239,17 +244,17 @@ public class MoodleClient {
         }
     }
 
-    private URI endpoint() {
-        String base = properties.baseUrl().strip();
+    private static URI endpoint(SourceProperties.Moodle settings) {
+        String base = settings.baseUrl().strip();
         try {
             URI uri = URI.create((base.endsWith("/") ? base.substring(0, base.length() - 1) : base) + REST_PATH);
             if ("http".equals(uri.getScheme()) || "https".equals(uri.getScheme())) {
                 return uri;
             }
         } catch (IllegalArgumentException exception) {
-            throw SourceFetchException.unavailable("Адрес Moodle в конфигурации развёртывания некорректен");
+            throw SourceFetchException.unavailable("Адрес Moodle некорректен");
         }
-        throw SourceFetchException.unavailable("Адрес Moodle в конфигурации развёртывания должен начинаться с http:// или https://");
+        throw SourceFetchException.unavailable("Адрес Moodle должен начинаться с http:// или https://");
     }
 
     private static JsonNode array(JsonNode body, String function) {
@@ -266,7 +271,7 @@ public class MoodleClient {
     private static SourceFetchException moodleError(String function, String errorCode) {
         if (ACCESS_ERRORS.contains(errorCode)) {
             return SourceFetchException.unauthorized(
-                    "Moodle отклонил запрос " + function + " (" + errorCode + "); проверьте MOODLE_TOKEN, внешний сервис и роль сервиса CRM"
+                    "Moodle отклонил запрос " + function + " (" + errorCode + "); проверьте токен Moodle, внешний сервис и роль сервиса CRM"
             );
         }
         return SourceFetchException.invalidResponse("Moodle вернул ошибку " + errorCode + " на " + function);

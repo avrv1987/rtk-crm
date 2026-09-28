@@ -65,6 +65,7 @@ app:
     queue-capacity: 1
     sync-cron: ${APP_SOURCES_SYNC_CRON:-}
     stale-after: ${APP_SOURCES_STALE_AFTER:26h}
+    settings-key: ${APP_SOURCES_SETTINGS_KEY:}
     website:
       base-url: ${APP_SOURCES_WEBSITE_BASE_URL:}
       token: ${APP_SOURCES_WEBSITE_TOKEN:}
@@ -103,6 +104,11 @@ app:
     training-notice-days: 90
     reminder-list-limit: 50
     deputy-expiry-delay: PT5M
+  lms-signals:
+    classes-stage-name: Занятия
+    no-students-after-days: 14
+    low-completion-percent: 50
+    completion-window-days: 7
   enrolment:
     enabled: ${APP_ENROLMENT_ENABLED:false}
     active-key-version: ${APP_ENROLMENT_ACTIVE_KEY_VERSION:}

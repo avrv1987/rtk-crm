@@ -1,218 +1,41 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   ApiError,
   apiClient,
   createIdempotencyKey,
   type Me,
-  type ReportColumn,
   type ReportJob,
-  type ReportKind,
-  type ReportPreview,
-  type ReportPreviewRequest,
   type ReportRequest,
-  type SavedReport,
-  type StatisticsRequest,
-  type StatisticsResult
+  type SavedReport
 } from '../../shared/api/client'
-import { formatMoscowDateTime } from '../../shared/format/datetime'
+import { AgreementConfirmationsPanel } from '../agreements/AgreementConfirmationsPanel'
+import { listReportVendors } from '../documents/documentsApi'
 import { loadReportSelection, saveReportSelection } from '../interactions/drafts'
-import {
-  applyDefinition,
-  columnTitle,
-  defaultSelection,
-  demandSorts,
-  eventTypeTitles,
-  eventTypes,
-  groupingProblem,
-  groupingTitles,
-  groupingsFor,
-  lineChartSelected,
-  maxDaysOnStage,
-  moscowToday,
-  normalizeSelection,
-  organizationTypeFilters,
-  periodProblem,
-  reportColumns,
-  reportFormats,
-  reportFlagLabels,
-  reportFlags,
-  reportKinds,
-  reportWorkStatusLabels,
-  reportWorkStatuses,
-  selectionProblem,
-  seriesGroupingsFor,
-  toPreviewRequest,
-  toStatisticsRequest,
-  type ReportSelection
-} from './reportSelection'
-import { StatisticsChart, chartBars } from './StatisticsChart'
 import { organizationTypeLabels } from '../organizations/OrganizationForm'
-import { ReportAgreementFilter } from './ReportAgreementFilter'
-import { LineChart, chartLines } from './LineChart'
-import { ColumnOrder } from './ColumnOrder'
-import { SavedReports } from './SavedReports'
-import { ErrorNotice } from './ReportErrorNotice'
+import { KamReviewPanel } from './KamReviewPanel'
+import { LearningDynamicsReport } from './LearningDynamics'
+import { ReportBuilder, type FilterOptions, type OptionsState, type OrderTarget } from './ReportBuilder'
+import { catalogTitle, kindViews, ReportCatalog, viewKind, type ReportView } from './ReportCatalog'
+import { InfoTip, type FilterOption } from './ReportControls'
+import { isFinished, ReportJobs, type DownloadState, type JobsState } from './ReportJobs'
+import { applyDefinition, chartKinds, groupingsFor, normalizeSelection, type ReportSelection } from './reportSelection'
+import { SavedReportsList, useSavedReports } from './SavedReports'
+import './reports.css'
 
 type ReportsScreenProps = {
   profileId: string
   role: Me['role']
+  view: string | undefined
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
 
-type FilterOption = {
-  id: string
-  label: string
-}
-
-type FilterOptions = {
-  organizations: FilterOption[]
-  directions: FilterOption[]
-  programs: FilterOption[]
-  products: FilterOption[]
-  managers: FilterOption[]
-  stages: FilterOption[]
-}
-
-type OptionsState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; options: FilterOptions }
-  | { kind: 'failed'; error: unknown }
-
-type PreviewState =
-  | { kind: 'idle' }
-  | { kind: 'loading'; request: ReportPreviewRequest }
-  | { kind: 'ready'; request: ReportPreviewRequest; preview: ReportPreview }
-  | { kind: 'failed'; request: ReportPreviewRequest; error: unknown }
-
-type StatisticsState =
-  | { kind: 'idle' }
-  | { kind: 'loading'; request: StatisticsRequest; line: boolean }
-  | { kind: 'ready'; request: StatisticsRequest; line: boolean; result: StatisticsResult }
-  | { kind: 'failed'; request: StatisticsRequest; line: boolean; error: unknown }
-
-type OrderTarget = 'report' | 'chart'
-
-type JobsState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; jobs: ReportJob[] }
-  | { kind: 'failed'; error: unknown }
-
-type DownloadState =
-  | { kind: 'idle' }
-  | { kind: 'downloading'; id: string }
-  | { kind: 'failed'; id: string; error: unknown }
-
-const previewPageSize = 50
-
-const pollIntervalMs = 1000
-
-const kindLabels: Record<ReportKind, string> = {
-  PORTFOLIO: 'Портфель взаимодействий',
-  EVENTS: 'События за период',
-  SNAPSHOT: 'Состояние портфеля на дату',
-  DURATION: 'Длительность этапов и цикла',
-  DEMAND: 'Востребованность программ',
-  AGREEMENTS: 'Реализация соглашений'
-}
-
-const kindHints: Record<ReportKind, string> = {
-  PORTFOLIO: 'Строка — взаимодействие. Этап и ответственный — текущие на момент формирования; «Дней на этапе» — полных суток с последнего входа в текущий этап, отбор «На этапе дольше» оставляет работы, которые стоят на этапе не меньше указанного числа дней. «Активные в периоде» — созданные до конца периода и не завершённые к его началу.',
-  EVENTS: 'Строка — событие: создание, переход, комментарий, изменение этапов или плана, а также назначение, смена и снятие КАМ вуза. Ответственный — КАМ на момент события.',
-  SNAPSHOT: 'Строка — взаимодействие, созданное до конца выбранного дня. Этап и ответственный восстановлены по истории переходов и назначений КАМ на эту дату; ИТ-программа и ИТ-продукты — текущие.',
-  DURATION: 'Строка — команда, ИТ-программа (итог команды — «Все программы») и этап или «Весь цикл». Средняя и максимальная длительность в календарных днях — по прохождениям, завершённым в периоде, по истории переходов; отдельно — сколько работ ещё на этапе на конец периода и самая долгая из них.',
-  DEMAND: 'Строка — ИТ-программа. Заявки — заявки на обучение с сайта по предложенному контракту (демонстрационный стенд) в ваших вузах, период — по дате подачи. Обучающиеся и завершившие (участия, не уникальные люди) — потоки занятий студентов в Moodle, которые шли в периоде хотя бы один день: у идущего потока — последнее наблюдение, у закрытого — последнее до окончания; обучение преподавателей не учитывается. Оплаченные заявки и потоки с оплатами — оплаты физлиц на открытые курсы («Открытый набор (физлица)»), их видят все КАМ и руководители; период к ним не применяется: сайт не передаёт дату оплаты, поэтому они показаны за всё время и с заявками не складываются. Дата снимка Moodle и период заявок указаны в заголовках колонок. Параллельные потоки — потоки, которые идут в последний день периода, а если он не задан — сегодня. «Нет данных» — источник не дал значения, это не ноль. Единого рейтинга нет: выберите показатель для сортировки.',
-  AGREEMENTS: 'Строка — мероприятие плана соглашения с вузом; соглашение без мероприятий выводится одной строкой. Период отбирает мероприятия, чьи фактические сроки, а если их нет — плановые, иначе срок соглашения, пересекаются с периодом. Объёмы — числа без ФИО; подтверждения — проверенные документы, привязанные к мероприятию, со ссылками для скачивания после входа в CRM. Фильтр «Ответственный» — ответственный за мероприятие.'
-}
-
-const managerEventsHint = 'Строка — событие: создание, переход, комментарий, изменение этапов или плана. Ответственный — КАМ на момент события. История назначений КАМ видна руководителю команды.'
-
-const demandSortLabels: Record<(typeof demandSorts)[number], string> = {
-  APPLICATIONS: 'по заявкам',
-  PAID_ORDERS: 'по оплаченным заявкам',
-  PAID_STREAMS: 'по потокам с оплатами',
-  PARTICIPANTS: 'по обучающимся',
-  LEARNERS_COMPLETED: 'по завершившим',
-  PARALLEL_RUNS: 'по параллельным потокам'
-}
-
-const dateColumns: ReadonlySet<ReportColumn> = new Set<ReportColumn>(['CREATED_AT', 'LAST_EVENT_AT', 'NEXT_ACTION_AT', 'EVENT_AT'])
-
-const focusResult = (id: string) => {
-  const target = document.getElementById(id)
-  if (target === null) {
-    return
-  }
-  target.scrollIntoView({ block: 'start' })
-  target.focus({ preventScroll: true })
-}
-
-const isFinished = (job: ReportJob) => job.status === 'SUCCEEDED' || job.status === 'FAILED'
-
-const jobStatusText = (job: ReportJob) => {
-  if (job.status === 'PENDING') {
-    return 'В очереди'
-  }
-  if (job.status === 'RUNNING') {
-    return job.rowCount === null || job.rowCount === undefined
-      ? 'Выбираем строки'
-      : `Формируем файл, строк: ${job.rowCount}`
-  }
-  if (job.status === 'SUCCEEDED') {
-    return `Готов, строк: ${job.rowCount ?? 0}`
-  }
-  return 'Не построен'
-}
-
-const periodBasisOptions: { value: ReportSelection['periodBasis']; label: string }[] = [
-  { value: 'CREATED', label: 'Созданные в периоде' },
-  { value: 'ACTIVITY', label: 'С событиями в периоде' },
-  { value: 'ACTIVE', label: 'Активные в периоде' }
+const reportViews: readonly ReportView[] = [
+  'portfolio', 'events', 'snapshot', 'duration', 'demand', 'agreements', 'statistics', 'learning-dynamics', 'kam-review',
+  'confirmations'
 ]
 
-const eventTypeOptions = (role: Me['role']): FilterOption[] => eventTypes
-  .filter((type) => role === 'LEADER' || role === 'MANAGEMENT' || type !== 'ASSIGNMENT')
-  .map((type) => ({ id: type, label: eventTypeTitles[type] }))
-
-const stageLegends: Record<ReportKind, string> = {
-  PORTFOLIO: 'Этап',
-  EVENTS: 'Этап события',
-  SNAPSHOT: 'Этап на дату',
-  DURATION: 'Этап',
-  DEMAND: 'Этап',
-  AGREEMENTS: 'Этап'
-}
-
-const managerLegends: Record<ReportKind, string> = {
-  PORTFOLIO: 'Ответственный',
-  EVENTS: 'Ответственный на момент события',
-  SNAPSHOT: 'Ответственный на дату',
-  DURATION: 'Ответственный (текущий КАМ вуза)',
-  DEMAND: 'Ответственный',
-  AGREEMENTS: 'Ответственный за мероприятие'
-}
-
-const cellText = (value: unknown, column: ReportColumn) => {
-  if (dateColumns.has(column)) {
-    return formatMoscowDateTime(String(value))
-  }
-  return typeof value === 'number' ? value.toLocaleString('ru-RU') : String(value)
-}
-
-const chartTitle = (job: ReportJob & { groupBy: NonNullable<ReportJob['groupBy']> }) => {
-  if (job.chartType !== 'LINE') {
-    return `Диаграмма ${groupingTitles[job.groupBy]}`
-  }
-  return job.seriesBy === null || job.seriesBy === undefined
-    ? `График ${groupingTitles[job.groupBy]}`
-    : `График ${groupingTitles[job.groupBy]}, линии ${groupingTitles[job.seriesBy]}`
-}
-
-const jobTitle = (job: ReportJob) => (
-  job.groupBy === null || job.groupBy === undefined
-    ? `${kindLabels[job.kind]}, ${job.format}`
-    : `${chartTitle({ ...job, groupBy: job.groupBy })} — ${kindLabels[job.kind]}, ${job.format}`
-)
+const pollIntervalMs = 1000
 
 const upsertJob = (jobs: ReportJob[], job: ReportJob) => (
   jobs.some((item) => item.id === job.id)
@@ -237,92 +60,41 @@ const catalogOptions = (items: { id: string; name: string; archived: boolean }[]
 
 const known = (ids: string[], options: FilterOption[]) => ids.filter((id) => options.some((option) => option.id === id))
 
-type MultiSelectProps = {
-  legend: string
-  options: FilterOption[]
-  selected: string[]
-  onChange: (ids: string[]) => void
-  includeNone?: boolean
-  onIncludeNoneChange?: (value: boolean) => void
-}
+const withKnownFilters = (selection: ReportSelection, options: FilterOptions): ReportSelection => ({
+  ...selection,
+  organizationIds: known(selection.organizationIds, options.organizations),
+  directionIds: known(selection.directionIds, options.directions),
+  programIds: known(selection.programIds, options.programs),
+  productIds: known(selection.productIds, options.products),
+  managerIds: known(selection.managerIds, options.managers),
+  stages: known(selection.stages, options.stages),
+  agreement: { ...selection.agreement, vendorIds: known(selection.agreement.vendorIds, options.vendors) }
+})
 
-const MultiSelect = ({ legend, options, selected, onChange, includeNone, onIncludeNoneChange }: MultiSelectProps) => {
-  const [search, setSearch] = useState('')
-  const query = search.trim().toLocaleLowerCase('ru-RU')
-  const visible = query.length === 0
-    ? options
-    : options.filter((option) => option.label.toLocaleLowerCase('ru-RU').includes(query))
-  const count = selected.length + (includeNone === true ? 1 : 0)
+const PageHeader = ({ title, children }: { title: string; children: ReactNode }) => (
+  <>
+    <p className="report-builder__back"><a href="#/reports">← Все отчёты</a></p>
+    <div className="report-builder__header">
+      <h2 id="report-page-title" className="reports__section-title">{title}</h2>
+      <InfoTip label={title}>{children}</InfoTip>
+    </div>
+  </>
+)
 
-  const toggle = (id: string, checked: boolean) => {
-    onChange(checked ? [...selected, id] : selected.filter((item) => item !== id))
-  }
-
-  const clear = () => {
-    onChange([])
-    onIncludeNoneChange?.(false)
-  }
-
-  return (
-    <fieldset className="report-filter">
-      <legend>{legend}</legend>
-      <div className="report-filter__summary">
-        <span>{count === 0 ? 'Все значения' : `Выбрано: ${count}`}</span>
-        {count > 0 && (
-          <button type="button" className="report-filter__clear" onClick={clear}>Снять выбор</button>
-        )}
-      </div>
-      {options.length > 6 && (
-        <label className="report-filter__search">
-          Найти
-          <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} />
-        </label>
-      )}
-      <ul className="report-filter__options">
-        {onIncludeNoneChange && (
-          <li>
-            <label>
-              <input
-                type="checkbox"
-                checked={includeNone === true}
-                onChange={(event) => onIncludeNoneChange(event.target.checked)}
-              />
-              <span className="report-filter__none">Не указано</span>
-            </label>
-          </li>
-        )}
-        {visible.map((option) => (
-          <li key={option.id}>
-            <label>
-              <input
-                type="checkbox"
-                checked={selected.includes(option.id)}
-                onChange={(event) => toggle(option.id, event.target.checked)}
-              />
-              <span>{option.label}</span>
-            </label>
-          </li>
-        ))}
-      </ul>
-      {options.length === 0 && <p className="report-filter__empty">Нет доступных значений.</p>}
-      {options.length > 0 && visible.length === 0 && <p className="report-filter__empty">Ничего не найдено.</p>}
-    </fieldset>
-  )
-}
-
-export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnavailable }: ReportsScreenProps) => {
+export const ReportsScreen = ({ profileId, role, view, onSessionExpired, onProfileUnavailable }: ReportsScreenProps) => {
+  const found = reportViews.find((item) => item === view) ?? null
+  const current = found === 'kam-review' && role === 'USER' ? null : found
   const [selection, setSelection] = useState<ReportSelection>(() => normalizeSelection(loadReportSelection(profileId)))
   const [optionsState, setOptionsState] = useState<OptionsState>({ kind: 'loading' })
-  const [previewState, setPreviewState] = useState<PreviewState>({ kind: 'idle' })
-  const [statisticsState, setStatisticsState] = useState<StatisticsState>({ kind: 'idle' })
   const [jobsState, setJobsState] = useState<JobsState>({ kind: 'loading' })
   const [pollError, setPollError] = useState<unknown>(null)
   const [ordering, setOrdering] = useState(false)
   const [orderError, setOrderError] = useState<{ target: OrderTarget; error: unknown } | null>(null)
+  const [orderNotice, setOrderNotice] = useState('')
   const [chartJobId, setChartJobId] = useState<string | null>(null)
   const [downloadState, setDownloadState] = useState<DownloadState>({ kind: 'idle' })
-  const previewVersion = useRef(0)
-  const statisticsVersion = useRef(0)
+  const [currentReportId, setCurrentReportId] = useState<string | null>(null)
+  const [autoRun, setAutoRun] = useState(false)
   const orderKey = useRef<{ payload: string; key: string } | null>(null)
   const autoDownloadIds = useRef(new Set<string>())
 
@@ -338,20 +110,19 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
     return false
   }, [onProfileUnavailable, onSessionExpired])
 
-  const update = (patch: Partial<ReportSelection>) => {
-    setSelection((current) => ({ ...current, ...patch }))
-  }
+  const saved = useSavedReports(handleAccessError)
 
   const loadOptions = useCallback(async () => {
     setOptionsState({ kind: 'loading' })
     try {
-      const [organizations, directions, programs, products, managers, stages] = await Promise.all([
+      const [organizations, directions, programs, products, managers, stages, vendors] = await Promise.all([
         loadAllPages((page) => apiClient.listOrganizations({ page, size: 100, sort: 'name,asc', status: 'ALL' })),
         loadAllPages((page) => apiClient.listDirections({ page, size: 100, state: 'ALL' })),
         loadAllPages((page) => apiClient.listPrograms({ page, size: 100, state: 'ALL' })),
         loadAllPages((page) => apiClient.listProducts({ page, size: 100, state: 'ALL' })),
         apiClient.listReportManagers(),
-        apiClient.listReportStages()
+        apiClient.listReportStages(),
+        listReportVendors()
       ])
       const options: FilterOptions = {
         organizations: organizations.map((organization) => ({
@@ -367,18 +138,11 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
           id: manager.id,
           label: manager.active ? manager.displayName : `${manager.displayName} (неактивен)`
         })),
-        stages: stages.map((stage) => ({ id: stage, label: stage }))
+        stages: stages.map((stage) => ({ id: stage, label: stage })),
+        vendors: vendors.map((vendor) => ({ id: vendor.id, label: vendor.archived ? `${vendor.name} (архивирован)` : vendor.name }))
       }
       setOptionsState({ kind: 'ready', options })
-      setSelection((current) => ({
-        ...current,
-        organizationIds: known(current.organizationIds, options.organizations),
-        directionIds: known(current.directionIds, options.directions),
-        programIds: known(current.programIds, options.programs),
-        productIds: known(current.productIds, options.products),
-        managerIds: known(current.managerIds, options.managers),
-        stages: known(current.stages, options.stages)
-      }))
+      setSelection((currentSelection) => withKnownFilters(currentSelection, options))
     } catch (error) {
       if (!handleAccessError(error)) {
         setOptionsState({ kind: 'failed', error })
@@ -401,10 +165,6 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
   useEffect(() => {
     void loadOptions()
     void loadJobs()
-    return () => {
-      previewVersion.current += 1
-      statisticsVersion.current += 1
-    }
   }, [loadJobs, loadOptions])
 
   useEffect(() => {
@@ -415,6 +175,28 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
   useEffect(() => {
     saveReportSelection(profileId, selection)
   }, [profileId, selection])
+
+  useEffect(() => {
+    if (current === null) {
+      setCurrentReportId(null)
+      setOrderNotice('')
+    }
+  }, [current])
+
+  const routeKind = current === null ? null : viewKind(current)
+  const synced = current === 'statistics' ? chartKinds.includes(selection.kind) : routeKind === null || routeKind === selection.kind
+
+  useEffect(() => {
+    if (synced || (routeKind === null && current !== 'statistics')) {
+      return
+    }
+    const kind = routeKind ?? 'PORTFOLIO'
+    setSelection((currentSelection) => ({
+      ...currentSelection,
+      kind,
+      groupBy: groupingsFor(kind).includes(currentSelection.groupBy) ? currentSelection.groupBy : 'PROGRAM'
+    }))
+  }, [current, routeKind, synced])
 
   const downloadJob = useCallback(async (job: ReportJob) => {
     setDownloadState({ kind: 'downloading', id: job.id })
@@ -451,9 +233,9 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
         gone.add(ids[index])
       }
     }
-    setJobsState((current) => ({
+    setJobsState((currentJobs) => ({
       kind: 'ready',
-      jobs: refreshed.reduce(upsertJob, (current.kind === 'ready' ? current.jobs : []).filter((job) => !gone.has(job.id)))
+      jobs: refreshed.reduce(upsertJob, (currentJobs.kind === 'ready' ? currentJobs.jobs : []).filter((job) => !gone.has(job.id)))
     }))
     for (const job of refreshed) {
       if (isFinished(job) && autoDownloadIds.current.delete(job.id) && job.resultReady) {
@@ -477,59 +259,6 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
     return () => window.clearTimeout(timer)
   }, [jobsState, pollError, refreshJobs])
 
-  const problem = selectionProblem(selection)
-  const blocked = problem !== null || optionsState.kind !== 'ready'
-  const currentRequest = toPreviewRequest(selection)
-  const statisticsProblem = groupingProblem(selection)
-  const statisticsBlocked = periodProblem(selection) !== null || statisticsProblem !== null || optionsState.kind !== 'ready'
-  const currentStatisticsRequest = toStatisticsRequest(selection)
-  const currentLine = lineChartSelected(selection)
-  const columns = reportColumns[selection.kind]
-  const selectedColumns = selection.columns[selection.kind]
-
-  const runPreview = async (request: ReportPreviewRequest, page: number) => {
-    const version = ++previewVersion.current
-    setPreviewState({ kind: 'loading', request })
-    try {
-      const preview = await apiClient.previewReport(request, page, previewPageSize)
-      if (version === previewVersion.current) {
-        setPreviewState({ kind: 'ready', request, preview })
-        if (page === 0) {
-          requestAnimationFrame(() => focusResult('reports-preview-total'))
-        }
-      }
-    } catch (error) {
-      if (version !== previewVersion.current || handleAccessError(error)) {
-        return
-      }
-      setPreviewState({ kind: 'failed', request, error })
-    }
-  }
-
-  const submitPreview = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!blocked) {
-      void runPreview(currentRequest, 0)
-    }
-  }
-
-  const runStatistics = async (request: StatisticsRequest, line: boolean) => {
-    const version = ++statisticsVersion.current
-    setStatisticsState({ kind: 'loading', request, line })
-    try {
-      const result = await apiClient.reportStatistics(request)
-      if (version === statisticsVersion.current) {
-        setStatisticsState({ kind: 'ready', request, line, result })
-        requestAnimationFrame(() => focusResult('reports-statistics-result'))
-      }
-    } catch (error) {
-      if (version !== statisticsVersion.current || handleAccessError(error)) {
-        return
-      }
-      setStatisticsState({ kind: 'failed', request, line, error })
-    }
-  }
-
   const orderJob = async (payload: ReportRequest, target: OrderTarget) => {
     if (ordering) {
       return
@@ -539,6 +268,7 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
     orderKey.current = { payload: serialized, key }
     setOrdering(true)
     setOrderError(null)
+    setOrderNotice('')
     setPollError(null)
     try {
       const created = await apiClient.createReportJob(payload, key)
@@ -546,6 +276,8 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
       if (target === 'chart') {
         autoDownloadIds.current.add(created.jobId)
         setChartJobId(created.jobId)
+      } else {
+        setOrderNotice(`Файл ${payload.format} заказан: он появится в «Моих выгрузках» ниже, когда будет готов.`)
       }
       void refreshJobs([created.jobId])
     } catch (error) {
@@ -560,543 +292,99 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
     }
   }
 
-  const orderFile = () => {
-    if (!blocked) {
-      void orderJob({ ...currentRequest, format: selection.format }, 'report')
-    }
-  }
-
-  const orderChart = (request: StatisticsRequest, line: boolean, format: 'PNG' | 'PDF') => {
-    void orderJob({ ...request, format, chartType: line ? 'LINE' : 'BAR' }, 'chart')
-  }
-
-  const setColumns = (next: ReportColumn[]) => {
-    setSelection((current) => ({ ...current, columns: { ...current.columns, [current.kind]: next } }))
-  }
-
-  const toggleColumn = (column: ReportColumn, checked: boolean) => {
-    setSelection((current) => {
-      const chosen = current.columns[current.kind].filter((item) => item !== column)
-      return { ...current, columns: { ...current.columns, [current.kind]: checked ? [...chosen, column] : chosen } }
-    })
-  }
-
   const openSavedReport = (report: SavedReport) => {
     const restored = applyDefinition(selection, report.definition)
-    const next = optionsState.kind === 'ready'
-      ? {
-          ...restored,
-          organizationIds: known(restored.organizationIds, optionsState.options.organizations),
-          directionIds: known(restored.directionIds, optionsState.options.directions),
-          programIds: known(restored.programIds, optionsState.options.programs),
-          productIds: known(restored.productIds, optionsState.options.products),
-          managerIds: known(restored.managerIds, optionsState.options.managers),
-          stages: known(restored.stages, optionsState.options.stages)
-        }
-      : restored
-    setSelection(next)
-    if (selectionProblem(next) === null) {
-      void runPreview(toPreviewRequest(next), 0)
-    }
+    setSelection(optionsState.kind === 'ready' ? withKnownFilters(restored, optionsState.options) : restored)
+    setCurrentReportId(report.id)
+    setAutoRun(true)
+    window.location.hash = `#/reports/${kindViews[restored.kind]}`
   }
 
-  const resetSelection = () => {
-    setSelection(defaultSelection())
+  const jobs = (
+    <ReportJobs
+      jobsState={jobsState}
+      pollError={pollError}
+      downloadState={downloadState}
+      onReload={() => void loadJobs()}
+      onDownload={(job) => void downloadJob(job)}
+    />
+  )
+
+  if (current === 'learning-dynamics') {
+    return (
+      <section className="reports report-page" aria-labelledby="report-page-title">
+        <PageHeader title={catalogTitle(role, current)}>
+          Обучающиеся и завершившие по месяцам по истории наблюдений Moodle: линии по вузам или по ИТ-программам,
+          таблица строк «месяц × вуз × программа», выгрузка XLSX и PDF.
+        </PageHeader>
+        <LearningDynamicsReport onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
+      </section>
+    )
   }
 
-  const previewOutdated = previewState.kind === 'ready'
-    && JSON.stringify(previewState.request) !== JSON.stringify(currentRequest)
-  const statisticsOutdated = statisticsState.kind === 'ready'
-    && (JSON.stringify(statisticsState.request) !== JSON.stringify(currentStatisticsRequest) || statisticsState.line !== currentLine)
-  const chartLimit = (() => {
-    if (statisticsState.kind !== 'ready') {
-      return null
-    }
-    const { result, line } = statisticsState
-    if (line && chartLines(result).length > result.maxChartSeries) {
-      return `В файл PNG или PDF помещается не больше ${result.maxChartSeries} линий, а на этом графике ${chartLines(result).length}. Оставьте меньше значений в фильтре или выберите другую разбивку на линии.`
-    }
-    const count = line ? result.items.length : chartBars(result).length
-    return count > result.maxChartBars
-      ? `В файл PNG или PDF помещается не больше ${result.maxChartBars} ${line ? 'месяцев' : 'столбцов с учётом «Не указано»'}, а здесь ${count}. Сузьте период или фильтры либо выберите другую группировку.`
-      : null
-  })()
-  const chartJob = chartJobId === null || jobsState.kind !== 'ready'
-    ? undefined
-    : jobsState.jobs.find((job) => job.id === chartJobId)
+  if (current === 'kam-review') {
+    return (
+      <section className="reports report-page" aria-labelledby="report-page-title">
+        <PageHeader title={catalogTitle(role, current)}>
+          События за период, открытые шаги и отмеченные риски одного КАМ на одной странице — для регулярного разбора с
+          руководителем. Показаны первые 200 событий и работ; полный список — в отчётах «События за период» и «Портфель».
+        </PageHeader>
+        <KamReviewPanel onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
+      </section>
+    )
+  }
+
+  if (current === 'confirmations') {
+    return (
+      <section className="reports report-page" aria-labelledby="report-page-title">
+        <PageHeader title={catalogTitle(role, current)}>
+          Документы, привязанные к мероприятиям соглашений: отбор по вузу, виду мероприятия и периоду мероприятия
+          (фактические сроки, иначе плановые, иначе срок соглашения). Архив содержит проверенные файлы по папкам видов
+          мероприятий и опись.
+        </PageHeader>
+        <AgreementConfirmationsPanel onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
+      </section>
+    )
+  }
+
+  if (current !== null) {
+    const chartJob = chartJobId === null || jobsState.kind !== 'ready'
+      ? undefined
+      : jobsState.jobs.find((job) => job.id === chartJobId)
+    return (
+      <div className="reports">
+        {synced && (
+          <ReportBuilder
+            key={current}
+            role={role}
+            selection={selection}
+            setSelection={setSelection}
+            statisticsMode={current === 'statistics'}
+            optionsState={optionsState}
+            onReloadOptions={() => void loadOptions()}
+            onAccessError={handleAccessError}
+            onOrder={(payload, target) => void orderJob(payload, target)}
+            ordering={ordering}
+            orderError={orderError}
+            orderNotice={orderNotice}
+            chartJob={chartJob}
+            saved={saved}
+            currentReport={saved.reports.find((report) => report.id === currentReportId)}
+            onSaved={(report) => setCurrentReportId(report.id)}
+            autoRun={autoRun}
+            onAutoRunDone={() => setAutoRun(false)}
+            jobs={jobs}
+          />
+        )}
+      </div>
+    )
+  }
 
   return (
-    <section className="reports" aria-labelledby="reports-title">
-      <h2 id="reports-title" className="reports__title">Отчёт по взаимодействиям</h2>
-
-      <form className="reports__form" onSubmit={submitPreview}>
-        <details className="reports__group" open>
-        <summary>Вид отчёта, период и тип</summary>
-        <div className="reports__settings">
-          <label>
-            Вид отчёта
-            <select
-              value={selection.kind}
-              onChange={(event) => {
-                const kind = reportKinds.find((item) => item === event.target.value) ?? 'PORTFOLIO'
-                update({ kind, groupBy: groupingsFor(kind).includes(selection.groupBy) ? selection.groupBy : 'PROGRAM' })
-              }}
-            >
-              {reportKinds.map((kind) => <option key={kind} value={kind}>{kindLabels[kind]}</option>)}
-            </select>
-          </label>
-          {selection.kind === 'SNAPSHOT' ? (
-            <label>
-              Состояние на дату
-              <input type="date" value={selection.asOf} max={moscowToday()} onChange={(event) => update({ asOf: event.target.value })} />
-            </label>
-          ) : (
-            <>
-              <label>
-                Период с
-                <input type="date" value={selection.from} max={selection.to || undefined} onChange={(event) => update({ from: event.target.value })} />
-              </label>
-              <label>
-                по
-                <input type="date" value={selection.to} min={selection.from || undefined} onChange={(event) => update({ to: event.target.value })} />
-              </label>
-            </>
-          )}
-          {selection.kind === 'DEMAND' && (
-            <label>
-              Сортировка
-              <select
-                value={selection.sortBy}
-                onChange={(event) => update({ sortBy: demandSorts.find((sort) => sort === event.target.value) ?? 'APPLICATIONS' })}
-              >
-                {demandSorts.map((sort) => <option key={sort} value={sort}>{demandSortLabels[sort]}</option>)}
-              </select>
-            </label>
-          )}
-          {selection.kind === 'PORTFOLIO' && (
-            <label>
-              Отбор по периоду
-              <select
-                value={selection.periodBasis}
-                onChange={(event) => update({
-                  periodBasis: periodBasisOptions.find((option) => option.value === event.target.value)?.value ?? 'CREATED'
-                })}
-              >
-                {periodBasisOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-          )}
-          <label>
-            Тип организации
-            <select
-              value={selection.organizationType}
-              onChange={(event) => update({
-                organizationType: organizationTypeFilters.find((type) => type === event.target.value) ?? ''
-              })}
-            >
-              {organizationTypeFilters.map((type) => (
-                <option key={type} value={type}>{type === '' ? 'Все типы' : organizationTypeLabels[type]}</option>
-              ))}
-            </select>
-          </label>
-          {selection.kind === 'PORTFOLIO' && (
-            <label>
-              На этапе дольше, дней
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={maxDaysOnStage}
-                step={1}
-                value={selection.minDaysOnStage}
-                placeholder="любой срок"
-                onChange={(event) => update({ minDaysOnStage: event.target.value })}
-              />
-            </label>
-          )}
-        </div>
-        <p className="reports__hint">
-          {selection.kind === 'EVENTS' && role !== 'LEADER' ? managerEventsHint : kindHints[selection.kind]} {selection.kind === 'SNAPSHOT'
-            ? 'Состояние — на конец выбранного дня по московскому времени; пустая дата — сегодня.'
-            : 'Даты включительно, время московское; пустая дата снимает ограничение.'}
-        </p>
-        </details>
-
-        <details className="reports__group" open>
-        <summary>Фильтры</summary>
-        {optionsState.kind === 'loading' && <p role="status">Загружаем значения фильтров…</p>}
-        {optionsState.kind === 'failed' && (
-          <ErrorNotice
-            error={optionsState.error}
-            message="Не удалось загрузить значения фильтров."
-            onRetry={() => void loadOptions()}
-          />
-        )}
-        {optionsState.kind === 'ready' && (
-          <div className="reports__filters">
-            <MultiSelect
-              legend="Вузы"
-              options={optionsState.options.organizations}
-              selected={selection.organizationIds}
-              onChange={(organizationIds) => update({ organizationIds })}
-            />
-            {selection.kind !== 'AGREEMENTS' && (
-              <>
-                <MultiSelect
-                  legend="ИТ-направления"
-                  options={optionsState.options.directions}
-                  selected={selection.directionIds}
-                  onChange={(directionIds) => update({ directionIds })}
-                  includeNone={selection.includeNoDirection}
-                  onIncludeNoneChange={(includeNoDirection) => update({ includeNoDirection })}
-                />
-                <MultiSelect
-                  legend="ИТ-программы"
-                  options={optionsState.options.programs}
-                  selected={selection.programIds}
-                  onChange={(programIds) => update({ programIds })}
-                  includeNone={selection.includeNoProgram}
-                  onIncludeNoneChange={(includeNoProgram) => update({ includeNoProgram })}
-                />
-              </>
-            )}
-            {selection.kind !== 'DEMAND' && selection.kind !== 'AGREEMENTS' && (
-              <MultiSelect
-                legend="ИТ-продукты"
-                options={optionsState.options.products}
-                selected={selection.productIds}
-                onChange={(productIds) => update({ productIds })}
-                includeNone={selection.includeNoProduct}
-                onIncludeNoneChange={(includeNoProduct) => update({ includeNoProduct })}
-              />
-            )}
-            <MultiSelect
-              legend={managerLegends[selection.kind]}
-              options={optionsState.options.managers}
-              selected={selection.managerIds}
-              onChange={(managerIds) => update({ managerIds })}
-              includeNone={selection.includeNoManager}
-              onIncludeNoneChange={(includeNoManager) => update({ includeNoManager })}
-            />
-            {selection.kind !== 'DEMAND' && selection.kind !== 'AGREEMENTS' && (
-              <MultiSelect
-                legend={stageLegends[selection.kind]}
-                options={optionsState.options.stages}
-                selected={selection.stages}
-                onChange={(stages) => update({ stages })}
-              />
-            )}
-            {selection.kind === 'PORTFOLIO' && (
-              <MultiSelect
-                legend="Статус работы"
-                options={reportWorkStatuses.map((status) => ({ id: status, label: reportWorkStatusLabels[status] }))}
-                selected={selection.workStatuses}
-                onChange={(workStatuses) => update({
-                  workStatuses: reportWorkStatuses.filter((status) => workStatuses.includes(status))
-                })}
-              />
-            )}
-            {selection.kind === 'PORTFOLIO' && (
-              <MultiSelect
-                legend="Отметки работы (все выбранные одновременно)"
-                options={reportFlags.map((flag) => ({ id: flag, label: reportFlagLabels[flag] }))}
-                selected={selection.flags}
-                onChange={(flags) => update({ flags: reportFlags.filter((flag) => flags.includes(flag)) })}
-              />
-            )}
-            {selection.kind !== 'DEMAND' && selection.kind !== 'AGREEMENTS' && (
-              <ReportAgreementFilter
-                value={selection.agreement}
-                onChange={(agreement) => update({ agreement })}
-                onSessionExpired={onSessionExpired}
-                onProfileUnavailable={onProfileUnavailable}
-              />
-            )}
-            {selection.kind === 'EVENTS' && (
-              <MultiSelect
-                legend="Вид события"
-                options={eventTypeOptions(role)}
-                selected={selection.eventTypes}
-                onChange={(ids) => update({ eventTypes: eventTypes.filter((type) => ids.includes(type)) })}
-              />
-            )}
-          </div>
-        )}
-        </details>
-
-        <fieldset className="reports__columns">
-          <legend>Колонки</legend>
-          <ul>
-            {columns.map((column) => (
-              <li key={column}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={selectedColumns.includes(column)}
-                    onChange={(event) => toggleColumn(column, event.target.checked)}
-                  />
-                  <span>{columnTitle(selection.kind, column)}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
-          <ColumnOrder kind={selection.kind} columns={selectedColumns} onChange={setColumns} />
-        </fieldset>
-
-        {problem !== null && <p className="reports__problem" role="alert">{problem}</p>}
-
-        <div className="reports__actions">
-          <button type="submit" disabled={blocked || previewState.kind === 'loading'}>
-            {previewState.kind === 'loading' ? 'Строим таблицу…' : 'Показать'}
-          </button>
-          <button type="button" className="reports__secondary" onClick={resetSelection}>Сбросить выбор</button>
-        </div>
-        <p className="reports__hint">Текущий выбор фильтров и колонок хранится в этой вкладке и удаляется при выходе из CRM. Чтобы вернуться к нему позже, сохраните его как отчёт ниже.</p>
-      </form>
-
-      <SavedReports
-        definition={currentRequest}
-        disabled={blocked}
-        onOpen={openSavedReport}
-        onAccessError={handleAccessError}
-      />
-
-      <section className="reports__preview" aria-labelledby="reports-preview-title" aria-busy={previewState.kind === 'loading'}>
-        <h3 id="reports-preview-title">Предпросмотр</h3>
-        {previewState.kind === 'idle' && <p>Нажмите «Показать», чтобы увидеть строки отчёта по выбранным фильтрам.</p>}
-        {previewState.kind === 'loading' && <p role="status">Строим таблицу предпросмотра…</p>}
-        {previewState.kind === 'failed' && (
-          <ErrorNotice
-            error={previewState.error}
-            message="Не удалось построить предпросмотр."
-            onRetry={() => void runPreview(previewState.request, 0)}
-          />
-        )}
-        {previewState.kind === 'ready' && (
-          <>
-            {previewOutdated && (
-              <p className="reports__outdated" role="status">Выбор изменён после построения таблицы. Нажмите «Показать», чтобы обновить её.</p>
-            )}
-            <p className="reports__total" id="reports-preview-total" tabIndex={-1}>Строк в отчёте: {previewState.preview.total}</p>
-            <ul className="reports__notes">
-              {previewState.preview.notes.map((note) => <li key={note}>{note}</li>)}
-            </ul>
-            {previewState.preview.total === 0 ? (
-              <p>По выбранному периоду и фильтрам строк нет. Измените период или снимите часть фильтров.</p>
-            ) : (
-              <>
-                <div className="reports__table-scroll" role="region" aria-label="Таблица предпросмотра" tabIndex={0}>
-                  <table>
-                    <thead>
-                      <tr>
-                        {previewState.preview.columns.map((column) => <th key={column.id} scope="col">{column.title}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {previewState.preview.items.map((row, index) => (
-                        <tr key={index}>
-                          {previewState.preview.columns.map((column) => {
-                            const value = row[column.id]
-                            return (
-                              <td key={column.id}>
-                                {value === null || value === undefined ? column.emptyText : cellText(value, column.id)}
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="reports__pagination">
-                  <button
-                    type="button"
-                    disabled={previewState.preview.page === 0}
-                    onClick={() => void runPreview(previewState.request, previewState.preview.page - 1)}
-                  >
-                    Назад
-                  </button>
-                  <p>
-                    Строки {previewState.preview.page * previewState.preview.size + 1}–
-                    {previewState.preview.page * previewState.preview.size + previewState.preview.items.length} из {previewState.preview.total}
-                  </p>
-                  <button
-                    type="button"
-                    disabled={(previewState.preview.page + 1) * previewState.preview.size >= previewState.preview.total}
-                    onClick={() => void runPreview(previewState.request, previewState.preview.page + 1)}
-                  >
-                    Вперёд
-                  </button>
-                </div>
-              </>
-            )}
-          </>
-        )}
-      </section>
-
-      <section className="reports__statistics" aria-labelledby="reports-statistics-title" aria-busy={statisticsState.kind === 'loading'} hidden={selection.kind === 'AGREEMENTS'}>
-        <h3 id="reports-statistics-title">Статистика</h3>
-        <p className="reports__hint">Диаграмма считается по тем же виду отчёта, периоду и фильтрам, что и таблица; выбор колонок на неё не влияет.</p>
-        <div className="reports__order">
-          <label>
-            Группировка
-            <select
-              value={selection.groupBy}
-              onChange={(event) => update({ groupBy: groupingsFor(selection.kind).find((groupBy) => groupBy === event.target.value) ?? 'STAGE' })}
-            >
-              {groupingsFor(selection.kind).map((groupBy) => <option key={groupBy} value={groupBy}>{groupingTitles[groupBy]}</option>)}
-            </select>
-          </label>
-          {selection.groupBy === 'MONTH' && (
-            <label>
-              Вид отображения
-              <select
-                value={selection.chartType}
-                onChange={(event) => update({ chartType: event.target.value === 'LINE' ? 'LINE' : 'BAR' })}
-              >
-                <option value="BAR">Столбцы</option>
-                <option value="LINE">График (линия)</option>
-              </select>
-            </label>
-          )}
-          {currentLine && (
-            <label>
-              Линии
-              <select
-                value={currentStatisticsRequest.seriesBy ?? ''}
-                onChange={(event) => update({
-                  seriesBy: seriesGroupingsFor(selection.kind).find((groupBy) => groupBy === event.target.value) ?? null
-                })}
-              >
-                <option value="">Одна линия: всего</option>
-                {seriesGroupingsFor(selection.kind).map((groupBy) => (
-                  <option key={groupBy} value={groupBy}>Отдельно {groupingTitles[groupBy]}</option>
-                ))}
-              </select>
-            </label>
-          )}
-          <button
-            type="button"
-            onClick={() => void runStatistics(currentStatisticsRequest, currentLine)}
-            disabled={statisticsBlocked || statisticsState.kind === 'loading'}
-          >
-            {statisticsState.kind === 'loading' ? 'Считаем…' : currentLine ? 'Построить график' : 'Построить диаграмму'}
-          </button>
-        </div>
-        {statisticsProblem !== null && <p className="reports__problem" role="alert">{statisticsProblem}</p>}
-        {statisticsState.kind === 'idle' && <p>Выберите группировку и нажмите «Построить диаграмму».</p>}
-        {statisticsState.kind === 'loading' && <p role="status">Считаем статистику…</p>}
-        {statisticsState.kind === 'failed' && (
-          <ErrorNotice
-            error={statisticsState.error}
-            message="Не удалось посчитать статистику."
-            onRetry={() => void runStatistics(statisticsState.request, statisticsState.line)}
-          />
-        )}
-        {statisticsState.kind === 'ready' && (
-          <>
-            {statisticsOutdated && (
-              <p className="reports__outdated" role="status">Выбор изменён после построения. Нажмите «{currentLine ? 'Построить график' : 'Построить диаграмму'}», чтобы обновить.</p>
-            )}
-            <div id="reports-statistics-result" tabIndex={-1}>
-              {statisticsState.line ? <LineChart result={statisticsState.result} /> : <StatisticsChart result={statisticsState.result} />}
-            </div>
-            <div className="reports__order">
-              <button
-                type="button"
-                onClick={() => orderChart(statisticsState.request, statisticsState.line, 'PNG')}
-                disabled={ordering || chartLimit !== null}
-              >
-                Скачать PNG
-              </button>
-              <button
-                type="button"
-                onClick={() => orderChart(statisticsState.request, statisticsState.line, 'PDF')}
-                disabled={ordering || chartLimit !== null}
-              >
-                Скачать PDF
-              </button>
-            </div>
-            {chartLimit !== null ? (
-              <p className="reports__problem" role="status">{chartLimit}</p>
-            ) : (
-              <p className="reports__hint">
-                Файл строится на сервере по параметрам показанной диаграммы и скачивается, когда готов. Он также остаётся в списке «Заказанные файлы».
-              </p>
-            )}
-          </>
-        )}
-        {chartJob && (
-          <p role="status">
-            {jobTitle(chartJob)}: {jobStatusText(chartJob)}
-            {chartJob.error ? `. Код: ${chartJob.error.code}. ${chartJob.error.message}` : ''}
-          </p>
-        )}
-        {orderError?.target === 'chart' && <ErrorNotice error={orderError.error} message="Заказ файла диаграммы не принят." />}
-      </section>
-
-      <section className="reports__files" aria-labelledby="reports-files-title">
-        <h3 id="reports-files-title">Файл отчёта</h3>
-        <div className="reports__order">
-          <label>
-            Формат
-            <select
-              value={selection.format}
-              onChange={(event) => update({ format: reportFormats.find((format) => format === event.target.value) ?? 'XLSX' })}
-            >
-              {reportFormats.map((format) => <option key={format} value={format}>{format}</option>)}
-            </select>
-          </label>
-          <button type="button" onClick={orderFile} disabled={blocked || ordering}>
-            {ordering ? 'Отправляем заказ…' : 'Сформировать файл'}
-          </button>
-        </div>
-        <p className="reports__hint">Файл строится в фоне по тем же фильтрам и колонкам. Пока он строится, можно работать в других разделах.</p>
-        {orderError?.target === 'report' && <ErrorNotice error={orderError.error} message="Заказ файла не принят." />}
-
-        <div className="reports__jobs-header">
-          <h4>Заказанные файлы</h4>
-          <button type="button" className="reports__secondary" onClick={() => void loadJobs()} disabled={jobsState.kind === 'loading'}>
-            Обновить список
-          </button>
-        </div>
-        {pollError !== null && (
-          <ErrorNotice error={pollError} message="Не удалось получить состояние файла." onRetry={() => void loadJobs()} retryLabel="Обновить список" />
-        )}
-        {jobsState.kind === 'loading' && <p role="status">Загружаем заказанные файлы…</p>}
-        {jobsState.kind === 'failed' && (
-          <ErrorNotice error={jobsState.error} message="Не удалось загрузить заказанные файлы." onRetry={() => void loadJobs()} />
-        )}
-        {jobsState.kind === 'ready' && jobsState.jobs.length === 0 && <p>Файлов пока нет.</p>}
-        {jobsState.kind === 'ready' && jobsState.jobs.length > 0 && (
-          <ul className="reports__jobs" aria-live="polite">
-            {jobsState.jobs.map((job) => (
-              <li key={job.id}>
-                <div className="reports__job-title">
-                  <strong>{jobTitle(job)}</strong>
-                  <span className={`reports__job-status reports__job-status--${job.status.toLowerCase()}`}>{jobStatusText(job)}</span>
-                </div>
-                <p>Заказан {formatMoscowDateTime(job.createdAt)}</p>
-                {job.status === 'FAILED' && job.error && (
-                  <p className="reports__job-error">Код: {job.error.code}. {job.error.message}</p>
-                )}
-                {job.resultReady && (
-                  <button
-                    type="button"
-                    onClick={() => void downloadJob(job)}
-                    disabled={downloadState.kind === 'downloading' && downloadState.id === job.id}
-                  >
-                    {downloadState.kind === 'downloading' && downloadState.id === job.id ? 'Готовим скачивание…' : 'Скачать'}
-                  </button>
-                )}
-                {downloadState.kind === 'failed' && downloadState.id === job.id && (
-                  <ErrorNotice error={downloadState.error} message="Файл не скачан." onRetry={() => void downloadJob(job)} />
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-    </section>
+    <div className="reports report-home">
+      <SavedReportsList saved={saved} onOpen={openSavedReport} />
+      <ReportCatalog role={role} />
+      {jobs}
+    </div>
   )
 }

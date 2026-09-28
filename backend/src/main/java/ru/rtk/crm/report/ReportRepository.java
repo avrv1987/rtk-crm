@@ -198,7 +198,14 @@ public class ReportRepository {
             JOIN organizations o ON o.id = s.organization_id
             JOIN programs p ON p.id = s.program_id
             LEFT JOIN directions d ON d.id = p.direction_id
+            LEFT JOIN learning_observations f ON f.mapping_id = s.mapping_id
+                AND f.observed_from = (SELECT MAX(h.observed_from) FROM learning_observations h
+                                       WHERE h.mapping_id = s.mapping_id AND h.observed_from < :learningAt)
             """;
+
+    static final String OBSERVATION_IN_FORCE = """
+            s.observed_from = (SELECT MAX(h.observed_from) FROM learning_observations h
+                               WHERE h.mapping_id = s.mapping_id AND h.observed_from < :learningAt)""";
 
     private static final String AGREEMENTS_FROM = """
             FROM agreements ag
@@ -299,7 +306,7 @@ public class ReportRepository {
             return Optional.empty();
         }
         Selection selection = learningSelection(scope.get(), request);
-        return jdbcClient.sql("SELECT MAX(s.observed_at) " + LEARNING_FROM + selection.sql())
+        return jdbcClient.sql("SELECT MAX(f.observed_from) " + LEARNING_FROM + selection.sql())
                 .params(selection.parameters())
                 .query((resultSet, rowNumber) -> resultSet.getObject(1, OffsetDateTime.class))
                 .optional();
@@ -671,8 +678,8 @@ public class ReportRepository {
                         + " CAST(NULL AS BIGINT) AS completed, CAST(NULL AS BIGINT) AS parallel_runs,"
                         + " CAST(NULL AS VARCHAR(200)) AS paid_order, CAST(NULL AS VARCHAR(64)) AS paid_stream " + DEMAND_FROM
                         + applications.sql()
-                        + " UNION ALL SELECT s.program_id, CAST(NULL AS BIGINT), CAST(s.participants_count AS BIGINT),"
-                        + " CAST(s.completed_count AS BIGINT),"
+                        + " UNION ALL SELECT s.program_id, CAST(NULL AS BIGINT), CAST(f.participants_count AS BIGINT),"
+                        + " CAST(f.completed_count AS BIGINT),"
                         + " CAST(CASE WHEN sm.run_starts_on <= :runsAsOf AND :runsAsOf < sm.run_ends_on THEN 1 ELSE 0 END"
                         + " AS BIGINT), CAST(NULL AS VARCHAR(200)), CAST(NULL AS VARCHAR(64)) " + LEARNING_FROM + learning.sql()
                         + " UNION ALL SELECT r.program_id, CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), CAST(NULL AS BIGINT),"
@@ -699,6 +706,7 @@ public class ReportRepository {
                 "s.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition() + ")"
         ));
         Map<String, Object> parameters = new HashMap<>(scope.parameters());
+        parameters.put("learningAt", request.learningAt());
         if (request.from() != null) {
             conditions.add("sm.run_ends_on > :learningFrom");
             parameters.put("learningFrom", request.from());
@@ -1029,7 +1037,7 @@ public class ReportRepository {
                 "(" + AgreementRepository.ACTIVITY_START + " IS NULL OR sm.run_ends_on > " + AgreementRepository.ACTIVITY_START + ")",
                 "(" + AgreementRepository.ACTIVITY_END + " IS NULL OR sm.run_starts_on <= " + AgreementRepository.ACTIVITY_END + ")"
         ));
-        Map<String, Object> runParameters = new HashMap<>();
+        Map<String, Object> runParameters = new HashMap<>(Map.of("learningAt", request.learningAt()));
         if (request.to() != null) {
             runConditions.add("sm.run_starts_on <= :periodTo");
             runParameters.put("periodTo", request.to());
@@ -1075,20 +1083,18 @@ public class ReportRepository {
             jdbcClient.sql("""
                     SELECT x.activity_id, CAST(SUM(x.participants_count) AS BIGINT) AS participants
                     FROM (
-                        SELECT DISTINCT ai.activity_id, s.source_record_id, s.participants_count
+                        SELECT DISTINCT ai.activity_id, s.mapping_id, s.participants_count
                         FROM agreement_activity_interactions ai
                         JOIN interactions i ON i.id = ai.interaction_id
-                        JOIN learning_snapshots s ON s.organization_id = i.organization_id AND s.program_id = i.program_id
-                        JOIN source_records sr ON sr.id = s.source_record_id
-                        JOIN source_mappings sm ON sm.source = sr.source AND sm.external_key = sr.external_id
-                            AND sm.kind = CASE WHEN s.group_id IS NULL THEN 'COURSE' ELSE 'GROUP' END
-                            AND sm.run_starts_on IS NOT NULL AND sm.run_kind = 'STUDENTS'
+                        JOIN source_mappings sm ON sm.organization_id = i.organization_id AND sm.program_id = i.program_id
+                            AND sm.kind IN ('COURSE', 'GROUP') AND sm.run_starts_on IS NOT NULL AND sm.run_kind = 'STUDENTS'
+                        JOIN learning_observations s ON s.mapping_id = sm.id
                         JOIN agreement_activities ac ON ac.id = ai.activity_id
                         JOIN agreements ag ON ag.id = ac.agreement_id
-                        WHERE ai.activity_id IN (:ids) AND %s
+                        WHERE ai.activity_id IN (:ids) AND %s AND %s
                     ) x
                     GROUP BY x.activity_id
-                    """.formatted(runWhere))
+                    """.formatted(runWhere, OBSERVATION_IN_FORCE))
                     .params(runParameters)
                     .param("ids", batch)
                     .query((ResultSet resultSet) -> {

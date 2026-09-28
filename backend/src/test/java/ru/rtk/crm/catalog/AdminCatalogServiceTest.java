@@ -227,7 +227,7 @@ class AdminCatalogServiceTest {
     private void createSchema() {
         List.of(
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL)
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL)
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS directions (

@@ -12,13 +12,10 @@ public record SourceProperties(
         int queueCapacity,
         String syncCron,
         Duration staleAfter,
+        String settingsKey,
         Website website,
         Moodle moodle
 ) {
-    public boolean scheduled() {
-        return syncCron != null && !syncCron.isBlank() && !syncCron.strip().equals("-");
-    }
-
     public record Website(
             String baseUrl,
             String token,

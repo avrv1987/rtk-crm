@@ -1,4 +1,5 @@
 import { ApiError } from '../../shared/api/client'
+import { SupportDetails } from '../../shared/ui/SupportDetails'
 
 const errorText = (error: unknown, fallback: string) => {
   if (!(error instanceof ApiError)) {
@@ -24,22 +25,20 @@ type ErrorNoticeProps = {
 }
 
 export const ErrorNotice = ({ error, message, onRetry, retryLabel = 'Повторить' }: ErrorNoticeProps) => {
-  const fieldErrors = error instanceof ApiError ? Object.entries(error.fieldErrors ?? {}) : []
+  const text = errorText(error, message)
+  const fieldErrors = error instanceof ApiError ? Object.values(error.fieldErrors ?? {}) : []
   return (
-    <div className="interaction-command-error" role="alert">
-      <p>{errorText(error, message)}</p>
-      {error instanceof ApiError && (
-        <div className="structured-api-error">
-          <p>Код: {error.code}</p>
-          <p>{error.message}</p>
-          {fieldErrors.length > 0 && (
-            <ul>
-              {fieldErrors.map(([field, text]) => <li key={field}>{field}: {text}</li>)}
-            </ul>
-          )}
-          <p className="request-id">Request ID: {error.requestId}</p>
-        </div>
+    <div className="interaction-command-error report-error" role="alert">
+      <p>{text}</p>
+      {error instanceof ApiError && error.message !== '' && error.message !== text && (
+        <p className="report-error__detail">{error.message}</p>
       )}
+      {fieldErrors.length > 0 && (
+        <ul className="report-error__detail">
+          {fieldErrors.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      )}
+      {error instanceof ApiError && <SupportDetails requestId={error.requestId} code={error.code} />}
       {onRetry && <button type="button" onClick={onRetry}>{retryLabel}</button>}
     </div>
   )

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$EnvFile = (Join-Path $PSScriptRoot '..\.env.local')
 )

@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,7 @@ public class OrganizationCatalogService {
     private final OrganizationAssignmentRepository organizationAssignmentRepository;
     private final CatalogChangeEventRepository catalogChangeEventRepository;
     private final IdempotentCommandRunner commandRunner;
+    private final ApplicationEventPublisher eventPublisher;
     private final boolean managerCreationRequiresApproval;
 
     public OrganizationCatalogService(
@@ -38,6 +40,7 @@ public class OrganizationCatalogService {
             OrganizationAssignmentRepository organizationAssignmentRepository,
             CatalogChangeEventRepository catalogChangeEventRepository,
             IdempotentCommandRunner commandRunner,
+            ApplicationEventPublisher eventPublisher,
             @Value("${app.organizations.manager-creation-requires-approval:true}") boolean managerCreationRequiresApproval
     ) {
         this.organizationRepository = organizationRepository;
@@ -46,6 +49,7 @@ public class OrganizationCatalogService {
         this.organizationAssignmentRepository = organizationAssignmentRepository;
         this.catalogChangeEventRepository = catalogChangeEventRepository;
         this.commandRunner = commandRunner;
+        this.eventPublisher = eventPublisher;
         this.managerCreationRequiresApproval = managerCreationRequiresApproval;
     }
 
@@ -277,6 +281,9 @@ public class OrganizationCatalogService {
                             CatalogEntityType.ORGANIZATION, organizationId, changeAction(request.action()), current.name(),
                             reason.isEmpty() ? null : "Причина: " + reason, actor.id(), auditRequestId, now
                     );
+                    if (next == OrganizationStatus.ARCHIVED) {
+                        eventPublisher.publishEvent(new CatalogArchivedEvent(organizationId, null, actor.id(), auditRequestId));
+                    }
                     return new OrganizationCommandResult(organizationId);
                 });
     }
@@ -358,6 +365,7 @@ public class OrganizationCatalogService {
             case ADMIN, MANAGEMENT -> true;
             case LEADER -> Objects.equals(actor.teamId(), row.teamId());
             case USER -> Objects.equals(actor.teamId(), row.teamId()) && actor.id().equals(row.ownerManagerId());
+            case PARTNER -> false;
         };
     }
 

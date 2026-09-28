@@ -214,3 +214,15 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.document-extras__partner {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 var(--space-2);
+  align-items: center;
+  max-width: 420px;
+}
+
+.document-extras__partner .interaction-field-hint {
+  grid-column: 2;
+}

@@ -852,7 +852,11 @@ try {
   assert(uiEvents.some((event) => event.type === 'COMMENTED' && event.comment === uiComment), 'UI comment is absent from history')
   const uiAfterComment = await uiState()
   await kamA.evaluate("location.hash = '#/reports'")
-  await kamA.waitFor(() => kamA.evaluate("Boolean(document.querySelector('.reports__form'))"), 'UI reports screen did not open')
+  await kamA.waitFor(() => kamA.evaluate("document.querySelectorAll('.report-card').length > 0"), 'UI reports catalog did not open')
+  await kamA.evaluate("document.querySelector('.report-card[href=\"#/reports/portfolio\"]').click()")
+  await kamA.waitFor(() => kamA.evaluate("Boolean(document.querySelector('.reports__form .report-period__preset'))"), 'UI reports screen did not open')
+  await kamA.evaluate("[...document.querySelectorAll('.report-period__preset')].find((button) => button.textContent.trim() === 'Свой диапазон').click()")
+  await kamA.waitFor(() => kamA.evaluate("document.querySelectorAll('.reports__form input[type=date]').length === 2"), 'UI custom period did not open')
   await kamA.evaluate(`(() => {
     for (const input of document.querySelectorAll('.reports__form input[type=date]')) {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(today)})
@@ -876,8 +880,8 @@ try {
   )
   await kamA.evaluate("location.hash = '#/organizations'")
   await kamA.waitFor(() => kamA.evaluate("!document.querySelector('.reports__form') && Boolean(document.querySelector('.organization-list-item'))"), 'UI organizations did not open')
-  await kamA.evaluate("location.hash = '#/reports'")
-  await kamA.waitFor(() => kamA.evaluate("Boolean(document.querySelector('.reports__form'))"), 'UI reports screen did not reopen')
+  await kamA.evaluate("location.hash = '#/reports/portfolio'")
+  await kamA.waitFor(() => kamA.evaluate("document.querySelectorAll('.reports__form input[type=date]').length === 2"), 'UI reports screen did not reopen')
   const uiReports = await kamA.evaluate(`({
     marker: window.__releaseSmokeMarker === ${JSON.stringify(nonce)},
     navigations: performance.getEntriesByType('navigation').length,

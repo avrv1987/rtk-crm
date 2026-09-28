@@ -12,7 +12,7 @@ import org.springframework.stereotype.Repository;
 public class AttachmentRepository {
     private static final String SELECT = """
             SELECT id, interaction_id, stage_id, event_id, original_name, media_type, size_bytes,
-                   storage_key, checksum, status, kind, revision, replaces_id, created_by, version, created_at
+                   storage_key, checksum, status, kind, revision, replaces_id, created_by, version, created_at, partner_visible
             FROM attachments
             """;
 
@@ -99,14 +99,21 @@ public class AttachmentRepository {
         }
     }
 
-    public boolean updateKind(UUID attachmentId, AttachmentKind kind, int expectedVersion, OffsetDateTime updatedAt) {
+    public boolean updateKind(
+            UUID attachmentId,
+            AttachmentKind kind,
+            boolean partnerVisible,
+            int expectedVersion,
+            OffsetDateTime updatedAt
+    ) {
         return jdbcClient.sql("""
                 UPDATE attachments
-                SET kind = :kind, version = version + 1, updated_at = :updatedAt
+                SET kind = :kind, partner_visible = :partnerVisible, version = version + 1, updated_at = :updatedAt
                 WHERE id = :attachmentId AND version = :expectedVersion AND deleted_at IS NULL
                 """)
                 .param("attachmentId", attachmentId)
                 .param("kind", kind.name())
+                .param("partnerVisible", partnerVisible)
                 .param("expectedVersion", expectedVersion)
                 .param("updatedAt", updatedAt)
                 .update() == 1;
@@ -202,7 +209,8 @@ public class AttachmentRepository {
                 resultSet.getObject("replaces_id", UUID.class),
                 resultSet.getObject("created_by", UUID.class),
                 resultSet.getInt("version"),
-                resultSet.getObject("created_at", OffsetDateTime.class)
+                resultSet.getObject("created_at", OffsetDateTime.class),
+                resultSet.getBoolean("partner_visible")
         );
     }
 
@@ -222,7 +230,8 @@ public class AttachmentRepository {
             UUID replacesId,
             UUID createdBy,
             int version,
-            OffsetDateTime createdAt
+            OffsetDateTime createdAt,
+            boolean partnerVisible
     ) {
         public Attachment attachment() {
             return new Attachment(
@@ -239,7 +248,8 @@ public class AttachmentRepository {
                     replacesId,
                     createdBy,
                     version,
-                    createdAt
+                    createdAt,
+                    partnerVisible
             );
         }
     }

@@ -20,7 +20,8 @@ const roleNames: Record<Me['role'], string> = {
   USER: 'КАМ',
   LEADER: 'Руководитель команды',
   ADMIN: 'Администратор',
-  MANAGEMENT: 'Руководство'
+  MANAGEMENT: 'Руководство',
+  PARTNER: 'Представитель вуза'
 }
 
 export const ProfileSummary = ({ profile }: { profile: Me }) => (
@@ -35,7 +36,7 @@ export const ProfileSummary = ({ profile }: { profile: Me }) => (
         <dd>Все команды, только просмотр</dd>
       </div>
     )}
-    {profile.role !== 'MANAGEMENT' && (profile.teamName !== null || profile.role !== 'ADMIN') && (
+    {profile.role !== 'MANAGEMENT' && profile.role !== 'PARTNER' && (profile.teamName !== null || profile.role !== 'ADMIN') && (
       <div className="profile-summary__chip" title="Команда">
         <dt>Команда</dt>
         <dd>{profile.teamName ?? 'Не назначена, вузы недоступны'}</dd>

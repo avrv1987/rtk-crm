@@ -38,7 +38,9 @@ import { InteractionMarkBadges } from './InteractionMarkBadges'
 import { InteractionStatusPanel } from './InteractionStatusPanel'
 import { StepCompletion } from '../work/StepCompletion'
 import { LearningSnapshots } from './LearningSnapshots'
-import { OrganizationContacts } from './OrganizationContacts'
+import { LmsSignalsCard } from '../work/LmsSignals'
+import { OrganizationContacts, type PartnerAccessRights } from './OrganizationContacts'
+import { PartnerStepToggle } from '../partner/PartnerStepToggle'
 import { useUnsavedDraft } from './unsavedDrafts'
 import { contactRoleLabels, contactRoles, workStatusLabels } from './workMarks'
 import { AttachmentExtras } from '../documents/AttachmentExtras'
@@ -51,7 +53,9 @@ import {
   type AttachmentKind
 } from '../documents/documentsApi'
 import { InteractionCycles } from '../training/InteractionCycles'
+import { LmsStageSuggestionPanel } from '../training/LmsStageSuggestion'
 import { TeacherTrainings } from '../training/TeacherTrainings'
+import { TeacherRoster } from '../training/TeacherRoster'
 import { StageCompletionPanel, formatCompletionDate } from './StageCompletionPanel'
 import { CardDialog, CardMenu, CardTabPanel, CardTabs, RequiredMark, type CardMenuItem, type CardTab } from './cardUi'
 import { formatMoscowDateTime, isoFromMoscowInput, moscowInputValue } from './moscowTime'
@@ -65,6 +69,7 @@ type InteractionsPanelProps = {
   initialInteractionId?: Interaction['id']
   profileId: string
   role: Me['role']
+  partnerAccess?: PartnerAccessRights
   onContactsChanged?: () => void
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
@@ -501,7 +506,7 @@ const attachmentLimitBytes = attachmentLimitMegabytes * 1024 * 1024
 
 type CardDialogKind = 'contact' | 'create' | 'transition' | 'step' | 'comment' | 'upload' | 'status' | 'flags' | 'stageEdit' | 'stageCompletion' | 'details'
 
-type CardTabId = 'history' | 'documents' | 'contract' | 'transfers' | 'route' | 'learning' | 'cycles' | 'contacts'
+type CardTabId = 'history' | 'documents' | 'contract' | 'transfers' | 'route' | 'learning' | 'cycles' | 'contacts' | 'teacherRoster'
 
 let carriedNotice: { interactionId: Interaction['id']; text: string } | null = null
 
@@ -545,6 +550,7 @@ export const InteractionsPanel = ({
   initialInteractionId,
   profileId,
   role,
+  partnerAccess,
   onContactsChanged,
   onSessionExpired,
   onProfileUnavailable
@@ -1874,6 +1880,7 @@ export const InteractionsPanel = ({
             contacts={contactsState.contacts}
             profileId={profileId}
             canEdit={canManageDailyWork}
+            partnerAccess={partnerAccess}
             onChanged={() => {
               void loadContacts()
               onContactsChanged?.()
@@ -2223,7 +2230,8 @@ export const InteractionsPanel = ({
     { id: 'route', label: 'Маршрут' },
     { id: 'learning', label: 'Обучение' },
     { id: 'cycles', label: 'Циклы' },
-    { id: 'contacts', label: 'Контакты', count: currentInteraction.contactIds.length }
+    { id: 'contacts', label: 'Контакты', count: currentInteraction.contactIds.length },
+    { id: 'teacherRoster', label: 'Преподаватели на ПК' }
   ]
   const reload = () => {
     if (currentInteraction !== undefined) {
@@ -2319,6 +2327,7 @@ export const InteractionsPanel = ({
 
           <p className={`work-card__next ${schedule?.className ?? ''}`}>
             <span>Следующий шаг: <strong>{currentInteraction.nextAction ?? 'не задан'}</strong></span>
+            {currentInteraction.nextStepPartnerVisible && <span className="status status--planned">Виден вузу</span>}
             <span>{schedule?.label}</span>
           </p>
 
@@ -2546,6 +2555,26 @@ export const InteractionsPanel = ({
 
             {cardTab === 'learning' && (
               <>
+                <LmsStageSuggestionPanel
+                  interaction={currentInteraction}
+                  canEdit={canManageDailyWork}
+                  onChanged={applyUpdatedInteraction}
+                  onOpenTransition={openTransition}
+                  onOpenCycles={() => setCardTab('cycles')}
+                  onSessionExpired={onSessionExpired}
+                  onProfileUnavailable={onProfileUnavailable}
+                />
+                <LmsSignalsCard
+                  interactionId={currentInteraction.id}
+                  version={currentInteraction.version}
+                  canEdit={canManageDailyWork}
+                  onMoveToStage={(stageId) => {
+                    changeTransitionStage(stageId)
+                    setDialog('transition')
+                  }}
+                  onSessionExpired={onSessionExpired}
+                  onProfileUnavailable={onProfileUnavailable}
+                />
                 <LearningSnapshots
                   interactionId={currentInteraction.id}
                   version={currentInteraction.version}
@@ -2580,6 +2609,26 @@ export const InteractionsPanel = ({
                 onStarted={(id) => {
                   carriedNotice = { interactionId: id, text: 'Новый цикл начат. Это его карточка.' }
                   goToInteraction(id)
+                }}
+                onSessionExpired={onSessionExpired}
+                onProfileUnavailable={onProfileUnavailable}
+              />
+            )}
+
+            {cardTab === 'teacherRoster' && (
+              <TeacherRoster
+                key={`teacher-roster:${currentInteraction.id}`}
+                interaction={currentInteraction}
+                contacts={contactsState.kind === 'ready' ? contactsState.contacts : null}
+                profileId={profileId}
+                canEdit={canManageDailyWork}
+                onAddContact={() => {
+                  setContactRole('TEACHER')
+                  setDialog('contact')
+                }}
+                onContactsChanged={() => {
+                  void loadContacts()
+                  onContactsChanged?.()
                 }}
                 onSessionExpired={onSessionExpired}
                 onProfileUnavailable={onProfileUnavailable}
@@ -2731,6 +2780,16 @@ export const InteractionsPanel = ({
                     />
                   )}
                 </div>
+                <PartnerStepToggle
+                  key={`partner-step:${currentInteraction.id}:${currentInteraction.version}`}
+                  interaction={currentInteraction}
+                  onUpdated={(interaction) => applyUpdatedInteraction(interaction, interaction.nextStepPartnerVisible
+                    ? 'Следующий шаг показан в кабинете вуза.'
+                    : 'Следующий шаг больше не показан в кабинете вуза.')}
+                  onReload={reload}
+                  onSessionExpired={onSessionExpired}
+                  onProfileUnavailable={onProfileUnavailable}
+                />
                 {planValues !== undefined && (
                   <form className="interaction-plan-form card-dialog__section" onSubmit={(event) => void submitPlan(event)}>
                     <h3>Изменить шаг, срок, программу и продукты</h3>
@@ -2990,6 +3049,12 @@ export const InteractionsPanel = ({
                   onProfileUnavailable={onProfileUnavailable}
                 />
               </CardDialog>
+
+              {cardTab === 'teacherRoster' && (
+                <CardDialog open={dialog === 'contact'} title="Новый контакт" onClose={closeDialog}>
+                  {contactForm}
+                </CardDialog>
+              )}
 
               <CardDialog open={dialog === 'stageCompletion'} title="Отметить этап выполненным" onClose={closeDialog}>
                 <StageCompletionPanel

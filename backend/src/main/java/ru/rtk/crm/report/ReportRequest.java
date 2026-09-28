@@ -242,6 +242,10 @@ public record ReportRequest(
         return to == null ? LocalDate.now(ZONE) : to;
     }
 
+    public OffsetDateTime learningAt() {
+        return runsAsOf().plusDays(1).atStartOfDay(ZONE).toOffsetDateTime();
+    }
+
     private List<ReportColumn> normalizedColumns() {
         if (columns == null || columns.isEmpty()) {
             return kind.defaultColumns();

@@ -1,43 +1,49 @@
-import { useCallback, useEffect, useState } from 'react'
-import {
-  handledAccessError,
-  listReportVendors,
-  transferKindLabels,
-  transferKinds,
-  type AccessHandlers,
-  type CatalogReference,
-  type ProductTransferKind
-} from '../documents/documentsApi'
-import type { AgreementSelection } from './reportAgreement'
-import '../documents/documents.css'
+import { useId } from 'react'
+import { transferKindLabels, transferKinds, type ProductTransferKind } from '../documents/documentsApi'
+import { Chip, type FilterOption, type SelectedValue } from './ReportControls'
+import { defaultAgreementSelection, type AgreementSelection } from './reportAgreement'
 
-type ReportAgreementFilterProps = AccessHandlers & {
+type ReportAgreementFilterProps = {
   value: AgreementSelection
+  vendors: FilterOption[]
   onChange: (value: AgreementSelection) => void
 }
 
-type VendorsState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; vendors: CatalogReference[] }
-  | { kind: 'failed' }
+const activeCount = (value: AgreementSelection) => (
+  value.vendorIds.length + value.notTransferred.length + (value.licenseSigned === '' ? 0 : 1) + (value.licenseExpiresBy === '' ? 0 : 1)
+)
 
-export const ReportAgreementFilter = ({ value, onChange, onSessionExpired, onProfileUnavailable }: ReportAgreementFilterProps) => {
-  const [vendorsState, setVendorsState] = useState<VendorsState>({ kind: 'loading' })
+export const agreementValues = (
+  value: AgreementSelection,
+  vendors: FilterOption[],
+  onChange: (value: AgreementSelection) => void
+): SelectedValue[] => [
+  ...(value.licenseSigned === '' ? [] : [{
+    key: 'license-signed',
+    text: value.licenseSigned === 'true' ? 'Лицензия подписана' : 'Лицензия не подписана или не указано',
+    onRemove: () => onChange({ ...value, licenseSigned: '' })
+  }]),
+  ...(value.licenseExpiresBy === '' ? [] : [{
+    key: 'license-expires',
+    text: `Лицензия истекает до ${value.licenseExpiresBy} г.`,
+    onRemove: () => onChange({ ...value, licenseExpiresBy: '' })
+  }]),
+  ...value.notTransferred.map((kind) => ({
+    key: `transfer-${kind}`,
+    text: `Не передано: ${transferKindLabels[kind].toLocaleLowerCase('ru-RU')}`,
+    onRemove: () => onChange({ ...value, notTransferred: value.notTransferred.filter((item) => item !== kind) })
+  })),
+  ...value.vendorIds.map((id) => ({
+    key: `vendor-${id}`,
+    text: `Вендор: ${vendors.find((vendor) => vendor.id === id)?.label ?? 'недоступен'}`,
+    onRemove: () => onChange({ ...value, vendorIds: value.vendorIds.filter((item) => item !== id) })
+  }))
+]
 
-  const loadVendors = useCallback(async () => {
-    setVendorsState({ kind: 'loading' })
-    try {
-      setVendorsState({ kind: 'ready', vendors: await listReportVendors() })
-    } catch (error) {
-      if (!handledAccessError(error, { onSessionExpired, onProfileUnavailable })) {
-        setVendorsState({ kind: 'failed' })
-      }
-    }
-  }, [onProfileUnavailable, onSessionExpired])
-
-  useEffect(() => {
-    void loadVendors()
-  }, [loadVendors])
+export const ReportAgreementFilter = ({ value, vendors, onChange }: ReportAgreementFilterProps) => {
+  const signedId = useId()
+  const expiresId = useId()
+  const count = activeCount(value)
 
   const toggleVendor = (id: string, checked: boolean) => {
     onChange({ ...value, vendorIds: checked ? [...value.vendorIds, id] : value.vendorIds.filter((item) => item !== id) })
@@ -53,40 +59,44 @@ export const ReportAgreementFilter = ({ value, onChange, onSessionExpired, onPro
   }
 
   return (
-    <fieldset className="report-filter report-agreement-filter">
-      <legend>Договор, лицензия и передача</legend>
-      <p className="report-filter__summary">Условия относятся к одному и тому же продукту взаимодействия.</p>
-      <div className="report-agreement-filter__fields">
-        <label>
-          Подписание лицензии
-          <select
-            value={value.licenseSigned}
-            onChange={(event) => onChange({ ...value, licenseSigned: event.target.value as AgreementSelection['licenseSigned'] })}
-          >
-            <option value="">Все</option>
-            <option value="true">Лицензия подписана</option>
-            <option value="false">Не подписана или не указано</option>
-          </select>
-        </label>
-        <label>
-          Лицензия истекает до (год, включительно)
-          <input
-            type="number"
-            inputMode="numeric"
-            min={2000}
-            max={2100}
-            placeholder="Например, 2026"
-            value={value.licenseExpiresBy}
-            onChange={(event) => onChange({ ...value, licenseExpiresBy: event.target.value.slice(0, 4) })}
-          />
-        </label>
-      </div>
-      <div>
-        <p className="report-filter__summary">Не передано:</p>
-        <ul className="report-filter__options">
-          {transferKinds.map((kind) => (
-            <li key={kind}>
-              <label>
+    <Chip
+      label="Договор и лицензия"
+      value={count === 0 ? 'все' : `условий ${count}`}
+      active={count > 0}
+      onClear={() => onChange(defaultAgreementSelection())}
+    >
+      {() => (
+        <div className="report-agreement">
+          <p className="report-popover__note">Все условия относятся к одному и тому же продукту взаимодействия.</p>
+          <div className="report-agreement__field">
+            <label htmlFor={signedId}>Подписание лицензии</label>
+            <select
+              id={signedId}
+              value={value.licenseSigned}
+              onChange={(event) => onChange({ ...value, licenseSigned: event.target.value as AgreementSelection['licenseSigned'] })}
+            >
+              <option value="">Все</option>
+              <option value="true">Лицензия подписана</option>
+              <option value="false">Не подписана или не указано</option>
+            </select>
+          </div>
+          <div className="report-agreement__field">
+            <label htmlFor={expiresId}>Лицензия истекает до (год, включительно)</label>
+            <input
+              id={expiresId}
+              type="number"
+              inputMode="numeric"
+              min={2000}
+              max={2100}
+              placeholder="Например, 2026"
+              value={value.licenseExpiresBy}
+              onChange={(event) => onChange({ ...value, licenseExpiresBy: event.target.value.slice(0, 4) })}
+            />
+          </div>
+          <fieldset className="report-agreement__group">
+            <legend>Не передано</legend>
+            {transferKinds.map((kind) => (
+              <label key={kind} className="report-chip__option">
                 <input
                   type="checkbox"
                   checked={value.notTransferred.includes(kind)}
@@ -94,38 +104,28 @@ export const ReportAgreementFilter = ({ value, onChange, onSessionExpired, onPro
                 />
                 <span>{transferKindLabels[kind]}</span>
               </label>
-            </li>
-          ))}
-        </ul>
-      </div>
-      <div>
-        <p className="report-filter__summary">
-          Вендор{value.vendorIds.length > 0 ? ` (выбрано: ${value.vendorIds.length})` : ': все'}
-        </p>
-        {vendorsState.kind === 'loading' && <p role="status">Загружаем вендоров…</p>}
-        {vendorsState.kind === 'failed' && (
-          <p role="alert">
-            Не удалось загрузить вендоров. <button type="button" className="report-filter__clear" onClick={() => void loadVendors()}>Повторить</button>
-          </p>
-        )}
-        {vendorsState.kind === 'ready' && vendorsState.vendors.length === 0 && <p className="report-filter__empty">Нет доступных значений.</p>}
-        {vendorsState.kind === 'ready' && vendorsState.vendors.length > 0 && (
-          <ul className="report-filter__options">
-            {vendorsState.vendors.map((vendor) => (
-              <li key={vendor.id}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={value.vendorIds.includes(vendor.id)}
-                    onChange={(event) => toggleVendor(vendor.id, event.target.checked)}
-                  />
-                  <span>{vendor.archived ? `${vendor.name} (архивирован)` : vendor.name}</span>
-                </label>
-              </li>
             ))}
-          </ul>
-        )}
-      </div>
-    </fieldset>
+          </fieldset>
+          <fieldset className="report-agreement__group">
+            <legend>Вендор</legend>
+            {vendors.length === 0 && <p className="report-popover__note">Нет доступных значений.</p>}
+            <ul className="report-chip__options">
+              {vendors.map((vendor) => (
+                <li key={vendor.id}>
+                  <label className="report-chip__option">
+                    <input
+                      type="checkbox"
+                      checked={value.vendorIds.includes(vendor.id)}
+                      onChange={(event) => toggleVendor(vendor.id, event.target.checked)}
+                    />
+                    <span>{vendor.label}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </fieldset>
+        </div>
+      )}
+    </Chip>
   )
 }

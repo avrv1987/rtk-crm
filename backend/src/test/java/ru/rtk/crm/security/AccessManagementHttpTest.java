@@ -4,10 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oidcLogin;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -74,6 +76,7 @@ class AccessManagementHttpTest {
         registry.add("app.enrolment.active-key-version", () -> "v1");
         registry.add("app.enrolment.keys.v1", () -> ENROLMENT_KEY);
         registry.add("app.enrolment.fingerprint-key", () -> ENROLMENT_FINGERPRINT_KEY);
+        registry.add("app.sources.settings-key", AccessManagementHttpTest::randomKey);
     }
 
     private static String randomKey() {
@@ -89,6 +92,7 @@ class AccessManagementHttpTest {
     void setUp() {
         createSchema();
         jdbcTemplate.update("DELETE FROM audit_events");
+        jdbcTemplate.update("DELETE FROM source_settings");
         jdbcTemplate.update("DELETE FROM crm_profile_events");
         jdbcTemplate.update("DELETE FROM organization_assignment_events");
         jdbcTemplate.update("DELETE FROM organization_team_events");
@@ -366,6 +370,49 @@ class AccessManagementHttpTest {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    void sourceSettingsAreAdminOnlyAndNeverExposeTokens() throws Exception {
+        String token = "http-secret-moodle-token";
+        String body = """
+                {"moodleBaseUrl":"https://lms.example.test","moodleToken":"%s","moodleCourseIds":[2,3],
+                 "moodleStudentRoles":["student"],"moodleTeacherRoles":["teacher"],"websiteBaseUrl":null,"syncCron":null}
+                """.formatted(token);
+        mockMvc.perform(get("/api/admin/source-settings").with(login(USER_A)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(put("/api/admin/source-settings").with(login(LEADER_A)).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/admin/source-settings").with(login(USER_A)).with(csrf()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/admin/sources/MOODLE/check").with(login(USER_A)).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_settings", Integer.class)).isZero();
+
+        mockMvc.perform(put("/api/admin/source-settings").with(login(ADMIN)).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body.replace("https://lms", "http://lms")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.moodleBaseUrl").exists());
+        String saved = mockMvc.perform(put("/api/admin/source-settings").with(login(ADMIN)).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.moodleToken.origin").value("SCREEN"))
+                .andExpect(jsonPath("$.moodleCourseIds[1]").value(3))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        String read = mockMvc.perform(get("/api/admin/source-settings").with(login(ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.saved").value(true))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        String journal = mockMvc.perform(get("/api/admin/audit-events").param("category", "SYNC").with(login(ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].action").value("SOURCE_SETTINGS_CHANGED"))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(saved + read + journal).contains("токен Moodle заменён").doesNotContain(token);
+        mockMvc.perform(delete("/api/admin/source-settings").with(login(ADMIN)).with(csrf()))
+                .andExpect(status().isNoContent());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_settings", Integer.class)).isZero();
+    }
+
     private RequestPostProcessor login(UUID profileId) {
         return oidcLogin().idToken(token -> token.issuer(ISSUER).subject(profileId.toString()));
     }
@@ -480,7 +527,7 @@ class AccessManagementHttpTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -611,6 +658,16 @@ class AccessManagementHttpTest {
                     needs_mapping_count INTEGER NOT NULL DEFAULT 0,
                     run_trigger VARCHAR(16) NOT NULL DEFAULT 'MANUAL',
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS source_settings (
+                    id SMALLINT PRIMARY KEY, moodle_base_url VARCHAR(500), moodle_token_encrypted VARCHAR(2000),
+                    moodle_token_changed_at TIMESTAMP WITH TIME ZONE, moodle_course_ids VARCHAR(2000) NOT NULL,
+                    moodle_student_roles VARCHAR(500) NOT NULL, moodle_teacher_roles VARCHAR(500) NOT NULL,
+                    website_base_url VARCHAR(500), website_token_encrypted VARCHAR(2000),
+                    website_token_changed_at TIMESTAMP WITH TIME ZONE, sync_cron VARCHAR(100), updated_by UUID NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """);
         jdbcTemplate.execute("""

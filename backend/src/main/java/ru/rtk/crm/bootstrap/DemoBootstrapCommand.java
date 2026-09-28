@@ -1,6 +1,13 @@
 package ru.rtk.crm.bootstrap;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.List;
@@ -16,14 +23,19 @@ import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserProfileRepository;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.attachment.AttachmentKind;
+import ru.rtk.crm.attachment.AttachmentService;
+import ru.rtk.crm.attachment.AttachmentUploadRequest;
 import ru.rtk.crm.catalog.Contact;
 import ru.rtk.crm.catalog.ContactCreateRequest;
 import ru.rtk.crm.catalog.ContactService;
 import ru.rtk.crm.interaction.InteractionCreateRequest;
 import ru.rtk.crm.interaction.InteractionService;
+import ru.rtk.crm.report.PdfLayout;
 
 @Component
 @Profile("demo-bootstrap")
@@ -32,25 +44,32 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     private static final Logger LOGGER = LoggerFactory.getLogger(DemoBootstrapCommand.class);
     private static final String DEMO_ORGANIZATION_NAME = "Университет А";
     private static final String DEMO_INTERACTION_TITLE = "Демо: внедрение цифрового университета";
+    private static final List<DemoDocument> PARTNER_DOCUMENTS = List.of(
+            new DemoDocument("plan", "Демо: план сотрудничества.pdf", AttachmentKind.OTHER, "План сотрудничества вуза и ИТ Школы РТК"),
+            new DemoDocument("program", "Демо: рабочая программа.pdf", AttachmentKind.CURRICULUM, "Рабочая программа дисциплины")
+    );
 
     private final DemoBootstrapProperties properties;
     private final JdbcClient jdbcClient;
     private final UserProfileRepository userProfileRepository;
     private final ContactService contactService;
     private final InteractionService interactionService;
+    private final AttachmentService attachmentService;
 
     public DemoBootstrapCommand(
             DemoBootstrapProperties properties,
             JdbcClient jdbcClient,
             UserProfileRepository userProfileRepository,
             ContactService contactService,
-            InteractionService interactionService
+            InteractionService interactionService,
+            AttachmentService attachmentService
     ) {
         this.properties = properties;
         this.jdbcClient = jdbcClient;
         this.userProfileRepository = userProfileRepository;
         this.contactService = contactService;
         this.interactionService = interactionService;
+        this.attachmentService = attachmentService;
     }
 
     @Override
@@ -70,6 +89,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         Map<String, UUID> organizationIds = createOrganizations(organizations, identitiesByKey, teamIds, profileIds);
         DemoCatalog catalog = createCatalogs();
         createDemoScenario(identitiesByKey, organizationIds, catalog);
+        createPartners(identities, identitiesByKey, organizationIds);
         LOGGER.info("Demo CRM bootstrap completed");
     }
 
@@ -92,7 +112,10 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         for (DemoBootstrapProperties.Identity identity : identities) {
             if (blank(identity.key()) || blank(identity.issuer()) || blank(identity.subject()) || blank(identity.displayName())
                     || identity.role() == null
-                    || identity.role() != UserRole.ADMIN && identity.role() != UserRole.MANAGEMENT && blank(identity.teamKey())
+                    || identity.role() == UserRole.PARTNER
+                            && (!blank(identity.teamKey()) || blank(identity.organization()) || blank(identity.contact()))
+                    || identity.role() != UserRole.ADMIN && identity.role() != UserRole.MANAGEMENT
+                            && identity.role() != UserRole.PARTNER && blank(identity.teamKey())
                     || values.put(identity.key(), identity) != null) {
                 throw new IllegalStateException("Demo bootstrap identities must be complete and unique");
             }
@@ -156,6 +179,9 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     ) {
         Map<String, UUID> profileIds = new HashMap<>();
         for (DemoBootstrapProperties.Identity identity : identities) {
+            if (identity.role() == UserRole.PARTNER) {
+                continue;
+            }
             UUID proposedId = stableId("profile:" + identity.issuer() + "\u0000" + identity.subject());
             jdbcClient.sql("""
                     INSERT INTO crm_user_profiles (id, issuer, subject, display_name, role, team_id)
@@ -389,6 +415,141 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         );
     }
 
+    private void createPartners(
+            List<DemoBootstrapProperties.Identity> identities,
+            Map<String, DemoBootstrapProperties.Identity> identitiesByKey,
+            Map<String, UUID> organizationIds
+    ) {
+        List<DemoBootstrapProperties.Identity> partners = identities.stream()
+                .filter(identity -> identity.role() == UserRole.PARTNER)
+                .toList();
+        for (DemoBootstrapProperties.Identity partner : partners) {
+            UUID organizationId = organizationIds.get(partner.organization());
+            if (organizationId == null) {
+                throw new IllegalStateException("Demo bootstrap partner must reference a configured organization");
+            }
+            UUID contactId = jdbcClient.sql("""
+                    SELECT id FROM contacts
+                    WHERE organization_id = :organizationId AND name = :name
+                    ORDER BY created_at, id
+                    LIMIT 1
+                    """)
+                    .param("organizationId", organizationId)
+                    .param("name", partner.contact())
+                    .query(UUID.class)
+                    .optional()
+                    .orElseThrow(() -> new IllegalStateException("Demo bootstrap partner contact is unavailable"));
+            jdbcClient.sql("""
+                    INSERT INTO crm_user_profiles (
+                        id, issuer, subject, display_name, login, role, team_id, partner_organization_id, partner_contact_id
+                    ) VALUES (
+                        :id, :issuer, :subject, :displayName, :login, 'PARTNER', NULL, :organizationId, :contactId
+                    )
+                    ON CONFLICT DO NOTHING
+                    """)
+                    .param("id", stableId("profile:" + partner.issuer() + "\u0000" + partner.subject()))
+                    .param("issuer", partner.issuer())
+                    .param("subject", partner.subject())
+                    .param("displayName", partner.displayName())
+                    .param("login", partner.key())
+                    .param("organizationId", organizationId)
+                    .param("contactId", contactId)
+                    .update();
+            jdbcClient.sql("""
+                    UPDATE crm_user_profiles
+                    SET display_name = :displayName,
+                        role = 'PARTNER',
+                        team_id = NULL,
+                        enrolment_operator = FALSE,
+                        partner_organization_id = :organizationId,
+                        partner_contact_id = :contactId,
+                        active = TRUE,
+                        pending_activation = FALSE,
+                        access_revision = access_revision + 1,
+                        version = version + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE issuer = :issuer AND subject = :subject
+                      AND (role <> 'PARTNER' OR partner_contact_id IS DISTINCT FROM :contactId OR NOT active)
+                    """)
+                    .param("issuer", partner.issuer())
+                    .param("subject", partner.subject())
+                    .param("displayName", partner.displayName())
+                    .param("organizationId", organizationId)
+                    .param("contactId", contactId)
+                    .update();
+            createPartnerDemo(identitiesByKey, organizationId);
+        }
+    }
+
+    private void createPartnerDemo(Map<String, DemoBootstrapProperties.Identity> identitiesByKey, UUID organizationId) {
+        UUID interactionId = jdbcClient.sql("""
+                SELECT id FROM interactions
+                WHERE organization_id = :organizationId AND title = :title
+                ORDER BY created_at, id
+                LIMIT 1
+                """)
+                .param("organizationId", organizationId)
+                .param("title", DEMO_INTERACTION_TITLE)
+                .query(UUID.class)
+                .optional()
+                .orElse(null);
+        if (interactionId == null || jdbcClient.sql("""
+                SELECT COUNT(*) FROM attachments WHERE interaction_id = :interactionId AND original_name = :name
+                """)
+                .param("interactionId", interactionId)
+                .param("name", PARTNER_DOCUMENTS.getFirst().name())
+                .query(Long.class)
+                .single() > 0) {
+            return;
+        }
+        DemoBootstrapProperties.Identity kamIdentity = identitiesByKey.get("kam-a");
+        CrmProfile kam = userProfileRepository.findActiveByIdentity(kamIdentity.issuer(), kamIdentity.subject())
+                .orElseThrow(() -> new IllegalStateException("Demo bootstrap requires active kam-a profile"));
+        UUID stageId = jdbcClient.sql("SELECT current_stage_id FROM interactions WHERE id = :interactionId")
+                .param("interactionId", interactionId)
+                .query(UUID.class)
+                .single();
+        for (DemoDocument document : PARTNER_DOCUMENTS) {
+            attachmentService.upload(
+                    kam,
+                    interactionId,
+                    new AttachmentUploadRequest(stageId, document.kind(), null),
+                    new DemoFile(document.name(), pdf(document.title())),
+                    "demo-bootstrap/v1/partner-document:" + document.key()
+            );
+        }
+        jdbcClient.sql("""
+                UPDATE attachments SET partner_visible = TRUE
+                WHERE interaction_id = :interactionId AND original_name IN (:names)
+                """)
+                .param("interactionId", interactionId)
+                .param("names", PARTNER_DOCUMENTS.stream().map(DemoDocument::name).toList())
+                .update();
+        jdbcClient.sql("""
+                UPDATE interactions SET next_step_partner_visible = TRUE
+                WHERE id = :interactionId AND next_action IS NOT NULL
+                """)
+                .param("interactionId", interactionId)
+                .update();
+    }
+
+    private static byte[] pdf(String title) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try {
+            PdfLayout.write(
+                    title,
+                    OffsetDateTime.now(),
+                    List.of("Демонстрационный документ CRM ИТ Школы РТК. Данные вымышлены."),
+                    output,
+                    layout -> {
+                    }
+            );
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+        return output.toByteArray();
+    }
+
     private boolean demoInteractionExists(UUID organizationId) {
         return jdbcClient.sql("""
                 SELECT EXISTS (
@@ -412,5 +573,50 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     }
 
     private record DemoCatalog(UUID programId, List<UUID> productIds) {
+    }
+
+    private record DemoDocument(String key, String name, AttachmentKind kind, String title) {
+    }
+
+    private record DemoFile(String originalName, byte[] content) implements MultipartFile {
+        @Override
+        public String getName() {
+            return "file";
+        }
+
+        @Override
+        public String getOriginalFilename() {
+            return originalName;
+        }
+
+        @Override
+        public String getContentType() {
+            return "application/pdf";
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return content.length == 0;
+        }
+
+        @Override
+        public long getSize() {
+            return content.length;
+        }
+
+        @Override
+        public byte[] getBytes() {
+            return content.clone();
+        }
+
+        @Override
+        public InputStream getInputStream() {
+            return new ByteArrayInputStream(content);
+        }
+
+        @Override
+        public void transferTo(File destination) throws IOException {
+            Files.write(destination.toPath(), content);
+        }
     }
 }

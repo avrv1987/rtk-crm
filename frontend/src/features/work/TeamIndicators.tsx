@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiClient, type ManagerIndicators, type Organization, type TeamIndicators as Indicators } from '../../shared/api/client'
+import {
+  apiClient,
+  type LmsSignal,
+  type ManagerIndicators,
+  type Organization,
+  type TeamIndicators as Indicators
+} from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { LmsSignalList } from './LmsSignals'
 import { type AccessHandlers, formatDate, formatDateTime, handledAccessError, requestIdOf } from './workShared'
 import './workControl.css'
 
 type IndicatorsState =
   | { kind: 'loading' }
-  | { kind: 'ready'; indicators: Indicators }
+  | { kind: 'ready'; indicators: Indicators; signals: LmsSignal[] | null }
   | { kind: 'failed'; requestId?: string }
 
 type TeamIndicatorsProps = AccessHandlers & {
@@ -34,6 +41,15 @@ const sum = (managers: ManagerIndicators[], pick: (manager: ManagerIndicators) =
   managers.reduce((total, manager) => total + pick(manager), 0)
 )
 
+const signalCount = (signals: LmsSignal[], managers: ManagerIndicators[], manager: ManagerIndicators) => {
+  const listed = new Set(managers.map((item) => item.managerId).filter((id) => id !== null))
+  return signals.filter((signal) => (
+    manager.managerId === null
+      ? signal.ownerManagerId === null || signal.ownerManagerId === undefined || !listed.has(signal.ownerManagerId)
+      : signal.ownerManagerId === manager.managerId
+  )).length
+}
+
 const deputyGroups = (organizations: Organization[]) => {
   const groups = new Map<string, { owner: string; deputy: string; endsOn: string | null; names: string[] }>()
   for (const organization of organizations) {
@@ -58,9 +74,12 @@ export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, on
     const version = ++requestVersion.current
     setState({ kind: 'loading' })
     try {
-      const indicators = await apiClient.getTeamIndicators(days)
+      const [indicators, signals] = await Promise.all([
+        apiClient.getTeamIndicators(days),
+        apiClient.listLmsSignals().then((result) => result.items, () => null)
+      ])
       if (version === requestVersion.current) {
-        setState({ kind: 'ready', indicators })
+        setState({ kind: 'ready', indicators, signals })
       }
     } catch (error) {
       if (version !== requestVersion.current || handledAccessError(error, { onSessionExpired, onProfileUnavailable })) {
@@ -79,6 +98,7 @@ export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, on
   const unassigned = organizations?.filter((organization) => organization.requiresAssignment) ?? []
   const pending = organizations?.filter((organization) => organization.status === 'PENDING').length ?? null
   const deputies = organizations === null ? [] : deputyGroups(organizations)
+  const signals = state.kind === 'ready' ? state.signals : null
 
   return (
     <>
@@ -140,6 +160,7 @@ export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, on
                     <th scope="col">Просрочено</th>
                     <th scope="col">Без шага или срока</th>
                     <th scope="col">На этапе дольше {state.indicators.stuckDays} дней</th>
+                    <th scope="col">Сигналы LMS</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -167,6 +188,13 @@ export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, on
                             label={`${name}, на этапе дольше ${state.indicators.stuckDays} дней`}
                           />
                         </td>
+                        {signals === null ? (
+                          <td>—</td>
+                        ) : (
+                          <td className={heat(signalCount(signals, state.indicators.managers, manager), 'warning')}>
+                            {signalCount(signals, state.indicators.managers, manager)}
+                          </td>
+                        )}
                       </tr>
                     )
                   })}
@@ -229,6 +257,14 @@ export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, on
           <p className="work-control__caption">Замещение назначают и снимают в карточке вуза.</p>
         </section>
       </div>
+
+      <section className="team-indicators lms-signals-panel" aria-labelledby="leader-lms-signals-title">
+        <h2 id="leader-lms-signals-title" className="lms-signals__heading">Сигналы LMS{signals !== null && signals.length > 0 && <span className="desk-feed__count">{signals.length}</span>}</h2>
+        {state.kind === 'ready' && signals === null && <p className="work-control__message">Сигналы LMS сейчас недоступны.</p>}
+        {signals !== null && signals.length === 0 && <p className="work-control__message">Сигналов по данным LMS нет.</p>}
+        {signals !== null && signals.length > 0 && <LmsSignalList signals={signals} limit={asideLimit} showOwner />}
+        <p className="work-control__caption">Скрыть сигнал и перейти к этапу можно в карточке работы.</p>
+      </section>
     </>
   )
 }

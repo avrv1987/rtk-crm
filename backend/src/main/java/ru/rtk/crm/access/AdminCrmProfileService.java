@@ -124,11 +124,20 @@ public class AdminCrmProfileService {
         if (next.equals(previous)) {
             throw new InteractionValidationException("body", "Профиль уже имеет указанные значения");
         }
+        boolean partner = previous.role() == UserRole.PARTNER || next.role() == UserRole.PARTNER;
+        if (partner && (previous.role() != next.role() || !Objects.equals(previous.teamId(), next.teamId())
+                || next.active() && !previous.active())) {
+            throw new InteractionValidationException(
+                    command.role() != null ? "role" : command.teamIdPresent() ? "teamId" : "active",
+                    "Доступ представителя вуза открывают в карточке вуза, во вкладке «Контакты»; здесь его можно только закрыть"
+            );
+        }
         if (next.teamId() != null && !Objects.equals(next.teamId(), previous.teamId())
                 && adminTeamRepository.findByIdForUpdate(next.teamId()).filter(team -> !team.archived()).isEmpty()) {
             throw new InteractionValidationException("teamId", "Команда не найдена или в архиве");
         }
-        if (next.active() && next.role() != UserRole.ADMIN && next.role() != UserRole.MANAGEMENT && next.teamId() == null) {
+        if (next.active() && !partner && next.role() != UserRole.ADMIN && next.role() != UserRole.MANAGEMENT
+                && next.teamId() == null) {
             throw new InteractionValidationException("teamId", "Менеджер и руководитель без команды не могут быть активны");
         }
         boolean removesAdministrator = previous.active() && previous.role() == UserRole.ADMIN

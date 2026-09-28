@@ -1,4 +1,4 @@
-import { type FormEvent, useRef, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
   ApiError,
   apiClient,
@@ -9,6 +9,8 @@ import {
   type ContactUpdate
 } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { PartnerAccessControl } from '../partner/PartnerAccessControl'
+import { listPartnerAccess, type PartnerAccess } from '../partner/partnerApi'
 import { changedDraft, conflictKeys, keepDraftValues, mergedValues, parseBasedDraft, takeCurrentValues } from './draftBase'
 import { DraftConflictNotice } from './DraftConflictNotice'
 import { recordOf, textOf, useFormDraft } from './formDraft'
@@ -21,11 +23,22 @@ type SessionHandlers = {
   onProfileUnavailable: (requestId: string) => void
 }
 
+export type PartnerAccessRights = {
+  canManage: boolean
+  canOpen: boolean
+}
+
+type PartnerAccessBinding = PartnerAccessRights & {
+  access: PartnerAccess | undefined
+  onChanged: () => void
+}
+
 type OrganizationContactsProps = SessionHandlers & {
   organizationId: string
   contacts: Contact[]
   profileId: string
   canEdit: boolean
+  partnerAccess?: PartnerAccessRights
   onChanged: () => void
 }
 
@@ -139,6 +152,7 @@ const ContactItem = ({
   contact,
   profileId,
   canEdit,
+  partner,
   onChanged,
   onSessionExpired,
   onProfileUnavailable
@@ -147,6 +161,7 @@ const ContactItem = ({
   contact: Contact
   profileId: string
   canEdit: boolean
+  partner?: PartnerAccessBinding
   onChanged: () => void
 }) => {
   const [draft, setDraft] = useFormDraft(profileId, `contact:${contact.id}`, parseDraft)
@@ -249,6 +264,18 @@ const ContactItem = ({
           </dd>
         </div>
       </dl>
+      {partner !== undefined && (
+        <PartnerAccessControl
+          organizationId={organizationId}
+          contact={contact}
+          access={partner.access}
+          canManage={partner.canManage}
+          canOpen={partner.canOpen}
+          onChanged={partner.onChanged}
+          onSessionExpired={onSessionExpired}
+          onProfileUnavailable={onProfileUnavailable}
+        />
+      )}
       <div className="interaction-plan-form__actions">
         {canEdit && contact.personalDataStatus === 'RESTRICTED' && draft === null && (
           <p className="interaction-field-hint">Правка недоступна: обработка данных контакта ограничена.</p>
@@ -373,10 +400,40 @@ const ContactItem = ({
   )
 }
 
-export const OrganizationContacts = ({ contacts, ...props }: OrganizationContactsProps) => (
-  contacts.length === 0 ? null : (
+export const OrganizationContacts = ({ contacts, partnerAccess, ...props }: OrganizationContactsProps) => {
+  const [accesses, setAccesses] = useState<PartnerAccess[] | null>(null)
+  const { organizationId, onSessionExpired, onProfileUnavailable } = props
+
+  const loadAccesses = useCallback(async () => {
+    try {
+      setAccesses(await listPartnerAccess(organizationId))
+    } catch (error) {
+      if (!handledAccessError(error, onSessionExpired, onProfileUnavailable)) {
+        setAccesses(null)
+      }
+    }
+  }, [organizationId, onSessionExpired, onProfileUnavailable])
+
+  useEffect(() => {
+    if (partnerAccess !== undefined) {
+      void loadAccesses()
+    }
+  }, [loadAccesses, partnerAccess !== undefined])
+
+  return contacts.length === 0 ? null : (
     <ul className="contact-list" aria-label="Контакты организации">
-      {contacts.map((contact) => <ContactItem key={contact.id} contact={contact} {...props} />)}
+      {contacts.map((contact) => (
+        <ContactItem
+          key={contact.id}
+          contact={contact}
+          partner={partnerAccess === undefined || accesses === null ? undefined : {
+            ...partnerAccess,
+            access: accesses.find((access) => access.contactId === contact.id),
+            onChanged: () => void loadAccesses()
+          }}
+          {...props}
+        />
+      ))}
     </ul>
   )
-)
+}

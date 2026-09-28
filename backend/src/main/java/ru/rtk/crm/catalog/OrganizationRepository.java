@@ -138,7 +138,7 @@ public class OrganizationRepository {
                     ? null
                     : new VisibilityScope("team_id = :teamId", Map.of("teamId", profile.teamId()));
             case MANAGEMENT -> new VisibilityScope("1 = 1", Map.of());
-            case ADMIN -> null;
+            case ADMIN, PARTNER -> null;
         };
     }
 
