@@ -91,7 +91,8 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         Map<String, DemoBootstrapProperties.Identity> values = new HashMap<>();
         for (DemoBootstrapProperties.Identity identity : identities) {
             if (blank(identity.key()) || blank(identity.issuer()) || blank(identity.subject()) || blank(identity.displayName())
-                    || identity.role() == null || identity.role() != UserRole.ADMIN && blank(identity.teamKey())
+                    || identity.role() == null
+                    || identity.role() != UserRole.ADMIN && identity.role() != UserRole.MANAGEMENT && blank(identity.teamKey())
                     || values.put(identity.key(), identity) != null) {
                 throw new IllegalStateException("Demo bootstrap identities must be complete and unique");
             }

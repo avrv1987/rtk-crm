@@ -8,6 +8,7 @@ import './workControl.css'
 
 type KamDeskProps = AccessHandlers & {
   activeQuery: string
+  refreshKey: number
   onChanged: () => void
 }
 
@@ -29,7 +30,7 @@ const groups: { key: DeadlineGroup; title: string; href: string }[] = [
 
 const total = async (query: InteractionListParams) => (await apiClient.listInteractions({ ...query, size: 1 })).total
 
-export const KamDesk = ({ activeQuery, onChanged, onSessionExpired, onProfileUnavailable }: KamDeskProps) => {
+export const KamDesk = ({ activeQuery, refreshKey, onChanged, onSessionExpired, onProfileUnavailable }: KamDeskProps) => {
   const [state, setState] = useState<DeskState>({ kind: 'loading' })
   const [completing, setCompleting] = useState<string | null>(null)
   const [message, setMessage] = useState('')
@@ -78,7 +79,7 @@ export const KamDesk = ({ activeQuery, onChanged, onSessionExpired, onProfileUna
     return () => {
       requestVersion.current += 1
     }
-  }, [load])
+  }, [load, refreshKey])
 
   if (state.kind === 'loading') {
     return <p className="work-control__message" role="status">Собираем рабочий стол…</p>

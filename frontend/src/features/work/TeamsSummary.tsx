@@ -24,7 +24,11 @@ const SummaryRow = ({ row, name }: { row: TeamSummary; name: string }) => (
   </tr>
 )
 
-export const TeamsSummary = ({ onSessionExpired, onProfileUnavailable }: AccessHandlers) => {
+type TeamsSummaryProps = AccessHandlers & {
+  refreshKey: number
+}
+
+export const TeamsSummary = ({ refreshKey, onSessionExpired, onProfileUnavailable }: TeamsSummaryProps) => {
   const [state, setState] = useState<SummaryState>({ kind: 'loading' })
   const requestVersion = useRef(0)
 
@@ -46,7 +50,7 @@ export const TeamsSummary = ({ onSessionExpired, onProfileUnavailable }: AccessH
 
   useEffect(() => {
     void load()
-  }, [load])
+  }, [load, refreshKey])
 
   return (
     <section className="team-indicators" aria-labelledby="teams-summary-title">

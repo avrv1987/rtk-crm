@@ -145,7 +145,7 @@ class DemoBootstrapCommandTest {
 
     @Test
     void bringsAPendingProfileFromAnEarlierLoginToTheConfiguredRoleTeamAndActivityAndRepeatsWithoutChanges() {
-        DemoBootstrapProperties.Identity management = identity("management", "Руководство", UserRole.MANAGEMENT, "team-a");
+        DemoBootstrapProperties.Identity management = identity("management", "Руководство", UserRole.MANAGEMENT, null);
         new UserProfileRepository(jdbcClient).insertPendingIfAbsent(UUID.randomUUID(), ISSUER, management.subject(), "management", "management");
         List<DemoBootstrapProperties.Identity> identities = new ArrayList<>(DEMO_IDENTITIES);
         identities.add(management);
@@ -155,14 +155,14 @@ class DemoBootstrapCommandTest {
         command.run(null);
 
         assertThat(jdbcTemplate.queryForList("""
-                SELECT role, active, pending_activation FROM crm_user_profiles WHERE display_name = 'Руководство'
-                """)).extracting(row -> tuple(row.get("ROLE"), row.get("ACTIVE"), row.get("PENDING_ACTIVATION")))
-                .containsExactly(tuple("MANAGEMENT", true, false));
+                SELECT role, team_id, active, pending_activation FROM crm_user_profiles WHERE display_name = 'Руководство'
+                """)).extracting(row -> tuple(row.get("ROLE"), row.get("TEAM_ID"), row.get("ACTIVE"), row.get("PENDING_ACTIVATION")))
+                .containsExactly(tuple("MANAGEMENT", null, true, false));
     }
 
     @Test
     void bringsAnAlreadyActiveProfileWithAnotherRoleToTheConfiguredRoleTeamAndActivityAndRepeatsWithoutChanges() {
-        DemoBootstrapProperties.Identity management = identity("management", "Руководство", UserRole.MANAGEMENT, "team-a");
+        DemoBootstrapProperties.Identity management = identity("management", "Руководство", UserRole.MANAGEMENT, null);
         jdbcTemplate.update("""
                 INSERT INTO crm_user_profiles (id, issuer, subject, display_name, role, team_id, active, pending_activation)
                 VALUES (?, ?, ?, 'Руководство', 'USER', NULL, TRUE, FALSE)
@@ -176,8 +176,8 @@ class DemoBootstrapCommandTest {
 
         assertThat(jdbcTemplate.queryForList("""
                 SELECT role, active, pending_activation, team_id FROM crm_user_profiles WHERE display_name = 'Руководство'
-                """)).extracting(row -> tuple(row.get("ROLE"), row.get("ACTIVE"), row.get("PENDING_ACTIVATION")))
-                .containsExactly(tuple("MANAGEMENT", true, false));
+                """)).extracting(row -> tuple(row.get("ROLE"), row.get("ACTIVE"), row.get("PENDING_ACTIVATION"), row.get("TEAM_ID")))
+                .containsExactly(tuple("MANAGEMENT", true, false, null));
     }
 
     @Test

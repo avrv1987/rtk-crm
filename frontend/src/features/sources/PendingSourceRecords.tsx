@@ -144,7 +144,7 @@ export const PendingSourceRecords = ({ role, onSessionExpired, onProfileUnavaila
               <li key={record.id}>
                 <strong>
                   {recordTypeLabels[record.recordType] ?? record.recordType}: {record.organizationName ?? 'вуз не указан'}
-                  {record.organizationId ? '' : ' (нет в CRM)'}
+                  {record.organizationId || record.organizationName?.includes('нет в CRM') ? '' : ' (нет в CRM)'}
                 </strong>
                 <span>
                   {record.submittedAt ? `Подана ${formatDateTime(record.submittedAt)}` : 'Дата подачи не указана'}

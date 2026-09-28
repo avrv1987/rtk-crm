@@ -23,6 +23,7 @@ import './workControl.css'
 type WorkScreenProps = {
   role: Me['role']
   initialQuery: string
+  refreshSignal: number
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
@@ -211,7 +212,7 @@ const loadAllPages = async <T,>(loadPage: (page: number) => Promise<{ items: T[]
   }
 }
 
-export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnavailable }: WorkScreenProps) => {
+export const WorkScreen = ({ role, initialQuery, refreshSignal, onSessionExpired, onProfileUnavailable }: WorkScreenProps) => {
   const [filters, setFilters] = useState<WorkFilters>(() => filtersFromQuery(initialQuery))
   const [searchText, setSearchText] = useState(filters.q)
   const [listState, setListState] = useState<ListState>({ kind: 'loading' })
@@ -295,7 +296,7 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
     const query = queryFromFilters(filters)
     window.history.replaceState(null, '', query.length > 0 ? `#/work?${query}` : '#/work')
     void loadList(filters)
-  }, [filters, loadList])
+  }, [filters, loadList, refreshSignal])
 
   useEffect(() => () => {
     listRequestVersion.current += 1
@@ -371,6 +372,7 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
       {role === 'USER' && (
         <KamDesk
           activeQuery={queryFromFilters({ ...filters, page: 0 })}
+          refreshKey={refreshSignal}
           onChanged={() => void loadList(currentFilters.current)}
           onSessionExpired={onSessionExpired}
           onProfileUnavailable={onProfileUnavailable}
@@ -379,11 +381,14 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
       {role === 'LEADER' && (
         <TeamIndicators
           organizations={optionsState.kind === 'ready' ? optionsState.organizations : null}
+          refreshKey={refreshSignal}
           onSessionExpired={onSessionExpired}
           onProfileUnavailable={onProfileUnavailable}
         />
       )}
-      {role === 'MANAGEMENT' && <TeamsSummary onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />}
+      {role === 'MANAGEMENT' && (
+        <TeamsSummary refreshKey={refreshSignal} onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
+      )}
 
       <form className="work-filters" role="search" aria-label="Отбор взаимодействий" onSubmit={(event) => event.preventDefault()}>
         <label className="work-filters__search">

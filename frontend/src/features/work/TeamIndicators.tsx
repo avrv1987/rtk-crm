@@ -11,6 +11,7 @@ type IndicatorsState =
 
 type TeamIndicatorsProps = AccessHandlers & {
   organizations: Organization[] | null
+  refreshKey: number
 }
 
 const stuckDayOptions = [7, 14, 30, 60, 90]
@@ -48,7 +49,7 @@ const deputyGroups = (organizations: Organization[]) => {
   return [...groups.values()]
 }
 
-export const TeamIndicators = ({ organizations, onSessionExpired, onProfileUnavailable }: TeamIndicatorsProps) => {
+export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, onProfileUnavailable }: TeamIndicatorsProps) => {
   const [stuckDays, setStuckDays] = useState<number | undefined>(undefined)
   const [state, setState] = useState<IndicatorsState>({ kind: 'loading' })
   const requestVersion = useRef(0)
@@ -71,7 +72,7 @@ export const TeamIndicators = ({ organizations, onSessionExpired, onProfileUnava
 
   useEffect(() => {
     void load(stuckDays)
-  }, [load, stuckDays])
+  }, [load, stuckDays, refreshKey])
 
   const days = state.kind === 'ready' ? state.indicators.stuckDays : stuckDays ?? 30
   const options = stuckDayOptions.includes(days) ? stuckDayOptions : [...stuckDayOptions, days].sort((a, b) => a - b)

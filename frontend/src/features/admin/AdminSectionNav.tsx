@@ -16,12 +16,13 @@ type AdminSectionEntry = { slug: AdminSectionSlug; label: string; roles: AdminNa
 
 const adminOnly: AdminNavRole[] = ['ADMIN']
 const adminAndLeader: AdminNavRole[] = ['ADMIN', 'LEADER']
+const leaderOnly: AdminNavRole[] = ['LEADER']
 
 export const adminSections: AdminSectionEntry[] = [
   { slug: 'profiles', label: 'Профили, команды и вузы', roles: adminOnly },
   { slug: 'catalogs', label: 'Справочники', roles: adminOnly },
   { slug: 'workflow-templates', label: 'Шаблоны этапов', roles: adminAndLeader },
-  { slug: 'pending-source-records', label: 'Заявки источников', roles: adminAndLeader },
+  { slug: 'pending-source-records', label: 'Заявки источников', roles: leaderOnly },
   { slug: 'catalog-import', label: 'Импорт каталогов', roles: adminOnly },
   { slug: 'sources', label: 'Источники данных', roles: adminOnly },
   { slug: 'journal', label: 'Журнал администратора и безопасности', roles: adminOnly },

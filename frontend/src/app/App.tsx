@@ -25,6 +25,7 @@ import {
 } from '../features/interactions/drafts'
 import { UnsavedDraftNotice } from '../features/interactions/UnsavedDraftNotice'
 import { HelpScreen } from '../features/help/HelpScreen'
+import { isSameRouteClick } from './routing'
 import { LandingPage } from '../features/landing/LandingPage'
 import { OrganizationsScreen } from '../features/organizations/OrganizationsScreen'
 import { KamReviewPanel } from '../features/reports/KamReviewPanel'
@@ -82,6 +83,7 @@ export const App = () => {
   const [state, setState] = useState<SessionState>({ kind: 'loading' })
   const [hash, setHash] = useState(() => window.location.hash)
   const [sourcesRevision, setSourcesRevision] = useState(0)
+  const [routePulse, setRoutePulse] = useState(0)
   const activeProfileId = useRef<string | null>(null)
   const route = parseRoute(hash)
 
@@ -99,6 +101,17 @@ export const App = () => {
     const syncHash = () => setHash(window.location.hash)
     window.addEventListener('hashchange', syncHash)
     return () => window.removeEventListener('hashchange', syncHash)
+  }, [])
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      const anchor = event.target instanceof Element ? event.target.closest('a[href^="#"]') : null
+      if (anchor instanceof HTMLAnchorElement && isSameRouteClick(anchor.getAttribute('href'), window.location.hash)) {
+        setRoutePulse((value) => value + 1)
+      }
+    }
+    document.addEventListener('click', handleClick)
+    return () => document.removeEventListener('click', handleClick)
   }, [])
 
   const loadSession = async () => {
@@ -236,7 +249,7 @@ export const App = () => {
           {(state.profile.role === 'USER' || state.profile.role === 'LEADER') && (
             <ReminderCenter
               profileId={state.profile.id}
-              refreshKey={section}
+              refreshKey={`${section}:${routePulse}`}
               onSessionExpired={handleSessionExpired}
               onProfileUnavailable={handleProfileUnavailable}
             />
@@ -317,20 +330,30 @@ export const App = () => {
             <WorkScreen
               role={state.profile.role}
               initialQuery={route.query}
+              refreshSignal={routePulse}
               onSessionExpired={handleSessionExpired}
               onProfileUnavailable={handleProfileUnavailable}
             />
           )}
           {section === 'organizations' && (
-            <OrganizationsScreen
-              profileId={state.profile.id}
-              role={state.profile.role}
-              selectedOrganizationId={route.organizationId}
-              selectedInteractionId={route.interactionId}
-              query={route.query}
-              onSessionExpired={handleSessionExpired}
-              onProfileUnavailable={handleProfileUnavailable}
-            />
+            <>
+              <OrganizationsScreen
+                profileId={state.profile.id}
+                role={state.profile.role}
+                selectedOrganizationId={route.organizationId}
+                selectedInteractionId={route.interactionId}
+                query={route.query}
+                onSessionExpired={handleSessionExpired}
+                onProfileUnavailable={handleProfileUnavailable}
+              />
+              {state.profile.role === 'USER' && (
+                <PendingSourceRecords
+                  role={state.profile.role}
+                  onSessionExpired={handleSessionExpired}
+                  onProfileUnavailable={handleProfileUnavailable}
+                />
+              )}
+            </>
           )}
           {section === 'reports' && (
             <>
@@ -346,7 +369,7 @@ export const App = () => {
               />
             </>
           )}
-          {section === 'reports' && (
+          {section === 'reports' && state.profile.role !== 'USER' && (
             <KamReviewPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
           )}
           {section === 'enrolment' && (
