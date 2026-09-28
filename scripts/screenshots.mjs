@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  adminProfile, api, assert, call, connect, demoOrganization, demoPassword, disconnect,
+  api, assert, call, connect, demoOrganization, demoPassword, disconnect,
   failureText, listAll, openPage, originUrl, pause, session
 } from './wave4-smoke.mjs'
 
@@ -202,23 +202,12 @@ try {
   await shoot(leader, 'templates-editor', "Boolean(document.querySelector('#workflow-template-stages-title'))", '.workflow-templates form')
 
   phase = 'management'
-  const managementLogin = process.env.DEMO_MANAGEMENT_USER || 'unprofiled-2'
-  const spare = await session(managementLogin)
-  await api(spare, 'GET', '/api/me')
-  const spareBefore = await adminProfile(managementLogin)
-  const admin = await session('admin')
-  await api(admin, 'PATCH', '/api/admin/crm-profiles/' + spareBefore.id, { body: { version: spareBefore.version, role: 'MANAGEMENT', active: true } })
-  try {
-    await call('Page.navigate', { url: originUrl() + '/#/work' }, spare.sessionId)
-    await call('Page.reload', {}, spare.sessionId)
-    await spare.waitFor(() => spare.evaluate("Boolean(document.getElementById('teams-summary-title'))"), 'Page did not load: teams-summary')
-    await shoot(spare, 'teams-summary', "Boolean(document.getElementById('teams-summary-title')) && Boolean(document.querySelector('.work-control__table'))", 'section[aria-labelledby=teams-summary-title]')
-  } finally {
-    const spareAfter = await adminProfile(managementLogin)
-    await api(admin, 'PATCH', '/api/admin/crm-profiles/' + spareAfter.id, { body: { version: spareAfter.version, active: false } })
-  }
+  const management = await session(process.env.DEMO_MANAGEMENT_USER || 'management')
+  await navigate(management, '#/work', "Boolean(document.getElementById('teams-summary-title'))")
+  await shoot(management, 'teams-summary', "Boolean(document.getElementById('teams-summary-title')) && Boolean(document.querySelector('.work-control__table'))", 'section[aria-labelledby=teams-summary-title]')
 
   phase = 'admin'
+  const admin = await session('admin')
   const adminReady = "Boolean(document.querySelector('#admin-profiles-title')) && Boolean(document.querySelector('.data-sources'))"
   await navigate(admin, '#/admin', adminReady)
   await shoot(admin, 'admin', adminReady)

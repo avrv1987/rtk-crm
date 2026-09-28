@@ -142,6 +142,10 @@ public class OrganizationRepository {
         };
     }
 
+    public static String currentStatus(String organization) {
+        return OrganizationListStatus.CURRENT.condition(organization + ".status");
+    }
+
     public static String requiresAssignment(String organization) {
         return """
                 (%1$s.type <> 'OPEN_ENROLLMENT' AND (%1$s.owner_manager_id IS NULL OR NOT EXISTS (

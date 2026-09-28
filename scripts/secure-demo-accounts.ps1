@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $envFilePath = [System.IO.Path]::GetFullPath($EnvFile)
 $accountsFile = Join-Path $projectRoot '.demo-accounts.local'
-$demoAccounts = @('kam-a', 'kam-b', 'kam-c', 'kam-d', 'leader', 'leader-b', 'admin', 'enrol', 'unprofiled', 'unprofiled-2')
+$demoAccounts = @('kam-a', 'kam-b', 'kam-c', 'kam-d', 'leader', 'leader-b', 'admin', 'management', 'enrol', 'unprofiled', 'unprofiled-2')
 
 if (-not (Test-Path -LiteralPath $envFilePath)) {
     throw "$envFilePath not found"
@@ -50,7 +50,7 @@ function Invoke-Keycloak([string[]]$Arguments) {
 function Protect-File([string]$Path) {
     if ($IsWindows) {
         $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-        & icacls $Path /inheritance:r /grant:r "*${sid}:(F)" | Out-Null
+        & icacls $Path /inheritance:r /grant:r "*${sid}:(F)" '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' | Out-Null
     }
     else {
         & chmod 600 $Path
@@ -106,6 +106,7 @@ try {
         $envLines += 'DEMO_ACCOUNTS_SECURED=true'
     }
     Set-Content -LiteralPath $envFilePath -Value $envLines -Encoding utf8NoBOM
+    Protect-File $envFilePath
     $enabledText = if ($enabled) { $enabled -join ' ' } else { 'none' }
     $disabledText = if ($disabled) { $disabled -join ' ' } else { 'none' }
     Write-Output "Demo accounts secured. Enabled with individual passwords: $enabledText. Disabled: $disabledText. Passwords are in $accountsFile"

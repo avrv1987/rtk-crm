@@ -340,6 +340,25 @@ class WorkControlTest {
     }
 
     @Test
+    void archivedOrganizationsWithoutKamAreExcludedFromCountersLikeFromTheOrganizationsList() {
+        insertOrganization(UUID.randomUUID(), "Архивный вуз без КАМ", TEAM_A, null, "ARCHIVED");
+
+        WorkModels.TeamIndicators indicators = workService.teamIndicators(leaderA, null);
+        WorkModels.TeamsSummary summary = workService.teamsSummary(management, null);
+
+        assertThat(indicators.unassignedOrganizations()).isEqualTo(1);
+        assertThat(indicators.managers()).filteredOn(row -> row.managerId() == null)
+                .singleElement()
+                .satisfies(row -> assertThat(row.organizations()).isEqualTo(1));
+        assertThat(summary.teams()).filteredOn(team -> TEAM_A.equals(team.teamId()))
+                .singleElement()
+                .satisfies(team -> {
+                    assertThat(team.organizations()).isEqualTo(2);
+                    assertThat(team.unassignedOrganizations()).isEqualTo(1);
+                });
+    }
+
+    @Test
     void managementSeesReadOnlySummaryOfAllTeams() {
         OffsetDateTime now = OffsetDateTime.now();
         insertInteraction(UNIVERSITY_A, "Работа А", "Позвонить", now.minusDays(1), now.minusDays(40), "ACTIVE");
@@ -572,10 +591,14 @@ class WorkControlTest {
     }
 
     private void insertOrganization(UUID id, String name, UUID teamId, UUID ownerManagerId) {
+        insertOrganization(id, name, teamId, ownerManagerId, "ACTIVE");
+    }
+
+    private void insertOrganization(UUID id, String name, UUID teamId, UUID ownerManagerId, String status) {
         jdbcTemplate.update("""
-                INSERT INTO organizations (id, name, type, team_id, owner_manager_id, version, updated_at)
-                VALUES (?, ?, 'UNIVERSITY', ?, ?, 0, CURRENT_TIMESTAMP)
-                """, id, name, teamId, ownerManagerId);
+                INSERT INTO organizations (id, name, type, team_id, owner_manager_id, version, updated_at, status)
+                VALUES (?, ?, 'UNIVERSITY', ?, ?, 0, CURRENT_TIMESTAMP, ?)
+                """, id, name, teamId, ownerManagerId, status);
     }
 
     private UUID ownerOf(UUID organizationId) {

@@ -222,6 +222,31 @@ class OrganizationAssignmentServiceTest {
     }
 
     @Test
+    void handedBackOrganizationShowsBothChangesAndTheNoteToTheReturningManagerOnly() {
+        OrganizationAssignmentRequest handover = new OrganizationAssignmentRequest(0, USER_A_NEXT);
+        handover.setHandoverNote("Ждут проект договора до 10.10");
+        organizationAssignmentService.assign(leaderA, ORGANIZATION_A, handover, "handover", REQUEST_ID);
+        organizationAssignmentService.assign(
+                leaderA, ORGANIZATION_A, new OrganizationAssignmentRequest(1, USER_A), "hand-back", REQUEST_ID
+        );
+
+        assertThat(organizationAssignmentService.events(userA, ORGANIZATION_A)).satisfiesExactly(
+                first -> {
+                    assertThat(first.newOwnerManagerDisplayName()).isEqualTo("Борис Менеджер");
+                    assertThat(first.handoverNote()).isEqualTo("Ждут проект договора до 10.10");
+                },
+                second -> {
+                    assertThat(second.previousOwnerManagerDisplayName()).isEqualTo("Борис Менеджер");
+                    assertThat(second.newOwnerManagerDisplayName()).isEqualTo("Анна Менеджер");
+                    assertThat(second.handoverNote()).isNull();
+                }
+        );
+        CrmProfile formerOwner = new CrmProfile(USER_A_NEXT, UserRole.USER, TEAM_A, 0);
+        assertThatThrownBy(() -> organizationAssignmentService.events(formerOwner, ORGANIZATION_A))
+                .isInstanceOf(OrganizationNotFoundException.class);
+    }
+
+    @Test
     void rejectsInactiveNonUserAndCrossTeamCandidatesWithoutChangingTheOrganization() {
         assertRejectedCandidate(USER_B, "cross-team");
         assertRejectedCandidate(LEADER_B, "non-user");

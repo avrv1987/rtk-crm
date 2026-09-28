@@ -6,6 +6,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.LocalDate;
+import java.util.zip.Deflater;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.Cell;
@@ -145,6 +148,44 @@ class CatalogImportWorkbookReaderTest {
         CatalogImportInspectResponse inspected = reader.inspect(file(workbook, "catalog.xlsx"));
 
         assertThat(inspected.sheets()).singleElement().satisfies(value -> assertThat(value.name()).isEqualTo("Каталог"));
+    }
+
+    @Test
+    void rejectsArchivesWithTooManyParts() throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
+            for (int index = 0; index <= CatalogImportWorkbookReader.MAX_ZIP_ENTRIES; index++) {
+                zip.putNextEntry(new ZipEntry("part" + index));
+                zip.write(1);
+                zip.closeEntry();
+            }
+        }
+        MockMultipartFile file = new MockMultipartFile("file", "catalog.xlsx", "application/octet-stream", bytes.toByteArray());
+
+        assertThatThrownBy(() -> reader.inspect(file))
+                .isInstanceOf(InteractionValidationException.class)
+                .hasMessage("В книге больше 200 частей архива");
+    }
+
+    @Test
+    void rejectsArchivesWithTooMuchDecompressedData() throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        byte[] chunk = new byte[1024 * 1024];
+        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
+            zip.setLevel(Deflater.BEST_COMPRESSION);
+            for (int index = 0; index < 8; index++) {
+                zip.putNextEntry(new ZipEntry("part" + index));
+                for (int written = 0; written < 10; written++) {
+                    zip.write(chunk);
+                }
+                zip.closeEntry();
+            }
+        }
+        MockMultipartFile file = new MockMultipartFile("file", "catalog.xlsx", "application/octet-stream", bytes.toByteArray());
+
+        assertThatThrownBy(() -> reader.inspect(file))
+                .isInstanceOf(InteractionValidationException.class)
+                .hasMessage("Суммарный распакованный объём книги больше 64 МиБ");
     }
 
     private void assertWorkbook(Workbook workbook, String fileName) throws IOException {

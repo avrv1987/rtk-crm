@@ -21,42 +21,63 @@ const readEnv = (file) => Object.fromEntries(
     .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)])
 )
 
-if (process.argv[2] === '--self-test') {
-  const rewrite = (absoluteUrl, internalOrigin) => {
-    const target = new URL(absoluteUrl)
-    const base = new URL(internalOrigin)
-    target.protocol = base.protocol
-    target.host = base.host
-    return target.toString()
+const nfrOps = [['transition', 'переход'], ['comment', 'комментарий'], ['preview', 'предпросмотр']]
+const opFigures = (stats) => stats ? `p95 ${stats.p95} мс, max ${stats.max} мс, дольше 1 с: ${stats.over1s} из ${stats.count}` : 'нет замеров'
+
+const verdict = (result) => {
+  const problems = result.failure ? [result.failure] : [
+    !result.requests && 'нет метрик: под нагрузкой не выполнено ни одного запроса',
+    ...(result.reportBursts || []).filter((burst) => burst.error).map((burst) => `${burst.label}: ${burst.error}`)
+  ].filter(Boolean)
+  if (problems.length > 0) {
+    return { ok: false, lines: ['ошибка генератора: ' + problems.join('; ')] }
   }
+  const statuses = Object.entries(result.statuses)
+  return {
+    ok: true,
+    lines: [
+      `запросов под нагрузкой: ${result.requests}, активных сессий: ${result.activeSessionsDuringLoad}, ответов 5xx и сетевых ошибок: ${statuses.filter(([status]) => Number(status) === 0 || Number(status) >= 500).reduce((sum, [, count]) => sum + count, 0)}, утечек чужих карточек: ${result.counters.foreignLeaks}`,
+      ...nfrOps.map(([op, name]) => `NFR-01 ${name}: ${opFigures(result.api[op])}`),
+      ...result.reportBursts.map((burst) => `NFR-03 ${burst.label}: готово ${burst.succeeded} из ${burst.jobs.length}, одновременно вычислялось до ${burst.concurrency.max}, общее время пика ${burst.concurrency.peakCommonMs} мс, вычисление ${Math.min(...burst.runningMs)}–${Math.max(...burst.runningMs)} мс`),
+      ...nfrOps.map(([op, name]) => `NFR-03 ${name} во время серий: ${opFigures(result.apiDuringReports[op])}`)
+    ]
+  }
+}
+
+if (process.argv[2] === '--self-test') {
   const check = (actual, expected, message) => {
     if (actual !== expected) {
       throw new Error(`${message}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
     }
   }
-  check(
-    rewrite('https://crm.example.ru/idp/realms/rtk-crm/protocol/openid-connect/auth?x=1', 'http://web:8080'),
-    'http://web:8080/idp/realms/rtk-crm/protocol/openid-connect/auth?x=1',
-    'toInternal keeps path and query, rewrites scheme and host'
-  )
   const html = '<form id="kc-form-login" onsubmit="x" action="https://crm.example.ru/idp/realms/rtk-crm/login-actions/authenticate?session_code=a&amp;execution=b" method="post">'
   const formTag = (html.match(/<form[^>]*id="kc-form-login"[^>]*>/) || [])[0]
   check(Boolean(formTag), true, 'finds the Keycloak login form tag')
   const action = (formTag.match(/action="([^"]+)"/) || [])[1]
   check(action?.replace(/&amp;/g, '&'), 'https://crm.example.ru/idp/realms/rtk-crm/login-actions/authenticate?session_code=a&execution=b', 'extracts and unescapes the form action')
+  const failed = verdict({ failure: 'load-001: Keycloak did not return a login page (400 at x)' })
+  check(failed.ok, false, 'failure makes the verdict an error')
+  check(failed.lines[0], 'ошибка генератора: load-001: Keycloak did not return a login page (400 at x)', 'error line names the failure')
+  check(verdict({ requests: 0, reportBursts: [] }).lines[0].startsWith('ошибка генератора: нет метрик'), true, 'no samples is an error')
+  check(verdict({ requests: 5, reportBursts: [{ label: 'burst-1', error: 'boom' }] }).lines[0], 'ошибка генератора: burst-1: boom', 'failed report burst is an error')
+  const stats = { count: 20, p95: 310, max: 900, over1s: 0 }
+  const passed = verdict({
+    requests: 100, activeSessionsDuringLoad: 2, statuses: { 200: 97, 404: 1, 502: 2 }, counters: { foreignLeaks: 0 },
+    api: { transition: stats, comment: stats }, apiDuringReports: { preview: stats },
+    reportBursts: [{ label: 'burst-1', succeeded: 12, jobs: new Array(12), concurrency: { max: 10, peakCommonMs: 1500 }, runningMs: [800, 4000] }]
+  })
+  check(passed.ok, true, 'complete result is a success')
+  check(passed.lines[0], 'запросов под нагрузкой: 100, активных сессий: 2, ответов 5xx и сетевых ошибок: 2, утечек чужих карточек: 0', 'totals line')
+  check(passed.lines[1], 'NFR-01 переход: p95 310 мс, max 900 мс, дольше 1 с: 0 из 20', 'NFR-01 line')
+  check(passed.lines[3], 'NFR-01 предпросмотр: нет замеров', 'missing op is reported')
+  check(passed.lines[4], 'NFR-03 burst-1: готово 12 из 12, одновременно вычислялось до 10, общее время пика 1500 мс, вычисление 800–4000 мс', 'NFR-03 burst line')
+  check(passed.lines[7], 'NFR-03 предпросмотр во время серий: p95 310 мс, max 900 мс, дольше 1 с: 0 из 20', 'NFR-03 interactive line')
   console.log('load-test.mjs --self-test: OK')
   process.exit(0)
 }
 
 const origin = (readEnv(envFile).PUBLIC_ORIGIN || 'http://rtk.localhost:8081').replace(/\/$/, '')
 
-const toInternal = (absoluteUrl) => {
-  const target = new URL(absoluteUrl)
-  const base = new URL(origin)
-  target.protocol = base.protocol
-  target.host = base.host
-  return target.toString()
-}
 const credentials = Object.entries(readEnv(path.join(stateDir, 'users.env')))
   .sort(([a], [b]) => a.localeCompare(b))
   .slice(0, userLimit)
@@ -166,7 +187,7 @@ async function httpLogin(username, password) {
     let response = start
     let current = startUrl
     for (let hops = 0; hops < 10 && response.status >= 300 && response.status < 400; hops += 1) {
-      current = toInternal(new URL(response.headers.get('location'), current).toString())
+      current = new URL(response.headers.get('location'), current).toString()
       response = await hop(current)
     }
     return { response, current }
@@ -178,12 +199,13 @@ async function httpLogin(username, password) {
   assert(formTag, `${username}: Keycloak login form not found`)
   const action = (formTag.match(/action="([^"]+)"/) || [])[1]
   assert(action, `${username}: Keycloak login form has no action`)
-  const submitted = await hop(toInternal(action.replace(/&amp;/g, '&')), {
+  const actionUrl = new URL(action.replace(/&amp;/g, '&'), start.current).toString()
+  const submitted = await hop(actionUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ username, password, credentialId: '' }).toString()
   })
-  const landed = await followRedirects(submitted, toInternal(action))
+  const landed = await followRedirects(submitted, actionUrl)
   assert(landed.response.status === 200, `${username}: login did not return to the CRM (${landed.response.status} at ${landed.current})`)
   const client = new Client(username, [...cookies].map(([name, value]) => ({ name, value, path: '/' })))
   const me = await client.request('GET', '/api/me')
@@ -199,12 +221,15 @@ class Client {
   }
 
   async request(method, url, body) {
-    if (method !== 'GET' && !this.csrf) {
-      this.csrf = await (await this.request('GET', '/api/csrf')).json()
-    }
+    const csrf = method === 'GET' ? null : await (this.csrf ||= this.request('GET', '/api/csrf')
+      .then((response) => response.json())
+      .catch((error) => {
+        this.csrf = null
+        throw error
+      }))
     const headers = { Cookie: [...this.cookies].map(([name, value]) => `${name}=${value}`).join('; ') }
-    if (method !== 'GET') {
-      headers[this.csrf.headerName] = this.csrf.token
+    if (csrf) {
+      headers[csrf.headerName] = csrf.token
       headers['Idempotency-Key'] = randomUUID()
     }
     if (body !== undefined) {
@@ -476,7 +501,7 @@ async function reportBurst(users, label) {
   const kams = users.filter((user) => user.profile.role !== 'LEADER')
   const assigned = reportPlan.map((plan, index) => ({
     plan,
-    user: plan.role === 'LEADER' ? leaders[index % leaders.length] : kams[(index * 3) % kams.length]
+    user: plan.role === 'LEADER' && leaders.length > 0 ? leaders[index % leaders.length] : kams[(index * 3) % kams.length]
   }))
   const submittedAt = Date.now()
   const orders = await Promise.all(assigned.map(({ plan, user }) => measure(user.client, 'reportOrder', 'POST', '/api/reports', { filters: {}, columns: [], ...plan.body })))
@@ -704,3 +729,12 @@ fs.mkdirSync(stateDir, { recursive: true })
 const resultFile = path.join(stateDir, `result-${output.startedAt.replace(/[:.]/g, '-')}.json`)
 fs.writeFileSync(resultFile, JSON.stringify(output, null, 2))
 console.log(JSON.stringify({ resultFile, failure: output.failure, api: output.api, apiDuringReports: output.apiDuringReports, browser: output.browserSummary, bursts: output.reportBursts?.map(({ label, succeeded, concurrency, runningMs }) => ({ label, succeeded, concurrency, runningMs })), counters: output.counters, statuses: output.statuses, errors: output.errors?.slice(0, 10) }, null, 1))
+const outcome = verdict(output)
+if (!outcome.ok) {
+  process.exitCode = 1
+}
+const summaryText = [...outcome.lines, 'подробный результат: ' + path.relative(projectRoot, resultFile)].join('\n') + '\n'
+if (process.env.LOAD_SUMMARY_FILE) {
+  fs.writeFileSync(process.env.LOAD_SUMMARY_FILE, summaryText)
+}
+process.stdout.write(summaryText)

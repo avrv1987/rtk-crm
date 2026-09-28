@@ -168,13 +168,25 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                     .param("role", identity.role().name())
                     .param("teamId", teamId(identity, teamIds))
                     .update();
-            userProfileRepository.activatePending(
-                    identity.issuer(),
-                    identity.subject(),
-                    identity.displayName(),
-                    identity.role(),
-                    teamId(identity, teamIds)
-            );
+            jdbcClient.sql("""
+                    UPDATE crm_user_profiles
+                    SET display_name = :displayName,
+                        role = :role,
+                        team_id = :teamId,
+                        active = TRUE,
+                        pending_activation = FALSE,
+                        access_revision = access_revision + 1,
+                        version = version + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE issuer = :issuer AND subject = :subject
+                      AND (role <> :role OR team_id IS DISTINCT FROM :teamId OR NOT active)
+                    """)
+                    .param("issuer", identity.issuer())
+                    .param("subject", identity.subject())
+                    .param("displayName", identity.displayName())
+                    .param("role", identity.role().name())
+                    .param("teamId", teamId(identity, teamIds))
+                    .update();
             UUID profileId = jdbcClient.sql("""
                     SELECT id FROM crm_user_profiles
                     WHERE issuer = :issuer AND subject = :subject

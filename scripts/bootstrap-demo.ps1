@@ -13,6 +13,14 @@ function New-Secret {
     return [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
 }
 
+function Protect-SecretFile([string]$Path) {
+    $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    & icacls $Path /inheritance:r /grant:r "*${sid}:(F)" '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot restrict access to $Path"
+    }
+}
+
 function Read-EnvironmentFile([string]$Path) {
     $values = [ordered]@{}
     if (Test-Path -LiteralPath $Path) {
@@ -135,6 +143,7 @@ function Invoke-MoodleDemo {
         }
     }
     Write-EnvironmentFile $moodleEnvFile $moodleValues
+    Protect-SecretFile $moodleEnvFile
     $moodleCompose = @('compose', '-p', 'rtk-crm-moodle', '--env-file', $moodleEnvFile, '-f', (Join-Path $projectRoot 'infra/moodle/compose.yaml'))
     & docker @moodleCompose up -d --wait --wait-timeout 1200
     if ($LASTEXITCODE -ne 0) {
@@ -260,6 +269,7 @@ elseif ($values['MOODLE_BASE_URL'] -eq $moodleDemoUrl) {
     }
 }
 Write-EnvironmentFile $envFilePath $values
+Protect-SecretFile $envFilePath
 foreach ($key in $values.Keys) {
     Set-Item -Path "Env:$key" -Value $values[$key]
 }
@@ -372,6 +382,7 @@ try {
             @('leader', 'Руководитель', 'LEADER', 'team-a'),
             @('leader-b', 'Руководитель Б', 'LEADER', 'team-b'),
             @('admin', 'Администратор', 'ADMIN', 'team-a'),
+            @('management', 'Руководство', 'MANAGEMENT', 'team-a'),
             @('enrol', 'Оператор зачисления', 'USER', 'open-enrolment', $true)
         )
         $spareAccounts = @(
@@ -445,6 +456,7 @@ try {
         ) + (ConvertTo-IdentityYaml $values['CRM_ADMIN_USERNAME'] $values['CRM_ADMIN_DISPLAY_NAME'] 'ADMIN' '')
     }
     Set-Content -LiteralPath $identityFile -Value $identityYaml -Encoding utf8NoBOM
+    Protect-SecretFile $identityFile
     if ($values['SITE_BASE_URL'] -eq $siteFixtureUrl) {
         & docker compose --env-file $envFilePath --profile demo-sources up -d --wait site-fixture
         if ($LASTEXITCODE -ne 0) {

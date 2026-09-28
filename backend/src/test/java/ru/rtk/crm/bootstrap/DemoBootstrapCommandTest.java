@@ -144,6 +144,43 @@ class DemoBootstrapCommandTest {
     }
 
     @Test
+    void bringsAPendingProfileFromAnEarlierLoginToTheConfiguredRoleTeamAndActivityAndRepeatsWithoutChanges() {
+        DemoBootstrapProperties.Identity management = identity("management", "Руководство", UserRole.MANAGEMENT, "team-a");
+        new UserProfileRepository(jdbcClient).insertPendingIfAbsent(UUID.randomUUID(), ISSUER, management.subject(), "management", "management");
+        List<DemoBootstrapProperties.Identity> identities = new ArrayList<>(DEMO_IDENTITIES);
+        identities.add(management);
+        DemoBootstrapCommand command = command(new DemoBootstrapProperties(true, false, TEAMS, identities, DEMO_ORGANIZATIONS, null));
+
+        command.run(null);
+        command.run(null);
+
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT role, active, pending_activation FROM crm_user_profiles WHERE display_name = 'Руководство'
+                """)).extracting(row -> tuple(row.get("ROLE"), row.get("ACTIVE"), row.get("PENDING_ACTIVATION")))
+                .containsExactly(tuple("MANAGEMENT", true, false));
+    }
+
+    @Test
+    void bringsAnAlreadyActiveProfileWithAnotherRoleToTheConfiguredRoleTeamAndActivityAndRepeatsWithoutChanges() {
+        DemoBootstrapProperties.Identity management = identity("management", "Руководство", UserRole.MANAGEMENT, "team-a");
+        jdbcTemplate.update("""
+                INSERT INTO crm_user_profiles (id, issuer, subject, display_name, role, team_id, active, pending_activation)
+                VALUES (?, ?, ?, 'Руководство', 'USER', NULL, TRUE, FALSE)
+                """, UUID.randomUUID(), ISSUER, management.subject());
+        List<DemoBootstrapProperties.Identity> identities = new ArrayList<>(DEMO_IDENTITIES);
+        identities.add(management);
+        DemoBootstrapCommand command = command(new DemoBootstrapProperties(true, false, TEAMS, identities, DEMO_ORGANIZATIONS, null));
+
+        command.run(null);
+        command.run(null);
+
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT role, active, pending_activation, team_id FROM crm_user_profiles WHERE display_name = 'Руководство'
+                """)).extracting(row -> tuple(row.get("ROLE"), row.get("ACTIVE"), row.get("PENDING_ACTIVATION")))
+                .containsExactly(tuple("MANAGEMENT", true, false));
+    }
+
+    @Test
     void renamesOnlyTeamsStillNamedByTheirKeyAndKeepsAdministratorChanges() {
         insertTeam("team-a", "team-a");
         insertTeam("team-b", "Продажи Сибирь");

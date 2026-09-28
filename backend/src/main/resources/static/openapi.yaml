@@ -1148,11 +1148,11 @@ paths:
       operationId: refreshInteractionLearningSnapshots
       x-implementation-stage: 4
       description: >
-        USER or LEADER of the interaction scope. Reads from Moodle only the allowed courses that an administrator already
-        mapped to the organization and program of the interaction and applies only the courses and groups mapped to that
-        pair, in the request thread and under the same one-active-run rule as the administrator sync. The Moodle token
-        stays on the server. A changed snapshot adds a «Данные LMS» event authored by the caller; unchanged counts only
-        get a new observation time. A Moodle error keeps the last full publication and returns 502 LMS_SYNC_FAILED.
+        USER или LEADER области взаимодействия. Читает из Moodle только курсы, уже разрешённые администратором для
+        организации и программы взаимодействия, и применяет только курсы и группы, сопоставленные этой паре, в потоке
+        запроса и по тому же правилу «один активный запуск», что и синхронизация администратора. Токен Moodle остаётся
+        на сервере. Изменившийся снимок добавляет событие «Данные LMS» от имени вызвавшего; неизменившиеся получают
+        только новое время наблюдения. Ошибка Moodle сохраняет последнюю полную публикацию и возвращает 502 LMS_SYNC_FAILED.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -1274,10 +1274,10 @@ paths:
       operationId: createTeacherTraining
       x-implementation-stage: 4
       description: >
-        USER or LEADER of the interaction scope. Writes a COMMENTED history event on stageId with the course, date,
-        enrolled and completed counts, binds the clean unbound attachment (the document on professional development)
-        uploaded to the same stage, and with remind=true sets the next step of the card to the next cycle date, so
-        the reminder appears in «Моя работа». Uses the interaction version (409 VERSION_CONFLICT) and Idempotency-Key.
+        USER или LEADER области взаимодействия. Пишет событие истории COMMENTED на stageId с курсом, датой, числом
+        зачисленных и завершивших, привязывает чистое непривязанное вложение (документ о повышении квалификации),
+        загруженное на этот же этап, и при remind=true выставляет следующий шаг карточки на дату следующего цикла,
+        чтобы напоминание появилось в «Моя работа». Использует версию взаимодействия (409 VERSION_CONFLICT) и Idempotency-Key.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -1435,10 +1435,10 @@ paths:
       operationId: createOrganizationFromSourceRecord
       x-implementation-stage: 4
       description: >
-        LEADER (organization of the own team) or ADMIN (teamId required). Creates the organization named as in the
-        request or in the record, without a responsible KAM («Требует назначения»), maps the site university to it and
-        applies the record and the other waiting records of that university. A taken name is 400 on name, a record that
-        already has an organization is 409 CONFLICT.
+        LEADER (организация своей команды) или ADMIN (teamId обязателен). Создаёт организацию с именем из запроса или
+        из записи, без ответственного КАМ («Требует назначения»), сопоставляет вуз сайта с ней и применяет запись и
+        другие ожидающие записи этого вуза. Занятое имя — 400 по полю name, запись, у которой уже есть организация, —
+        409 CONFLICT.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -1579,9 +1579,9 @@ paths:
       operationId: changeInteractionStatus
       x-implementation-stage: 4
       description: >-
-        Pauses, completes or resumes the work. PAUSED requires a reason, COMPLETED requires an outcome, ACTIVE accepts
-        an optional comment. Paused and completed work leaves the default list of «Моя работа» but keeps its history,
-        stays in the organization card and in reports. Writes one STATUS_CHANGED history event.
+        Приостанавливает, завершает или возобновляет работу. PAUSED требует причину, COMPLETED требует итог, ACTIVE
+        принимает необязательный комментарий. Приостановленная и завершённая работа уходит из списка «Моя работа» по
+        умолчанию, но сохраняет историю, остаётся в карточке организации и в отчётах. Пишет одно событие истории STATUS_CHANGED.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -1863,12 +1863,12 @@ paths:
       operationId: updateProductAgreement
       x-implementation-stage: 7
       description: >
-        contract, when present, replaces contract number, license signing, license expiry year and scan (null clears a
-        value). transfers, when present, replaces all transfer marks of the product (an absent kind means not specified)
-        and recalculates transferStatus: all three transferred — «Передано», some — «Передано частично», none —
-        «Не передано», no marks — null. The scan and confirmation files must be CLEAN documents of this interaction.
-        A change writes one AGREEMENT_UPDATED history event with previous and new values; a request without effective
-        changes returns the card unchanged.
+        contract, если передан, заменяет номер договора, факт подписания лицензии, год истечения лицензии и скан (null
+        очищает значение). transfers, если передан, заменяет все отметки передачи продукта (отсутствующий kind означает
+        «не указано») и пересчитывает transferStatus: все три переданы — «Передано», часть — «Передано частично», ни
+        одной — «Не передано», нет отметок — null. Скан и файлы подтверждения должны быть чистыми (CLEAN) документами
+        этого взаимодействия. Изменение пишет одно событие истории AGREEMENT_UPDATED с прежними и новыми значениями;
+        запрос без фактических изменений возвращает карточку без изменений.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - name: agreementId
@@ -2411,10 +2411,10 @@ paths:
       operationId: downloadAgreementConfirmations
       x-implementation-stage: 7
       description: >
-        ZIP of the same selection: CLEAN files grouped by activity kind and university with the inventory опись.csv
-        (university, agreement, kind, activity, dates, work, file, upload time); files that are not CLEAN are listed in
-        the inventory but not included. The archive is streamed without a request time limit; when the CLEAN files of the
-        selection exceed app.agreements.archive-max-size (1 GB by default) the answer is 422 CONFIRMATION_LIMIT.
+        ZIP той же выборки: чистые (CLEAN) файлы, сгруппированные по виду мероприятия и вузу, с описью опись.csv
+        (вуз, договор, вид, мероприятие, даты, работа, файл, время загрузки); файлы не в статусе CLEAN перечислены в
+        описи, но не включены. Архив передаётся потоком без ограничения времени запроса; когда чистые файлы выборки
+        превышают app.agreements.archive-max-size (по умолчанию 1 ГБ), ответ — 422 CONFIRMATION_LIMIT.
       parameters:
         - $ref: '#/components/parameters/AgreementConfirmationOrganization'
         - $ref: '#/components/parameters/AgreementConfirmationAgreement'
@@ -2546,12 +2546,12 @@ paths:
       operationId: reportStatistics
       x-implementation-stage: 5
       description: >
-        Counts over exactly the same row set as the report with the same filters, aggregated by the database; rows are
-        not loaded into the API process and app.reports.max-rows does not apply. unknownCount holds rows without a
-        value for the grouping; groups present in items with count 0 are real zeros (MONTH is zero-filled over the period).
-        MONTH with kind PORTFOLIO and periodBasis ACTIVITY or ACTIVE is rejected with 400 VALIDATION_ERROR (field groupBy).
-        seriesBy (only with MONTH) adds series, the monthly counts split by that grouping; rows without a value form the
-        «Не указано» series. DURATION is not grouped here and returns 400 VALIDATION_ERROR.
+        Считает по тому же набору строк, что и отчёт с теми же фильтрами, агрегируя в базе данных; строки не
+        загружаются в процесс API, и app.reports.max-rows не применяется. unknownCount хранит строки без значения
+        для группировки; группы, присутствующие в items со count 0, — настоящие нули (MONTH заполняется нулями на
+        весь период). MONTH с kind PORTFOLIO и periodBasis ACTIVITY или ACTIVE отклоняется с 400 VALIDATION_ERROR
+        (поле groupBy). seriesBy (только с MONTH) добавляет серии — помесячные значения, разбитые по этой группировке;
+        строки без значения образуют серию «Не указано». DURATION здесь не группируется и возвращает 400 VALIDATION_ERROR.
       parameters:
         - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
@@ -4491,11 +4491,11 @@ paths:
       operationId: updateSourceMapping
       x-implementation-stage: 4
       description: >
-        ADMIN only, with version (409 VERSION_CONFLICT with currentVersion). A Moodle run needs organizationId,
-        programId, runStartsOn and runEndsOn not overlapping other runs of the same course or group; its snapshot moves
-        with the run when the latest observation is still inside it (the new organization gets a «Данные LMS» event),
-        otherwise it is recalculated from the latest observation. A site mapping changes the organization or program,
-        and the records resolved through it are applied again.
+        Только ADMIN, с version (409 VERSION_CONFLICT с currentVersion). Запуску Moodle нужны organizationId,
+        programId, runStartsOn и runEndsOn, не пересекающиеся с другими запусками того же курса или группы; его снимок
+        переносится вместе с запуском, если последнее наблюдение всё ещё попадает в него (новая организация получает
+        событие «Данные LMS»), иначе пересчитывается по последнему наблюдению. Сопоставление сайта меняет организацию
+        или программу, и записи, разрешаемые через него, применяются заново.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -4574,7 +4574,7 @@ paths:
               $ref: '#/components/schemas/SourceMappingUpdate'
       responses:
         '201':
-          description: The new run
+          description: Новый запуск
           content:
             application/json:
               schema:
@@ -8004,7 +8004,7 @@ components:
         activationRequestedAt:
           type: [string, 'null']
           format: date-time
-          description: When the employee pressed «Сообщить администратору» on the waiting screen
+          description: Когда сотрудник нажал «Сообщить администратору» на экране ожидания
         accountSyncRequired:
           type: boolean
           description: Учётная запись Keycloak всё ещё включена для заблокированного профиля либо отключена для активного
@@ -8692,24 +8692,24 @@ components:
     ReportKind:
       type: string
       description: >
-        DEMAND ranks programs by separate sortable measures: applications from the site (learning_application records
-        applied from the proposed contract, withdrawn ones excluded), participants from the latest Moodle snapshots of
-        student training runs (courses and groups mapped with run dates) that overlap the period by at least one day,
-        the last observation of an open run or the last one before the end of a closed run; teacher training runs are
-        excluded; completed participants are summed over runs with completion tracking; and parallel runs,
-        the number of those training runs whose [runStartsOn, runEndsOn) contains the last day of the period, or the
-        report date when the period has no end; a measure without source data is null («нет данных»), not 0; no combined index
-        is computed. EVENTS also lists assignment, reassignment and removal of the organization KAM as rows without an
-        interaction to LEADER only, like the assignment history of the organization card; USER gets interaction events
-        only. SNAPSHOT shows interactions created before the end of asOf with the stage of the last transition and
-        the organization KAM restored from assignment history at that date; from and to are rejected. DURATION groups by
-        team, program and stage the average and maximum days of stage stays and of the whole cycle (creation until the
-        first entry into the last stage of the route) completed in the period, plus stays still open at the period end. AGREEMENTS has one row per activity of an agreement plan (an agreement without activities gives one
-        row): the period selects activities whose actual dates, otherwise planned dates, otherwise the agreement term
-        intersect it; MANAGER is the activity responsible, PARTICIPANTS sums Moodle participations of the programs of
-        linked works, counting only training runs whose [runStartsOn, runEndsOn) overlaps both the activity dates and
-        the report period; only organizationIds, organizationType, managerIds and includeNoManager filters apply and no
-        chart is built
+        DEMAND ранжирует программы по отдельным сортируемым показателям: заявки с сайта (записи learning_application,
+        применённые из предложенного договора, отозванные исключены), участники — по последним снимкам Moodle запусков
+        обучения студентов (курсы и группы, сопоставленные с датами запуска), пересекающимся с периодом хотя бы на один
+        день, последнее наблюдение открытого запуска или последнее до конца закрытого; запуски обучения преподавателей
+        исключены; завершившие суммируются по запускам с отслеживанием завершения; и параллельные запуски — число тех
+        запусков обучения, чей интервал [runStartsOn, runEndsOn) содержит последний день периода, либо дату отчёта, если
+        у периода нет конца; показатель без исходных данных — null («нет данных»), а не 0; сводный индекс не считается.
+        EVENTS также перечисляет назначение, переназначение и снятие КАМ организации как строки без взаимодействия
+        только для LEADER; USER получает только события взаимодействий. SNAPSHOT показывает взаимодействия, созданные
+        до конца asOf, с этапом последнего перехода и КАМ организации, восстановленным из истории назначений на эту
+        дату; from и to отклоняются. DURATION группирует по команде, программе и этапу среднее и максимальное число
+        дней пребывания на этапе и всего цикла (от создания до первого входа на последний этап маршрута), завершённых
+        в периоде, плюс пребывания, всё ещё открытые на конец периода. AGREEMENTS выдаёт одну строку на каждое
+        мероприятие плана по договору (договор без мероприятий даёт одну строку): период отбирает мероприятия, чьи
+        фактические даты, иначе плановые даты, иначе срок договора пересекаются с ним; MANAGER — ответственный за
+        мероприятие, PARTICIPANTS суммирует участия в Moodle по программам связанных работ, считая только запуски
+        обучения, чей интервал [runStartsOn, runEndsOn) пересекается и с датами мероприятия, и с периодом отчёта;
+        применяются только фильтры organizationIds, organizationType, managerIds и includeNoManager, диаграмма не строится
       enum: [PORTFOLIO, EVENTS, DEMAND, SNAPSHOT, DURATION, AGREEMENTS]
     ReportFormat:
       type: string
@@ -8737,22 +8737,23 @@ components:
     ReportColumn:
       type: string
       description: >
-        PORTFOLIO allows ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING,
-        PROBLEM, RISK, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, VENDORS, CONTRACT_NUMBER,
-        LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON; DAYS_ON_STAGE is the number of whole
-        days from the last entry into the current stage (creation when the card never entered it by a transition) until the
-        report is generated; agreement columns show the value itself for one product and «product: value» pairs for several
-        products. EVENTS allows EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE,
-        FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND allows DIRECTION, PROGRAM,
-        APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, PARALLEL_RUNS; DEMAND column titles carry
-        the application period, the latest Moodle observation and the parallel-runs date. PAID_ORDERS counts distinct paid
-        order numbers and PAID_STREAMS distinct course and stream pairs of applied paid_order records of the service
-        organization «Открытый набор (физлица)», visible to every USER and LEADER; the report period does not apply to them
-        because the site does not send a payment date. SNAPSHOT allows ORGANIZATION, INTERACTION, DIRECTION, PROGRAM,
-        PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT. DURATION allows TEAM, PROGRAM, STAGE, COMPLETED, AVG_DAYS,
-        MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; days are decimal numbers with one fractional digit. AGREEMENTS allows ORGANIZATION,
-        AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT,
-        PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS, PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS.
+        PORTFOLIO допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS,
+        WAITING, PROBLEM, RISK, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, VENDORS, CONTRACT_NUMBER,
+        LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON; DAYS_ON_STAGE — число полных
+        дней от последнего входа на текущий этап (от создания, если карточка ни разу не входила на него через переход)
+        до момента формирования отчёта; колонки по договору показывают само значение для одного продукта и пары
+        «продукт: значение» для нескольких. EVENTS допускает EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE,
+        FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND допускает DIRECTION, PROGRAM,
+        APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, PARALLEL_RUNS; заголовки колонок
+        DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков. PAID_ORDERS считает
+        различные номера оплаченных заказов, а PAID_STREAMS — различные пары «курс и поток» применённых записей
+        paid_order сервисной организации «Открытый набор (физлица)», видимой каждому USER и LEADER; период отчёта к
+        ним не применяется, поскольку сайт не передаёт дату оплаты. SNAPSHOT допускает ORGANIZATION, INTERACTION,
+        DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT. DURATION допускает TEAM, PROGRAM,
+        STAGE, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; дни — десятичные числа с одним знаком после
+        запятой. AGREEMENTS допускает ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND,
+        ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS,
+        PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS.
       enum: [ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK,
              MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, EVENT_AT, EVENT_TYPE, FROM_STAGE, COMMENT, AUTHOR,
              APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, PARALLEL_RUNS, VENDORS, CONTRACT_NUMBER,
@@ -8841,10 +8842,11 @@ components:
     ReportAgreementFilters:
       type: object
       description: >
-        Conditions on one and the same product agreement of the interaction (restricted to productIds when they are
-        given): vendor, license signed (false means not signed or not specified), license expiry year not later than
-        licenseExpiresBy, and no TRANSFERRED mark for each notTransferred kind; an agreement without any marks whose
-        stored transferStatus is «Передано» counts as fully transferred. DEMAND rejects any of them with 400.
+        Условия на один и тот же договор по продукту взаимодействия (ограничивается productIds, если они переданы):
+        vendor, факт подписания лицензии (false означает не подписано или не указано), год истечения лицензии не позже
+        licenseExpiresBy и отсутствие отметки TRANSFERRED для каждого kind из notTransferred; договор без каких-либо
+        отметок, у которого сохранённый transferStatus — «Передано», считается полностью переданным. DEMAND отклоняет
+        любое из них с 400.
       properties:
         vendorIds:
           type: array
@@ -8893,9 +8895,9 @@ components:
             $ref: '#/components/schemas/ReportColumn'
         sortBy:
           description: >
-            DEMAND only, APPLICATIONS (default), PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED or PARALLEL_RUNS;
-            rows are sorted by that measure
-            descending with «нет данных» last, then by program name. Other kinds reject it with 400 VALIDATION_ERROR.
+            Только для DEMAND: APPLICATIONS (по умолчанию), PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED
+            или PARALLEL_RUNS; строки сортируются по этому показателю по убыванию, «нет данных» — в конце, затем по
+            названию программы. Остальные виды отклоняют его с 400 VALIDATION_ERROR.
           oneOf:
             - $ref: '#/components/schemas/ReportColumn'
             - type: 'null'
@@ -8998,8 +9000,8 @@ components:
         emptyText:
           type: string
           description: >
-            Text shown for null values, «Не указано» for direction, program, products and manager, «нет данных» for
-            APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS and PARALLEL_RUNS
+            Текст для пустых значений: «Не указано» для направления, программы, продуктов и менеджера, «нет данных»
+            для APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS и PARALLEL_RUNS
     ReportPreview:
       type: object
       required: [kind, generatedAt, notes, columns, items, page, size, total]
@@ -9078,7 +9080,7 @@ components:
           type: string
         unspecified:
           type: boolean
-          description: Rows without a value of seriesBy («Не указано»), always the last series
+          description: Строки без значения seriesBy («Не указано»), всегда последняя серия
         counts:
           type: array
           description: По одному счётчику на элемент результата, в том же порядке
@@ -9144,9 +9146,9 @@ components:
           type: integer
           minimum: 1
           description: >
-            Largest number of bars a PNG/PDF chart file can hold, counting the «Не указано» bar of DIRECTION, PROGRAM,
-            PRODUCT and MANAGER (and STAGE for EVENTS, where KAM assignments have no stage); a larger chart job fails with
-            REPORT_CHART_LIMIT. For a line chart it limits the number of months
+            Наибольшее число столбцов, которое вмещает файл диаграммы PNG/PDF, считая столбец «Не указано» для
+            DIRECTION, PROGRAM, PRODUCT и MANAGER (и STAGE для EVENTS, где у назначений КАМ нет этапа); при превышении
+            задание на диаграмму завершается с REPORT_CHART_LIMIT. Для линейной диаграммы ограничивает число месяцев
         asOf:
           type: [string, 'null']
           format: date
@@ -9156,7 +9158,7 @@ components:
             - type: 'null'
         series:
           type: array
-          description: Empty without seriesBy; ordered by total descending with «Не указано» last
+          description: Пусто без seriesBy; упорядочено по убыванию суммы, «Не указано» — последней
           items:
             $ref: '#/components/schemas/StatisticsSeries'
         maxChartSeries:
@@ -9622,7 +9624,7 @@ components:
         completedCount:
           type: [integer, 'null']
           minimum: 0
-          description: Not more than enrolledCount; null means «нет данных»
+          description: Не больше enrolledCount; null означает «нет данных»
         attachmentId:
           type: [string, 'null']
           format: uuid
@@ -10242,8 +10244,8 @@ components:
         learnerProfilesTerm:
           type: string
           description: >-
-            Learner profile retention after the end of the learner's last stream, for display, for example «3 г.»;
-            configured by APP_RETENTION_LEARNER_PROFILES as an ISO-8601 period
+            Срок хранения анкеты слушателя после окончания последнего потока, для отображения, например «3 г.»;
+            настраивается APP_RETENTION_LEARNER_PROFILES как период ISO-8601
         schedule:
           type: string
           description: Spring cron-выражение, московское время
@@ -10267,7 +10269,7 @@ components:
         profilesLimit:
           type: integer
           minimum: 0
-          description: 100 000 subjects, the condition of the fourth protection level (УЗ-4)
+          description: 100 000 субъектов — условие четвёртого уровня защищённости (УЗ-4)
         nearLimit:
           type: boolean
           description: True, начиная с 80 000 профилей

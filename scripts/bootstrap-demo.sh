@@ -258,6 +258,7 @@ demo_identities=(
     'leader|Руководитель|LEADER|team-a'
     'leader-b|Руководитель Б|LEADER|team-b'
     'admin|Администратор|ADMIN|team-a'
+    'management|Руководство|MANAGEMENT|team-a'
     'enrol|Оператор зачисления|USER|open-enrolment|operator'
 )
 spare_accounts=(

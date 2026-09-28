@@ -91,10 +91,14 @@ public class WorkRepository {
                 FROM (
                     SELECT CASE WHEN %s THEN NULL ELSE organizations.owner_manager_id END AS group_id
                     FROM organizations
-                    WHERE %s
+                    WHERE %s AND %s
                 ) owned
                 GROUP BY owned.group_id
-                """.formatted(OrganizationRepository.requiresAssignment("organizations"), scope.condition()))
+                """.formatted(
+                        OrganizationRepository.requiresAssignment("organizations"),
+                        scope.condition(),
+                        OrganizationRepository.currentStatus("organizations")
+                ))
                 .params(scope.parameters())
                 .query((resultSet, rowNumber) -> counts.put(
                         resultSet.getObject("group_id", UUID.class),
@@ -107,9 +111,9 @@ public class WorkRepository {
     public List<TeamOrganizations> countOrganizationsByTeam(VisibilityScope scope) {
         return jdbcClient.sql("""
                 SELECT team.id, team.name,
-                       (SELECT COUNT(*) FROM organizations WHERE organizations.team_id = team.id AND %1$s
+                       (SELECT COUNT(*) FROM organizations WHERE organizations.team_id = team.id AND %1$s AND %4$s
                             AND organizations.type <> 'OPEN_ENROLLMENT') AS organizations,
-                       (SELECT COUNT(*) FROM organizations WHERE organizations.team_id = team.id AND %1$s AND %2$s)
+                       (SELECT COUNT(*) FROM organizations WHERE organizations.team_id = team.id AND %1$s AND %4$s AND %2$s)
                            AS unassigned_organizations,
                        (SELECT COUNT(DISTINCT snapshot.organization_id) %3$s AND snapshot.participants_count > 0)
                            AS organizations_with_learning,
@@ -117,12 +121,13 @@ public class WorkRepository {
                        (SELECT COALESCE(SUM(snapshot.teachers_count), 0) %3$s) AS teachers
                 FROM teams team
                 WHERE team.archived = FALSE
-                   OR EXISTS (SELECT 1 FROM organizations WHERE organizations.team_id = team.id AND %1$s)
+                   OR EXISTS (SELECT 1 FROM organizations WHERE organizations.team_id = team.id AND %1$s AND %4$s)
                 ORDER BY team.name, team.id
                 """.formatted(
                         scope.condition(),
                         OrganizationRepository.requiresAssignment("organizations"),
-                        COUNTED_LEARNING.formatted(scope.condition())
+                        COUNTED_LEARNING.formatted(scope.condition()),
+                        OrganizationRepository.currentStatus("organizations")
                 ))
                 .params(scope.parameters())
                 .query((resultSet, rowNumber) -> new TeamOrganizations(

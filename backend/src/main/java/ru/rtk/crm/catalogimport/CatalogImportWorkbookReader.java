@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.zip.ZipInputStream;
 
 import org.apache.poi.EncryptedDocumentException;
 import org.apache.poi.openxml4j.util.ZipSecureFile;
@@ -30,6 +31,8 @@ public class CatalogImportWorkbookReader {
     static final int MAX_ROWS = 5_000;
     static final int MAX_COLUMNS = 50;
     static final int MAX_CELL_LENGTH = 4_000;
+    static final int MAX_ZIP_ENTRIES = 200;
+    static final long MAX_TOTAL_INFLATED_BYTES = 64L * 1024L * 1024L;
     private static final long MAX_DECOMPRESSED_BYTES = 12L * 1024L * 1024L;
 
     public CatalogImportWorkbookReader() {
@@ -39,6 +42,11 @@ public class CatalogImportWorkbookReader {
     }
 
     public CatalogImportInspectResponse inspect(MultipartFile file) {
+        try {
+            checkAggregateZipSize(file);
+        } catch (IOException exception) {
+            throw new InteractionValidationException("file", "Файл не читается как книга XLS или XLSX");
+        }
         try (InputStream input = file.getInputStream(); Workbook workbook = WorkbookFactory.create(input)) {
             DataFormatter formatter = new DataFormatter(Locale.ROOT);
             List<CatalogImportSheet> sheets = new ArrayList<>();
@@ -71,6 +79,11 @@ public class CatalogImportWorkbookReader {
     }
 
     public CatalogImportWorkbookSheet read(MultipartFile file, String sheetName) {
+        try {
+            checkAggregateZipSize(file);
+        } catch (IOException exception) {
+            throw new InteractionValidationException("file", "Файл не читается как книга XLS или XLSX");
+        }
         try (InputStream input = file.getInputStream(); Workbook workbook = WorkbookFactory.create(input)) {
             Sheet sheet = workbook.getSheet(sheetName);
             if (sheet == null) {
@@ -122,6 +135,35 @@ public class CatalogImportWorkbookReader {
             throw new InteractionValidationException("file", "Книга защищена паролем; сохраните её без пароля");
         } catch (IOException | RuntimeException exception) {
             throw new InteractionValidationException("file", "Файл не читается как книга XLS или XLSX");
+        }
+    }
+
+    private void checkAggregateZipSize(MultipartFile file) throws IOException {
+        byte[] signature = new byte[4];
+        try (InputStream input = file.getInputStream()) {
+            if (input.readNBytes(signature, 0, 4) < 4 || signature[0] != 0x50 || signature[1] != 0x4B) {
+                return;
+            }
+        }
+        long total = 0;
+        int parts = 0;
+        byte[] buffer = new byte[8192];
+        try (InputStream input = file.getInputStream(); ZipInputStream zip = new ZipInputStream(input)) {
+            while (zip.getNextEntry() != null) {
+                if (++parts > MAX_ZIP_ENTRIES) {
+                    throw new InteractionValidationException("file", "В книге больше " + MAX_ZIP_ENTRIES + " частей архива");
+                }
+                int read;
+                while ((read = zip.read(buffer)) >= 0) {
+                    total += read;
+                    if (total > MAX_TOTAL_INFLATED_BYTES) {
+                        throw new InteractionValidationException(
+                                "file", "Суммарный распакованный объём книги больше "
+                                        + MAX_TOTAL_INFLATED_BYTES / (1024 * 1024) + " МиБ"
+                        );
+                    }
+                }
+            }
         }
     }
 

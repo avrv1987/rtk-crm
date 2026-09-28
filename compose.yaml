@@ -19,6 +19,11 @@ services:
       - ./infra/web/default.conf:/etc/nginx/templates/default.conf.template:ro
       - ./infra/web/crm-site.conf:/etc/nginx/crm-site.conf:ro
       - ./infra/web/security-headers.conf:/etc/nginx/security-headers.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks:
       - rtk-crm
 
@@ -38,6 +43,7 @@ services:
       APP_OIDC_CLIENT_SECRET: ${CRM_OIDC_CLIENT_SECRET:?CRM_OIDC_CLIENT_SECRET is required}
       APP_KEYCLOAK_ACCOUNT_SYNC_CLIENT_SECRET: ${CRM_ACCOUNT_SYNC_CLIENT_SECRET:-}
       APP_ATTACHMENTS_STORAGE_ROOT: /var/lib/rtk-crm/files
+      APP_REPORTS_STORAGE_ROOT: /var/lib/rtk-crm/reports
       APP_ATTACHMENTS_SCANNER_HOST: clamav
       APP_ATTACHMENTS_SCANNER_PORT: "3310"
       APP_SOURCES_WEBSITE_BASE_URL: ${SITE_BASE_URL:-}
@@ -73,6 +79,7 @@ services:
       retries: 30
     volumes:
       - attachments-data:/var/lib/rtk-crm/files
+      - reports-data:/var/lib/rtk-crm/reports
     networks:
       - rtk-crm
 
@@ -168,16 +175,19 @@ services:
   clamav:
     restart: unless-stopped
     image: clamav/clamav:1.4.6-debian13-slim
+    init: true
+    entrypoint: ["sh", "/usr/local/sbin/rtk-clamav-supervise.sh"]
     healthcheck:
-      test: ["CMD-SHELL", "clamdscan --ping 1"]
+      test: ["CMD", "clamdcheck.sh"]
       interval: 30s
       timeout: 10s
-      retries: 20
+      retries: 3
       start_period: 15m
     mem_limit: 2g
     pids_limit: 256
     volumes:
       - ./infra/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+      - ./infra/clamav/supervise.sh:/usr/local/sbin/rtk-clamav-supervise.sh:ro
       - clamav-data:/var/lib/clamav
     networks:
       - rtk-crm
@@ -186,6 +196,7 @@ volumes:
   postgres-data:
   clamav-data:
   attachments-data:
+  reports-data:
 
 networks:
   rtk-crm:

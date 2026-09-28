@@ -9,7 +9,7 @@ FROM build AS test
 RUN --mount=type=cache,target=/root/.m2 mvn -B test
 
 FROM eclipse-temurin:21.0.8_9-jre
-RUN useradd --system --create-home crm && mkdir --parents /var/lib/rtk-crm/files && chown --recursive crm:crm /var/lib/rtk-crm
+RUN useradd --system --create-home crm && mkdir --parents /var/lib/rtk-crm/files /var/lib/rtk-crm/reports && chown --recursive crm:crm /var/lib/rtk-crm
 WORKDIR /app
 COPY --from=build /workspace/target/rtk-crm-backend-0.1.0-SNAPSHOT.jar app.jar
 USER crm

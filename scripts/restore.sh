@@ -16,6 +16,14 @@ env_file=${2:-$project_root/.env.local}
 env_file=$(cd "$(dirname "$env_file")" && pwd)/$(basename "$env_file")
 
 (cd "$backup_dir" && sha256sum --check --quiet SHA256SUMS) || fail "checksum mismatch in $backup_dir"
+reports_archive=$backup_dir/reports.tar
+reports_mode=restore
+if ! grep -Eq '^[0-9a-f]{64} [ *]reports\.tar$' "$backup_dir/SHA256SUMS"; then
+    [[ ! -e $reports_archive ]] || fail "reports.tar in $backup_dir is not covered by SHA256SUMS"
+    printf 'restore: %s has no reports.tar (made before report files were backed up): report files are not restored, finished reports answer 410 REPORT_RESULT_UNAVAILABLE and have to be ordered again\n' "$backup_dir" >&2
+    reports_archive=/dev/null
+    reports_mode=clear
+fi
 
 cd "$project_root"
 
@@ -42,5 +50,10 @@ compose run --rm --no-deps -T --entrypoint sh backend -c '
     find "$APP_ATTACHMENTS_STORAGE_ROOT" -mindepth 1 -delete &&
     tar -C "$APP_ATTACHMENTS_STORAGE_ROOT" -xf -
 ' < "$backup_dir/attachments.tar"
+compose run --rm --no-deps -T --user root --entrypoint sh backend -c '
+    find "$APP_REPORTS_STORAGE_ROOT" -mindepth 1 -delete &&
+    if [ "$1" = restore ]; then tar -C "$APP_REPORTS_STORAGE_ROOT" --no-same-owner -xf -; fi &&
+    chown -R crm:crm "$APP_REPORTS_STORAGE_ROOT"
+' sh "$reports_mode" < "$reports_archive"
 compose up -d --wait --build keycloak clamav backend web
 printf 'Restore completed from %s\n' "$backup_dir"

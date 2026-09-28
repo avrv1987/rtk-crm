@@ -25,8 +25,9 @@ compose() {
     docker compose --env-file "$env_file" "$@"
 }
 
+compose run --rm --no-deps -T --entrypoint sh backend -c 'tar -C "$APP_REPORTS_STORAGE_ROOT" -cf - .' > "$backup_dir/reports.tar"
 compose exec -T postgres sh -c 'pg_dump --username="$POSTGRES_USER" --format=custom "$CRM_DB_NAME"' > "$backup_dir/crm.dump"
 compose exec -T postgres sh -c 'pg_dump --username="$POSTGRES_USER" --format=custom "$KEYCLOAK_DB_NAME"' > "$backup_dir/keycloak.dump"
 compose run --rm --no-deps -T --entrypoint sh backend -c 'tar -C "$APP_ATTACHMENTS_STORAGE_ROOT" -cf - .' > "$backup_dir/attachments.tar"
-(cd "$backup_dir" && sha256sum crm.dump keycloak.dump attachments.tar > SHA256SUMS)
+(cd "$backup_dir" && sha256sum crm.dump keycloak.dump attachments.tar reports.tar > SHA256SUMS)
 printf 'Backup completed: %s\n' "$backup_dir"

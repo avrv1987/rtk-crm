@@ -42,6 +42,7 @@ backup_dir="$project_root/.backups/night-$run_stamp"
 summary_file="$state_dir/night-summary-$run_stamp.txt"
 log_file="$state_dir/night-log-$run_stamp.txt"
 load_container="rtk-crm-load-night-$run_stamp"
+generator_summary=".load-test/night-generator-$run_stamp.txt"
 
 seeded=false
 started=false
@@ -55,10 +56,6 @@ run() {
     else
         "$@"
     fi
-}
-
-compose() {
-    docker compose --env-file "$env_file" "$@"
 }
 
 free_mb() {
@@ -114,7 +111,7 @@ write_summary() {
             printf 'остановлено досрочно: %s\n' "$abort_reason"
         fi
         if [[ -n $run_result ]]; then
-            printf 'результат генератора: %s\n' "$run_result"
+            printf 'итог генератора:\n%s\n' "$run_result"
         fi
         printf 'журнал контейнера: %s\n' "$log_file"
         printf 'причина завершения: %s\n' "$exit_reason"
@@ -150,40 +147,44 @@ run bash "$project_root/scripts/load/seed-load-data.sh" "$env_file"
 $dry_run || seeded=true
 
 if $dry_run; then
-    printf '[dry-run] would resolve the rtk-crm project network from the backend container\n'
-    printf '[dry-run] would write %s/night.env with PUBLIC_ORIGIN=http://web:8080\n' "$state_dir"
-    printf '[dry-run] would run: docker run -d --name %s --network <rtk-crm> -v %s:/opt/rtk-crm -w /opt/rtk-crm -e LOAD_HTTP_LOGIN=1 -e LOAD_USERS=%s -e LOAD_DURATION_S=%s -e LOAD_REPORT_BURSTS=%s %s node scripts/load/load-test.mjs .load-test/night.env\n' \
-        "$load_container" "$project_root" "$load_users" "$load_duration_s" "$load_report_bursts" "$node_image"
+    printf '[dry-run] would write %s/night.env with PUBLIC_ORIGIN=%s\n' "$state_dir" "$public_origin"
+    printf '[dry-run] would run: docker run -d --name %s --network host -v %s:/opt/rtk-crm -w /opt/rtk-crm -e LOAD_HTTP_LOGIN=1 -e LOAD_USERS=%s -e LOAD_DURATION_S=%s -e LOAD_REPORT_BURSTS=%s -e LOAD_SUMMARY_FILE=%s %s node scripts/load/load-test.mjs .load-test/night.env\n' \
+        "$load_container" "$project_root" "$load_users" "$load_duration_s" "$load_report_bursts" "$generator_summary" "$node_image"
     printf '[dry-run] would monitor atlas (%s, max %ss) and host free memory (min %sMB) every %ss, stop the container early on breach\n' \
         "$atlas_url" "$atlas_max_s" "$min_free_mb" "$check_interval_s"
+    printf '[dry-run] would read %s and exit with code 1 when it is missing or starts with "ошибка генератора:"\n' "$generator_summary"
     exit 0
 fi
 
-backend_id=$(compose ps -q backend)
-[[ -n $backend_id ]] || fail 'backend container is not running (docker compose ps -q backend is empty)'
-network=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$backend_id" | awk '{print $1}')
-[[ -n $network ]] || fail 'could not determine the rtk-crm project network from the backend container'
-
 mkdir -p "$state_dir"
-printf 'PUBLIC_ORIGIN=http://web:8080\n' > "$state_dir/night.env"
+printf 'PUBLIC_ORIGIN=%s\n' "$public_origin" > "$state_dir/night.env"
 
-printf 'run-server-night: starting load generator (%s users, %ss, network %s)\n' "$load_users" "$load_duration_s" "$network"
-docker run -d --name "$load_container" --network "$network" \
+printf 'run-server-night: starting load generator (%s users, %ss, %s via edge)\n' "$load_users" "$load_duration_s" "$public_origin"
+docker run -d --name "$load_container" --network host \
     -v "$project_root:/opt/rtk-crm" -w /opt/rtk-crm \
     -e LOAD_HTTP_LOGIN=1 \
     -e LOAD_USERS="$load_users" \
     -e LOAD_DURATION_S="$load_duration_s" \
     -e LOAD_REPORT_BURSTS="$load_report_bursts" \
+    -e LOAD_SUMMARY_FILE="$generator_summary" \
     "$node_image" \
     node scripts/load/load-test.mjs .load-test/night.env >/dev/null
 started=true
 
 monitor
-docker wait "$load_container" >/dev/null 2>&1 || true
+generator_exit=$(docker wait "$load_container" 2>/dev/null) || generator_exit=unknown
 docker logs "$load_container" > "$log_file" 2>&1 || true
-run_result=$(tail -n 1 "$log_file" 2>/dev/null || true)
-if [[ -n $abort_reason ]]; then
-    exit_reason="stopped early: $abort_reason"
-fi
+printf 'run-server-night: load generator finished with code %s, log at %s\n' "$generator_exit" "$log_file"
 
-printf 'run-server-night: load generator finished, log at %s\n' "$log_file"
+if [[ -s $project_root/$generator_summary ]]; then
+    run_result=$(cat "$project_root/$generator_summary")
+fi
+if [[ -n $abort_reason ]]; then
+    exit_reason="ошибка генератора: остановлен досрочно, $abort_reason"
+    exit 1
+fi
+if [[ $generator_exit != 0 || -z $run_result || $run_result == "ошибка генератора:"* ]]; then
+    exit_reason=${run_result%%$'\n'*}
+    [[ $exit_reason == "ошибка генератора:"* ]] || exit_reason="ошибка генератора: код $generator_exit, итога нет, см. $log_file"
+    exit 1
+fi

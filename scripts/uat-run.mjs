@@ -581,6 +581,7 @@ scenario('UAT-КАМ-30', 'Принять вуз от коллеги и поня
   const university = await leaderView(demo.universityA)
   const kamCId = await profileIdOf('kam-c')
   const kamAId = await profileIdOf('kam-a')
+  let commented = false
   try {
     await step('1–3', 'Передача КАМ В с комментарием', async () => {
       const result = await assign(leader, university.id, kamCId, 'Вуз на этапе подписания; Александра Демонстрационная — ЛПР, звонить до 12:00')
@@ -596,8 +597,9 @@ scenario('UAT-КАМ-30', 'Принять вуз от коллеги и поня
     })
     await step(6, 'Записка и история назначений видны КАМ', async () => {
       const events = requireStatus(await api(kamC, 'GET', '/api/organizations/' + university.id + '/assignment-events'), 200, 'История назначений')
-      assert(events.at(-1).handoverNote?.includes('ЛПР') && events.length >= 2, 'Нет записки или истории')
-      await screenTexts(kamC, '/#/organizations/' + university.id, ['История назначений', 'ЛПР'], 'Карточка вуза у КАМ В')
+      const handover = events.at(-1)
+      assert(handover?.previousOwnerManagerDisplayName === 'КАМ А' && handover.newOwnerManagerDisplayName === 'КАМ В' && handover.occurredAt && handover.handoverNote?.includes('ЛПР'), 'Нет записки или истории')
+      await screenTexts(kamC, '/#/organizations/' + university.id, ['История назначений', 'Ответственный изменён: КАМ А → КАМ В', 'ЛПР'], 'Карточка вуза у КАМ В')
       return 'записей ' + events.length
     })
     await step(7, 'Контакт подтверждён с датой и автором', async () => {
@@ -610,6 +612,7 @@ scenario('UAT-КАМ-30', 'Принять вуз от коллеги и поня
       const card = await interactionOf(kamC, work.id)
       const result = requireStatus(await api(kamC, 'POST', '/api/interactions/' + work.id + '/comments', { body: { version: card.version, stageId: card.currentStageId, text: 'Принял вуз, созвонился с Александрой Демонстрационной ' + nonce } }), 200, 'Комментарий')
       assert(result.event.actorDisplayName === 'КАМ В', 'Автор ' + result.event.actorDisplayName)
+      commented = true
       return 'автор КАМ В'
     })
     await step(9, 'У КАМ А вуза нет', async () => {
@@ -622,9 +625,12 @@ scenario('UAT-КАМ-30', 'Принять вуз от коллеги и поня
       await assign(leader, university.id, kamAId, null)
       const work = await demoWorkOf(kamA, university.id)
       const history = await eventsOf(kamA, work.id)
+      const [handover, handback] = requireStatus(await api(kamA, 'GET', '/api/organizations/' + university.id + '/assignment-events'), 200, 'История назначений').slice(-2)
       const kamCView = await api(kamC, 'GET', '/api/organizations/' + university.id)
-      assert(history.some((event) => event.actorDisplayName === 'КАМ В' && event.comment?.includes(nonce)) && kamCView.status === 404, 'Возврат неполный')
-      return 'КАМ А видит комментарий, КАМ В — 404'
+      assert(handover?.newOwnerManagerDisplayName === 'КАМ В' && handover.handoverNote?.includes('ЛПР') && handback?.previousOwnerManagerDisplayName === 'КАМ В' && handback.newOwnerManagerDisplayName === 'КАМ А', 'В истории назначений нет обеих смен')
+      assert(!commented || history.some((event) => event.actorDisplayName === 'КАМ В' && event.comment?.includes(nonce)), 'КАМ А не видит комментарий КАМ В')
+      assert(kamCView.status === 404, 'КАМ В после возврата: ' + kamCView.status)
+      return (commented ? 'КАМ А видит комментарий и обе смены' : 'КАМ А видит обе смены') + ', КАМ В — 404'
     })
   }
 })
