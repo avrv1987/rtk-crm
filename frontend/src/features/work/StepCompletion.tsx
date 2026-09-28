@@ -1,13 +1,15 @@
 import { type FormEvent, useRef, useState } from 'react'
 import { ApiError, apiClient, createIdempotencyKey, type Interaction } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
-import { type AccessHandlers, commandErrorText, formatDateTime, handledAccessError } from './workShared'
+import { type AccessHandlers, commandErrorText, formatDateTime, handledAccessError, isoFromInput } from './workShared'
 import './workControl.css'
 
 type StepCompletionProps = AccessHandlers & {
-  interaction: Interaction
+  interaction: Pick<Interaction, 'id' | 'version' | 'nextAction' | 'nextActionAt'>
   onCompleted: (interaction: Interaction) => void
   onReload: () => void
+  startOpen?: boolean
+  onCancel?: () => void
 }
 
 type CommandState =
@@ -17,22 +19,16 @@ type CommandState =
   | { kind: 'failed'; error: unknown }
   | { kind: 'done' }
 
-const isoOf = (value: string) => {
-  if (value.length === 0) {
-    return null
-  }
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? null : date.toISOString()
-}
-
 export const StepCompletion = ({
   interaction,
   onCompleted,
   onReload,
+  startOpen = false,
+  onCancel,
   onSessionExpired,
   onProfileUnavailable
 }: StepCompletionProps) => {
-  const [state, setState] = useState<CommandState>({ kind: 'closed' })
+  const [state, setState] = useState<CommandState>({ kind: startOpen ? 'open' : 'closed' })
   const [result, setResult] = useState('')
   const [nextAction, setNextAction] = useState('')
   const [nextActionAt, setNextActionAt] = useState('')
@@ -57,7 +53,7 @@ export const StepCompletion = ({
       return
     }
     const action = nextAction.trim()
-    const dueAt = isoOf(nextActionAt)
+    const dueAt = isoFromInput(nextActionAt)
     setState({ kind: 'saving' })
     try {
       const updated = await apiClient.completeInteractionStep(
@@ -112,7 +108,7 @@ export const StepCompletion = ({
             <textarea value={nextAction} maxLength={500} onChange={(event) => edit(() => setNextAction(event.target.value))} />
           </label>
           <label>
-            Срок нового шага
+            Срок нового шага (МСК)
             <input type="datetime-local" value={nextActionAt} onChange={(event) => edit(() => setNextActionAt(event.target.value))} />
           </label>
           {nextAction.trim().length === 0 && nextActionAt.length === 0 && (
@@ -131,7 +127,7 @@ export const StepCompletion = ({
             <button type="submit" disabled={state.kind === 'saving'}>
               {state.kind === 'saving' ? 'Сохраняем…' : 'Отметить выполненным'}
             </button>
-            <button type="button" className="button--secondary" disabled={state.kind === 'saving'} onClick={() => setState({ kind: 'closed' })}>
+            <button type="button" className="button--secondary" disabled={state.kind === 'saving'} onClick={() => onCancel === undefined ? setState({ kind: 'closed' }) : onCancel()}>
               Отмена
             </button>
           </div>

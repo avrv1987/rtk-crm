@@ -785,7 +785,12 @@ try {
   )
   const uiTarget = uiInteraction.allowedTransitions.find((option) => !option.commentRequired)
   assert(uiTarget, 'UI interaction has no transition without a comment')
-  const formByTitle = (titleText) => `[...document.querySelectorAll('form')].find((form) => form.querySelector('h6')?.textContent?.trim() === ${JSON.stringify(titleText)})`
+  const dialogForms = { 'Переход этапа': 'interaction-transition-form', 'Комментарий': 'interaction-comment-form' }
+  const formByTitle = (titleText) => `document.querySelector('dialog[open] form.${dialogForms[titleText]}')`
+  const openCardDialog = async (buttonText, titleText) => {
+    await kamA.evaluate(`[...document.querySelectorAll('.work-card__actions button')].find((button) => button.textContent.trim() === ${JSON.stringify(buttonText)}).click()`)
+    await kamA.waitFor(() => kamA.evaluate(`Boolean(${formByTitle(titleText)})`), 'UI dialog did not open: ' + titleText)
+  }
   const uiState = () => kamA.evaluate(`({
     marker: window.__releaseSmokeMarker === ${JSON.stringify(nonce)},
     navigations: performance.getEntriesByType('navigation').length,
@@ -802,14 +807,17 @@ try {
     'UI interaction did not load'
   )
   await kamA.evaluate(`[...document.querySelectorAll('.interaction-list-item')].find((item) => item.querySelector('.interaction-list-item__title')?.textContent === ${JSON.stringify(uiTitle)}).click()`)
-  await kamA.waitFor(() => kamA.evaluate(`Boolean(${formByTitle('Переход этапа')})`), 'UI transition form did not load')
+  await kamA.waitFor(
+    () => kamA.evaluate("Boolean([...document.querySelectorAll('.work-card__actions button')].find((button) => button.textContent.trim() === 'Перейти к следующему этапу'))"),
+    'UI work card did not load'
+  )
   await kamA.evaluate(`(() => {
     window.__releaseSmokeMarker = ${JSON.stringify(nonce)}
-    const form = ${formByTitle('Переход этапа')}
-    form.scrollIntoView({ block: 'center' })
+    window.scrollTo(0, 200)
   })()`)
   await pause(300)
   const uiScrollBefore = (await uiState()).scroll
+  await openCardDialog('Перейти к следующему этапу', 'Переход этапа')
   await kamA.evaluate(`(() => {
     const form = ${formByTitle('Переход этапа')}
     const select = form.querySelector('select')
@@ -824,6 +832,7 @@ try {
   )
   const uiAfterTransition = await uiState()
   const uiComment = 'Release smoke UI comment ' + nonce
+  await openCardDialog('Комментарий', 'Комментарий')
   await kamA.evaluate(`(() => {
     const form = ${formByTitle('Комментарий')}
     const select = form.querySelector('select')
@@ -836,7 +845,7 @@ try {
   await kamA.waitFor(() => kamA.evaluate(`!${formByTitle('Комментарий')}.querySelector('button[type=submit]').disabled`), 'UI comment is not ready')
   await kamA.evaluate(`${formByTitle('Комментарий')}.querySelector('button[type=submit]').click()`)
   await kamA.waitFor(
-    () => kamA.evaluate(`${formByTitle('Комментарий')}.querySelector('textarea').value === ''`),
+    () => kamA.evaluate(`!${formByTitle('Комментарий')} && Boolean(document.querySelector('.card-notice')?.textContent.includes('Комментарий добавлен'))`),
     'UI comment was not accepted'
   )
   const uiEvents = requireStatus(await api(kamA, 'GET', '/api/interactions/' + uiInteraction.id + '/events'), 200, 'UI history is unavailable')

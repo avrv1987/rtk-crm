@@ -219,7 +219,7 @@ export const OrganizationAssignmentPanel = ({
         ) : (
           <form className="organization-assignment__form" onSubmit={handleAssignmentSubmit}>
             <label>
-              Новый ответственный
+              <span>Новый ответственный<span className="required-mark" aria-hidden="true"> *</span></span>
               <select
                 value={selectedOwnerManagerId}
                 required

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, apiClient, type Me } from '../shared/api/client'
 import { AdminCatalogsPanel } from '../features/admin/AdminCatalogsPanel'
-import { AdminSectionNav } from '../features/admin/AdminSectionNav'
+import { AdminSectionNav, resolveAdminSection } from '../features/admin/AdminSectionNav'
 import { ActivityKindsPanel } from '../features/agreements/ActivityKindsPanel'
 import { AgreementConfirmationsPanel } from '../features/agreements/AgreementConfirmationsPanel'
 import { CatalogImportPanel } from '../features/admin/CatalogImportPanel'
@@ -53,14 +53,23 @@ const sectionTitles: Record<Section, string> = {
   help: 'Справка'
 }
 
+const sectionTitle = (section: Section, profile: Me): string => (
+  section === 'work' && profile.role === 'MANAGEMENT' ? 'Сводка по всем командам' : sectionTitles[section]
+)
+
 const sectionsFor = (profile: Me): Section[] => {
   if (profile.role === 'ADMIN') {
     return ['admin', 'help']
   }
+  const sections: Section[] = ['work', 'organizations', 'reports']
   if (profile.enrolmentOperator) {
-    return ['work', 'organizations', 'reports', 'enrolment', 'help']
+    sections.push('enrolment')
   }
-  return ['work', 'organizations', 'reports', 'help']
+  if (profile.role === 'LEADER') {
+    sections.push('admin')
+  }
+  sections.push('help')
+  return sections
 }
 
 const parseRoute = (hash: string) => {
@@ -163,7 +172,7 @@ export const App = () => {
         <main className="app-main">
           <h1>Справка</h1>
           <div className="app-content">
-            <HelpScreen />
+            <HelpScreen initialQuery={route.query} />
           </div>
         </main>
       </div>
@@ -207,6 +216,8 @@ export const App = () => {
   }
   const sections = sectionsFor(state.profile)
   const section = sections.find((item) => item === route.section) ?? sections[0]
+  const adminNavRole = state.profile.role === 'LEADER' ? 'LEADER' : 'ADMIN'
+  const adminSection = resolveAdminSection(route.organizationId, adminNavRole)
 
   return (
     <div className="app-shell">
@@ -216,7 +227,7 @@ export const App = () => {
           <ul>
             {sections.map((item) => (
               <li key={item}>
-                <a href={`#/${item}`} aria-current={item === section ? 'page' : undefined}>{sectionTitles[item]}</a>
+                <a href={`#/${item}`} aria-current={item === section ? 'page' : undefined}>{sectionTitle(item, state.profile)}</a>
               </li>
             ))}
           </ul>
@@ -236,43 +247,70 @@ export const App = () => {
         </div>
       </header>
       <main className="app-main">
-        <h1>{sectionTitles[section]}</h1>
+        <h1>{sectionTitle(section, state.profile)}</h1>
         <div className="app-content">
           {section === 'admin' && (
             <>
-              <AdminSectionNav />
-              <SourceAlerts
-                onSessionExpired={handleSessionExpired}
-                onProfileUnavailable={handleProfileUnavailable}
-                refreshSignal={sourcesRevision}
-              />
-              <AdminProfilesScreen
-                currentProfile={state.profile}
-                onSessionExpired={handleSessionExpired}
-                onProfileUnavailable={handleProfileUnavailable}
-              />
-              <AdminCatalogsPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
-              <WorkflowTemplatesPanel
-                role={state.profile.role}
-                onSessionExpired={handleSessionExpired}
-                onProfileUnavailable={handleProfileUnavailable}
-              />
-              <CatalogImportPanel
-                onSessionExpired={handleSessionExpired}
-                onProfileUnavailable={handleProfileUnavailable}
-              />
-              <SourcesPanel
-                onSessionExpired={handleSessionExpired}
-                onProfileUnavailable={handleProfileUnavailable}
-                onSynced={() => setSourcesRevision((value) => value + 1)}
-              />
-              <AuditJournalPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
-              <PersonalDataPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
-              <RetentionPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
-              <ActivityKindsPanel
-                onSessionExpired={handleSessionExpired}
-                onProfileUnavailable={handleProfileUnavailable}
-              />
+              <AdminSectionNav active={adminSection} role={adminNavRole} />
+              {state.profile.role === 'ADMIN' && (
+                <SourceAlerts
+                  onSessionExpired={handleSessionExpired}
+                  onProfileUnavailable={handleProfileUnavailable}
+                  refreshSignal={sourcesRevision}
+                />
+              )}
+              {adminSection === 'pending-source-records' && (
+                <PendingSourceRecords
+                  role={state.profile.role}
+                  onSessionExpired={handleSessionExpired}
+                  onProfileUnavailable={handleProfileUnavailable}
+                />
+              )}
+              {adminSection === 'profiles' && (
+                <AdminProfilesScreen
+                  currentProfile={state.profile}
+                  onSessionExpired={handleSessionExpired}
+                  onProfileUnavailable={handleProfileUnavailable}
+                />
+              )}
+              {adminSection === 'catalogs' && (
+                <AdminCatalogsPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
+              )}
+              {adminSection === 'workflow-templates' && (
+                <WorkflowTemplatesPanel
+                  role={state.profile.role}
+                  onSessionExpired={handleSessionExpired}
+                  onProfileUnavailable={handleProfileUnavailable}
+                />
+              )}
+              {adminSection === 'catalog-import' && (
+                <CatalogImportPanel
+                  onSessionExpired={handleSessionExpired}
+                  onProfileUnavailable={handleProfileUnavailable}
+                />
+              )}
+              {adminSection === 'sources' && (
+                <SourcesPanel
+                  onSessionExpired={handleSessionExpired}
+                  onProfileUnavailable={handleProfileUnavailable}
+                  onSynced={() => setSourcesRevision((value) => value + 1)}
+                />
+              )}
+              {adminSection === 'journal' && (
+                <AuditJournalPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
+              )}
+              {adminSection === 'personal-data' && (
+                <PersonalDataPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
+              )}
+              {adminSection === 'retention' && (
+                <RetentionPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
+              )}
+              {adminSection === 'activity-kinds' && (
+                <ActivityKindsPanel
+                  onSessionExpired={handleSessionExpired}
+                  onProfileUnavailable={handleProfileUnavailable}
+                />
+              )}
             </>
           )}
           {section === 'work' && (
@@ -284,29 +322,15 @@ export const App = () => {
             />
           )}
           {section === 'organizations' && (
-            <>
-              <OrganizationsScreen
-                profileId={state.profile.id}
-                role={state.profile.role}
-                selectedOrganizationId={route.organizationId}
-                selectedInteractionId={route.interactionId}
-                query={route.query}
-                onSessionExpired={handleSessionExpired}
-                onProfileUnavailable={handleProfileUnavailable}
-              />
-              <PendingSourceRecords
-                role={state.profile.role}
-                onSessionExpired={handleSessionExpired}
-                onProfileUnavailable={handleProfileUnavailable}
-              />
-              {state.profile.role === 'LEADER' && (
-                <WorkflowTemplatesPanel
-                  role={state.profile.role}
-                  onSessionExpired={handleSessionExpired}
-                  onProfileUnavailable={handleProfileUnavailable}
-                />
-              )}
-            </>
+            <OrganizationsScreen
+              profileId={state.profile.id}
+              role={state.profile.role}
+              selectedOrganizationId={route.organizationId}
+              selectedInteractionId={route.interactionId}
+              query={route.query}
+              onSessionExpired={handleSessionExpired}
+              onProfileUnavailable={handleProfileUnavailable}
+            />
           )}
           {section === 'reports' && (
             <>
@@ -328,7 +352,7 @@ export const App = () => {
           {section === 'enrolment' && (
             <EnrolmentScreen onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
           )}
-          {section === 'help' && <HelpScreen />}
+          {section === 'help' && <HelpScreen initialQuery={route.query} />}
         </div>
         <UnsavedDraftNotice />
       </main>

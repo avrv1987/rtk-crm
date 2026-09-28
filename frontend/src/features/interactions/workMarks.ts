@@ -1,4 +1,5 @@
 import { ApiError, type ContactRole, type InteractionMarks } from '../../shared/api/client'
+import { formatMoscowDateTime } from './moscowTime'
 
 export type WorkStatus = InteractionMarks['status']
 export type WaitingOn = NonNullable<InteractionMarks['waitingOn']>
@@ -90,9 +91,5 @@ export const handledAccessError = (
   return false
 }
 
-const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Moscow' })
 
-export const formatDateTime = (value: string) => {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date)
-}
+export const formatDateTime = formatMoscowDateTime

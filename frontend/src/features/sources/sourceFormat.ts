@@ -1,30 +1,17 @@
 import { ApiError } from '../../shared/api/client'
+import { formatCalendarDate, formatMoscowDateTime, shiftCalendarDate, todayInMoscow } from '../../shared/format/datetime'
 
-const dateTime = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Moscow' })
-const date = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeZone: 'UTC' })
-
-export const formatDateTime = (value: string | null | undefined) => {
-  if (value === null || value === undefined) {
-    return 'нет'
-  }
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? value : dateTime.format(parsed)
-}
-
-export const formatDate = (value: string | null | undefined) => (
-  value === null || value === undefined ? 'нет' : date.format(new Date(`${value}T00:00:00Z`))
+export const formatDateTime = (value: string | null | undefined) => (
+  value === null || value === undefined ? 'нет' : formatMoscowDateTime(value)
 )
 
-export const shiftDate = (value: string, days: number) => {
-  const shifted = new Date(`${value}T00:00:00Z`)
-  shifted.setUTCDate(shifted.getUTCDate() + days)
-  return shifted.toISOString().slice(0, 10)
-}
+export const formatDate = (value: string | null | undefined) => (
+  value === null || value === undefined ? 'нет' : formatCalendarDate(value)
+)
 
-export const todayIso = () => {
-  const now = new Date()
-  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())).toISOString().slice(0, 10)
-}
+export const shiftDate = shiftCalendarDate
+
+export const todayIso = todayInMoscow
 
 export const runPeriod = (startsOn: string | null | undefined, endsOn: string | null | undefined) => (
   !startsOn || !endsOn ? 'даты не подтверждены администратором' : `с ${formatDate(startsOn)} по ${formatDate(shiftDate(endsOn, -1))}`

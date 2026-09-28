@@ -534,6 +534,9 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
       <a className="catalog-import__template" href="/catalog-import-template.xlsx" download>
         Скачать шаблон файла (10 полей ТЗ, 3 примера)
       </a>
+      <p className="catalog-import__hint">
+        ФИО менеджера в примерах шаблона вымышленное — замените его на реального КАМ своей команды, иначе строка не сопоставится.
+      </p>
       <a className="catalog-import__template" href="/vendor-contacts-template.xlsx" download>
         Скачать шаблон «Вендоры, продукты и контакты» (формат файла организатора, вымышленные контакты)
       </a>
@@ -673,9 +676,12 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
             </button>
           </div>
           {job !== null && (
-            <p className="catalog-import__job" role="status">
-              {jobActionLabel(job.action)}: {job.status === 'SUCCEEDED' ? 'завершено' : 'не выполнено'}; Job {job.id}{job.result ? `; ${job.result}` : ''}.
-            </p>
+            <>
+              <p className="catalog-import__job" role="status">
+                {jobActionLabel(job.action)}: {job.status === 'SUCCEEDED' ? 'завершено' : 'не выполнено'}{job.result ? `; ${job.result}` : ''}.
+              </p>
+              <p className="request-id">Идентификатор задания для поддержки: {job.id}</p>
+            </>
           )}
           {targetsDirty && (
             <div className="catalog-import__hint" role="status">

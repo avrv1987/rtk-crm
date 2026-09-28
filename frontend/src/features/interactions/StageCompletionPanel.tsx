@@ -8,6 +8,7 @@ import {
   type InteractionStage
 } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { todayInMoscow } from '../../shared/format/datetime'
 
 type StageCompletionPanelProps = {
   interaction: Interaction
@@ -27,7 +28,7 @@ type PendingCommand = {
   key: string
 }
 
-const moscowToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date())
+const moscowToday = todayInMoscow
 
 export const formatCompletionDate = (value: string) => value.split('-').reverse().join('.')
 
@@ -178,7 +179,7 @@ export const StageCompletionPanel = ({
       )}
       <form className="stage-completion__form" onSubmit={(event) => void submit(event)}>
         <label>
-          Этап
+          <span>Этап<span className="required-mark" aria-hidden="true"> *</span></span>
           <select
             value={stageId}
             required
@@ -201,7 +202,7 @@ export const StageCompletionPanel = ({
           </select>
         </label>
         <label>
-          Дата выполнения
+          <span>Дата выполнения<span className="required-mark" aria-hidden="true"> *</span></span>
           <input
             type="date"
             value={completedOn}

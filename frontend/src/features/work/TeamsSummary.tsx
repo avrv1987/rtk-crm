@@ -52,6 +52,7 @@ export const TeamsSummary = ({ onSessionExpired, onProfileUnavailable }: AccessH
     <section className="team-indicators" aria-labelledby="teams-summary-title">
       <div className="team-indicators__header">
         <h2 id="teams-summary-title">Сводка по всем командам</h2>
+        <span className="desk-badge">Только просмотр</span>
       </div>
       {state.kind === 'loading' && <p className="work-control__message" role="status">Собираем сводку по командам…</p>}
       {state.kind === 'failed' && (
@@ -63,6 +64,25 @@ export const TeamsSummary = ({ onSessionExpired, onProfileUnavailable }: AccessH
       )}
       {state.kind === 'ready' && (
         <>
+          <ul className="desk-tiles" aria-label="Итоги по всем командам">
+            {[
+              { label: 'Вузов и школ', value: state.summary.total.organizations },
+              { label: 'Вузов без КАМ', value: state.summary.total.unassignedOrganizations, tone: 'danger' },
+              { label: 'Незавершённых работ', value: state.summary.total.interactions },
+              { label: 'Просрочено', value: state.summary.total.overdue, tone: 'danger' },
+              { label: 'Без шага или срока', value: state.summary.total.withoutNextStep, tone: 'warning' },
+              { label: 'Вузов, где идёт обучение', value: state.summary.total.organizationsWithLearning },
+              { label: 'Обучающихся', value: state.summary.total.participants },
+              { label: 'Преподавателей', value: state.summary.total.teachers }
+            ].map((tile) => (
+              <li key={tile.label}>
+                <span className={`desk-tile${tile.tone !== undefined && tile.value > 0 ? ` desk-tile--${tile.tone}` : ''}`}>
+                  <span className="desk-tile__value">{tile.value.toLocaleString('ru-RU')}</span>
+                  <span className="desk-tile__label">{tile.label}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
           <p className="work-control__caption" id="teams-summary-caption">Вузы и школы всех команд, незавершённые работы и обучение по последним данным Moodle. Режим только для чтения.</p>
           <div className="work-control__scroll">
             <table className="work-control__table" aria-describedby="teams-summary-caption">
@@ -90,6 +110,7 @@ export const TeamsSummary = ({ onSessionExpired, onProfileUnavailable }: AccessH
           </div>
           <p className="team-indicators__footer">
             <span>Рассчитано: {formatDateTime(state.summary.calculatedAt)}</span>
+            <a href="#/reports">Отчёты и выгрузки по всем командам</a>
             <button type="button" className="button--secondary" onClick={() => void load()}>Обновить</button>
           </p>
         </>

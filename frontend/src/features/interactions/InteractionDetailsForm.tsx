@@ -12,6 +12,7 @@ import { changedDraft, conflictKeys, keepDraftValues, mergedValues, parseBasedDr
 import { DraftConflictNotice } from './DraftConflictNotice'
 import { recordOf, textOf, useFormDraft } from './formDraft'
 import { useUnsavedDraft } from './unsavedDrafts'
+import { isoFromMoscowInput, moscowInputValue } from './moscowTime'
 import { commandFailureMessage, contactRoleLabels, formatDateTime, handledAccessError } from './workMarks'
 import './workCard.css'
 
@@ -36,20 +37,9 @@ type CommandState =
   | { kind: 'saving' }
   | { kind: 'failed'; error: unknown }
 
-const toDateTimeLocal = (value: string | null) => {
-  if (value === null) {
-    return ''
-  }
-  const date = new Date(value)
-  return Number.isNaN(date.getTime())
-    ? ''
-    : new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
-}
+const toDateTimeLocal = moscowInputValue
 
-const toIsoDateTime = (value: string) => {
-  const date = new Date(value)
-  return value.length === 0 || Number.isNaN(date.getTime()) ? null : date.toISOString()
-}
+const toIsoDateTime = isoFromMoscowInput
 
 const fieldLabels: Record<keyof DetailsValues, string> = {
   title: 'Название',
@@ -193,11 +183,11 @@ export const InteractionDetailsForm = ({
         />
       )}
       <label>
-        Название
+        <span>Название<span className="required-mark" aria-hidden="true"> *</span></span>
         <input value={values.title} maxLength={200} required onChange={(event) => change({ title: event.target.value })} />
       </label>
       <label>
-        Дата последнего контакта
+        Дата последнего контакта (МСК)
         <input type="datetime-local" value={values.lastContactAt} onChange={(event) => change({ lastContactAt: event.target.value })} />
       </label>
       <fieldset className="interaction-contact-picker">

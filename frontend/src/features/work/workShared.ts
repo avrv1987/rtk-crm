@@ -1,4 +1,5 @@
 import { ApiError } from '../../shared/api/client'
+import { formatCalendarDate, formatMoscowDateTime, isoFromMoscowInput, todayInMoscow } from '../../shared/format/datetime'
 
 export type AccessHandlers = {
   onSessionExpired: () => void
@@ -34,24 +35,12 @@ export const commandErrorText = (error: unknown, action: string) => {
   return 'Не удалось связаться с сервисом. Повторите попытку позже.'
 }
 
-const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Moscow' })
-const dateFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium' })
 const dayMilliseconds = 24 * 60 * 60 * 1000
 
-export const formatDateTime = (value: string) => {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date)
-}
-
-export const formatDate = (value: string) => {
-  const date = new Date(`${value}T00:00:00`)
-  return Number.isNaN(date.getTime()) ? value : dateFormatter.format(date)
-}
-
-export const todayIso = () => {
-  const now = new Date()
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10)
-}
+export const formatDateTime = formatMoscowDateTime
+export const formatDate = formatCalendarDate
+export const todayIso = todayInMoscow
+export const isoFromInput = isoFromMoscowInput
 
 export const daysSince = (value: string, now: number) => {
   const time = new Date(value).getTime()

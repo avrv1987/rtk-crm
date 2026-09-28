@@ -4,6 +4,38 @@ import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { PaidOrdersUpload } from './PaidOrdersUpload'
 import { type AccessErrorReporter, formatIsoDate, requestIdOf, responseErrorMessage } from './enrolmentShared'
 
+type StreamRow = EnrolmentStreams['streams'][number]
+
+const stageSteps = (stream: StreamRow): { label: string; value: number }[] => [
+  { label: 'Оплачено', value: stream.paid },
+  { label: 'Анкета заполнена', value: stream.profilesComplete },
+  { label: 'Выгружено в LMS', value: stream.exported },
+  { label: 'Передано', value: stream.transferred }
+]
+
+const stageTotalsOf = (streams: StreamRow[]) => streams.reduce((totals, stream) => {
+  const steps = stageSteps(stream)
+  return totals.map((total, index) => total + steps[index].value)
+}, [0, 0, 0, 0])
+
+const StageBar = ({ stream }: { stream: StreamRow }) => {
+  const steps = stageSteps(stream)
+  const base = stream.paid
+  const title = steps.map((step) => `${step.label}: ${step.value} из ${base}`).join('; ')
+  return (
+    <div className="enrolment__stage-bar" title={title} aria-label={title}>
+      {steps.map((step) => (
+        <span key={step.label} className="enrolment__stage-bar-segment">
+          <span
+            className="enrolment__stage-bar-fill"
+            style={{ width: `${base === 0 ? 0 : Math.min(100, Math.round((step.value / base) * 100))}%` }}
+          />
+        </span>
+      ))}
+    </div>
+  )
+}
+
 type EnrolmentStreamsListProps = {
   onOpenStream: (streamId: string) => void
   onOpenLearner: (learnerId: string) => void
@@ -115,46 +147,58 @@ export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessErro
             {state.data.streams.length === 0 ? (
               <p>Потоков пока нет: загрузите файл оплат.</p>
             ) : (
-              <div className="catalog-import__table-scroll">
-                <table aria-label="Потоки зачисления">
-                  <thead>
-                    <tr>
-                      <th scope="col">Курс</th>
-                      <th scope="col">Поток</th>
-                      <th scope="col">Программа</th>
-                      <th scope="col">Оплачено</th>
-                      <th scope="col">Анкеты</th>
-                      <th scope="col">Выгружено</th>
-                      <th scope="col">Передано</th>
-                      <th scope="col">Ожидает</th>
-                      <th scope="col">Окончание</th>
-                      <th scope="col">Хранить до</th>
-                      <th scope="col">Действие</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {state.data.streams.map((stream) => (
-                      <tr key={stream.id}>
-                        <td>{stream.courseName}</td>
-                        <td>{stream.streamNo}</td>
-                        <td>{stream.programName ?? 'не сопоставлена'}</td>
-                        <td>{stream.paid}</td>
-                        <td>{stream.profilesComplete} из {stream.paid}</td>
-                        <td>{stream.exported}</td>
-                        <td>{stream.transferred}</td>
-                        <td>{stream.pending}</td>
-                        <td>{stream.endsOn === null ? 'не указана' : formatIsoDate(stream.endsOn)}</td>
-                        <td>{stream.keepUntil === null ? 'срок не определён' : formatIsoDate(stream.keepUntil)}</td>
-                        <td>
-                          <button type="button" className="button--secondary" onClick={() => onOpenStream(stream.id)}>
-                            Открыть
-                          </button>
-                        </td>
+              <>
+                <dl className="enrolment__funnel" aria-label="Итог по стадиям зачисления, все потоки">
+                  {['Оплачено', 'Анкета заполнена', 'Выгружено в LMS', 'Передано'].map((label, index) => (
+                    <div key={label}>
+                      <dt>{label}</dt>
+                      <dd>{stageTotalsOf(state.data.streams)[index]}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <div className="catalog-import__table-scroll">
+                  <table aria-label="Потоки зачисления">
+                    <thead>
+                      <tr>
+                        <th scope="col">Курс</th>
+                        <th scope="col">Поток</th>
+                        <th scope="col">Программа</th>
+                        <th scope="col">Оплачено</th>
+                        <th scope="col">Анкеты</th>
+                        <th scope="col">Выгружено</th>
+                        <th scope="col">Передано</th>
+                        <th scope="col">Ожидает</th>
+                        <th scope="col">Стадия</th>
+                        <th scope="col">Окончание</th>
+                        <th scope="col">Хранить до</th>
+                        <th scope="col">Действие</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {state.data.streams.map((stream) => (
+                        <tr key={stream.id}>
+                          <td>{stream.courseName}</td>
+                          <td>{stream.streamNo}</td>
+                          <td>{stream.programName ?? 'не сопоставлена'}</td>
+                          <td>{stream.paid}</td>
+                          <td>{stream.profilesComplete} из {stream.paid}</td>
+                          <td>{stream.exported}</td>
+                          <td>{stream.transferred}</td>
+                          <td>{stream.pending}</td>
+                          <td><StageBar stream={stream} /></td>
+                          <td>{stream.endsOn === null ? 'не указана' : formatIsoDate(stream.endsOn)}</td>
+                          <td>{stream.keepUntil === null ? 'срок не определён' : formatIsoDate(stream.keepUntil)}</td>
+                          <td>
+                            <button type="button" className="button--secondary" onClick={() => onOpenStream(stream.id)}>
+                              Открыть
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </section>
 

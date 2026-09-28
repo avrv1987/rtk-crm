@@ -126,7 +126,7 @@ export const InteractionStatusPanel = ({
   }
 
   const reasonRequired = draft !== null && draft.status !== 'ACTIVE'
-  const targets = statuses.filter((status) => status !== current.status)
+  const targets = statuses.filter((status) => status !== current.status && !(current.status === 'COMPLETED' && status === 'PAUSED'))
 
   return (
     <section className="interaction-plan-form work-status" aria-labelledby={`work-status-${interaction.id}`}>
@@ -161,7 +161,7 @@ export const InteractionStatusPanel = ({
             </div>
           )}
           <label>
-            {reasonLabels[draft.status]}
+            <span>{reasonLabels[draft.status]}{reasonRequired && <span className="required-mark" aria-hidden="true"> *</span>}</span>
             <textarea
               value={draft.reason}
               maxLength={1000}

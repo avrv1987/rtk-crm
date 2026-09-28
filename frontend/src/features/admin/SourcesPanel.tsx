@@ -11,6 +11,8 @@ import {
   type SyncRun,
   type Team
 } from '../../shared/api/client'
+import { shiftCalendarDate } from '../../shared/format/datetime'
+import { formatDateTime } from '../sources/sourceFormat'
 import { SourceMappingsList } from '../sources/SourceMappingsList'
 import { SourceRunHistory } from '../sources/SourceRunHistory'
 import '../sources/sources.css'
@@ -67,16 +69,6 @@ const recordStatusLabels: Record<SourceRecord['status'], string> = {
   SKIPPED: 'Пропущена'
 }
 
-const dateTime = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Moscow' })
-
-const formatDateTime = (value: string | null | undefined) => {
-  if (value === null || value === undefined) {
-    return 'нет'
-  }
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : dateTime.format(date)
-}
-
 const scheduleLabel = (cron: string) => {
   const [second, minute, hour, day, month, weekday] = cron.split(/\s+/)
   if (second === '0' && day === '*' && month === '*' && weekday === '*') {
@@ -121,11 +113,7 @@ const needsProgram = (record: SourceRecord) => (
 
 const needsRun = (record: SourceRecord) => isMoodle(record) && record.status === 'NEEDS_MAPPING'
 
-const nextDay = (date: string) => {
-  const value = new Date(`${date}T00:00:00Z`)
-  value.setUTCDate(value.getUTCDate() + 1)
-  return value.toISOString().slice(0, 10)
-}
+const nextDay = (date: string) => shiftCalendarDate(date, 1)
 
 const ErrorDetails = ({ error, message }: { error: unknown; message: string }) => (
   <div className="interaction-command-error" role="alert">

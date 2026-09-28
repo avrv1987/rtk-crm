@@ -1,4 +1,5 @@
 import { ApiError, type CrmProfile } from '../../shared/api/client'
+import { formatMoscowDateTime } from '../../shared/format/datetime'
 
 export type SessionHandlers = {
   onSessionExpired: () => void
@@ -12,16 +13,8 @@ export const roleLabels: Record<CrmProfile['role'], string> = {
   MANAGEMENT: 'Руководство (только чтение)'
 }
 
-const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-  timeZone: 'Europe/Moscow'
-})
-
-export const formatDateTime = (value: string) => {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date)
-}
+/** @deprecated используйте formatMoscowDateTime из shared/format/datetime — оставлено для совместимости импортов. */
+export const formatDateTime = formatMoscowDateTime
 
 export const requestIdOf = (error: unknown) => (
   error instanceof ApiError ? error.requestId : undefined

@@ -7,6 +7,7 @@ import {
   type ProductAgreement
 } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { todayInMoscow } from '../../shared/format/datetime'
 import {
   canPreview,
   commandMessage,
@@ -27,9 +28,15 @@ type ProductAgreementsSectionProps = AccessHandlers & {
   canEdit: boolean
   onInteraction: (interaction: Interaction) => void
   onReload: () => void
+  part?: Mode
 }
 
 type Mode = 'contract' | 'transfers'
+
+const partTitles: Record<Mode, string> = {
+  contract: 'Договор и лицензия',
+  transfers: 'Отметки передачи'
+}
 
 type Editing = { agreementId: string; mode: Mode } | null
 
@@ -50,11 +57,7 @@ type TransferDraft = Record<ProductTransferKind, { status: '' | ProductTransfer[
 const minYear = 2000
 const maxYear = 2100
 
-const todayIso = () => {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).formatToParts(new Date())
-  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? ''
-  return `${value('year')}-${value('month')}-${value('day')}`
-}
+const todayIso = todayInMoscow
 
 const formatDate = (value: string) => new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short' })
   .format(new Date(`${value}T00:00:00`))
@@ -133,6 +136,7 @@ const VendorContactDetails = ({ agreement }: { agreement: ProductAgreement }) =>
 }
 
 export const ProductAgreementsSection = ({
+  part,
   interaction,
   canEdit,
   onInteraction,
@@ -300,7 +304,7 @@ export const ProductAgreementsSection = ({
           </label>
         </div>
         <p className="interaction-field-hint">
-          Скан сначала загрузите в блоке «Документы» и дождитесь статуса «Проверен: доступен». Пустое поле очищает значение;
+          Скан сначала загрузите во вкладке «Документы» и дождитесь статуса «Проверен: доступен». Пустое поле очищает значение;
           каждое изменение попадает в историю с прежним и новым значением.
         </p>
         {renderFormActions(expiryProblem !== undefined)}
@@ -333,7 +337,7 @@ export const ProductAgreementsSection = ({
             {transfers[kind].status === 'TRANSFERRED' && (
               <>
                 <label>
-                  Дата передачи
+                  <span>Дата передачи<span className="required-mark" aria-hidden="true"> *</span></span>
                   <input
                     type="date"
                     required
@@ -368,7 +372,7 @@ export const ProductAgreementsSection = ({
     <>
       <div className="product-contract__buttons">
         <button type="submit" disabled={invalid || saveState.kind === 'saving'}>
-          {saveState.kind === 'saving' ? 'Сохраняем…' : 'Сохранить'}
+          {saveState.kind === 'saving' ? 'Сохраняем…' : editing?.mode === 'transfers' ? 'Сохранить отметки передачи' : 'Сохранить договор и лицензию'}
         </button>
         <button type="button" className="button--secondary" onClick={close} disabled={saveState.kind === 'saving'}>Отмена</button>
       </div>
@@ -404,8 +408,8 @@ export const ProductAgreementsSection = ({
 
   return (
     <section className="interaction-product-agreements" aria-labelledby="interaction-product-agreements-title">
-      <h6 id="interaction-product-agreements-title">Продукты и соглашения</h6>
-      {interaction.productAgreements.length === 0 && <p>Продукты не указаны.</p>}
+      <h5 id="interaction-product-agreements-title">{part === undefined ? 'Продукты и соглашения' : `${partTitles[part]} по продуктам`}</h5>
+      {interaction.productAgreements.length === 0 && <p>Продукты не указаны. Добавьте их в «Следующий шаг» → «Изменить шаг, срок, программу и продукты».</p>}
       {interaction.productAgreements.length > 0 && (
         <ul>
           {interaction.productAgreements.map((agreement) => (
@@ -416,7 +420,7 @@ export const ProductAgreementsSection = ({
                 {agreement.productArchived && <span className="interaction-archived">Архивирован</span>}
                 {agreement.archived && <span className="interaction-archived">Договор в архиве: нет в реестре</span>}
               </div>
-              <dl>
+              {part !== 'transfers' && <dl>
                 <div>
                   <dt>Номер договора</dt>
                   <dd>{agreement.contractNumber ?? 'Не указан'}</dd>
@@ -445,22 +449,29 @@ export const ProductAgreementsSection = ({
                       : <FileReference attachment={attachmentById.get(agreement.scanAttachmentId)} onError={fail} />}
                   </dd>
                 </div>
-              </dl>
-              <ul className="product-contract__transfers" aria-label={`Передача по продукту ${agreement.productName}`}>
+              </dl>}
+              {part === 'transfers' && (
+                <p className="product-contract__wide">Статус передачи: {agreement.transferStatus ?? 'не указан'}</p>
+              )}
+              {part !== 'contract' && <ul className="product-contract__transfers" aria-label={`Передача по продукту ${agreement.productName}`}>
                 {transferKinds.map((kind) => (
                   <li key={kind}>
                     <strong>{transferKindLabels[kind]}:</strong> {transferText(agreement, kind)}
                   </li>
                 ))}
-              </ul>
+              </ul>}
               {canEdit && editing?.agreementId !== agreement.id && (
                 <div className="product-contract__buttons">
-                  <button type="button" className="button--secondary" onClick={() => start(agreement, 'contract')}>
-                    Договор и лицензия
-                  </button>
-                  <button type="button" className="button--secondary" onClick={() => start(agreement, 'transfers')}>
-                    Отметки передачи
-                  </button>
+                  {part !== 'transfers' && (
+                    <button type="button" className="button--secondary" onClick={() => start(agreement, 'contract')}>
+                      {part === undefined ? 'Договор и лицензия' : 'Изменить договор и лицензию'}
+                    </button>
+                  )}
+                  {part !== 'contract' && (
+                    <button type="button" className="button--secondary" onClick={() => start(agreement, 'transfers')}>
+                      {part === undefined ? 'Отметки передачи' : 'Изменить отметки передачи'}
+                    </button>
+                  )}
                 </div>
               )}
               {editing?.agreementId === agreement.id && editing.mode === 'contract' && renderContractForm(agreement)}

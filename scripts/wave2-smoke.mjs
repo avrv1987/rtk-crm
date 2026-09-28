@@ -242,8 +242,7 @@ const pressKey = async (page, key, code, keyCode) => {
 
 const closeReminderDigest = async (page) => {
   await page.waitFor(() => page.evaluate("Boolean(document.querySelector('.reminder-center__counter')) && !document.querySelector('.reminder-center__counter').textContent.includes('…')"), 'Reminder counter did not load')
-  await page.evaluate("document.querySelector('dialog.reminder-center__dialog[open] .reminder-center__dialog-header button')?.click()")
-  await page.waitFor(() => page.evaluate("!document.querySelector('dialog.reminder-center__dialog[open]')"), 'Reminder digest did not close')
+  assert(await page.evaluate("document.querySelector('.reminder-center__panel')?.hidden === true"), 'Reminder panel opened by itself and covers the screen')
 }
 
 const setViewport = (page, viewport) => call('Emulation.setDeviceMetricsOverride', {
@@ -714,7 +713,7 @@ try {
   result.teamTransfer = { before: leaderBefore.status, after: leaderAfter.status, returned: leaderReturned.status }
 
   phase = 'viewports'
-  const cardReady = "document.body.innerText.includes('Обучение (LMS)') && document.body.innerText.includes('Демо: Java-разработчик') && document.body.innerText.includes('Поток обучения') && Boolean([...document.querySelectorAll('button')].find((button) => button.textContent.includes('Обновить данные источников')))"
+  const cardReady = "(document.querySelector('#work-card-tab-learning[aria-selected=false]')?.click(), true) && document.body.innerText.includes('Обучение (LMS)') && document.body.innerText.includes('Демо: Java-разработчик') && document.body.innerText.includes('Поток обучения') && Boolean([...document.querySelectorAll('button')].find((button) => button.textContent.includes('Обновить данные источников')))"
   await call('Page.navigate', { url: origin + '/#/organizations/' + universityA.id + '/' + demoInteraction.id }, kamA.sessionId)
   await kamA.waitFor(() => kamA.evaluate(cardReady), 'LMS block is not shown in the card')
   await kamA.evaluate("[...document.querySelectorAll('button')].find((button) => button.textContent.includes('Обновить данные источников')).click()")
@@ -723,7 +722,7 @@ try {
     'LMS refresh button did not report the result'
   )
   await call('Page.navigate', { url: origin + '/#/work' }, leader.sessionId)
-  await call('Page.navigate', { url: origin + '/#/admin' }, admin.sessionId)
+  await call('Page.navigate', { url: origin + '/#/admin/sources' }, admin.sessionId)
   await call('Page.reload', {}, unprofiled.sessionId)
   result.viewports = {
     kamCard: await captureViewports(kamA, 'kam-a-card', cardReady, outputDirectory, '.interaction-learning'),
@@ -750,6 +749,7 @@ try {
   await closeReminderDigest(leader)
   await leader.evaluate("document.querySelector('.work-filters input[type=search]').focus()")
   await call('Input.insertText', { text: 'ПРОСРОЧЕНО ' + nonce.toUpperCase() }, leader.sessionId)
+  await leader.evaluate("document.querySelector('.work-filters__more').open = true")
   await leader.evaluate("[...document.querySelectorAll('.work-filters input[type=radio]')].find((input) => input.value === 'OVERDUE').focus()")
   await pressKey(leader, ' ', 'Space', 32)
   await leader.waitFor(

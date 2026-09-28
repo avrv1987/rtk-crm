@@ -1080,6 +1080,8 @@ sections.management = async () => {
     const reportOrganizations = new Set(report.items.map((item) => item.label))
     const teamsTotal = summary.teams.filter((team) => team.teamId).reduce((sum, team) => sum + team.interactions, 0)
     const activeWork = await listAll(kamC, '/api/interactions', 'Management active work failed')
+    const summaryScreen = await screenTexts(kamC, '/#/work', ['Сводка по всем командам', 'Только просмотр', 'Все команды'], 'Management summary screen')
+    assert(summaryScreen.overflow360 <= 0, 'Management summary scrolls horizontally at 360 px')
     assert(me.role === 'MANAGEMENT' && me.teamId === null, 'Profile is not MANAGEMENT')
     assert(universityA && universityB, 'Management does not see all teams')
     assert(indicators.status === 403 && reminders.status === 403 && teamWork.status === 403, 'Management-only summary or leader indicators leaked')
@@ -1400,9 +1402,24 @@ sections.reminders = async () => {
   const off = requireStatus(await api(kamA, 'PUT', '/api/reminders/settings', { body: { enabled: false } }), 200, 'Reminder settings failed')
   const on = requireStatus(await api(kamA, 'PUT', '/api/reminders/settings', { body: { enabled: true } }), 200, 'Reminder settings failed')
   const overdue = await listAll(kamA, '/api/interactions?due=OVERDUE', 'Overdue list failed')
+  const totalOf = async (query) => requireStatus(await api(kamA, 'GET', '/api/interactions?size=1&' + query), 200, 'Desk count failed').total
+  const licenseQuery = 'license=' + digest.licenseExpiresBy + '&status=ALL'
+  const expected = {
+    '#/work?due=OVERDUE': overdue.length,
+    '#/work?due=THIS_WEEK': await totalOf('due=THIS_WEEK'),
+    '#/work?due=NO_NEXT_STEP': await totalOf('due=NO_NEXT_STEP'),
+    ['#/work?' + licenseQuery]: await totalOf('licenseExpiresBy=' + digest.licenseExpiresBy + '&status=ALL')
+  }
+  await call('Page.navigate', { url: origin + '/#/work' }, kamA.sessionId)
+  await kamA.waitFor(() => kamA.evaluate("document.querySelectorAll('.desk-tile').length === 4 && Boolean(document.querySelector('.reminder-center__counter'))"), 'KAM desk tiles are not shown')
+  const tiles = Object.fromEntries(await kamA.evaluate("[...document.querySelectorAll('.desk-tile')].map((tile) => [tile.getAttribute('href'), Number(tile.querySelector('.desk-tile__value').textContent)])"))
+  const panelHidden = await kamA.evaluate("document.querySelector('.reminder-center__panel').hidden")
   assert(digest.overdueTotal === overdue.length, 'Reminder overdue total differs from My work: ' + digest.overdueTotal + '/' + overdue.length)
+  assert(Number.isInteger(digest.licenseExpiresBy), 'Reminder digest lacks licenseExpiresBy')
+  assert(JSON.stringify(tiles) === JSON.stringify(expected), 'Desk tiles differ from the lists: ' + JSON.stringify(tiles) + ' / ' + JSON.stringify(expected))
+  assert(panelHidden, 'Reminder panel opened by itself')
   assert(off.enabled === false && on.enabled === true, 'Reminder setting is not stored')
-  return { overdue: digest.overdueTotal, dueToday: digest.dueTodayTotal, upcoming: digest.upcomingTotal, licenses: digest.licenses?.length ?? digest.licenseTotal ?? null, setting: [off.enabled, on.enabled] }
+  return { overdue: digest.overdueTotal, dueToday: digest.dueTodayTotal, upcoming: digest.upcomingTotal, licenses: digest.expiringLicenses.length, licenseExpiresBy: digest.licenseExpiresBy, tiles, panelHidden, setting: [off.enabled, on.enabled] }
 }
 
 const screenTexts = async (page, url, texts, label) => {
@@ -1435,11 +1452,18 @@ sections.screens = async () => {
   const organization = await testOrganization()
   const work = ctx.documentsInteraction ?? await createInteraction(kamA, organization.id, 'W4 экран ' + nonce)
   const result = {
-    kamCard: await screenTexts(kamA, '/#/organizations/' + organization.id + '/' + work.id, ['Статус работы', 'Ожидание, проблема и риск', 'Документы', 'Загрузить документ', 'Отметить этап выполненным', 'Следующий шаг', 'История', 'Карта пути', 'Контакты организации', 'Соглашения'], 'KAM card lacks wave 4 blocks'),
-    leaderWork: await screenTexts(leader, '/#/work', ['Где команде нужна помощь', 'Требует назначения'], 'Leader work lacks indicators'),
-    leaderOrganization: await screenTexts(leader, '/#/organizations/' + organization.id, ['Назначение ответственного', 'История назначений'], 'Leader organization card lacks assignment blocks'),
+    kamCard: await screenTexts(kamA, '/#/organizations/' + organization.id + '/' + work.id, ['Перейти к следующему этапу', 'Следующий шаг', 'Комментарий', 'Файл', 'Маршрут этапов', 'Приостановить или завершить работу', 'Ожидание, проблема и риск', 'Отметить этап выполненным', 'История', 'Документы', 'Договор и лицензия', 'Отметки передачи', 'Маршрут', 'Обучение', 'Циклы'], 'KAM card lacks wave 4 blocks'),
+    kamOrganization: await screenTexts(kamA, '/#/organizations/' + organization.id, ['Сводка по работам', 'Работы', 'Контакты', 'Документы и соглашения', 'История назначений', 'Новое взаимодействие'], 'KAM organization card lacks tabs'),
+    leaderWork: await screenTexts(leader, '/#/work', ['Пульт команды', 'Где команде нужна помощь', 'Требует назначения', 'Вузы без ответственного', 'Заместители'], 'Leader work lacks indicators'),
+    kamDesk: await screenTexts(kamA, '/#/work', ['Задачи по срокам', 'Шаги на этой неделе', 'Без следующего шага', 'Лицензии истекают', 'Фильтры', 'Все работы'], 'KAM desk lacks blocks'),
+    leaderOrganization: await screenTexts(leader, '/#/organizations/' + organization.id, ['Назначить или сменить ответственного', 'Заместитель на время отсутствия', 'Назначение и история', 'Сводка по работам'], 'Leader organization card lacks assignment blocks'),
     reports: await screenTexts(leader, '/#/reports', ['Сохранённые отчёты'], 'Reports lack saved reports'),
-    admin: await screenTexts(admin, '/#/admin', ['Журнал администратора и безопасности', 'Субъект персональных данных', 'Сроки хранения', 'Справочники', 'Профили CRM', 'Сохранённые сопоставления', 'Организации и команды'], 'Admin screen lacks wave 4 blocks')
+    adminProfiles: await screenTexts(admin, '/#/admin/profiles', ['Профили CRM', 'Организации и команды'], 'Admin profiles screen lacks wave 4 blocks'),
+    adminCatalogs: await screenTexts(admin, '/#/admin/catalogs', ['Справочники'], 'Admin catalogs screen lacks wave 4 blocks'),
+    adminSources: await screenTexts(admin, '/#/admin/sources', ['Сохранённые сопоставления'], 'Admin sources screen lacks wave 4 blocks'),
+    adminJournal: await screenTexts(admin, '/#/admin/journal', ['Журнал администратора и безопасности'], 'Admin journal screen lacks wave 4 blocks'),
+    adminPersonalData: await screenTexts(admin, '/#/admin/personal-data', ['Субъект персональных данных'], 'Admin personal data screen lacks wave 4 blocks'),
+    adminRetention: await screenTexts(admin, '/#/admin/retention', ['Сроки хранения'], 'Admin retention screen lacks wave 4 blocks')
   }
   const overflowing = Object.entries(result).filter(([, value]) => value.overflow360 > 0).map(([name]) => name)
   assert(overflowing.length === 0, 'Screens scroll horizontally at 360 px: ' + overflowing.join(', '))

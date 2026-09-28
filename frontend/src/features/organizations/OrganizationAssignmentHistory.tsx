@@ -7,6 +7,7 @@ import {
   type OrganizationDeputy
 } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { formatMoscowDateTime } from '../interactions/moscowTime'
 import { deputyHistoryEntries } from './OrganizationDeputyPanel'
 
 type OrganizationAssignmentHistoryProps = {
@@ -22,12 +23,7 @@ type EventsState =
   | { kind: 'ready'; events: OrganizationAssignmentEvent[]; deputies: OrganizationDeputy[] }
   | { kind: 'failed'; requestId?: string }
 
-const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Moscow' })
-
-const formatDateTime = (value: string) => {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date)
-}
+const formatDateTime = formatMoscowDateTime
 
 const reasonLabels: Record<NonNullable<OrganizationAssignmentEvent['reason']>, string> = {
   PROFILE_BLOCKED: 'КАМ заблокирован администратором',
@@ -38,7 +34,7 @@ const reasonLabels: Record<NonNullable<OrganizationAssignmentEvent['reason']>, s
 }
 
 const managerLabel = (id: string | null, displayName?: string | null) => (
-  displayName?.trim() ? displayName : id === null ? 'Не назначен' : 'Профиль менеджера недоступен'
+  displayName?.trim() ? displayName : id === null ? 'Не назначен' : 'Профиль КАМ недоступен'
 )
 
 const assignmentEventDescription = (event: OrganizationAssignmentEvent) => {

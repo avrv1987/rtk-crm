@@ -9,6 +9,7 @@ import type {
   StatisticsGroupBy,
   StatisticsRequest
 } from '../../shared/api/client'
+import { todayInMoscow } from '../../shared/format/datetime'
 import {
   agreementColumnTitles,
   agreementColumns,
@@ -217,14 +218,8 @@ export const isoDate = (date: Date) => [
   date.getDate().toString().padStart(2, '0')
 ].join('-')
 
-const moscowDate = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Europe/Moscow',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit'
-})
-
-export const moscowToday = (now: Date = new Date()) => moscowDate.format(now)
+/** @deprecated используйте todayInMoscow из shared/format/datetime — оставлено для совместимости импортов. */
+export const moscowToday = todayInMoscow
 
 export const maxDaysOnStage = 3650
 

@@ -310,7 +310,7 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
       return (
         <form className="security-form" onSubmit={(event) => void saveEdit(event)} aria-label={`Уточнение контакта ${contact.name}`}>
           <label>
-            ФИО
+            ФИО *
             <input
               value={edit.draft.name}
               maxLength={200}

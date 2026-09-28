@@ -17,7 +17,7 @@ export const SessionScreen = ({ title, children }: SessionScreenProps) => (
 )
 
 const roleNames: Record<Me['role'], string> = {
-  USER: 'Менеджер',
+  USER: 'КАМ',
   LEADER: 'Руководитель команды',
   ADMIN: 'Администратор',
   MANAGEMENT: 'Руководство'
@@ -25,18 +25,18 @@ const roleNames: Record<Me['role'], string> = {
 
 export const ProfileSummary = ({ profile }: { profile: Me }) => (
   <dl className="profile-summary">
-    <div>
+    <div className="profile-summary__chip" title="Роль в CRM">
       <dt>Роль</dt>
       <dd>{roleNames[profile.role]}</dd>
     </div>
     {profile.role === 'MANAGEMENT' && (
-      <div>
+      <div className="profile-summary__chip" title="Область видимости данных">
         <dt>Область</dt>
         <dd>Все команды, только просмотр</dd>
       </div>
     )}
     {profile.role !== 'MANAGEMENT' && (profile.teamName !== null || profile.role !== 'ADMIN') && (
-      <div>
+      <div className="profile-summary__chip" title="Команда">
         <dt>Команда</dt>
         <dd>{profile.teamName ?? 'Не назначена, вузы недоступны'}</dd>
       </div>

@@ -142,13 +142,29 @@ const openOrganization = async (page, organizationName) => {
 
 const openInteraction = async (page, title) => {
   await page.waitFor(
-    () => page.evaluate(`Boolean([...document.querySelectorAll('button')].find((button) => button.textContent.includes(${JSON.stringify(title)})))`),
+    () => page.evaluate(`Boolean([...document.querySelectorAll('a.interaction-list-item')].find((link) => link.textContent.includes(${JSON.stringify(title)})))`),
     'Interaction is unavailable in the UI'
   )
   await page.evaluate(`(() => {
-    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes(${JSON.stringify(title)}))
-    button.click()
+    const link = [...document.querySelectorAll('a.interaction-list-item')].find((item) => item.textContent.includes(${JSON.stringify(title)}))
+    link.click()
   })()`)
+}
+
+const stageEditorMenuItem = "[...document.querySelectorAll('.card-menu__item')].find((item) => item.textContent.trim() === 'Изменить этапы этой работы…')"
+
+const openStageEditor = async (page, label) => {
+  await page.waitFor(() => page.evaluate(`Boolean(${stageEditorMenuItem})`), label)
+  await page.evaluate(`${stageEditorMenuItem}.click()`)
+  await page.waitFor(() => page.evaluate("Boolean(document.querySelector('dialog[open] form.interaction-stage-editor'))"), label)
+}
+
+const openCreateDialog = async (page) => {
+  await page.waitFor(
+    () => page.evaluate("Boolean([...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Новое взаимодействие'))"),
+    'New interaction button is unavailable'
+  )
+  await page.evaluate("[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Новое взаимодействие').click()")
 }
 
 let leader
@@ -202,14 +218,14 @@ try {
   const kamConcurrentCsrf = await csrfFor(kamConcurrent)
 
   phase = 'leader-panel'
-  await navigateHome(leader)
+  await call('Page.navigate', { url: origin + '/#/admin/workflow-templates' }, leader.sessionId)
   await leader.waitFor(
     () => leader.evaluate("Boolean([...document.querySelectorAll('h2')].find((heading) => heading.textContent.trim() === 'Шаблоны этапов'))"),
     'Leader workflow template panel is unavailable'
   )
   const leaderPanel = await leader.evaluate(`(() => ({
     templates: Boolean([...document.querySelectorAll('h2')].find((heading) => heading.textContent.trim() === 'Шаблоны этапов')),
-    stageEditor: Boolean([...document.querySelectorAll('form h6')].find((heading) => heading.textContent.trim() === 'Изменить локальный граф этапов'))
+    stageEditor: Boolean(${stageEditorMenuItem}) || Boolean(document.querySelector('form.interaction-stage-editor'))
   }))()`)
   assert(leaderPanel.templates && !leaderPanel.stageEditor, 'Leader UI role boundary is incorrect')
 
@@ -236,16 +252,17 @@ try {
   phase = 'user-template-select'
   await navigateHome(kam)
   await openOrganization(kam, organization.name)
+  await openCreateDialog(kam)
   await kam.waitFor(
     () => kam.evaluate(`(() => {
-      const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h5')?.textContent?.trim() === 'Новое взаимодействие')
+      const form = document.querySelector('dialog[open] form.interaction-create-form')
       const label = [...(form?.querySelectorAll('label') ?? [])].find((item) => item.textContent.includes('Шаблон процесса'))
       return Boolean(label?.querySelector('select option[value=${JSON.stringify(template.id)}]'))
     })()`),
     'Workflow template option is unavailable to KAM'
   )
   await kam.evaluate(`(() => {
-    const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h5')?.textContent?.trim() === 'Новое взаимодействие')
+    const form = document.querySelector('dialog[open] form.interaction-create-form')
     const label = [...form.querySelectorAll('label')].find((item) => item.textContent.includes('Шаблон процесса'))
     const select = label.querySelector('select')
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
@@ -255,7 +272,7 @@ try {
   })()`)
   await kam.waitFor(
     () => kam.evaluate(`(() => {
-      const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h5')?.textContent?.trim() === 'Новое взаимодействие')
+      const form = document.querySelector('dialog[open] form.interaction-create-form')
       const label = [...(form?.querySelectorAll('label') ?? [])].find((item) => item.textContent.includes('Шаблон процесса'))
       return label?.querySelector('select')?.value === ${JSON.stringify(template.id)}
     })()`),
@@ -280,23 +297,17 @@ try {
     () => leader.evaluate("Boolean(document.querySelector('ol[aria-labelledby=\"interaction-path-title\"] li'))"),
     'Leader interaction stages are unavailable'
   )
-  await leader.waitFor(
-    () => leader.evaluate("Boolean([...document.querySelectorAll('form h6')].find((heading) => heading.textContent.trim() === 'Изменить локальный граф этапов'))"),
-    'Leader cannot see the local stage editor of the team card'
-  )
+  await openStageEditor(leader, 'Leader cannot see the local stage editor of the team card')
 
   phase = 'user-stage-editor'
   await navigateHome(kam)
   await openOrganization(kam, organization.name)
   await openInteraction(kam, interactionTitle)
-  await kam.waitFor(
-    () => kam.evaluate("Boolean([...document.querySelectorAll('form h6')].find((heading) => heading.textContent.trim() === 'Изменить локальный граф этапов'))"),
-    'KAM local stage editor is unavailable'
-  )
+  await openStageEditor(kam, 'KAM local stage editor is unavailable')
 
   phase = 'current-delete'
   await kam.evaluate(`(() => {
-    const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+    const form = document.querySelector('dialog[open] form.interaction-stage-editor')
     const select = form.querySelector('select')
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
     if (!setter) throw new Error('Select setter is unavailable')
@@ -305,13 +316,13 @@ try {
   })()`)
   await kam.waitFor(
     () => kam.evaluate(`(() => {
-      const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+      const form = document.querySelector('dialog[open] form.interaction-stage-editor')
       return form?.querySelectorAll('select').length === 2
     })()`),
     'Stage delete controls are unavailable'
   )
   await kam.evaluate(`(() => {
-    const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+    const form = document.querySelector('dialog[open] form.interaction-stage-editor')
     const select = form.querySelectorAll('select')[1]
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
     if (!setter) throw new Error('Select setter is unavailable')
@@ -320,18 +331,18 @@ try {
   })()`)
   await kam.waitFor(
     () => kam.evaluate(`(() => {
-      const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+      const form = document.querySelector('dialog[open] form.interaction-stage-editor')
       return !form?.querySelector('button[type="submit"]')?.disabled
     })()`),
     'Current stage delete is not ready'
   )
   await kam.evaluate(`(() => {
-    const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+    const form = document.querySelector('dialog[open] form.interaction-stage-editor')
     form.querySelector('button[type="submit"]').click()
   })()`)
   await kam.waitFor(
     () => kam.evaluate(`(() => {
-      const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+      const form = document.querySelector('dialog[open] form.interaction-stage-editor')
       const alert = form?.querySelector('[role="alert"]')
       const reason = alert?.querySelector('.structured-api-error li')?.textContent ?? ''
       const support = alert?.querySelector('.support-details')?.textContent ?? ''
@@ -344,7 +355,7 @@ try {
   const draftName = 'UI smoke local draft ' + nonce
   const serverName = 'UI smoke concurrent change ' + nonce
   await kam.evaluate(`(() => {
-    const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+    const form = document.querySelector('dialog[open] form.interaction-stage-editor')
     const select = form.querySelector('select')
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
     if (!setter) throw new Error('Select setter is unavailable')
@@ -353,13 +364,13 @@ try {
   })()`)
   await kam.waitFor(
     () => kam.evaluate(`(() => {
-      const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+      const form = document.querySelector('dialog[open] form.interaction-stage-editor')
       return Boolean(form?.querySelectorAll('select').length === 2 && form?.querySelector('input'))
     })()`),
     'Stage rename controls are unavailable'
   )
   await kam.evaluate(`(() => {
-    const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+    const form = document.querySelector('dialog[open] form.interaction-stage-editor')
     const select = form.querySelectorAll('select')[1]
     const input = form.querySelector('input')
     const selectSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
@@ -372,7 +383,7 @@ try {
   })()`)
   await kam.waitFor(
     () => kam.evaluate(`(() => {
-      const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+      const form = document.querySelector('dialog[open] form.interaction-stage-editor')
       return form?.querySelector('input')?.value === ${JSON.stringify(draftName)} && !form?.querySelector('button[type="submit"]')?.disabled
     })()`),
     'Local stage draft is unavailable'
@@ -383,12 +394,12 @@ try {
   }, 'fr05-ui-concurrent-' + nonce), 200, 'Concurrent stage edit failed')
   assert(concurrent.version === interaction.version + 1, 'Concurrent stage edit did not change the version')
   await kam.evaluate(`(() => {
-    const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+    const form = document.querySelector('dialog[open] form.interaction-stage-editor')
     form.querySelector('button[type="submit"]').click()
   })()`)
   await kam.waitFor(
     () => kam.evaluate(`(() => {
-      const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+      const form = document.querySelector('dialog[open] form.interaction-stage-editor')
       const alert = form?.querySelector('[role="alert"]')
       const refresh = [...(form?.querySelectorAll('button') ?? [])].find((button) => button.type === 'button' && button.textContent?.trim() === 'Обновить карточку')
       return Boolean(alert?.textContent?.includes('Черновик сохранён') && refresh && form?.querySelector('input')?.value === ${JSON.stringify(draftName)})
@@ -396,12 +407,12 @@ try {
     'Stage conflict draft or refresh action is unavailable'
   )
   await kam.evaluate(`(() => {
-    const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+    const form = document.querySelector('dialog[open] form.interaction-stage-editor')
     ;[...form.querySelectorAll('button')].find((button) => button.type === 'button' && button.textContent?.trim() === 'Обновить карточку').click()
   })()`)
   await kam.waitFor(
     () => kam.evaluate(`(() => {
-      const form = [...document.querySelectorAll('form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Изменить локальный граф этапов')
+      const form = document.querySelector('dialog[open] form.interaction-stage-editor')
       const selected = form?.querySelectorAll('select')[1]
       return form?.querySelector('input')?.value === ${JSON.stringify(draftName)} && selected?.querySelector('option:checked')?.textContent?.includes(${JSON.stringify(serverName)})
     })()`),

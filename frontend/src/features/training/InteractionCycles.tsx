@@ -183,11 +183,11 @@ export const InteractionCycles = ({
             считаются по потокам, которые начинаются с даты начала цикла.
           </p>
           <label className="source-form__wide">
-            Название новой работы
+            <span>Название новой работы<span className="required-mark" aria-hidden="true"> *</span></span>
             <input required maxLength={300} value={draft.title} onChange={(event) => update({ title: event.target.value })} />
           </label>
           <label>
-            Начало цикла
+            <span>Начало цикла<span className="required-mark" aria-hidden="true"> *</span></span>
             <input type="date" required value={draft.startsOn} onChange={(event) => update({ startsOn: event.target.value })} />
           </label>
           <label>

@@ -170,7 +170,7 @@ export const AttachmentExtras = ({
       {panel === 'version' && (
         <form className="document-extras__panel" onSubmit={(event) => void submitVersion(event)}>
           <label>
-            Файл версии {attachment.revision + 1}
+            <span>Файл версии {attachment.revision + 1}<span className="required-mark" aria-hidden="true"> *</span></span>
             <input
               type="file"
               required
@@ -181,11 +181,11 @@ export const AttachmentExtras = ({
               }}
             />
             <span className="interaction-field-hint">
-              Этап и вид документа сохранятся, прежняя версия останется в списке.
+              Этап и вид документа сохранятся, прежняя версия останется в списке. После загрузки файл проверяется антивирусом.
             </span>
           </label>
           <div className="document-extras__buttons">
-            <button type="submit" disabled={busy || versionFile === null}>{busy ? 'Загружаем…' : 'Загрузить в карантин'}</button>
+            <button type="submit" disabled={busy || versionFile === null}>{busy ? 'Загружаем…' : 'Загрузить новую версию'}</button>
             <button type="button" className="button--secondary" onClick={() => open('none')} disabled={busy}>Отмена</button>
           </div>
         </form>

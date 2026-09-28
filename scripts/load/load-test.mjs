@@ -594,7 +594,7 @@ async function browserMeasurements(page, card, rounds, start) {
       await page.evaluate("location.hash = '#/work'")
       await page.waitFor("document.querySelector('.work__total')?.textContent.startsWith('Найдено:')", 'Work list did not load')
       const due = await page.evaluate(`[...document.querySelectorAll('input[name=work-due]')].filter((input) => !input.checked).map((input) => input.value)[${round} % 3]`)
-      await page.evaluate(`window.__loadAct = () => document.querySelector('input[name=work-due][value="${due}"]').click()`)
+      await page.evaluate(`window.__loadAct = () => { document.querySelector('.work-filters__more').open = true; document.querySelector('input[name=work-due][value="${due}"]').click() }`)
       record('workFilter', await page.evaluate(observe(`() => { const text = document.querySelector('.work__total')?.textContent ?? ''; return { busy: !text.startsWith('Найдено:') || document.querySelector('.work-list')?.getAttribute('aria-busy') === 'true', changed: false, done: text.startsWith('Найдено:') } }`)), round)
 
       await page.evaluate("location.hash = '#/reports'")

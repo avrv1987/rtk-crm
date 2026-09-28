@@ -1,4 +1,5 @@
 import { ApiError, type LearnerFieldCode, type LearnerFieldGroup, type StreamLearner } from '../../shared/api/client'
+import { formatCalendarDate, formatMoscowDateTime } from '../../shared/format/datetime'
 
 export type EnrolmentAccessHandlers = {
   onSessionExpired: () => void
@@ -42,23 +43,11 @@ export const responseErrorMessage = (error: unknown) => {
   return fields.length > 0 ? fields.join(' ') : error.message
 }
 
-const dateFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium' })
-const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Moscow' })
-const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/
+/** @deprecated используйте formatCalendarDate из shared/format/datetime — оставлено для совместимости импортов. */
+export const formatIsoDate = formatCalendarDate
 
-export const formatIsoDate = (value: string): string => {
-  const datePart = value.slice(0, 10)
-  if (!isoDatePattern.test(datePart)) {
-    return value
-  }
-  const date = new Date(`${datePart}T00:00:00`)
-  return Number.isNaN(date.getTime()) ? value : dateFormatter.format(date)
-}
-
-export const formatDateTime = (value: string): string => {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date)
-}
+/** @deprecated используйте formatMoscowDateTime из shared/format/datetime — оставлено для совместимости импортов. */
+export const formatDateTime = formatMoscowDateTime
 
 export const snilsDigits = (value: string) => value.replace(/\D/g, '')
 

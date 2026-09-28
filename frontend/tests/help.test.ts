@@ -15,6 +15,27 @@ const headingIds = [...helpScreenSource.matchAll(/\bid="([a-z0-9-]+)"/g)].map((m
 const labelledByIds = [...helpScreenSource.matchAll(/aria-labelledby="([a-z0-9-]+)"/g)].map((match) => match[1])
 const screenshotUsages = [...helpScreenSource.matchAll(/<Screenshot\s+name="([a-z0-9-]+)"/g)].map((match) => match[1])
 const shotCalls = [...screenshotsScriptSource.matchAll(/shoot\(\w+,\s*'([a-z0-9-]+)'/g)].map((match) => match[1])
+const hrefs = [...helpScreenSource.matchAll(/href=(?:"(#[^"]*)"|\{`(#[^`]*)`\})/g)].map((match) => match[1] ?? match[2])
+
+const parseRoute = (hash: string) => {
+  const [path, query = ''] = hash.replace(/^#\/?/, '').split('?')
+  const [section = ''] = path.split('/')
+  return { section, query }
+}
+
+test('в справке нет сырых href="#…", ломающих hash-маршрут приложения', () => {
+  for (const href of hrefs) {
+    assert.ok(href.startsWith('#/'), `ссылка "${href}" не начинается с "#/" и откроет вместо справки раздел по умолчанию`)
+  }
+})
+
+test('прямая ссылка на любой раздел или подраздел справки разбирается роутером приложения', () => {
+  for (const id of headingIds) {
+    const route = parseRoute(`#/help?section=${id}`)
+    assert.equal(route.section, 'help')
+    assert.equal(new URLSearchParams(route.query).get('section'), id)
+  }
+})
 
 test('оглавление ссылается только на существующие заголовки', () => {
   const idSet = new Set(headingIds)

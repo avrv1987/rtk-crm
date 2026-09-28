@@ -17,6 +17,7 @@ import {
   requestIdOf,
   todayIso
 } from '../work/workShared'
+import { shiftCalendarDate } from '../../shared/format/datetime'
 import '../work/workControl.css'
 
 type OrganizationDeputyPanelProps = AccessHandlers & {
@@ -63,12 +64,6 @@ export const deputyHistoryEntries = (deputies: OrganizationDeputy[]): Assignment
   return entries
 })
 
-const addDays = (isoDate: string, days: number) => {
-  const date = new Date(`${isoDate}T00:00:00`)
-  date.setDate(date.getDate() + days)
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 10)
-}
-
 export const OrganizationDeputyPanel = ({
   organization,
   onChanged,
@@ -79,7 +74,7 @@ export const OrganizationDeputyPanel = ({
   const requestVersion = useRef(0)
   const [deputyProfileId, setDeputyProfileId] = useState('')
   const [startsOn, setStartsOn] = useState(todayIso)
-  const [endsOn, setEndsOn] = useState(() => addDays(todayIso(), 7))
+  const [endsOn, setEndsOn] = useState(() => shiftCalendarDate(todayIso(), 7))
   const [commandState, setCommandState] = useState<CommandState>({ kind: 'idle' })
   const [confirmingEnd, setConfirmingEnd] = useState(false)
   const commandKey = useRef<string | null>(null)
@@ -190,26 +185,26 @@ export const OrganizationDeputyPanel = ({
           <p className="work-control__message">
             {organization.requiresAssignment
               ? 'Сначала назначьте ответственного: заместитель подменяет активного КАМ.'
-              : 'В команде нет другого активного менеджера для замещения.'}
+              : 'В команде нет другого активного КАМ для замещения.'}
           </p>
         ) : (
           <form className="organization-deputy__form" onSubmit={submit}>
             <label>
-              Заместитель
+              <span>Заместитель<span className="required-mark" aria-hidden="true"> *</span></span>
               <select
                 value={deputyProfileId}
                 required
                 disabled={commandState.kind === 'saving'}
                 onChange={(event) => edit(() => setDeputyProfileId(event.target.value))}
               >
-                <option value="">Выберите менеджера</option>
+                <option value="">Выберите КАМ</option>
                 {deputyCandidates.map((candidate) => (
                   <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>
                 ))}
               </select>
             </label>
             <label>
-              С
+              <span>С<span className="required-mark" aria-hidden="true"> *</span></span>
               <input
                 type="date"
                 value={startsOn}
@@ -219,7 +214,7 @@ export const OrganizationDeputyPanel = ({
               />
             </label>
             <label>
-              По
+              <span>По<span className="required-mark" aria-hidden="true"> *</span></span>
               <input
                 type="date"
                 value={endsOn}

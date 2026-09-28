@@ -56,7 +56,8 @@ public final class WorkModels {
             List<ReminderStep> overdue,
             List<ReminderStep> upcoming,
             List<ReminderLicense> expiringLicenses,
-            List<ReminderTraining> trainingCycles
+            List<ReminderTraining> trainingCycles,
+            int licenseExpiresBy
     ) {
     }
 

@@ -126,7 +126,7 @@ export const SourceMappingsList = ({
   const save = (mapping: SourceMapping, draft: Draft) => run(mapping, async () => {
     if (draft.mode === 'run') {
       await apiClient.addSourceMappingRun(mapping.id, payloadOf(mapping, draft))
-      return `Для «${mapping.label}» добавлен поток ${runPeriod(draft.runStartsOn, shiftDate(draft.runLastDay, 1))}; снимок пересчитается при следующей синхронизации Moodle.`
+      return `Для «${mapping.label}» добавлен поток ${runPeriod(draft.runStartsOn, shiftDate(draft.runLastDay, 1))}; данные участия пересчитаются при следующей синхронизации Moodle.`
     }
     await apiClient.updateSourceMapping(mapping.id, payloadOf(mapping, draft))
     return `Сопоставление «${mapping.label}» изменено${isLearning(mapping) ? '; снимки пересчитаны по новому сопоставлению' : '; заявки пересопоставлены'}.`
@@ -144,7 +144,7 @@ export const SourceMappingsList = ({
         return `Сопоставление «${mapping.label}» снято; запись вернулась в разбор.`
       }
       await apiClient.deleteSourceMappingSnapshot(mapping.id)
-      return `Снимок «${mapping.label}» удалён из карточек и отчётов.`
+      return `Данные участия «${mapping.label}» удалены из карточек и отчётов.`
     })
   }
 
@@ -196,8 +196,8 @@ export const SourceMappingsList = ({
                 {learning && (
                   <span>
                     {mapping.observedAt
-                      ? `Снимок: участий — ${mapping.participants ?? 0}, наблюдение ${formatDateTime(mapping.observedAt)}`
-                      : 'Снимка ещё нет'}
+                      ? `Данные участия: ${mapping.participants ?? 0}, посчитаны ${formatDateTime(mapping.observedAt)}`
+                      : 'Данные участия ещё не посчитаны'}
                   </span>
                 )}
                 <span className="data-sources__hint">
@@ -215,7 +215,7 @@ export const SourceMappingsList = ({
                     )}
                     {learning && mapping.observedAt && (
                       <button type="button" className="button--secondary" disabled={busy} onClick={() => setConfirm({ kind: 'snapshot', mapping })}>
-                        Удалить снимок
+                        Удалить данные участия
                       </button>
                     )}
                     <button type="button" className="button--danger" disabled={busy} onClick={() => setConfirm({ kind: 'remove', mapping })}>
@@ -293,11 +293,11 @@ export const SourceMappingsList = ({
       )}
       <ConfirmDialog
         open={confirm !== null}
-        title={confirm?.kind === 'snapshot' ? 'Удалить снимок?' : 'Снять сопоставление?'}
+        title={confirm?.kind === 'snapshot' ? 'Удалить данные участия?' : 'Снять сопоставление?'}
         description={confirm?.kind === 'snapshot'
-          ? `Числа «${confirm.mapping.label}» исчезнут из карточки и отчётов. Если поток ещё идёт, а курс или группа есть в Moodle, снимок появится снова при следующей синхронизации.`
-          : `«${confirm?.mapping.label ?? ''}» вернётся в «Записи для разбора»; снимок этого потока будет удалён.`}
-        confirmLabel={confirm?.kind === 'snapshot' ? 'Удалить снимок' : 'Снять'}
+          ? `Числа «${confirm.mapping.label}» исчезнут из карточки и отчётов. Если поток ещё идёт, а курс или группа есть в Moodle, данные участия появятся снова при следующей синхронизации.`
+          : `«${confirm?.mapping.label ?? ''}» вернётся в «Записи для разбора»; данные участия этого потока будут удалены.`}
+        confirmLabel={confirm?.kind === 'snapshot' ? 'Удалить данные участия' : 'Снять'}
         onConfirm={confirmAction}
         onCancel={() => setConfirm(null)}
       />

@@ -1,5 +1,6 @@
 import { apiClient, type Organization } from '../../shared/api/client'
 import type { components } from '../../shared/api/openapi'
+import { formatMoscowDateTime } from '../../shared/format/datetime'
 
 export type AgreementStatus = components['schemas']['AgreementStatus']
 export type ActivityStatus = components['schemas']['AgreementActivityStatus']
@@ -44,10 +45,7 @@ export const formatDate = (value: string | null | undefined) => {
   return dateFormatter.format(new Date(year, month - 1, day))
 }
 
-export const formatInstant = (value: string) => {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : dateFormatter.format(date)
-}
+export const formatInstant = formatMoscowDateTime
 
 export const formatPeriod = (start: string | null | undefined, end: string | null | undefined) => {
   if (!start && !end) {

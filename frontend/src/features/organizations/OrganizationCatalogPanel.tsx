@@ -41,7 +41,7 @@ type OrganizationCatalogPanelProps<T extends CatalogOrganization> = {
   onSessionError: (error: unknown) => boolean
 }
 
-const actionTexts: Record<StatusAction, { button: string; title: string; description: string; done: string }> = {
+export const actionTexts: Record<StatusAction, { button: string; title: string; description: string; done: string }> = {
   APPROVE: {
     button: 'Подтвердить организацию',
     title: 'Подтвердить организацию',

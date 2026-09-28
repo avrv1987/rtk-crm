@@ -407,7 +407,7 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
     return (
       <form className="admin-profile-form" onSubmit={submitEdit} aria-label={`Изменение профиля ${profileName(profile)}`}>
         <label>
-          Отображаемое имя
+          Отображаемое имя *
           <input
             value={edit.draft.displayName}
             maxLength={200}

@@ -140,6 +140,7 @@ try {
   phase = 'login-admin'
   admin = await login('admin')
   phase = 'admin-ui'
+  await admin.evaluate("location.hash = '#/admin/catalog-import'")
   await admin.waitFor(
     () => admin.evaluate("Boolean(document.querySelector('#catalog-import-title')?.textContent?.includes('Импорт каталогов'))"),
     'Catalog import panel did not appear for ADMIN'

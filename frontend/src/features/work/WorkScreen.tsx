@@ -14,9 +14,11 @@ import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { InteractionMarkBadges } from '../interactions/InteractionMarkBadges'
 import { reportFlagLabels, reportFlags } from '../reports/reportSelection'
+import { KamDesk } from './KamDesk'
 import { TeamIndicators } from './TeamIndicators'
 import { TeamsSummary } from './TeamsSummary'
 import { daysLabel, daysSince, eventTypeLabel, formatDate, formatDateTime } from './workShared'
+import './workControl.css'
 
 type WorkScreenProps = {
   role: Me['role']
@@ -48,7 +50,7 @@ type OptionsState =
   | {
     kind: 'ready'
     stages: string[]
-    organizations: Pick<Organization, 'id' | 'name'>[]
+    organizations: Organization[]
     managers: ReportManagerOption[]
   }
   | { kind: 'failed'; error: unknown }
@@ -155,17 +157,18 @@ const queryFromFilters = (filters: WorkFilters) => {
   return params.toString()
 }
 
-const hasFilters = (filters: WorkFilters) => (
-  filters.q.trim().length > 0
-  || filters.due !== ''
-  || filters.stage.length > 0
-  || filters.organizationId.length > 0
-  || filters.responsible.length > 0
-  || filters.status !== 'ACTIVE'
-  || filters.minDaysOnStage !== null
-  || filters.flag !== ''
-  || filters.licenseExpiresBy !== ''
-)
+const activeFilterCount = (filters: WorkFilters) => [
+  filters.due !== '',
+  filters.stage.length > 0,
+  filters.organizationId.length > 0,
+  filters.responsible.length > 0,
+  filters.status !== 'ACTIVE',
+  filters.minDaysOnStage !== null,
+  filters.flag !== '',
+  filters.licenseExpiresBy !== ''
+].filter(Boolean).length
+
+const hasFilters = (filters: WorkFilters) => filters.q.trim().length > 0 || activeFilterCount(filters) > 0
 
 const dueStatus = (item: InteractionListItem, now: number) => {
   const action = item.nextAction?.trim() ?? ''
@@ -217,6 +220,7 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
   const resultsHeading = useRef<HTMLHeadingElement>(null)
   const focusResults = useRef(false)
   const currentFilters = useRef(filters)
+  const [filtersOpen, setFiltersOpen] = useState(() => activeFilterCount(filters) > 0)
   const seesTeamWork = role === 'LEADER' || role === 'MANAGEMENT'
 
   currentFilters.current = filters
@@ -307,6 +311,7 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
       if (queryFromFilters(linked) === queryFromFilters(currentFilters.current)) {
         return
       }
+      focusResults.current = true
       setSearchText(linked.q)
       setFilters(linked)
     }
@@ -353,16 +358,31 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
     ? stageDayOptions
     : [...stageDayOptions, filters.minDaysOnStage].sort((a, b) => a - b)
   const filtered = hasFilters(filters)
+  const filterCount = activeFilterCount(filters)
 
   return (
     <section className="work" aria-labelledby="work-results-title">
       <p className="work__intro">
         {role === 'MANAGEMENT' && 'Взаимодействия всех команд в режиме просмотра. Сначала идут ближайшие и просроченные сроки следующего шага.'}
         {role === 'LEADER' && 'Взаимодействия по всем вузам команды. Сначала идут ближайшие и просроченные сроки следующего шага.'}
-        {role === 'USER' && 'Взаимодействия по вашим вузам. Сначала идут ближайшие и просроченные сроки следующего шага.'}
+        {role === 'USER' && 'Рабочий стол: сроки ваших шагов и истекающие лицензии. Плитка открывает список ниже с тем же отбором.'}
       </p>
 
-      {role === 'LEADER' && <TeamIndicators onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />}
+      {role === 'USER' && (
+        <KamDesk
+          activeQuery={queryFromFilters({ ...filters, page: 0 })}
+          onChanged={() => void loadList(currentFilters.current)}
+          onSessionExpired={onSessionExpired}
+          onProfileUnavailable={onProfileUnavailable}
+        />
+      )}
+      {role === 'LEADER' && (
+        <TeamIndicators
+          organizations={optionsState.kind === 'ready' ? optionsState.organizations : null}
+          onSessionExpired={onSessionExpired}
+          onProfileUnavailable={onProfileUnavailable}
+        />
+      )}
       {role === 'MANAGEMENT' && <TeamsSummary onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />}
 
       <form className="work-filters" role="search" aria-label="Отбор взаимодействий" onSubmit={(event) => event.preventDefault()}>
@@ -375,109 +395,116 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
             onChange={(event) => setSearchText(event.target.value)}
           />
         </label>
-        <fieldset className="segmented">
-          <legend>Срок следующего шага</legend>
-          {dueOptions.map((option) => (
-            <label key={option.value || 'all'} className="segmented__option">
-              <input
-                type="radio"
-                name="work-due"
-                value={option.value}
-                checked={filters.due === option.value}
-                onChange={() => changeFilter({ due: option.value })}
-              />
-              <span>{option.label}</span>
-            </label>
-          ))}
-        </fieldset>
-        <label>
-          Этап
-          <select
-            value={filters.stage}
-            disabled={optionsState.kind !== 'ready' && filters.stage.length === 0}
-            onChange={(event) => changeFilter({ stage: event.target.value })}
-          >
-            <option value="">Все этапы</option>
-            {filters.stage.length > 0 && !stageOptions.includes(filters.stage) && (
-              <option value={filters.stage}>{filters.stage}</option>
-            )}
-            {stageOptions.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
-          </select>
-        </label>
-        <label>
-          Вуз
-          <select
-            value={filters.organizationId}
-            disabled={optionsState.kind !== 'ready' && filters.organizationId.length === 0}
-            onChange={(event) => changeFilter({ organizationId: event.target.value })}
-          >
-            <option value="">Все вузы</option>
-            {filters.organizationId.length > 0 && !organizationOptions.some((item) => item.id === filters.organizationId) && (
-              <option value={filters.organizationId}>Выбранный ранее вуз</option>
-            )}
-            {organizationOptions.map((organization) => (
-              <option key={organization.id} value={organization.id}>{organization.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Отметка
-          <select
-            value={filters.flag}
-            onChange={(event) => changeFilter({ flag: isFlag(event.target.value) ? event.target.value : '' })}
-          >
-            <option value="">Все работы</option>
-            {reportFlags.map((flag) => <option key={flag} value={flag}>{reportFlagLabels[flag]}</option>)}
-          </select>
-        </label>
-        <label>
-          Лицензия истекает
-          <select value={filters.licenseExpiresBy} onChange={(event) => changeFilter({ licenseExpiresBy: event.target.value })}>
-            <option value="">Любой срок</option>
-            {filters.licenseExpiresBy !== '' && !licenseYears.includes(filters.licenseExpiresBy) && (
-              <option value={filters.licenseExpiresBy}>до {filters.licenseExpiresBy} года включительно</option>
-            )}
-            {licenseYears.map((year) => <option key={year} value={year}>до {year} года включительно</option>)}
-          </select>
-        </label>
-        {seesTeamWork && (
-          <label>
-            Ответственный
-            <select
-              value={filters.responsible}
-              disabled={optionsState.kind !== 'ready' && filters.responsible.length === 0}
-              onChange={(event) => changeFilter({ responsible: event.target.value })}
-            >
-              <option value="">Все ответственные</option>
-              <option value={unassigned}>Требует назначения</option>
-              {filters.responsible.length > 0 && filters.responsible !== unassigned
-                && !managerOptions.some((manager) => manager.id === filters.responsible) && (
-                <option value={filters.responsible}>Выбранный ранее КАМ</option>
-              )}
-              {managerOptions.map((manager) => (
-                <option key={manager.id} value={manager.id}>
-                  {manager.active ? manager.displayName : `${manager.displayName} (неактивен)`}
-                </option>
+        <details className="work-filters__more" open={filtersOpen} onToggle={(event) => setFiltersOpen(event.currentTarget.open)}>
+          <summary>
+            Фильтры{filterCount > 0 && <span className="work-filters__count" aria-label={`, выбрано: ${filterCount}`}>{filterCount}</span>}
+          </summary>
+          <div className="work-filters__panel">
+            <fieldset className="segmented">
+              <legend>Срок следующего шага</legend>
+              {dueOptions.map((option) => (
+                <label key={option.value || 'all'} className="segmented__option">
+                  <input
+                    type="radio"
+                    name="work-due"
+                    value={option.value}
+                    checked={filters.due === option.value}
+                    onChange={() => changeFilter({ due: option.value })}
+                  />
+                  <span>{option.label}</span>
+                </label>
               ))}
-            </select>
-          </label>
-        )}
-        <label>
-          Статус работы
-          <select value={filters.status} onChange={(event) => changeFilter({ status: event.target.value as InteractionWorkStatusFilter })}>
-            {statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-        </label>
-        <label>
-          На текущем этапе
-          <select
-            value={filters.minDaysOnStage ?? ''}
-            onChange={(event) => changeFilter({ minDaysOnStage: positiveInteger(event.target.value) })}
-          >
-            <option value="">Любой срок</option>
-            {stageDays.map((days) => <option key={days} value={days}>дольше {daysLabel(days)}</option>)}
-          </select>
-        </label>
+            </fieldset>
+            <label>
+              Этап
+              <select
+                value={filters.stage}
+                disabled={optionsState.kind !== 'ready' && filters.stage.length === 0}
+                onChange={(event) => changeFilter({ stage: event.target.value })}
+              >
+                <option value="">Все этапы</option>
+                {filters.stage.length > 0 && !stageOptions.includes(filters.stage) && (
+                  <option value={filters.stage}>{filters.stage}</option>
+                )}
+                {stageOptions.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+              </select>
+            </label>
+            <label>
+              Вуз
+              <select
+                value={filters.organizationId}
+                disabled={optionsState.kind !== 'ready' && filters.organizationId.length === 0}
+                onChange={(event) => changeFilter({ organizationId: event.target.value })}
+              >
+                <option value="">Все вузы</option>
+                {filters.organizationId.length > 0 && !organizationOptions.some((item) => item.id === filters.organizationId) && (
+                  <option value={filters.organizationId}>Выбранный ранее вуз</option>
+                )}
+                {organizationOptions.map((organization) => (
+                  <option key={organization.id} value={organization.id}>{organization.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Отметка
+              <select
+                value={filters.flag}
+                onChange={(event) => changeFilter({ flag: isFlag(event.target.value) ? event.target.value : '' })}
+              >
+                <option value="">Все работы</option>
+                {reportFlags.map((flag) => <option key={flag} value={flag}>{reportFlagLabels[flag]}</option>)}
+              </select>
+            </label>
+            <label>
+              Лицензия истекает
+              <select value={filters.licenseExpiresBy} onChange={(event) => changeFilter({ licenseExpiresBy: event.target.value })}>
+                <option value="">Любой срок</option>
+                {filters.licenseExpiresBy !== '' && !licenseYears.includes(filters.licenseExpiresBy) && (
+                  <option value={filters.licenseExpiresBy}>до {filters.licenseExpiresBy} года включительно</option>
+                )}
+                {licenseYears.map((year) => <option key={year} value={year}>до {year} года включительно</option>)}
+              </select>
+            </label>
+            {seesTeamWork && (
+              <label>
+                Ответственный
+                <select
+                  value={filters.responsible}
+                  disabled={optionsState.kind !== 'ready' && filters.responsible.length === 0}
+                  onChange={(event) => changeFilter({ responsible: event.target.value })}
+                >
+                  <option value="">Все ответственные</option>
+                  <option value={unassigned}>Требует назначения</option>
+                  {filters.responsible.length > 0 && filters.responsible !== unassigned
+                    && !managerOptions.some((manager) => manager.id === filters.responsible) && (
+                    <option value={filters.responsible}>Выбранный ранее КАМ</option>
+                  )}
+                  {managerOptions.map((manager) => (
+                    <option key={manager.id} value={manager.id}>
+                      {manager.active ? manager.displayName : `${manager.displayName} (неактивен)`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label>
+              Статус работы
+              <select value={filters.status} onChange={(event) => changeFilter({ status: event.target.value as InteractionWorkStatusFilter })}>
+                {statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label>
+              На текущем этапе
+              <select
+                value={filters.minDaysOnStage ?? ''}
+                onChange={(event) => changeFilter({ minDaysOnStage: positiveInteger(event.target.value) })}
+              >
+                <option value="">Любой срок</option>
+                {stageDays.map((days) => <option key={days} value={days}>дольше {daysLabel(days)}</option>)}
+              </select>
+            </label>
+          </div>
+        </details>
         {filtered && (
           <button type="button" className="button--secondary work-filters__reset" onClick={resetFilters}>Сбросить фильтры</button>
         )}
@@ -492,7 +519,7 @@ export const WorkScreen = ({ role, initialQuery, onSessionExpired, onProfileUnav
       )}
 
       <div className="work__results-header">
-        <h2 id="work-results-title" ref={resultsHeading} tabIndex={-1}>Взаимодействия</h2>
+        <h2 id="work-results-title" ref={resultsHeading} tabIndex={-1}>Все работы</h2>
         <p className="work__total" role="status">
           {listState.kind === 'ready' && (listState.refreshing ? 'Обновляем…' : `Найдено: ${listState.total}`)}
           {listState.kind === 'loading' && 'Загружаем взаимодействия…'}

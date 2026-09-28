@@ -4,12 +4,13 @@ import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { AgreementsPanel } from '../agreements/AgreementsPanel'
 import { InteractionsPanel } from '../interactions/InteractionsPanel'
+import { CardTabPanel, CardTabs, type CardTab } from '../interactions/cardUi'
 import { OrganizationAssignmentHistory } from './OrganizationAssignmentHistory'
 import { OrganizationAssignmentPanel } from './OrganizationAssignmentPanel'
-import { OrganizationCatalogPanel, OrganizationStatusBadge } from './OrganizationCatalogPanel'
+import { OrganizationStatusBadge } from './OrganizationCatalogPanel'
+import { OrganizationCardHeader, OrganizationSummary, deputyLabel } from './OrganizationCard'
 import { OrganizationForm, organizationTypeLabels } from './OrganizationForm'
 import { OrganizationBulkTransfer } from './OrganizationBulkTransfer'
-import { formatDate } from '../work/workShared'
 
 type OrganizationsScreenProps = {
   profileId: string
@@ -22,6 +23,14 @@ type OrganizationsScreenProps = {
 }
 
 type ListStatus = 'CURRENT' | 'PENDING' | 'ARCHIVED'
+
+type OrganizationTab = 'works' | 'contacts' | 'documents' | 'history'
+
+const listStatusOf: Record<Organization['status'], ListStatus> = {
+  ACTIVE: 'CURRENT',
+  PENDING: 'PENDING',
+  ARCHIVED: 'ARCHIVED'
+}
 
 type ListFilters = {
   q: string
@@ -44,12 +53,6 @@ type DetailState =
 const pageSize = 25
 const searchDelayMilliseconds = 300
 
-const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-  timeZone: 'Europe/Moscow'
-})
-
 const organizationTypeLabel = (type: Organization['type']) => organizationTypeLabels[type]
 
 const listStatuses: Array<{ value: ListStatus; label: string }> = [
@@ -57,11 +60,6 @@ const listStatuses: Array<{ value: ListStatus; label: string }> = [
   { value: 'PENDING', label: 'Ожидают подтверждения' },
   { value: 'ARCHIVED', label: 'Архив' }
 ]
-
-const formatUpdatedAt = (value: string) => {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date)
-}
 
 const filtersFromQuery = (query: string, role: Me['role']): ListFilters => {
   const params = new URLSearchParams(query)
@@ -96,21 +94,6 @@ const requestIdOf = (error: unknown) => (
   error instanceof ApiError ? error.requestId : undefined
 )
 
-const ownerLabel = (organization: Organization) => {
-  if (!organization.requiresAssignment) {
-    return organization.ownerManagerName ?? 'Назначен'
-  }
-  return organization.ownerManagerName === null
-    ? 'Требует назначения: ответственный не назначен'
-    : `Требует назначения: ${organization.ownerManagerName} больше не активный КАМ команды`
-}
-
-const deputyLabel = (organization: Organization) => (
-  organization.deputyManagerName === null
-    ? null
-    : `${organization.deputyManagerName}${organization.deputyEndsOn === null ? '' : ` до ${formatDate(organization.deputyEndsOn)}`}`
-)
-
 export const OrganizationsScreen = ({
   profileId,
   role,
@@ -127,6 +110,8 @@ export const OrganizationsScreen = ({
   const [creating, setCreating] = useState(false)
   const [createdMessage, setCreatedMessage] = useState<string | null>(null)
   const [selected, setSelected] = useState<Record<string, Organization>>({})
+  const [organizationTab, setOrganizationTab] = useState<OrganizationTab>('works')
+  const [cardMessage, setCardMessage] = useState<string | null>(null)
   const listRequestVersion = useRef(0)
   const detailRequestVersion = useRef(0)
   const detailHeading = useRef<HTMLHeadingElement>(null)
@@ -229,6 +214,8 @@ export const OrganizationsScreen = ({
   }, [listSuffix, query])
 
   useEffect(() => {
+    setOrganizationTab('works')
+    setCardMessage(null)
     if (selectedOrganizationId === undefined) {
       detailRequestVersion.current += 1
       setDetailState({ kind: 'idle' })
@@ -300,11 +287,29 @@ export const OrganizationsScreen = ({
     window.location.hash = `#/organizations/${organization.id}${listSuffix}`
   }
 
-  const organizationChanged = (organization: Organization) => {
+  const organizationChanged = (organization: Organization, message: string) => {
     setCreatedMessage(null)
+    setCardMessage(message)
     replaceOrganization(organization)
-    void loadOrganizations(filters)
+    const status = listStatusOf[organization.status]
+    if (status !== filters.status) {
+      setFilters((current) => ({ ...current, status, page: 0 }))
+    } else {
+      void loadOrganizations(filters)
+    }
   }
+
+  const openAssignment = () => {
+    setOrganizationTab('history')
+    window.requestAnimationFrame(() => document.getElementById('organization-assignment-title')?.scrollIntoView({ block: 'start' }))
+  }
+
+  const organizationTabs: CardTab<OrganizationTab>[] = [
+    { id: 'works', label: 'Работы' },
+    { id: 'contacts', label: 'Контакты' },
+    { id: 'documents', label: 'Документы и соглашения' },
+    { id: 'history', label: role === 'LEADER' ? 'Назначение и история' : 'История назначений' }
+  ]
 
   return (
     <section className="organizations-panel" aria-labelledby="organizations-title">
@@ -484,7 +489,15 @@ export const OrganizationsScreen = ({
 
         <section className="organization-detail" aria-labelledby="organization-detail-title">
           {selectedOrganizationId !== undefined && (
-            <a className="organizations-back" href={`#/organizations${listSuffix}`}>← Все вузы</a>
+            <nav className="card-crumbs" aria-label="Путь по разделу">
+              <a href={`#/organizations${listSuffix}`}>← Все вузы</a>
+              {selectedInteractionId !== undefined && detailState.kind === 'ready' && (
+                <>
+                  <span aria-hidden="true">/</span>
+                  <a href={`#/organizations/${detailState.organization.id}${listSuffix}`}>{detailState.organization.name}</a>
+                </>
+              )}
+            </nav>
           )}
           {detailState.kind === 'idle' && (
             <>
@@ -508,98 +521,95 @@ export const OrganizationsScreen = ({
               </div>
             </>
           )}
-          {detailState.kind === 'ready' && (
-            <>
-              <h3 id="organization-detail-title" ref={detailHeading} tabIndex={-1}>{detailState.organization.name}</h3>
-              <dl className="organization-detail__fields">
-                <div>
-                  <dt>Тип</dt>
-                  <dd>{organizationTypeLabel(detailState.organization.type)}</dd>
-                </div>
-                <div>
-                  <dt>Команда</dt>
-                  <dd>{detailState.organization.teamName ?? 'Не указана'}</dd>
-                </div>
-                <div>
-                  <dt>Ответственный КАМ</dt>
-                  <dd className={detailState.organization.requiresAssignment ? 'organization-detail__attention' : undefined}>
-                    {ownerLabel(detailState.organization)}
-                  </dd>
-                </div>
-                {detailState.organization.inherited && !detailState.organization.requiresAssignment && (
-                  <div>
-                    <dt>После передачи</dt>
-                    <dd className="organization-detail__attention">
-                      {role === 'USER'
-                        ? 'Унаследованный вуз: вы ещё не подтвердили ни одного контакта. Свяжитесь с контактом и отметьте у него «Контакт подтверждён».'
-                        : `Унаследованный вуз: ${detailState.organization.ownerManagerName ?? 'новый ответственный'} ещё не подтвердил ни одного контакта после передачи.`}
-                    </dd>
-                  </div>
-                )}
-                {deputyLabel(detailState.organization) !== null && (
-                  <div>
-                    <dt>Заместитель</dt>
-                    <dd>{deputyLabel(detailState.organization)}</dd>
-                  </div>
-                )}
-                <div>
-                  <dt>Обновлено</dt>
-                  <dd>{formatUpdatedAt(detailState.organization.updatedAt)}</dd>
-                </div>
-              </dl>
-              <OrganizationCatalogPanel
-                key={`catalog:${detailState.organization.id}`}
+          {detailState.kind === 'ready' && selectedInteractionId !== undefined && (
+            <InteractionsPanel
+              key={`card:${detailState.organization.id}`}
+              view="card"
+              organizationId={detailState.organization.id}
+              initialInteractionId={selectedInteractionId}
+              profileId={profileId}
+              role={role}
+              onContactsChanged={() => void refreshOrganization(detailState.organization.id)}
+              onSessionExpired={onSessionExpired}
+              onProfileUnavailable={onProfileUnavailable}
+            />
+          )}
+          {detailState.kind === 'ready' && selectedInteractionId === undefined && (
+            <div className="org-card">
+              <OrganizationCardHeader
+                key={`header:${detailState.organization.id}`}
                 organization={detailState.organization}
-                canEdit={role === 'LEADER'}
-                canApprove={role === 'LEADER'}
-                canArchive={role === 'LEADER' || detailState.organization.ownerManagerId === profileId}
-                canRestore={role === 'LEADER'}
-                linkDuplicates
-                update={(payload, idempotencyKey) => apiClient.updateOrganization(detailState.organization.id, payload, idempotencyKey)}
-                changeStatus={(payload, idempotencyKey) => (
-                  apiClient.changeOrganizationStatus(detailState.organization.id, payload, idempotencyKey)
-                )}
+                role={role}
+                profileId={profileId}
+                headingRef={detailHeading}
                 onChanged={organizationChanged}
+                onOpenAssignment={openAssignment}
                 onSessionError={handleAccessError}
               />
-              {role === 'USER' && (
-                <OrganizationAssignmentHistory
-                  key={detailState.organization.id}
-                  organizationId={detailState.organization.id}
-                  revision={0}
-                  onSessionExpired={onSessionExpired}
-                  onProfileUnavailable={onProfileUnavailable}
-                />
-              )}
-              {role === 'LEADER' && (
-                <OrganizationAssignmentPanel
-                  key={detailState.organization.id}
-                  organization={detailState.organization}
-                  profileId={profileId}
-                  onOrganizationChanged={replaceOrganization}
-                  onReload={() => loadOrganization(detailState.organization.id)}
-                  onSessionExpired={onSessionExpired}
-                  onProfileUnavailable={onProfileUnavailable}
-                />
-              )}
-              <InteractionsPanel
-                key={`${detailState.organization.id}:${selectedInteractionId ?? ''}`}
+              <div className="card-notice-slot" role="status" aria-live="polite">
+                {cardMessage !== null && <p className="card-notice">{cardMessage}</p>}
+              </div>
+              <OrganizationSummary
+                key={`summary:${detailState.organization.id}`}
                 organizationId={detailState.organization.id}
-                initialInteractionId={selectedInteractionId}
-                profileId={profileId}
-                role={role}
-                onContactsChanged={() => void refreshOrganization(detailState.organization.id)}
-                onSessionExpired={onSessionExpired}
-                onProfileUnavailable={onProfileUnavailable}
+                workHref={(id) => `#/organizations/${detailState.organization.id}/${id}${listSuffix}`}
+                onShowWorks={() => setOrganizationTab('works')}
+                onSessionError={handleAccessError}
               />
-              <AgreementsPanel
-                key={`agreements:${detailState.organization.id}`}
-                organizationId={detailState.organization.id}
-                role={role}
-                onSessionExpired={onSessionExpired}
-                onProfileUnavailable={onProfileUnavailable}
+              <CardTabs
+                label="Разделы карточки вуза"
+                idPrefix="organization-card"
+                tabs={organizationTabs}
+                active={organizationTab}
+                onChange={setOrganizationTab}
               />
-            </>
+              <CardTabPanel idPrefix="organization-card" active={organizationTab}>
+                {(organizationTab === 'works' || organizationTab === 'contacts') && (
+                  <InteractionsPanel
+                    key={`${organizationTab}:${detailState.organization.id}`}
+                    view={organizationTab}
+                    organizationId={detailState.organization.id}
+                    profileId={profileId}
+                    role={role}
+                    onContactsChanged={() => void refreshOrganization(detailState.organization.id)}
+                    onSessionExpired={onSessionExpired}
+                    onProfileUnavailable={onProfileUnavailable}
+                  />
+                )}
+                {organizationTab === 'documents' && (
+                  <AgreementsPanel
+                    key={`agreements:${detailState.organization.id}`}
+                    organizationId={detailState.organization.id}
+                    role={role}
+                    onSessionExpired={onSessionExpired}
+                    onProfileUnavailable={onProfileUnavailable}
+                  />
+                )}
+                {organizationTab === 'history' && role === 'LEADER' && (
+                  <OrganizationAssignmentPanel
+                    key={detailState.organization.id}
+                    organization={detailState.organization}
+                    profileId={profileId}
+                    onOrganizationChanged={(organization) => {
+                      setCardMessage('Назначение ответственного сохранено.')
+                      replaceOrganization(organization)
+                    }}
+                    onReload={() => loadOrganization(detailState.organization.id)}
+                    onSessionExpired={onSessionExpired}
+                    onProfileUnavailable={onProfileUnavailable}
+                  />
+                )}
+                {organizationTab === 'history' && role !== 'LEADER' && (
+                  <OrganizationAssignmentHistory
+                    key={detailState.organization.id}
+                    organizationId={detailState.organization.id}
+                    revision={0}
+                    onSessionExpired={onSessionExpired}
+                    onProfileUnavailable={onProfileUnavailable}
+                  />
+                )}
+              </CardTabPanel>
+            </div>
           )}
         </section>
       </div>

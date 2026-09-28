@@ -234,7 +234,7 @@ const AgreementForm = ({ organizationId, agreement, options, onSaved, onCancel, 
     <form className="agreement-form" onSubmit={(event) => void submit(event)} aria-label={agreement ? 'Реквизиты соглашения' : 'Новое соглашение'}>
       <div className="agreement-form__grid">
         <label>
-          Номер соглашения
+          <span>Номер соглашения<span className="required-mark" aria-hidden="true"> *</span></span>
           <input value={number} required maxLength={100} onChange={(event) => setNumber(event.target.value)} />
         </label>
         <label>
@@ -610,13 +610,13 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
     <form className="agreement-form" onSubmit={(event) => void submit(event)} aria-label={activity ? 'Изменение мероприятия' : 'Новое мероприятие'}>
       <div className="agreement-form__grid">
         <label className="agreement-form__wide">
-          Вид мероприятия
+          <span>Вид мероприятия<span className="required-mark" aria-hidden="true"> *</span></span>
           <select value={kindId} required onChange={(event) => setKindId(event.target.value)}>
             {kinds.map((kind) => <option key={kind.id} value={kind.id}>{kind.name}{kind.archived ? ' (в архиве)' : ''}</option>)}
           </select>
         </label>
         <label className="agreement-form__wide">
-          Мероприятие
+          <span>Мероприятие<span className="required-mark" aria-hidden="true"> *</span></span>
           <input value={title} required maxLength={300} onChange={(event) => setTitle(event.target.value)} />
         </label>
         <label>

@@ -14,6 +14,7 @@ import {
   type StatisticsRequest,
   type StatisticsResult
 } from '../../shared/api/client'
+import { formatMoscowDateTime } from '../../shared/format/datetime'
 import { loadReportSelection, saveReportSelection } from '../interactions/drafts'
 import {
   applyDefinition,
@@ -137,20 +138,13 @@ const demandSortLabels: Record<(typeof demandSorts)[number], string> = {
 
 const dateColumns: ReadonlySet<ReportColumn> = new Set<ReportColumn>(['CREATED_AT', 'LAST_EVENT_AT', 'NEXT_ACTION_AT', 'EVENT_AT'])
 
-const moscowDateTime = new Intl.DateTimeFormat('ru-RU', {
-  dateStyle: 'short',
-  timeStyle: 'short',
-  timeZone: 'Europe/Moscow'
-})
-
-const localDateTime = new Intl.DateTimeFormat('ru-RU', {
-  dateStyle: 'medium',
-  timeStyle: 'short'
-})
-
-const formatDateTime = (formatter: Intl.DateTimeFormat, value: string) => {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : formatter.format(date)
+const focusResult = (id: string) => {
+  const target = document.getElementById(id)
+  if (target === null) {
+    return
+  }
+  target.scrollIntoView({ block: 'start' })
+  target.focus({ preventScroll: true })
 }
 
 const isFinished = (job: ReportJob) => job.status === 'SUCCEEDED' || job.status === 'FAILED'
@@ -200,7 +194,7 @@ const managerLegends: Record<ReportKind, string> = {
 
 const cellText = (value: unknown, column: ReportColumn) => {
   if (dateColumns.has(column)) {
-    return formatDateTime(moscowDateTime, String(value))
+    return formatMoscowDateTime(String(value))
   }
   return typeof value === 'number' ? value.toLocaleString('ru-RU') : String(value)
 }
@@ -500,6 +494,9 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
       const preview = await apiClient.previewReport(request, page, previewPageSize)
       if (version === previewVersion.current) {
         setPreviewState({ kind: 'ready', request, preview })
+        if (page === 0) {
+          requestAnimationFrame(() => focusResult('reports-preview-total'))
+        }
       }
     } catch (error) {
       if (version !== previewVersion.current || handleAccessError(error)) {
@@ -523,6 +520,7 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
       const result = await apiClient.reportStatistics(request)
       if (version === statisticsVersion.current) {
         setStatisticsState({ kind: 'ready', request, line, result })
+        requestAnimationFrame(() => focusResult('reports-statistics-result'))
       }
     } catch (error) {
       if (version !== statisticsVersion.current || handleAccessError(error)) {
@@ -632,6 +630,8 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
       <h2 id="reports-title" className="reports__title">Отчёт по взаимодействиям</h2>
 
       <form className="reports__form" onSubmit={submitPreview}>
+        <details className="reports__group" open>
+        <summary>Вид отчёта, период и тип</summary>
         <div className="reports__settings">
           <label>
             Вид отчёта
@@ -720,7 +720,10 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
             ? 'Состояние — на конец выбранного дня по московскому времени; пустая дата — сегодня.'
             : 'Даты включительно, время московское; пустая дата снимает ограничение.'}
         </p>
+        </details>
 
+        <details className="reports__group" open>
+        <summary>Фильтры</summary>
         {optionsState.kind === 'loading' && <p role="status">Загружаем значения фильтров…</p>}
         {optionsState.kind === 'failed' && (
           <ErrorNotice
@@ -819,6 +822,7 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
             )}
           </div>
         )}
+        </details>
 
         <fieldset className="reports__columns">
           <legend>Колонки</legend>
@@ -873,7 +877,7 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
             {previewOutdated && (
               <p className="reports__outdated" role="status">Выбор изменён после построения таблицы. Нажмите «Показать», чтобы обновить её.</p>
             )}
-            <p className="reports__total">Строк в отчёте: {previewState.preview.total}</p>
+            <p className="reports__total" id="reports-preview-total" tabIndex={-1}>Строк в отчёте: {previewState.preview.total}</p>
             <ul className="reports__notes">
               {previewState.preview.notes.map((note) => <li key={note}>{note}</li>)}
             </ul>
@@ -994,7 +998,9 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
             {statisticsOutdated && (
               <p className="reports__outdated" role="status">Выбор изменён после построения. Нажмите «{currentLine ? 'Построить график' : 'Построить диаграмму'}», чтобы обновить.</p>
             )}
-            {statisticsState.line ? <LineChart result={statisticsState.result} /> : <StatisticsChart result={statisticsState.result} />}
+            <div id="reports-statistics-result" tabIndex={-1}>
+              {statisticsState.line ? <LineChart result={statisticsState.result} /> : <StatisticsChart result={statisticsState.result} />}
+            </div>
             <div className="reports__order">
               <button
                 type="button"
@@ -1070,7 +1076,7 @@ export const ReportsScreen = ({ profileId, role, onSessionExpired, onProfileUnav
                   <strong>{jobTitle(job)}</strong>
                   <span className={`reports__job-status reports__job-status--${job.status.toLowerCase()}`}>{jobStatusText(job)}</span>
                 </div>
-                <p>Заказан {formatDateTime(localDateTime, job.createdAt)}</p>
+                <p>Заказан {formatMoscowDateTime(job.createdAt)}</p>
                 {job.status === 'FAILED' && job.error && (
                   <p className="reports__job-error">Код: {job.error.code}. {job.error.message}</p>
                 )}

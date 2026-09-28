@@ -7509,7 +7509,7 @@ components:
           format: date
     ReminderDigest:
       type: object
-      required: [enabled, generatedAt, upcomingDays, overdueTotal, dueTodayTotal, upcomingTotal, overdue, upcoming, expiringLicenses, trainingCycles]
+      required: [enabled, generatedAt, upcomingDays, overdueTotal, dueTodayTotal, upcomingTotal, overdue, upcoming, expiringLicenses, trainingCycles, licenseExpiresBy]
       properties:
         enabled:
           type: boolean
@@ -7545,6 +7545,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ReminderTraining'
+        licenseExpiresBy:
+          type: integer
+          description: Год, до которого включительно лицензия считается истекающей; тот же год принимает отбор licenseExpiresBy списка взаимодействий
     ReminderSettings:
       type: object
       required: [enabled]

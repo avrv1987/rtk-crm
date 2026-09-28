@@ -47,6 +47,51 @@
   font-weight: 600;
 }
 
+.enrolment__funnel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.enrolment__funnel div {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.enrolment__funnel dt {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.enrolment__funnel dd {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.enrolment__stage-bar {
+  display: flex;
+  gap: 2px;
+  min-width: 96px;
+}
+
+.enrolment__stage-bar-segment {
+  flex: 1 1 0;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--color-surface-accent);
+  overflow: hidden;
+}
+
+.enrolment__stage-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-action);
+}
+
 .enrolment__issues {
   display: grid;
   gap: var(--space-1);

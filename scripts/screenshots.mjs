@@ -130,15 +130,21 @@ try {
   const cardReady = "Boolean(document.querySelector('.interaction-path')) && [...document.querySelectorAll('.interaction-events li')].some((item) => item.textContent.includes('Данные LMS'))"
   await navigate(kam, '#/organizations/' + universityA.id + '/' + demo.id, cardReady)
   await shoot(kam, 'interaction-card', cardReady, '.interaction-detail')
-  await shoot(kam, 'interaction-path', cardReady, ['#interaction-path-title', '.interaction-path'])
-  await shoot(kam, 'next-step', cardReady, '.interaction-plan-form')
   await shoot(kam, 'history', cardReady, '.interaction-events')
-  await fillFields(kam, '.interaction-commands form:nth-of-type(2) select', [1])
-  await fillFields(kam, '.interaction-commands form:nth-of-type(2) textarea', [
+  await kam.evaluate("document.getElementById('work-card-tab-route').click()")
+  await shoot(kam, 'interaction-path', "Boolean(document.querySelector('.interaction-stages .interaction-path'))", ['#interaction-route-title', '.interaction-stages'])
+  await kam.evaluate("document.getElementById('work-card-tab-history').click()")
+  await clickButton(kam, 'Следующий шаг', "document.querySelector('.work-card__actions')")
+  await shoot(kam, 'next-step', "Boolean(document.querySelector('dialog[open] .interaction-plan-form'))", 'dialog[open]')
+  await clickButton(kam, 'Закрыть', "document.querySelector('dialog[open]')")
+  await clickButton(kam, 'Перейти к следующему этапу', "document.querySelector('.work-card__actions')")
+  await fillFields(kam, 'dialog[open] form.interaction-transition-form select', [1])
+  await fillFields(kam, 'dialog[open] form.interaction-transition-form textarea', [
     'Проректор подтвердил интерес к программе, договорились о встрече.',
     'Провести встречу с проректором и показать программу'
   ])
-  await shoot(kam, 'transition', cardReady + " && document.querySelector('.interaction-commands').innerText.includes('Выбран этап')", '.interaction-commands')
+  await shoot(kam, 'transition', "Boolean(document.querySelector('dialog[open] form.interaction-transition-form')?.innerText.includes('Выбран этап'))", 'dialog[open]')
+  await clickButton(kam, 'Закрыть', "document.querySelector('dialog[open]')")
 
   phase = 'attachments'
   let attachmentCard = null
@@ -151,7 +157,7 @@ try {
     }
   }
   assert(attachmentCard, 'No interaction with clean and rejected attachments (run scripts/attachment-smoke.mjs first)')
-  const attachmentsReady = "document.querySelectorAll('.interaction-attachments li').length > 1"
+  const attachmentsReady = "(document.querySelector('#work-card-tab-documents[aria-selected=false]')?.click(), true) && document.querySelectorAll('.interaction-attachments li').length > 1"
   await navigate(kam, '#/organizations/' + universityA.id + '/' + attachmentCard.id, attachmentsReady)
   await shoot(kam, 'attachments', attachmentsReady, '.interaction-attachments')
 
@@ -193,11 +199,11 @@ try {
   const leaderOrganizations = await listAll(leader, '/api/organizations?sort=name,asc', 'Organizations are unavailable')
   const universityC = leaderOrganizations.find((item) => item.name.startsWith('Университет C'))
   assert(universityC, 'Leader does not see University C')
-  const assignmentReady = "Boolean(document.querySelector('.organization-assignment')) && document.body.innerText.includes('История назначений')"
+  const assignmentReady = "(document.querySelector('#organization-card-tab-history[aria-selected=false]')?.click(), true) && Boolean(document.querySelector('.organization-assignment')) && document.body.innerText.includes('История назначений')"
   await navigate(leader, '#/organizations/' + universityC.id, assignmentReady)
   await shoot(leader, 'assignment', assignmentReady, ['#organization-detail-title', '.organization-assignment'])
   const templatesReady = "Boolean(document.querySelector('.workflow-templates__item'))"
-  await navigate(leader, '#/organizations', templatesReady)
+  await navigate(leader, '#/admin/workflow-templates', templatesReady)
   await clickButton(leader, 'Создать на основе базового')
   await shoot(leader, 'templates-editor', "Boolean(document.querySelector('#workflow-template-stages-title'))", '.workflow-templates form')
 
@@ -208,14 +214,19 @@ try {
 
   phase = 'admin'
   const admin = await session('admin')
-  const adminReady = "Boolean(document.querySelector('#admin-profiles-title')) && Boolean(document.querySelector('.data-sources'))"
-  await navigate(admin, '#/admin', adminReady)
-  await shoot(admin, 'admin', adminReady)
-  await shoot(admin, 'admin-profiles', adminReady, 'section[aria-labelledby=admin-profiles-title]')
+  const adminNavReady = "Boolean(document.querySelector('.admin-section-nav'))"
+  const adminProfilesReady = adminNavReady + " && Boolean(document.querySelector('#admin-profiles-title'))"
+  await navigate(admin, '#/admin', adminProfilesReady)
+  await shoot(admin, 'admin', adminProfilesReady)
+  await shoot(admin, 'admin-profiles', adminProfilesReady, 'section[aria-labelledby=admin-profiles-title]')
+  const adminImportReady = adminNavReady + " && Boolean(document.querySelector('.catalog-import'))"
+  await navigate(admin, '#/admin/catalog-import', adminImportReady)
   await setFile(admin, '.catalog-import input[type=file]', importTemplate)
   await clickButton(admin, 'Проверить файл', "document.querySelector('.catalog-import')")
-  await shoot(admin, 'catalog-import', adminReady + " && document.querySelector('.catalog-import').innerText.includes('Сопоставление столбцов')", '.catalog-import')
-  await shoot(admin, 'sources', adminReady + " && document.querySelector('.data-sources').innerText.includes('LMS Moodle')", '.data-sources')
+  await shoot(admin, 'catalog-import', adminImportReady + " && document.querySelector('.catalog-import').innerText.includes('Сопоставление столбцов')", '.catalog-import')
+  const adminSourcesReady = adminNavReady + " && Boolean(document.querySelector('.data-sources'))"
+  await navigate(admin, '#/admin/sources', adminSourcesReady)
+  await shoot(admin, 'sources', adminSourcesReady + " && document.querySelector('.data-sources').innerText.includes('LMS Moodle')", '.data-sources')
 
   phase = 'swagger'
   await goTo(kam, originUrl() + '/swagger-ui/index.html', "document.querySelectorAll('.opblock').length > 10")

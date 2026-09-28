@@ -7,6 +7,7 @@ import {
   type ReportPreview
 } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { formatCalendarDate, formatMoscowDateTime, todayInMoscow } from '../../shared/format/datetime'
 import { handledAccessError } from '../interactions/workMarks'
 import './kamReview.css'
 
@@ -43,18 +44,9 @@ const stepColumns: ReportColumn[] = ['ORGANIZATION', 'INTERACTION', 'STAGE', 'NE
 const markColumns: ReportColumn[] = ['ORGANIZATION', 'INTERACTION', 'WAITING', 'PROBLEM', 'RISK']
 const dateColumns: ReadonlySet<ReportColumn> = new Set<ReportColumn>(['EVENT_AT', 'NEXT_ACTION_AT'])
 
-const moscowDateTime = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Moscow' })
-const shortDate = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'long' })
-
-const isoDate = (date: Date) => [
-  date.getFullYear(),
-  String(date.getMonth() + 1).padStart(2, '0'),
-  String(date.getDate()).padStart(2, '0')
-].join('-')
-
-const today = new Date()
-const defaultFrom = isoDate(new Date(today.getFullYear(), today.getMonth(), 1))
-const defaultTo = isoDate(today)
+const todayIso = todayInMoscow()
+const defaultFrom = `${todayIso.slice(0, 7)}-01`
+const defaultTo = todayIso
 
 const cellText = (preview: ReportPreview, row: Row, column: ReportColumn) => {
   const value = row[column]
@@ -62,8 +54,7 @@ const cellText = (preview: ReportPreview, row: Row, column: ReportColumn) => {
     return preview.columns.find((item) => item.id === column)?.emptyText ?? ''
   }
   if (dateColumns.has(column)) {
-    const date = new Date(String(value))
-    return Number.isNaN(date.getTime()) ? String(value) : moscowDateTime.format(date)
+    return formatMoscowDateTime(String(value))
   }
   return String(value)
 }
@@ -169,11 +160,11 @@ export const KamReviewPanel = ({ onSessionExpired, onProfileUnavailable }: KamRe
           </select>
         </label>
         <label>
-          Период с
+          Период с *
           <input type="date" required value={from} max={to || undefined} onChange={(event) => setFrom(event.target.value)} />
         </label>
         <label>
-          по
+          по *
           <input type="date" required value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} />
         </label>
         <div className="reports__actions">
@@ -191,8 +182,8 @@ export const KamReviewPanel = ({ onSessionExpired, onProfileUnavailable }: KamRe
       {review !== null && (
         <div className="kam-review__result" aria-live="polite">
           <p className="kam-review__summary">
-            <strong>{review.managerName}</strong>, {shortDate.format(new Date(`${review.from}T00:00:00`))} —{' '}
-            {shortDate.format(new Date(`${review.to}T00:00:00`))}: событий {review.events.total}, активных работ {review.works.total},
+            <strong>{review.managerName}</strong>, {formatCalendarDate(review.from)} —{' '}
+            {formatCalendarDate(review.to)}: событий {review.events.total}, активных работ {review.works.total},
             {' '}с отметками ожидания, проблемы или риска {markedWorks.length}.
           </p>
           <section aria-labelledby="kam-review-events">

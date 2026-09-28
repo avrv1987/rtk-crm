@@ -171,15 +171,15 @@ export const TeacherTrainings = ({
       {canEdit && open && (
         <form className="source-form" onSubmit={(event) => void submit(event)}>
           <label>
-            Дата обучения
+            <span>Дата обучения<span className="required-mark" aria-hidden="true"> *</span></span>
             <input type="date" required max={todayIso()} value={draft.trainedOn} onChange={(event) => update({ trainedOn: event.target.value })} />
           </label>
           <label>
-            Курс
+            <span>Курс<span className="required-mark" aria-hidden="true"> *</span></span>
             <input required maxLength={300} value={draft.courseName} onChange={(event) => update({ courseName: event.target.value })} />
           </label>
           <label>
-            Записано преподавателей
+            <span>Записано преподавателей<span className="required-mark" aria-hidden="true"> *</span></span>
             <input type="number" required min={0} value={draft.enrolledCount} onChange={(event) => update({ enrolledCount: event.target.value })} />
           </label>
           <label>
@@ -195,7 +195,7 @@ export const TeacherTrainings = ({
               ))}
             </select>
             {documents.length === 0 && (
-              <span>Чтобы приложить документ, сначала загрузите его в блоке «Документы» на текущем этапе.</span>
+              <span>Чтобы приложить документ, сначала загрузите его во вкладке «Документы» на текущем этапе.</span>
             )}
           </label>
           <label>

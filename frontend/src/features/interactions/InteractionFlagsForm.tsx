@@ -204,7 +204,7 @@ export const InteractionFlagsForm = ({
       </label>
       {values.problem.on && (
         <label>
-          Описание проблемы
+          <span>Описание проблемы<span className="required-mark" aria-hidden="true"> *</span></span>
           <textarea
             value={values.problem.text}
             maxLength={1000}
@@ -225,7 +225,7 @@ export const InteractionFlagsForm = ({
       </label>
       {values.risk.level !== '' && (
         <label>
-          Причина риска
+          <span>Причина риска<span className="required-mark" aria-hidden="true"> *</span></span>
           <textarea
             value={values.risk.reason}
             maxLength={1000}

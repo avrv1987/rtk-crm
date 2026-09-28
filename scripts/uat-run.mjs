@@ -25,6 +25,11 @@ const demo = {
   digitalProgram: 'Демо-программа: цифровой университет'
 }
 
+const cardTabTexts = async (page, url, tab, texts, label) => {
+  await screenTexts(page, url, [tab], label)
+  await page.evaluate(`[...document.querySelectorAll('.card-tabs__tab')].find((item) => item.textContent.startsWith(${JSON.stringify(tab)})).click()`)
+  await page.waitFor(() => page.evaluate(`${JSON.stringify(texts)}.every((item) => document.body.textContent.includes(item))`), label + ': ' + texts.join(', '))
+}
 const leaderView = async (name) => demoOrganization(await session('leader'), name)
 const kamView = async (login, name) => demoOrganization(await session(login), name)
 const organizationWork = async (page, organizationId) => listAll(page, '/api/interactions?status=ALL&organizationId=' + organizationId, 'Organization work failed')
@@ -182,6 +187,16 @@ scenario('UAT-КАМ-03', '«Моя работа»: список дел на д�
     const value = ids(await listAll(kamA, '/api/interactions?due=NO_NEXT_STEP' + query, 'Без шага')).split('').sort().join('')
     assert(value === 'gv', 'Без шага: ' + value)
     return value
+  })
+  await step(1, 'Рабочий стол: плитки равны спискам, напоминания не закрывают экран', async () => {
+    await screenTexts(kamA, '/#/work', ['Задачи по срокам', 'Просрочено', 'Шаги на этой неделе', 'Без следующего шага', 'Лицензии истекают'], 'Рабочий стол')
+    const tiles = Object.fromEntries(await kamA.evaluate("[...document.querySelectorAll('.desk-tile')].map((tile) => [tile.getAttribute('href'), Number(tile.querySelector('.desk-tile__value').textContent)])"))
+    for (const due of ['OVERDUE', 'THIS_WEEK', 'NO_NEXT_STEP']) {
+      const total = requireStatus(await api(kamA, 'GET', '/api/interactions?size=1&due=' + due), 200, 'Список').total
+      assert(tiles['#/work?due=' + due] === total, due + ': плитка ' + tiles['#/work?due=' + due] + ' ≠ список ' + total)
+    }
+    assert(await kamA.evaluate("document.querySelector('.reminder-center__panel').hidden"), 'Напоминания открылись сами')
+    return 'плитки ' + JSON.stringify(tiles) + ', панель напоминаний закрыта'
   })
   await step(6, 'В строке последнее событие и дни на этапе', async () => {
     const row = (await listAll(kamA, '/api/interactions?status=ALL' + query, 'Строки')).find((item) => item.id === works.a.id)
@@ -362,7 +377,7 @@ scenario('UAT-КАМ-12', 'Пакет документов в 10 формата�
     const card = await interactionOf(kamA, work.id)
     const kinds = new Set(card.attachments.map((item) => item.kind))
     assert(['CONTRACT', 'SIGNED_SCAN', 'MATERIALS', 'APPENDIX'].every((kind) => kinds.has(kind)), 'Виды: ' + [...kinds].join(','))
-    await screenTexts(kamA, '/#/organizations/' + university.id + '/' + work.id, ['Документы', 'Вид документа'], 'Отбор по виду')
+    await cardTabTexts(kamA, '/#/organizations/' + university.id + '/' + work.id, 'Документы', ['Отбор по виду документа', 'Вид документа'], 'Отбор по виду')
     return [...kinds].join(', ')
   })
   await step(8, 'Просмотр PNG и PDF без скачивания', async () => {
@@ -506,7 +521,7 @@ scenario('UAT-КАМ-15', 'Отметки передачи материалов,
   await step('5–6', 'Статус передачи «Передано частично» виден в карточке', async () => {
     const value = card.productAgreements[0]
     assert(value.transferStatus === 'Передано частично', 'Статус ' + value.transferStatus)
-    await screenTexts(kamA, '/#/organizations/' + university.id + '/' + work.id, ['Передано частично'], 'Карточка')
+    await cardTabTexts(kamA, '/#/organizations/' + university.id + '/' + work.id, 'Отметки передачи', ['Передано частично'], 'Карточка')
     return value.transferStatus
   })
   await step(7, 'Отбор «Документация не передана»', async () => {
@@ -599,7 +614,7 @@ scenario('UAT-КАМ-30', 'Принять вуз от коллеги и поня
       const events = requireStatus(await api(kamC, 'GET', '/api/organizations/' + university.id + '/assignment-events'), 200, 'История назначений')
       const handover = events.at(-1)
       assert(handover?.previousOwnerManagerDisplayName === 'КАМ А' && handover.newOwnerManagerDisplayName === 'КАМ В' && handover.occurredAt && handover.handoverNote?.includes('ЛПР'), 'Нет записки или истории')
-      await screenTexts(kamC, '/#/organizations/' + university.id, ['История назначений', 'Ответственный изменён: КАМ А → КАМ В', 'ЛПР'], 'Карточка вуза у КАМ В')
+      await cardTabTexts(kamC, '/#/organizations/' + university.id, 'История назначений', ['Ответственный изменён: КАМ А → КАМ В', 'ЛПР'], 'Карточка вуза у КАМ В')
       return 'записей ' + events.length
     })
     await step(7, 'Контакт подтверждён с датой и автором', async () => {
@@ -916,7 +931,7 @@ scenario('UAT-РУК-08', 'Показатели руководителя по К
   const leader = await session('leader')
   const indicators = await step(1, 'Блок показателей по КАМ и «Требует назначения»', async () => {
     const value = requireStatus(await api(leader, 'GET', '/api/work/team-indicators'), 200, 'Показатели')
-    await screenTexts(leader, '/#/work', ['Где команде нужна помощь', 'Требует назначения'], 'Блок показателей')
+    await screenTexts(leader, '/#/work', ['Пульт команды', 'Где команде нужна помощь', 'Требует назначения', 'Вузы без ответственного', 'Заместители'], 'Блок показателей')
     assert(value.managers.some((item) => item.managerId === null) && value.calculatedAt, 'Нет строки «Требует назначения»')
     return value
   })
@@ -946,6 +961,15 @@ scenario('UAT-РУК-08', 'Показатели руководителя по К
     const report = requireStatus(await preview(leader, { kind: 'PORTFOLIO', from: null, to: null, filters: { includeNoManager: true } }, 1), 200, 'Отчёт')
     assert(list.length === report.total, list.length + ' ≠ ' + report.total)
     return String(list.length)
+  })
+  await step('1а', 'Плитки пульта равны спискам «Моей работы»', async () => {
+    const sum = (key) => indicators.managers.reduce((value, item) => value + item[key], 0)
+    const totals = {}
+    for (const [key, query] of [['overdue', 'due=OVERDUE'], ['withoutNextStep', 'due=NO_NEXT_STEP'], ['stuck', 'minDaysOnStage=' + indicators.stuckDays]]) {
+      totals[key] = requireStatus(await api(leader, 'GET', '/api/interactions?size=1&' + query), 200, 'Список').total
+      assert(sum(key) === totals[key], key + ': ' + sum(key) + ' ≠ ' + totals[key])
+    }
+    return JSON.stringify(totals)
   })
   await step(7, 'Колонка «Дней на этапе» и отбор «дольше N дней»', async () => {
     const report = requireStatus(await preview(leader, { kind: 'PORTFOLIO', from: null, to: null, filters: { minDaysOnStage: 1 }, columns: ['INTERACTION', 'DAYS_ON_STAGE'] }), 200, 'Отчёт')
@@ -1248,7 +1272,7 @@ scenario('UAT-ИБ-05', 'Журнал значимых событий', {}, asyn
     return 'событий ' + events.length + ', типы: ' + [...new Set(events.map((event) => event.type))].join(',')
   })
   await step(10, 'Единый экран журнала с фильтрами и выгрузкой', async () => {
-    await screenTexts(admin, '/#/admin', ['Журнал администратора и безопасности'], 'Журнал')
+    await screenTexts(admin, '/#/admin/journal', ['Журнал администратора и безопасности'], 'Журнал')
     const csv = await api(admin, 'GET', '/api/admin/audit-events/export?format=CSV&from=' + today + '&to=' + today, { text: true })
     assert(csv.status === 200 && csv.text.length > 0, 'Выгрузка ' + csv.status)
     return 'экран и CSV'
@@ -1370,7 +1394,7 @@ scenario('UAT-ИБ-08', 'Сроки хранения ПДн и файлов от
   const admin = await session('admin')
   await step(2, 'Экран и настройки «Сроки хранения»', async () => {
     const policy = requireStatus(await api(admin, 'GET', '/api/admin/retention'), 200, 'Сроки')
-    await screenTexts(admin, '/#/admin', ['Сроки хранения'], 'Экран')
+    await screenTexts(admin, '/#/admin/retention', ['Сроки хранения'], 'Экран')
     return 'файлы отчётов ' + policy.reportFilesDays + ' дн., контакты ' + policy.inactiveContactsDays + ' дн., профили ' + policy.dismissedProfilesDays + ' дн., журнал ' + policy.auditEventsDays + ' дн., расписание ' + policy.schedule
   })
   await step('3–5', 'Ручной запуск: лишнего не удалено', async () => {

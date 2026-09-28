@@ -138,7 +138,8 @@ public class WorkService {
                         trainedBefore,
                         properties.trainingCycleYears(),
                         limit
-                )
+                ),
+                properties.licenseExpiresBy(now)
         );
     }
 

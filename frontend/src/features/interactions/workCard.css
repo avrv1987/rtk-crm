@@ -146,3 +146,311 @@
   padding-left: var(--space-4);
   overflow-wrap: anywhere;
 }
+
+.work-card {
+  gap: var(--space-4);
+  background: var(--color-surface);
+}
+
+.work-card__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.work-card__heading {
+  display: grid;
+  flex: 1 1 360px;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.work-card__heading h3 {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  line-height: 1.25;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+.work-card__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.work-card__meta {
+  margin: 0;
+  color: var(--color-text-body);
+  font-size: var(--font-size-md);
+  overflow-wrap: anywhere;
+}
+
+.work-card__actions,
+.work-card__inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.work-card__route {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.work-card__route-title {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.interaction-path.interaction-path--strip {
+  grid-template-columns: repeat(auto-fit, minmax(32px, 1fr));
+  gap: 3px;
+}
+
+.interaction-path--strip .interaction-path__stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  min-height: 30px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0;
+  background: var(--color-surface);
+  box-shadow: none;
+}
+
+.interaction-path--strip .interaction-path__number {
+  width: auto;
+  height: auto;
+  grid-row: auto;
+  border-radius: 0;
+  color: inherit;
+  background: none;
+  font-size: var(--font-size-sm);
+}
+
+.interaction-path--strip .interaction-path__name,
+.interaction-path--strip .interaction-path__status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.interaction-path--strip .interaction-path__stage--passed,
+.interaction-path--strip .interaction-path__stage--completed {
+  border-color: var(--color-success);
+  color: var(--color-text-inverse);
+  background: var(--color-success);
+}
+
+.interaction-path--strip .interaction-path__stage--current {
+  border: 2px solid var(--color-action);
+  color: var(--color-text-inverse);
+  background: var(--color-action);
+}
+
+.interaction-path--strip .interaction-path__stage--skipped {
+  color: var(--color-text-muted);
+  background: var(--color-surface-muted);
+  text-decoration: line-through;
+}
+
+.interaction-path--strip .interaction-path__stage--optional {
+  border-style: dashed;
+}
+
+.work-card__stage {
+  margin: 0;
+  color: var(--color-text-body);
+  font-size: var(--font-size-md);
+}
+
+.work-card__next {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  border-left: 4px solid var(--color-action);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text);
+  background: var(--color-surface-accent);
+  overflow-wrap: anywhere;
+}
+
+.work-card__next.interaction-summary__overdue {
+  border-left-color: var(--color-danger-border);
+  color: var(--color-danger);
+  background: var(--color-danger-surface);
+}
+
+.work-card__next.interaction-summary__missing {
+  border-left-color: var(--color-warning-accent);
+  background: var(--color-warning-surface-soft);
+}
+
+.work-card__rules summary {
+  cursor: pointer;
+  color: var(--color-action);
+  font-weight: 600;
+}
+
+.card-tabpanel h5 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-emphasis);
+}
+
+.card-tabpanel h6 {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.interaction-stage-transitions ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-2) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.interaction-stage-transitions li span {
+  margin-left: var(--space-2);
+  color: var(--color-warning);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.interaction-attachment-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.interaction-attachment {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+}
+
+.interaction-attachment__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.interaction-attachment__name {
+  overflow-wrap: anywhere;
+}
+
+.interaction-attachment__status {
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.interaction-attachment__status--clean {
+  color: var(--color-success);
+  background: var(--color-success-surface);
+}
+
+.interaction-attachment__status--quarantine {
+  color: var(--color-warning);
+  background: var(--color-warning-surface);
+}
+
+.interaction-attachment__status--rejected,
+.interaction-attachment__status--unverifiable {
+  color: var(--color-danger);
+  background: var(--color-danger-surface);
+}
+
+.interaction-attachment__meta {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+}
+
+.interaction-attachment__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.interaction-attachment-upload {
+  display: grid;
+  gap: 14px;
+}
+
+.interaction-attachment-upload label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-label);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+}
+
+.interaction-attachment-upload button {
+  width: fit-content;
+}
+
+a.interaction-list-item {
+  border-radius: var(--radius-md);
+  text-decoration: none;
+}
+
+.interaction-list-item__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.interaction-list-item__days {
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+.interaction-list-item__due {
+  font-size: var(--font-size-md);
+  font-weight: 700;
+}
+
+.interaction-contact-picker__add {
+  margin-top: var(--space-2);
+}
+
+.interactions-panel.interactions-panel--works {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 0;
+}
+
+@media (max-width: 640px) {
+  .work-card__actions > button {
+    flex: 1 1 calc(50% - var(--space-2));
+  }
+
+  .interaction-path.interaction-path--strip {
+    grid-template-columns: repeat(auto-fit, minmax(24px, 1fr));
+  }
+}

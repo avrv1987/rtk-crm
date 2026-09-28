@@ -3613,6 +3613,8 @@ export interface components {
             upcoming: components["schemas"]["ReminderStep"][];
             expiringLicenses: components["schemas"]["ReminderLicense"][];
             trainingCycles: components["schemas"]["ReminderTraining"][];
+            /** @description Год, до которого включительно лицензия считается истекающей; тот же год принимает отбор licenseExpiresBy списка взаимодействий */
+            licenseExpiresBy: number;
         };
         ReminderSettings: {
             enabled: boolean;

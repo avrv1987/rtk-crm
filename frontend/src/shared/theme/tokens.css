@@ -1894,7 +1894,17 @@ input[type='radio'] {
   color: var(--color-text);
   text-align: left;
   vertical-align: top;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+.catalog-import__table-scroll th:nth-child(4),
+.catalog-import__table-scroll td:nth-child(4),
+.catalog-import__table-scroll th:nth-child(5),
+.catalog-import__table-scroll td:nth-child(5),
+.catalog-import__table-scroll th:nth-child(6),
+.catalog-import__table-scroll td:nth-child(6) {
+  min-width: 180px;
 }
 
 .catalog-import__table-scroll th {
@@ -2063,6 +2073,12 @@ input[type='radio'] {
   display: flex;
   gap: 6px;
   padding: 6px 10px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--color-surface-accent);
+}
+
+.app-header .profile-summary dt::after {
+  content: ':';
 }
 
 .app-main {
@@ -2106,6 +2122,22 @@ input[type='radio'] {
 
 .reports__form {
   gap: var(--space-4);
+}
+
+.reports__group {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+
+.reports__group > summary {
+  width: fit-content;
+  color: var(--color-text);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .reports__settings {
@@ -3270,11 +3302,26 @@ p.structured-api-error {
   list-style: none;
 }
 
-.admin-section-nav button,
+.admin-section-nav a,
 .admin-catalogs__tabs button {
+  display: inline-flex;
+  align-items: center;
   min-height: var(--control-height-compact);
+  border-radius: var(--radius-md);
   padding: 0 var(--space-3);
+  color: var(--color-text-label);
+  font-weight: 600;
   font-size: var(--font-size-md);
+  text-decoration: none;
+}
+
+.admin-section-nav a:hover {
+  background: var(--color-surface-accent);
+}
+
+.admin-section-nav a[aria-current='page'] {
+  color: var(--color-text-inverse);
+  background: var(--color-action);
 }
 
 .admin-catalogs__tabs,

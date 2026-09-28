@@ -41,8 +41,8 @@ const rememberShown = (profileId: string) => {
   }
 }
 
-const hasReminders = (digest: ReminderDigest) => (
-  digest.overdueTotal + digest.upcomingTotal + digest.expiringLicenses.length + digest.trainingCycles.length > 0
+const reminderCount = (digest: ReminderDigest) => (
+  digest.overdueTotal + digest.upcomingTotal + digest.expiringLicenses.length + digest.trainingCycles.length
 )
 
 const cardLink = (organizationId: string, interactionId: string) => `#/organizations/${organizationId}/${interactionId}`
@@ -51,7 +51,10 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
   const [state, setState] = useState<DigestState>({ kind: 'loading' })
   const [settingState, setSettingState] = useState<SettingState>({ kind: 'idle' })
   const [open, setOpen] = useState(false)
-  const dialogRef = useRef<HTMLDialogElement>(null)
+  const [fresh, setFresh] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const headingRef = useRef<HTMLHeadingElement>(null)
   const requestVersion = useRef(0)
   const titleId = useId()
 
@@ -63,10 +66,7 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
         return
       }
       setState({ kind: 'ready', digest })
-      if (digest.enabled && hasReminders(digest) && !shownToday(profileId)) {
-        rememberShown(profileId)
-        setOpen(true)
-      }
+      setFresh(digest.enabled && reminderCount(digest) > 0 && !shownToday(profileId))
     } catch (error) {
       if (version !== requestVersion.current || handledAccessError(error, { onSessionExpired, onProfileUnavailable })) {
         return
@@ -94,17 +94,30 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
   }, [])
 
   useEffect(() => {
-    const dialog = dialogRef.current
-    if (dialog === null) {
+    if (!open) {
       return
     }
-    if (open && !dialog.open) {
-      dialog.showModal()
+    headingRef.current?.focus()
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
+        setOpen(false)
+      }
     }
-    if (!open && dialog.open) {
-      dialog.close()
-    }
+    document.addEventListener('pointerdown', closeOutside)
+    return () => document.removeEventListener('pointerdown', closeOutside)
   }, [open])
+
+  const openPanel = () => {
+    rememberShown(profileId)
+    setFresh(false)
+    setOpen(true)
+    void load()
+  }
+
+  const closePanel = () => {
+    setOpen(false)
+    buttonRef.current?.focus()
+  }
 
   const saveEnabled = async (enabled: boolean) => {
     setSettingState({ kind: 'saving' })
@@ -123,9 +136,10 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
   }
 
   const overdue = state.kind === 'ready' ? state.digest.overdueTotal : null
+  const count = state.kind === 'ready' ? reminderCount(state.digest) : null
 
   return (
-    <div className="reminder-center">
+    <div className="reminder-center" ref={rootRef}>
       <a
         className={`reminder-center__counter${overdue !== null && overdue > 0 ? ' reminder-center__counter--overdue' : ''}`}
         href="#/work?due=OVERDUE"
@@ -133,24 +147,34 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
       >
         Просрочено: {overdue ?? '…'}
       </a>
-      <button type="button" className="button--secondary reminder-center__open" aria-haspopup="dialog" onClick={() => {
-        setOpen(true)
-        void load()
-      }}>
+      <button
+        ref={buttonRef}
+        type="button"
+        className={`button--secondary reminder-center__open${fresh ? ' reminder-center__open--fresh' : ''}`}
+        aria-expanded={open}
+        aria-controls={`${titleId}-panel`}
+        onClick={() => open ? closePanel() : openPanel()}
+      >
         Напоминания
+        {count !== null && count > 0 && <span className="reminder-center__badge">{count}</span>}
+        {fresh && <span className="reminder-center__sr">, новая сводка на сегодня</span>}
       </button>
-      <dialog
-        ref={dialogRef}
-        className="reminder-center__dialog"
+      <div
+        id={`${titleId}-panel`}
+        className="reminder-center__panel"
+        role="dialog"
+        aria-modal="false"
         aria-labelledby={titleId}
-        onCancel={(event) => {
-          event.preventDefault()
-          setOpen(false)
+        hidden={!open}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            closePanel()
+          }
         }}
       >
         <div className="reminder-center__dialog-header">
-          <h2 id={titleId}>Напоминания на {formatDate(todayIso())}</h2>
-          <button type="button" className="button--secondary" onClick={() => setOpen(false)}>Закрыть</button>
+          <h2 id={titleId} ref={headingRef} tabIndex={-1}>Напоминания на {formatDate(todayIso())}</h2>
+          <button type="button" className="button--secondary" onClick={closePanel}>Закрыть</button>
         </div>
         {state.kind === 'loading' && <p role="status">Собираем напоминания…</p>}
         {state.kind === 'failed' && (
@@ -245,7 +269,7 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
                 disabled={settingState.kind === 'saving'}
                 onChange={(event) => void saveEnabled(event.target.checked)}
               />
-              Показывать сводку при первом входе за день
+              Отмечать новую сводку на кнопке при первом входе за день
             </label>
             {settingState.kind === 'failed' && (
               <div className="notice notice--error" role="alert">
@@ -253,12 +277,9 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
                 <SupportDetails requestId={settingState.requestId} />
               </div>
             )}
-            <p className="reminder-center__note">
-              Сводка формируется при входе в CRM. Отправку по почте или в мессенджер подключим после выбора канала заказчиком.
-            </p>
           </div>
         )}
-      </dialog>
+      </div>
     </div>
   )
 }

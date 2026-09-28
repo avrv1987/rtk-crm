@@ -283,7 +283,7 @@ const ContactItem = ({
             onTakeCurrent={() => resolveConflicts(false)}
           />
           <label>
-            ФИО
+            <span>ФИО<span className="required-mark" aria-hidden="true"> *</span></span>
             <input value={values.name} maxLength={200} required onChange={(event) => change({ name: event.target.value })} />
           </label>
           <label>

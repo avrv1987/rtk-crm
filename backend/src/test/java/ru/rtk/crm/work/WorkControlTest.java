@@ -407,6 +407,7 @@ class WorkControlTest {
         assertThat(digest.enabled()).isTrue();
         assertThat(digest.overdueTotal()).isEqualTo(1);
         assertThat(digest.upcomingTotal()).isEqualTo(1);
+        assertThat(digest.licenseExpiresBy()).isEqualTo(now.atZoneSameInstant(WorkProperties.ZONE).getYear() + 1);
         assertThat(digest.overdue()).extracting(WorkModels.ReminderStep::interactionId).containsExactly(overdue);
         assertThat(digest.upcoming()).extracting(WorkModels.ReminderStep::interactionId).containsExactly(upcoming);
         assertThat(digest.expiringLicenses()).singleElement().satisfies(license -> {

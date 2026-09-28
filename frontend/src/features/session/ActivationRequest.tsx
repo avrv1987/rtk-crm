@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ApiError, apiClient } from '../../shared/api/client'
+import { formatMoscowDateTime } from '../../shared/format/datetime'
 import '../admin/security.css'
 
 type RequestState =
@@ -9,8 +10,6 @@ type RequestState =
   | { kind: 'failed'; requestId?: string }
 
 const accountUrl = '/idp/realms/rtk-crm/account'
-
-const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Moscow' })
 
 export const PasswordLink = () => (
   <a className="password-link" href={accountUrl} target="_blank" rel="noopener noreferrer">Сменить пароль</a>
@@ -42,7 +41,7 @@ export const ActivationRequest = ({ onSessionExpired }: { onSessionExpired: () =
       </div>
       {state.kind === 'sent' && (
         <p className="security-success" role="status">
-          Администратор увидит вашу просьбу в списке профилей CRM ({dateTimeFormatter.format(new Date(state.requestedAt))}).
+          Администратор увидит вашу просьбу в списке профилей CRM ({formatMoscowDateTime(state.requestedAt)}).
           Войдите снова после того, как он откроет доступ.
         </p>
       )}

@@ -675,7 +675,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
           <button type="button" disabled={commandState.kind === 'saving'} onClick={beginCreate}>Новый шаблон</button>
         </div>
         <label>
-          Название шаблона
+          Название шаблона *
           <input
             value={draft.name}
             maxLength={200}
@@ -693,7 +693,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
               <li key={index}>
                 <span>{index + 1}</span>
                 <label>
-                  Название
+                  Название *
                   <input
                     value={stage.name}
                     maxLength={200}

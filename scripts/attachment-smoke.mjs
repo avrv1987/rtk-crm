@@ -312,15 +312,18 @@ try {
   })()`)
   phase = 'ui-comment-form'
   await kamAConcurrent.waitFor(
-    () => kamAConcurrent.evaluate(`Boolean(
-      [...document.querySelectorAll('.interaction-commands form')].find((form) => form.querySelector('h6')?.textContent?.trim() === 'Комментарий')
-    )`),
+    () => kamAConcurrent.evaluate("Boolean([...document.querySelectorAll('.work-card__actions button')].find((button) => button.textContent.trim() === 'Комментарий'))"),
+    'UI comment button did not load'
+  )
+  await kamAConcurrent.evaluate("[...document.querySelectorAll('.work-card__actions button')].find((button) => button.textContent.trim() === 'Комментарий').click()")
+  await kamAConcurrent.waitFor(
+    () => kamAConcurrent.evaluate("Boolean(document.querySelector('dialog[open] form.interaction-comment-form'))"),
     'UI comment form did not load'
   )
   const uiDraft = 'Attachment smoke UI draft ' + Date.now()
   phase = 'ui-fill-draft'
   await kamAConcurrent.evaluate(`(() => {
-    const form = [...document.querySelectorAll('.interaction-commands form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Комментарий')
+    const form = document.querySelector('dialog[open] form.interaction-comment-form')
     const select = form.querySelector('select')
     const textarea = form.querySelector('textarea')
     select.value = ${JSON.stringify(check.stageId)}
@@ -333,7 +336,7 @@ try {
   phase = 'ui-prepare-draft'
   await kamAConcurrent.waitFor(
     () => kamAConcurrent.evaluate(`(() => {
-      const form = [...document.querySelectorAll('.interaction-commands form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Комментарий')
+      const form = document.querySelector('dialog[open] form.interaction-comment-form')
       const select = form?.querySelector('select')
       const textarea = form?.querySelector('textarea')
       const submit = form?.querySelector('button[type=submit]')
@@ -344,7 +347,7 @@ try {
   const uiPrepared = await kamAConcurrent.evaluate(`(async () => {
     const response = await fetch('/api/interactions/${check.interactionId}')
     const interaction = await response.json()
-    const form = [...document.querySelectorAll('.interaction-commands form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Комментарий')
+    const form = document.querySelector('dialog[open] form.interaction-comment-form')
     return { version: response.status === 200 ? interaction.version : null, draft: form?.querySelector('textarea')?.value === ${JSON.stringify(uiDraft)} }
   })()`)
   if (uiPrepared.version !== finalState.version || !uiPrepared.draft) throw new Error('UI comment version is unavailable')
@@ -363,13 +366,13 @@ try {
   if (uiCompeting.status !== 200 || !uiCompeting.body?.event?.id) throw new Error('UI competing comment failed')
   phase = 'ui-submit-stale'
   await kamAConcurrent.evaluate(`(() => {
-    const form = [...document.querySelectorAll('.interaction-commands form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Комментарий')
+    const form = document.querySelector('dialog[open] form.interaction-comment-form')
     form.querySelector('button[type=submit]').click()
   })()`)
   phase = 'ui-wait-conflict'
   await kamAConcurrent.waitFor(
     () => kamAConcurrent.evaluate(`(() => {
-      const form = [...document.querySelectorAll('.interaction-commands form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Комментарий')
+      const form = document.querySelector('dialog[open] form.interaction-comment-form')
       const alert = form?.querySelector('[role=alert]')
       const refresh = [...(form?.querySelectorAll('button') ?? [])].find((button) => button.type === 'button' && button.textContent?.trim() === 'Обновить карточку')
       return Boolean(alert?.textContent?.includes('Черновик сохранён') && refresh && form?.querySelector('textarea')?.value === ${JSON.stringify(uiDraft)})
@@ -377,14 +380,14 @@ try {
     'UI version conflict did not appear'
   )
   const uiConflict = await kamAConcurrent.evaluate(`(() => {
-    const form = [...document.querySelectorAll('.interaction-commands form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Комментарий')
+    const form = document.querySelector('dialog[open] form.interaction-comment-form')
     const refresh = [...form.querySelectorAll('button')].find((button) => button.type === 'button' && button.textContent?.trim() === 'Обновить карточку')
     return { draft: form.querySelector('textarea')?.value === ${JSON.stringify(uiDraft)}, refresh: Boolean(refresh) }
   })()`)
   if (!uiConflict.draft || !uiConflict.refresh) throw new Error('UI conflict draft was lost')
   phase = 'ui-refresh'
   await kamAConcurrent.evaluate(`(() => {
-    const form = [...document.querySelectorAll('.interaction-commands form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Комментарий')
+    const form = document.querySelector('dialog[open] form.interaction-comment-form')
     ;
     [...form.querySelectorAll('button')].find((button) => button.type === 'button' && button.textContent?.trim() === 'Обновить карточку').click()
   })()`)
@@ -392,7 +395,7 @@ try {
   await kamAConcurrent.waitFor(
     () => kamAConcurrent.evaluate(`(() => {
       const comments = [...document.querySelectorAll('.interaction-events__comment')].map((item) => item.textContent)
-      const form = [...document.querySelectorAll('.interaction-commands form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Комментарий')
+      const form = document.querySelector('dialog[open] form.interaction-comment-form')
       return comments.includes('Attachment smoke UI competing comment') && form?.querySelector('textarea')?.value === ${JSON.stringify(uiDraft)}
     })()`),
     'UI refresh did not retain the comment draft'
@@ -400,7 +403,7 @@ try {
   const uiRefreshed = await kamAConcurrent.evaluate(`(async () => {
     const response = await fetch('/api/interactions/${check.interactionId}')
     const interaction = await response.json()
-    const form = [...document.querySelectorAll('.interaction-commands form')].find((item) => item.querySelector('h6')?.textContent?.trim() === 'Комментарий')
+    const form = document.querySelector('dialog[open] form.interaction-comment-form')
     return { version: response.status === 200 ? interaction.version : null, draft: form?.querySelector('textarea')?.value === ${JSON.stringify(uiDraft)} }
   })()`)
   if (uiRefreshed.version !== uiPrepared.version + 1 || !uiRefreshed.draft) throw new Error('UI refresh did not update the interaction')
