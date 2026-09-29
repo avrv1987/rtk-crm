@@ -74,7 +74,7 @@ public class WorkService {
         VisibilityScope scope = scope(profile);
         OffsetDateTime now = OffsetDateTime.now();
         Map<UUID, WorkCounts> work = workRepository.countWorkByTeam(scope, now, now.minusDays(stuckDays));
-        List<TeamSummary> teams = workRepository.countOrganizationsByTeam(scope).stream()
+        List<TeamSummary> teams = workRepository.countOrganizationsByTeam(scope, LocalDate.now(WorkProperties.ZONE)).stream()
                 .map(team -> {
                     WorkCounts counts = work.getOrDefault(team.teamId(), WorkCounts.EMPTY);
                     return new TeamSummary(
@@ -86,8 +86,10 @@ public class WorkService {
                             counts.overdue(),
                             counts.withoutNextStep(),
                             counts.stuck(),
+                            counts.atRisk(),
                             team.organizationsWithLearning(),
                             team.participants(),
+                            team.learningNow(),
                             team.teachers()
                     );
                 })
@@ -101,8 +103,10 @@ public class WorkService {
                 teams.stream().mapToLong(TeamSummary::overdue).sum(),
                 teams.stream().mapToLong(TeamSummary::withoutNextStep).sum(),
                 teams.stream().mapToLong(TeamSummary::stuck).sum(),
+                teams.stream().mapToLong(TeamSummary::atRisk).sum(),
                 teams.stream().mapToLong(TeamSummary::organizationsWithLearning).sum(),
                 teams.stream().mapToLong(TeamSummary::participants).sum(),
+                teams.stream().mapToLong(TeamSummary::learningNow).sum(),
                 teams.stream().mapToLong(TeamSummary::teachers).sum()
         );
         return new TeamsSummary(now, stuckDays, teams, total);
@@ -167,7 +171,8 @@ public class WorkService {
                 counts.interactions(),
                 counts.overdue(),
                 counts.withoutNextStep(),
-                counts.stuck()
+                counts.stuck(),
+                counts.atRisk()
         );
     }
 

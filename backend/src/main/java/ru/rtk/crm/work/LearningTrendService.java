@@ -36,7 +36,7 @@ public class LearningTrendService {
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public LearningTrend trend(CrmProfile profile, Integer requestedDays) {
-        if (profile.role() != UserRole.MANAGEMENT) {
+        if (profile.role() != UserRole.MANAGEMENT && profile.role() != UserRole.LEADER) {
             throw new WorkAccessDeniedException();
         }
         int days = requestedDays == null ? DEFAULT_DAYS : requestedDays;

@@ -66,7 +66,8 @@ public class JsonReportWriter {
         }
         if (demand) {
             quality.put("noData", Stream.of(ReportColumn.APPLICATIONS, ReportColumn.PAID_ORDERS, ReportColumn.PAID_STREAMS,
-                            ReportColumn.PARTICIPANTS, ReportColumn.LEARNERS_COMPLETED, ReportColumn.PARALLEL_RUNS)
+                            ReportColumn.PARTICIPANTS, ReportColumn.LEARNERS_COMPLETED, ReportColumn.COMPLETION_SHARE,
+                            ReportColumn.PARALLEL_RUNS)
                     .filter(column -> document.countWithout(column) > 0)
                     .toList());
         } else if (duration) {

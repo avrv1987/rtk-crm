@@ -6,7 +6,8 @@ public enum InteractionFlag {
     WAITING_UNIVERSITY("Ждём вуз", "i.waiting_on = 'UNIVERSITY'"),
     WAITING_RTK("Ждём РТК", "i.waiting_on = 'RTK'"),
     PROBLEM("Есть проблема", "i.problem IS NOT NULL"),
-    RISK("Есть риск", "i.risk_level IS NOT NULL");
+    RISK("Есть риск", "i.risk_level IS NOT NULL"),
+    RISK_OR_PROBLEM("Есть риск или проблема", "(i.risk_level IS NOT NULL OR i.problem IS NOT NULL)");
 
     private final String label;
     private final String condition;

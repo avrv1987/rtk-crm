@@ -178,6 +178,53 @@ class KeycloakAccountClientTest {
     }
 
     @Test
+    void privilegedAccountGetsTheSecondFactorRoleAndLosesItWithAnExplicitBody() {
+        lookup = "[{\"id\":\"role-1\",\"name\":\"crm-privileged\"},{\"id\":\"role-2\",\"name\":\"other\"}]";
+
+        client("sync-secret").setPrivileged(USER, true);
+        client("sync-secret").setPrivileged(USER, false);
+
+        assertThat(requests).containsSubsequence(
+                "GET /admin/realms/rtk-crm/users/" + USER + "/role-mappings/realm/available Bearer service-token ",
+                "POST /admin/realms/rtk-crm/users/" + USER + "/role-mappings/realm Bearer service-token [{\"id\":\"role-1\",\"name\":\"crm-privileged\"}]",
+                "GET /admin/realms/rtk-crm/users/" + USER + "/role-mappings/realm Bearer service-token ",
+                "DELETE /admin/realms/rtk-crm/users/" + USER + "/role-mappings/realm Bearer service-token [{\"id\":\"role-1\",\"name\":\"crm-privileged\"}]"
+        );
+
+        requests.clear();
+        lookup = "[{\"id\":\"role-2\",\"name\":\"other\"}]";
+        client("sync-secret").setPrivileged(USER, true);
+        assertThat(requests).hasSize(2).noneMatch(request -> request.startsWith("POST /admin"));
+
+        userStatus = 403;
+        lookup = "[{\"id\":\"role-1\",\"name\":\"crm-privileged\"}]";
+        assertThatThrownBy(() -> client("sync-secret").setPrivileged(USER, true))
+                .isInstanceOf(AccountSyncException.class)
+                .hasMessageContaining("второго фактора")
+                .hasMessageContaining("учётная запись не изменена");
+        assertThatThrownBy(() -> client("").setPrivileged(USER, true))
+                .isInstanceOf(AccountSyncException.class)
+                .hasMessageContaining("APP_KEYCLOAK_ACCOUNT_SYNC_CLIENT_SECRET");
+    }
+
+    @Test
+    void secondFactorResetDeletesOnlyOtpCredentials() {
+        lookup = "[{\"id\":\"pwd-1\",\"type\":\"password\"},{\"id\":\"otp-1\",\"type\":\"otp\"},{\"id\":\"otp-2\",\"type\":\"otp\"}]";
+
+        assertThat(client("sync-secret").removeSecondFactor(USER)).isEqualTo(2);
+
+        assertThat(requests).filteredOn(request -> request.startsWith("DELETE")).containsExactly(
+                "DELETE /admin/realms/rtk-crm/users/" + USER + "/credentials/otp-1 Bearer service-token ",
+                "DELETE /admin/realms/rtk-crm/users/" + USER + "/credentials/otp-2 Bearer service-token "
+        );
+
+        lookup = "{\"error\":\"unexpected\"}";
+        assertThatThrownBy(() -> client("sync-secret").removeSecondFactor(USER))
+                .isInstanceOf(AccountSyncException.class)
+                .hasMessageContaining("учётная запись не изменена");
+    }
+
+    @Test
     void slowFirstTokenRequestIsRetriedOnceAndThenTheOperationSucceeds() {
         slowPath = "/realms/rtk-crm/protocol/openid-connect/token";
         slowResponses.set(1);

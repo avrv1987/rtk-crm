@@ -38,6 +38,7 @@ public enum ReportColumn {
     PAID_STREAMS("Потоки с оплатами (сайт)", 14, ReportRow::paidStreams),
     PARTICIPANTS("Обучающиеся (Moodle)", 14, ReportRow::participants),
     LEARNERS_COMPLETED("Завершили (Moodle)", 14, ReportRow::completed),
+    COMPLETION_SHARE("Доля завершивших, %", 14, ReportRow::completionPercent),
     PARALLEL_RUNS("Параллельные потоки (Moodle)", 14, ReportRow::parallelRuns),
     TEAM("Команда", null, false, 22, ReportRow::teamName),
     COMPLETED("Завершённых прохождений", 14, ReportRow::completedCount),

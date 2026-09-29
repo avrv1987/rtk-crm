@@ -540,7 +540,8 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
   const accountMenuItems = (profile: CrmProfile): CardMenuItem[] => [
     ...(profile.id === currentProfile.id ? [] : [
       { label: 'Сбросить пароль', onSelect: () => setAccountAction({ kind: 'reset', profile }) },
-      { label: 'Завершить сеансы', onSelect: () => setAccountAction({ kind: 'logout', profile }) }
+      { label: 'Завершить сеансы', onSelect: () => setAccountAction({ kind: 'logout', profile }) },
+      { label: 'Сбросить второй фактор', onSelect: () => setAccountAction({ kind: 'otp', profile }) }
     ]),
     ...(profile.role === 'PARTNER' ? [] : [
       { label: 'Сменить почту', onSelect: () => setAccountAction({ kind: 'email', profile }) }

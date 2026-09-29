@@ -36,7 +36,15 @@ import ru.rtk.crm.catalog.Contact;
 import ru.rtk.crm.catalog.ContactCreateRequest;
 import ru.rtk.crm.catalog.ContactService;
 import ru.rtk.crm.interaction.InteractionCreateRequest;
+import ru.rtk.crm.interaction.InteractionFlagsRequest;
+import ru.rtk.crm.interaction.InteractionRiskLevel;
 import ru.rtk.crm.interaction.InteractionService;
+import ru.rtk.crm.interaction.ProductAgreementContract;
+import ru.rtk.crm.interaction.ProductAgreementService;
+import ru.rtk.crm.interaction.ProductAgreementUpdateRequest;
+import ru.rtk.crm.interaction.ProductTransfer;
+import ru.rtk.crm.interaction.ProductTransferKind;
+import ru.rtk.crm.interaction.ProductTransferStatus;
 import ru.rtk.crm.report.PdfLayout;
 
 @Component
@@ -56,6 +64,10 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             new DemoAgreement("Колледж связи (демо)", "kam-b", "ДЕМО-К/1", "ACTIVE", -200, 60, "RENEWAL", 45),
             new DemoAgreement("Школа № 1 (демо)", "kam-d", "ДЕМО-Ш/1", "DRAFT", null, null, "SIGNING", 5)
     );
+    private static final List<DemoContract> DEMO_CONTRACTS = List.of(
+            new DemoContract("ДЕМО-А/ЛС-1", 2026, 30, 14),
+            new DemoContract("ДЕМО-А/ЛС-2", 2028, 7, null)
+    );
     private static final List<DemoDocument> PARTNER_DOCUMENTS = List.of(
             new DemoDocument("plan", "Демо: план сотрудничества.pdf", AttachmentKind.OTHER, "План сотрудничества вуза и ИТ Школы РТК"),
             new DemoDocument("program", "Демо: рабочая программа.pdf", AttachmentKind.CURRICULUM, "Рабочая программа дисциплины")
@@ -67,6 +79,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     private final ContactService contactService;
     private final InteractionService interactionService;
     private final AttachmentService attachmentService;
+    private final ProductAgreementService productAgreementService;
 
     public DemoBootstrapCommand(
             DemoBootstrapProperties properties,
@@ -74,7 +87,8 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             UserProfileRepository userProfileRepository,
             ContactService contactService,
             InteractionService interactionService,
-            AttachmentService attachmentService
+            AttachmentService attachmentService,
+            ProductAgreementService productAgreementService
     ) {
         this.properties = properties;
         this.jdbcClient = jdbcClient;
@@ -82,6 +96,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         this.contactService = contactService;
         this.interactionService = interactionService;
         this.attachmentService = attachmentService;
+        this.productAgreementService = productAgreementService;
     }
 
     @Override
@@ -101,6 +116,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         Map<String, UUID> organizationIds = createOrganizations(organizations, identitiesByKey, teamIds, profileIds);
         DemoCatalog catalog = createCatalogs();
         createDemoScenario(identitiesByKey, organizationIds, catalog);
+        createDemoMarks(identitiesByKey, organizationIds.get(DEMO_ORGANIZATION_NAME));
         createDemoAgreements(organizationIds, profileIds);
         createPartners(identities, identitiesByKey, organizationIds);
         LOGGER.info("Demo CRM bootstrap completed");
@@ -428,6 +444,78 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         );
     }
 
+    private void createDemoMarks(Map<String, DemoBootstrapProperties.Identity> identitiesByKey, UUID organizationId) {
+        UUID interactionId = jdbcClient.sql("""
+                SELECT id FROM interactions
+                WHERE organization_id = :organizationId AND title = :title
+                ORDER BY created_at, id
+                LIMIT 1
+                """)
+                .param("organizationId", organizationId)
+                .param("title", DEMO_INTERACTION_TITLE)
+                .query(UUID.class)
+                .optional()
+                .orElse(null);
+        DemoBootstrapProperties.Identity kamIdentity = identitiesByKey.get("kam-a");
+        if (interactionId == null || kamIdentity == null) {
+            return;
+        }
+        CrmProfile kam = userProfileRepository.findActiveByIdentity(kamIdentity.issuer(), kamIdentity.subject())
+                .orElseThrow(() -> new IllegalStateException("Demo bootstrap requires active kam-a profile"));
+        boolean unmarked = jdbcClient.sql("SELECT COUNT(*) FROM interactions WHERE id = :id AND risk_level IS NULL AND problem IS NULL")
+                .param("id", interactionId)
+                .query(Long.class)
+                .single() > 0;
+        if (unmarked) {
+            int version = interactionVersion(interactionId);
+            interactionService.updateFlags(
+                    kam,
+                    interactionId,
+                    new InteractionFlagsRequest(
+                            version,
+                            null,
+                            null,
+                            "Вуз задерживает подписанный акт передачи",
+                            InteractionRiskLevel.MEDIUM,
+                            "Согласование лицензий идёт дольше плана"
+                    ),
+                    "demo-bootstrap/v1/flags:university-a:" + version
+            );
+        }
+        List<UUID> agreementIds = jdbcClient.sql("""
+                SELECT agreement.id FROM product_agreements agreement
+                JOIN products product ON product.id = agreement.product_id
+                WHERE agreement.interaction_id = :interactionId AND agreement.contract_number IS NULL
+                ORDER BY product.name, agreement.id
+                """)
+                .param("interactionId", interactionId)
+                .query(UUID.class)
+                .list();
+        LocalDate today = LocalDate.now(ZONE);
+        for (int index = 0; index < agreementIds.size() && index < DEMO_CONTRACTS.size(); index++) {
+            DemoContract contract = DEMO_CONTRACTS.get(index);
+            int version = interactionVersion(interactionId);
+            productAgreementService.update(
+                    kam,
+                    interactionId,
+                    agreementIds.get(index),
+                    new ProductAgreementUpdateRequest(
+                            version,
+                            new ProductAgreementContract(contract.number(), true, contract.licenseExpiryYear(), null),
+                            contract.transfers(today)
+                    ),
+                    "demo-bootstrap/v1/agreement:" + agreementIds.get(index) + ":" + version
+            );
+        }
+    }
+
+    private int interactionVersion(UUID interactionId) {
+        return jdbcClient.sql("SELECT version FROM interactions WHERE id = :id")
+                .param("id", interactionId)
+                .query(Integer.class)
+                .single();
+    }
+
     private void createDemoAgreements(Map<String, UUID> organizationIds, Map<String, UUID> profileIds) {
         LocalDate today = LocalDate.now(ZONE);
         OffsetDateTime now = OffsetDateTime.now();
@@ -630,6 +718,22 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             String plannedKind,
             Integer plannedDays
     ) {
+    }
+
+    private record DemoContract(String number, int licenseExpiryYear, Integer materialsDaysAgo, Integer licenseDaysAgo) {
+        List<ProductTransfer> transfers(LocalDate today) {
+            return List.of(
+                    transfer(ProductTransferKind.MATERIALS, today, materialsDaysAgo),
+                    transfer(ProductTransferKind.LICENSE, today, licenseDaysAgo),
+                    transfer(ProductTransferKind.DOCUMENTATION, today, null)
+            );
+        }
+
+        private static ProductTransfer transfer(ProductTransferKind kind, LocalDate today, Integer daysAgo) {
+            return daysAgo == null
+                    ? new ProductTransfer(kind, ProductTransferStatus.NOT_TRANSFERRED, null, null)
+                    : new ProductTransfer(kind, ProductTransferStatus.TRANSFERRED, today.minusDays(daysAgo), null);
+        }
     }
 
     private record DemoCatalog(UUID programId, List<UUID> productIds) {

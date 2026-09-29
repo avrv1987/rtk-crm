@@ -7,6 +7,7 @@ import { InteractionsPanel } from '../interactions/InteractionsPanel'
 import { CardTabPanel, CardTabs, type CardTab } from '../interactions/cardUi'
 import { OrganizationAssignmentHistory } from './OrganizationAssignmentHistory'
 import { OrganizationAssignmentPanel } from './OrganizationAssignmentPanel'
+import { OrganizationHistoryFeed } from './OrganizationHistoryFeed'
 import { OrganizationStatusBadge } from './OrganizationCatalogPanel'
 import { OrganizationCardHeader, OrganizationSummary, deputyLabel } from './OrganizationCard'
 import { OrganizationForm, organizationTypeLabels } from './OrganizationForm'
@@ -24,7 +25,7 @@ type OrganizationsScreenProps = {
 
 type ListStatus = 'CURRENT' | 'PENDING' | 'ARCHIVED'
 
-type OrganizationTab = 'works' | 'contacts' | 'documents' | 'history'
+type OrganizationTab = 'works' | 'contacts' | 'documents' | 'timeline' | 'history'
 
 const listStatusOf: Record<Organization['status'], ListStatus> = {
   ACTIVE: 'CURRENT',
@@ -308,6 +309,7 @@ export const OrganizationsScreen = ({
     { id: 'works', label: 'Работы' },
     { id: 'contacts', label: 'Контакты' },
     { id: 'documents', label: 'Документы и соглашения' },
+    { id: 'timeline', label: 'История' },
     { id: 'history', label: role === 'LEADER' ? 'Назначение и история' : 'История назначений' }
   ]
 
@@ -585,6 +587,15 @@ export const OrganizationsScreen = ({
                     key={`agreements:${detailState.organization.id}`}
                     organizationId={detailState.organization.id}
                     role={role}
+                    onSessionExpired={onSessionExpired}
+                    onProfileUnavailable={onProfileUnavailable}
+                  />
+                )}
+                {organizationTab === 'timeline' && (
+                  <OrganizationHistoryFeed
+                    key={detailState.organization.id}
+                    organizationId={detailState.organization.id}
+                    workHref={(id) => `#/organizations/${detailState.organization.id}/${id}${listSuffix}`}
                     onSessionExpired={onSessionExpired}
                     onProfileUnavailable={onProfileUnavailable}
                   />

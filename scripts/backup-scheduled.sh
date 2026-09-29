@@ -48,9 +48,6 @@ backup_args=("$partial")
 [[ -z ${3-} ]] || backup_args+=("$3")
 "$project_root/scripts/backup.sh" "${backup_args[@]}" >> "$log" 2>&1 || report_failure "backup.sh exited with code $?"
 (cd "$partial" && sha256sum --check --quiet SHA256SUMS) >> "$log" 2>&1 || report_failure 'checksum verification failed'
-for dump in crm.dump keycloak.dump; do
-    [[ $(head -c 5 "$partial/$dump") == PGDMP ]] || report_failure "$dump is not a PostgreSQL custom-format dump"
-done
 mv -- "$partial" "$root/$stamp"
 
 mapfile -t copies < <(find "$root" -mindepth 1 -maxdepth 1 -type d \

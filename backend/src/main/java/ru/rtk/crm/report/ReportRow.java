@@ -44,10 +44,19 @@ public record ReportRow(
         Long completed,
         AgreementLine agreement,
         Long paidOrders,
-        Long paidStreams
+        Long paidStreams,
+        Long completedBase
 ) {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
 
+
+    public static Long percentOf(Long part, Long base) {
+        return part == null || base == null || base <= 0 ? null : (part * 200 + base) / (base * 2);
+    }
+
+    public Long completionPercent() {
+        return percentOf(completed, completedBase);
+    }
 
     public String productNames() {
         return products.isEmpty() ? null : products.stream().map(Product::name).collect(Collectors.joining(", "));
@@ -175,7 +184,8 @@ public record ReportRow(
                 completed,
                 agreement,
                 paidOrders,
-                paidStreams
+                paidStreams,
+                completedBase
         );
     }
 

@@ -100,6 +100,82 @@ function Ensure-KeycloakUser([string]$Username, [string]$FirstName, [string]$Pas
     return $existing[0].id
 }
 
+function New-KeycloakResource([string]$Path, [hashtable]$Definition) {
+    $id = $Definition | ConvertTo-Json -Compress -Depth 5 |
+        & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh create $Path -r rtk-crm -f - -i
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($id)) {
+        throw "Cannot create Keycloak $Path"
+    }
+    return "$id".Trim()
+}
+
+function Add-KeycloakExecution([string]$ParentFlow, [string]$Authenticator, [string]$Requirement, [int]$Priority) {
+    return New-KeycloakResource 'authentication/executions' @{
+        parentFlow = $ParentFlow; authenticator = $Authenticator; requirement = $Requirement; priority = $Priority
+        authenticatorFlow = $false
+    }
+}
+
+function Add-KeycloakSubflow([string]$ParentFlow, [string]$Alias, [string]$Requirement, [int]$Priority) {
+    $id = New-KeycloakResource 'authentication/flows' @{ alias = $Alias; providerId = 'basic-flow'; topLevel = $false; builtIn = $false }
+    New-KeycloakResource 'authentication/executions' @{
+        parentFlow = $ParentFlow; flowId = $id; requirement = $Requirement; priority = $Priority; authenticatorFlow = $true
+    } | Out-Null
+    return $id
+}
+
+function Clear-PendingTotp([string]$Role) {
+    foreach ($member in (Invoke-Keycloak @('get', "roles/$Role/users", '-r', 'rtk-crm', '-q', 'max=10000') | ConvertFrom-Json)) {
+        $user = Invoke-Keycloak @('get', "users/$($member.id)", '-r', 'rtk-crm') | ConvertFrom-Json
+        if (@($user.requiredActions) -ccontains 'CONFIGURE_TOTP') {
+            $actions = @(@($user.requiredActions) | Where-Object { $_ -cne 'CONFIGURE_TOTP' })
+            @{ requiredActions = $actions } | ConvertTo-Json -Compress |
+                & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh update "users/$($member.id)" -r rtk-crm -f -
+            if ($LASTEXITCODE -ne 0) {
+                throw "Cannot update Keycloak user $($member.username)"
+            }
+        }
+    }
+}
+
+function Set-PrivilegedSecondFactor {
+    $role = 'crm-privileged'
+    $flow = 'crm-browser'
+    $roles = Invoke-Keycloak @('get', 'roles', '-r', 'rtk-crm') | ConvertFrom-Json
+    if (-not (@($roles.name) -ccontains $role)) {
+        Invoke-Keycloak @('create', 'roles', '-r', 'rtk-crm', '-s', "name=$role", '-s', 'description=CRM: second factor is required at sign-in') | Out-Null
+    }
+    Invoke-Keycloak @('update', 'realms/rtk-crm', '-s', 'browserFlow=browser') | Out-Null
+    foreach ($item in (Invoke-Keycloak @('get', 'authentication/flows', '-r', 'rtk-crm') | ConvertFrom-Json)) {
+        if ($item.alias -ceq $flow) {
+            Invoke-Keycloak @('delete', "authentication/flows/$($item.id)", '-r', 'rtk-crm') | Out-Null
+        }
+    }
+    if ($values['MFA_REQUIRED_FOR_PRIVILEGED'] -ne 'true') {
+        Clear-PendingTotp $role
+        return
+    }
+    $top = New-KeycloakResource 'authentication/flows' @{
+        alias = $flow; description = "Browser sign-in, OTP for $role"; providerId = 'basic-flow'; topLevel = $true; builtIn = $false
+    }
+    Add-KeycloakExecution $top 'auth-cookie' 'ALTERNATIVE' 10 | Out-Null
+    $forms = Add-KeycloakSubflow $top "$flow forms" 'ALTERNATIVE' 20
+    Add-KeycloakExecution $forms 'auth-username-password-form' 'REQUIRED' 10 | Out-Null
+    $otp = Add-KeycloakSubflow $forms "$flow privileged OTP" 'CONDITIONAL' 20
+    $condition = Add-KeycloakExecution $otp 'conditional-user-role' 'REQUIRED' 10
+    @{ alias = "$flow role"; config = @{ condUserRole = $role; negate = 'false' } } | ConvertTo-Json -Compress |
+        & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh create "authentication/executions/$condition/config" -r rtk-crm -f -
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Cannot configure the privileged role condition'
+    }
+    Add-KeycloakExecution $otp 'auth-otp-form' 'REQUIRED' 20 | Out-Null
+    Invoke-Keycloak @('update', 'realms/rtk-crm', '-s', "browserFlow=$flow") | Out-Null
+}
+
+function Set-SecondFactorRequired([string]$Username) {
+    Invoke-Keycloak @('add-roles', '-r', 'rtk-crm', '--uusername', $Username, '--rolename', 'crm-privileged') | Out-Null
+}
+
 function Ensure-CrmAdministrator {
     $username = $values['CRM_ADMIN_USERNAME']
     $existing = Get-KeycloakUsers $username
@@ -210,6 +286,7 @@ $defaults = [ordered]@{
     PUBLIC_ORIGIN = 'http://rtk.localhost:8081'
     SOURCES_SYNC_CRON = '0 0 * * * *'
     ENROLMENT_ACTIVE_KEY_VERSION = 'v1'
+    MFA_REQUIRED_FOR_PRIVILEGED = 'false'
 }
 $secrets = @(
     'POSTGRES_SUPERUSER_PASSWORD',
@@ -220,7 +297,8 @@ $secrets = @(
     'CRM_ACCOUNT_SYNC_CLIENT_SECRET',
     'ENROLMENT_KEYS_V1',
     'ENROLMENT_FINGERPRINT_KEY',
-    'SOURCES_SETTINGS_KEY'
+    'SOURCES_SETTINGS_KEY',
+    'BACKUP_ENCRYPTION_KEY'
 )
 if ($values['DEMO_DATA'] -eq 'true') {
     $defaults['SITE_BASE_URL'] = $siteFixtureUrl
@@ -254,6 +332,9 @@ foreach ($key in $secrets) {
 }
 if ($values['DEMO_LMS'] -cne 'true' -and $values['DEMO_LMS'] -cne 'false') {
     throw 'DEMO_LMS must be true or false'
+}
+if ($values['MFA_REQUIRED_FOR_PRIVILEGED'] -cne 'true' -and $values['MFA_REQUIRED_FOR_PRIVILEGED'] -cne 'false') {
+    throw 'MFA_REQUIRED_FOR_PRIVILEGED must be true or false'
 }
 $moodleDemoUrl = 'http://moodle:8080'
 if ($values['DEMO_LMS'] -eq 'true') {
@@ -293,6 +374,7 @@ try {
         '--password', $values['KEYCLOAK_ADMIN_PASSWORD']
     ) | Out-Null
     Invoke-Keycloak @('update', 'realms/rtk-crm', '-f', '/opt/keycloak/data/import/rtk-crm-realm.json') | Out-Null
+    Set-PrivilegedSecondFactor
     $webOrigins = @($values['PUBLIC_ORIGIN'])
     if ($values['PUBLIC_ORIGIN'] -eq 'http://rtk.localhost:8081') {
         $webOrigins += 'http://localhost:8081'
@@ -402,6 +484,11 @@ try {
         foreach ($account in $demoIdentities + $spareAccounts) {
             $subjects[$account[0]] = Ensure-KeycloakUser $account[0] $account[1] $values['DEMO_USER_PASSWORD']
         }
+        foreach ($identity in $demoIdentities) {
+            if ($identity[2] -eq 'ADMIN' -or ($identity.Count -gt 4 -and $identity[4])) {
+                Set-SecondFactorRequired $identity[0]
+            }
+        }
         $identityYaml = @(
             'app:',
             '  demo-bootstrap:',
@@ -484,6 +571,7 @@ try {
     }
     else {
         $subjects[$values['CRM_ADMIN_USERNAME']] = Ensure-CrmAdministrator
+        Set-SecondFactorRequired $values['CRM_ADMIN_USERNAME']
         $identityYaml = @(
             'app:',
             '  demo-bootstrap:',

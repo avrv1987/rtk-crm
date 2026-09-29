@@ -283,5 +283,9 @@ public class AdminCrmProfileRepository {
                     profile.displayName(), profile.role(), profile.teamId(), profile.active(), profile.enrolmentOperator()
             );
         }
+
+        boolean privileged() {
+            return role == UserRole.ADMIN || enrolmentOperator;
+        }
     }
 }

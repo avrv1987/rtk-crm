@@ -1,5 +1,6 @@
 package ru.rtk.crm.work;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.List;
@@ -28,7 +29,8 @@ public class WorkRepository {
             SELECT %s AS group_id,
                    CASE WHEN i.next_action_at < :now THEN 1 ELSE 0 END AS overdue,
                    CASE WHEN i.next_action IS NULL OR i.next_action_at IS NULL THEN 1 ELSE 0 END AS without_next_step,
-                   CASE WHEN %s <= :stuckBefore THEN 1 ELSE 0 END AS stuck
+                   CASE WHEN %s <= :stuckBefore THEN 1 ELSE 0 END AS stuck,
+                   CASE WHEN i.risk_level IS NOT NULL OR i.problem IS NOT NULL THEN 1 ELSE 0 END AS at_risk
             """;
 
     private static final String COUNTED_LEARNING = """
@@ -61,7 +63,8 @@ public class WorkRepository {
         Map<UUID, WorkCounts> counts = new HashMap<>();
         jdbcClient.sql("""
                 SELECT work.group_id, COUNT(*) AS interactions, SUM(work.overdue) AS overdue,
-                       SUM(work.without_next_step) AS without_next_step, SUM(work.stuck) AS stuck
+                       SUM(work.without_next_step) AS without_next_step, SUM(work.stuck) AS stuck,
+                       SUM(work.at_risk) AS at_risk
                 FROM (
                 """ + WORK_FLAGS.formatted(group, InteractionRepository.STAGE_ENTERED_AT)
                         + OPEN_WORK.formatted(scope.condition()) + """
@@ -77,7 +80,8 @@ public class WorkRepository {
                                 resultSet.getLong("interactions"),
                                 resultSet.getLong("overdue"),
                                 resultSet.getLong("without_next_step"),
-                                resultSet.getLong("stuck")
+                                resultSet.getLong("stuck"),
+                                resultSet.getLong("at_risk")
                         )
                 ))
                 .list();
@@ -108,7 +112,7 @@ public class WorkRepository {
         return counts;
     }
 
-    public List<TeamOrganizations> countOrganizationsByTeam(VisibilityScope scope) {
+    public List<TeamOrganizations> countOrganizationsByTeam(VisibilityScope scope, LocalDate today) {
         return jdbcClient.sql("""
                 SELECT team.id, team.name,
                        (SELECT COUNT(*) FROM organizations WHERE organizations.team_id = team.id AND %1$s AND %4$s
@@ -118,6 +122,9 @@ public class WorkRepository {
                        (SELECT COUNT(DISTINCT snapshot.organization_id) %3$s AND snapshot.participants_count > 0)
                            AS organizations_with_learning,
                        (SELECT COALESCE(SUM(snapshot.participants_count), 0) %3$s) AS participants,
+                       (SELECT COALESCE(SUM(CASE WHEN snapshot.completed_count IS NOT NULL
+                                AND source_mapping.run_starts_on <= :today AND :today < source_mapping.run_ends_on
+                                THEN snapshot.participants_count - snapshot.completed_count ELSE 0 END), 0) %3$s) AS learning_now,
                        (SELECT COALESCE(SUM(snapshot.teachers_count), 0) %3$s) AS teachers
                 FROM teams team
                 WHERE team.archived = FALSE
@@ -130,6 +137,7 @@ public class WorkRepository {
                         OrganizationRepository.currentStatus("organizations")
                 ))
                 .params(scope.parameters())
+                .param("today", today)
                 .query((resultSet, rowNumber) -> new TeamOrganizations(
                         resultSet.getObject("id", UUID.class),
                         resultSet.getString("name"),
@@ -137,6 +145,7 @@ public class WorkRepository {
                         resultSet.getLong("unassigned_organizations"),
                         resultSet.getLong("organizations_with_learning"),
                         resultSet.getLong("participants"),
+                        resultSet.getLong("learning_now"),
                         resultSet.getLong("teachers")
                 ))
                 .list();
@@ -310,8 +319,8 @@ public class WorkRepository {
     private record StepRange(String condition, Map<String, Object> parameters) {
     }
 
-    public record WorkCounts(long interactions, long overdue, long withoutNextStep, long stuck) {
-        static final WorkCounts EMPTY = new WorkCounts(0, 0, 0, 0);
+    public record WorkCounts(long interactions, long overdue, long withoutNextStep, long stuck, long atRisk) {
+        static final WorkCounts EMPTY = new WorkCounts(0, 0, 0, 0, 0);
     }
 
     public record TeamOrganizations(
@@ -321,6 +330,7 @@ public class WorkRepository {
             long unassignedOrganizations,
             long organizationsWithLearning,
             long participants,
+            long learningNow,
             long teachers
     ) {
     }

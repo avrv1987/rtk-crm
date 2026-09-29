@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiClient, type LearningTrend, type LearningTrendItem, type TeamSummary, type TeamsSummary as Summary } from '../../shared/api/client'
+import { apiClient, type TeamSummary, type TeamsSummary as Summary } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { LearningTrendPanel } from './LearningTrendPanel'
 import { SigningPlanBlock } from './SigningPlanBlock'
-import { type AccessHandlers, formatDate, formatDateTime, handledAccessError, requestIdOf } from './workShared'
+import { type AccessHandlers, formatDateTime, handledAccessError, requestIdOf } from './workShared'
 import './workControl.css'
 
 type SummaryState =
   | { kind: 'loading' }
   | { kind: 'ready'; summary: Summary }
   | { kind: 'failed'; requestId?: string }
+
+const riskHref = '#/work?flag=RISK_OR_PROBLEM'
 
 const SummaryRow = ({ row, name }: { row: TeamSummary; name: string }) => (
   <tr className={row.teamId === null ? 'work-control__row--total' : undefined}>
@@ -19,162 +22,18 @@ const SummaryRow = ({ row, name }: { row: TeamSummary; name: string }) => (
     <td>{row.overdue}</td>
     <td>{row.withoutNextStep}</td>
     <td>{row.stuck}</td>
+    <td className={row.atRisk > 0 ? 'work-control__cell--danger' : undefined}>
+      {row.teamId === null && row.atRisk > 0 ? <a href={riskHref} aria-label={`${name}, с риском или проблемой: ${row.atRisk}`}>{row.atRisk}</a> : row.atRisk}
+    </td>
     <td>{row.organizationsWithLearning}</td>
     <td>{row.participants}</td>
+    <td>{row.learningNow}</td>
     <td>{row.teachers}</td>
   </tr>
 )
 
 type TeamsSummaryProps = AccessHandlers & {
   refreshKey: number
-}
-
-type TrendState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; trend: LearningTrend }
-  | { kind: 'failed'; requestId?: string }
-
-const trendPeriods = [30, 90, 180, 365]
-
-const signed = (value: number) => (value > 0 ? `+${value.toLocaleString('ru-RU')}` : value < 0 ? `−${Math.abs(value).toLocaleString('ru-RU')}` : '0')
-
-const TrendTable = ({ title, rows, total }: { title: string; rows: LearningTrendItem[]; total?: LearningTrendItem }) => (
-  <div className="work-control__scroll">
-    <table className="work-control__table">
-      <thead>
-        <tr>
-          <th scope="col">{title}</th>
-          <th scope="col">На начало</th>
-          <th scope="col">На конец</th>
-          <th scope="col">Изменение</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => (
-          <tr key={row.id ?? row.name ?? 'row'}>
-            <th scope="row">{row.name ?? 'Без названия'}</th>
-            <td>{row.start}</td>
-            <td>{row.end}</td>
-            <td className={row.change < 0 ? 'work-control__cell--danger' : undefined}>
-              {signed(row.change)}
-              {row.runsWithoutData > 0 && <span className="work-control__hint">{` (потоков без данных: ${row.runsWithoutData})`}</span>}
-            </td>
-          </tr>
-        ))}
-        {total && (
-          <tr className="work-control__row--total">
-            <th scope="row">Все команды</th>
-            <td>{total.start}</td>
-            <td>{total.end}</td>
-            <td>{signed(total.change)}</td>
-          </tr>
-        )}
-      </tbody>
-    </table>
-  </div>
-)
-
-const TrendList = ({ title, items, empty }: { title: string; items: LearningTrendItem[]; empty: string }) => (
-  <div>
-    <h3 className="team-indicators__subtitle">{title}</h3>
-    {items.length === 0 ? <p className="team-indicators__zero">{empty}</p> : (
-      <ol className="leader-aside__list">
-        {items.map((item) => (
-          <li key={item.id ?? item.name}>
-            <strong>{item.name}</strong>
-            <span>{item.runsWithoutData > 0
-              ? `${signed(item.change)}: на конец ${item.end}, в потоках без данных на начало: ${item.runsWithoutData}`
-              : `${signed(item.change)}: было ${item.start}, стало ${item.end}`}</span>
-          </li>
-        ))}
-      </ol>
-    )}
-  </div>
-)
-
-const LearningTrendPanel = ({ onSessionExpired, onProfileUnavailable }: AccessHandlers) => {
-  const [days, setDays] = useState(90)
-  const [state, setState] = useState<TrendState>({ kind: 'loading' })
-  const requestVersion = useRef(0)
-
-  const load = useCallback(async (period: number) => {
-    const version = ++requestVersion.current
-    setState({ kind: 'loading' })
-    try {
-      const trend = await apiClient.getLearningTrend(period)
-      if (version === requestVersion.current) {
-        setState({ kind: 'ready', trend })
-      }
-    } catch (error) {
-      if (version !== requestVersion.current || handledAccessError(error, { onSessionExpired, onProfileUnavailable })) {
-        return
-      }
-      setState({ kind: 'failed', requestId: requestIdOf(error) })
-    }
-  }, [onProfileUnavailable, onSessionExpired])
-
-  useEffect(() => {
-    void load(days)
-  }, [days, load])
-
-  return (
-    <section className="team-indicators" aria-labelledby="teams-trend-title" aria-busy={state.kind === 'loading'}>
-      <div className="team-indicators__header">
-        <h2 id="teams-trend-title">Тренд обучения</h2>
-        <label className="team-indicators__threshold">
-          Период
-          <select value={days} onChange={(event) => setDays(Number(event.target.value))}>
-            {trendPeriods.map((period) => <option key={period} value={period}>{`последние ${period} дней`}</option>)}
-          </select>
-        </label>
-      </div>
-      {state.kind === 'loading' && <p className="work-control__message" role="status">Считаем тренд обучения…</p>}
-      {state.kind === 'failed' && (
-        <div className="notice notice--error" role="alert">
-          <p>Не удалось посчитать тренд обучения.</p>
-          <SupportDetails requestId={state.requestId} />
-          <button type="button" onClick={() => void load(days)}>Повторить</button>
-        </div>
-      )}
-      {state.kind === 'ready' && (
-        <>
-          <ul className="desk-tiles" aria-label="Обучающиеся на начало и конец периода">
-            {[
-              { label: `Обучающихся на ${formatDate(state.trend.from)}`, value: state.trend.total.start.toLocaleString('ru-RU'), tone: '' },
-              { label: `Обучающихся на ${formatDate(state.trend.to)}`, value: state.trend.total.end.toLocaleString('ru-RU'), tone: '' },
-              { label: 'Изменение за период', value: signed(state.trend.total.change), tone: state.trend.total.change < 0 ? ' desk-tile--danger' : ' desk-tile--plain' }
-            ].map((tile) => (
-              <li key={tile.label}>
-                <span className={`desk-tile${tile.tone}`}>
-                  <span className="desk-tile__value">{tile.value}</span>
-                  <span className="desk-tile__label">{tile.label}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="work-control__caption">
-            {`Обучающиеся в потоках занятий студентов Moodle на конец дня ${formatDate(state.trend.from)} и ${formatDate(state.trend.to)} по истории наблюдений: берётся последнее наблюдение не позже этой даты; до начала потока и после его окончания — ноль.`}
-          </p>
-          {state.trend.runsWithoutData > 0 && (
-            <p className="notice" role="note">
-              <strong>{`Потоков без данных на начало периода: ${state.trend.runsWithoutData}.`}</strong>
-              <span>{`Обучение в них уже шло на ${formatDate(state.trend.from)}, но наблюдений до этой даты нет. Они входят в число обучающихся на ${formatDate(state.trend.to)}, но не в изменение за период.`}</span>
-            </p>
-          )}
-          <TrendTable title="Команда" rows={state.trend.teams} total={state.trend.total} />
-          <TrendTable title="ИТ-программа" rows={state.trend.programs} />
-          <div className="leader-aside">
-            <TrendList title="Растёт число обучающихся" items={state.trend.growing} empty="Роста за период нет." />
-            <TrendList title="Падает число обучающихся" items={state.trend.falling} empty="Падения за период нет." />
-          </div>
-          <p className="team-indicators__footer">
-            <span>Рассчитано: {formatDateTime(state.trend.calculatedAt)}</span>
-            <a href="#/reports">Динамика по месяцам — в отчётах</a>
-          </p>
-        </>
-      )}
-    </section>
-  )
 }
 
 export const TeamsSummary = ({ refreshKey, onSessionExpired, onProfileUnavailable }: TeamsSummaryProps) => {
@@ -225,19 +84,29 @@ export const TeamsSummary = ({ refreshKey, onSessionExpired, onProfileUnavailabl
                 { label: 'Незавершённых работ', value: state.summary.total.interactions },
                 { label: 'Просрочено', value: state.summary.total.overdue, tone: 'danger' },
                 { label: 'Без шага или срока', value: state.summary.total.withoutNextStep, tone: 'warning' },
+                { label: 'С риском или проблемой', value: state.summary.total.atRisk, tone: 'danger', href: riskHref },
                 { label: 'Вузов, где идёт обучение', value: state.summary.total.organizationsWithLearning },
                 { label: 'Обучающихся', value: state.summary.total.participants },
+                { label: 'Учатся сейчас', value: state.summary.total.learningNow },
                 { label: 'Преподавателей', value: state.summary.total.teachers }
-              ].map((tile) => (
-                <li key={tile.label}>
-                  <span className={`desk-tile${tile.tone !== undefined && tile.value > 0 ? ` desk-tile--${tile.tone}` : ''}`}>
+              ].map((tile) => {
+                const className = `desk-tile${tile.tone !== undefined && tile.value > 0 ? ` desk-tile--${tile.tone}` : ''}`
+                const content = (
+                  <>
                     <span className="desk-tile__value">{tile.value.toLocaleString('ru-RU')}</span>
                     <span className="desk-tile__label">{tile.label}</span>
-                  </span>
-                </li>
-              ))}
+                  </>
+                )
+                return (
+                  <li key={tile.label}>
+                    {tile.href === undefined || tile.value === 0
+                      ? <span className={className}>{content}</span>
+                      : <a className={className} href={tile.href}>{content}</a>}
+                  </li>
+                )
+              })}
             </ul>
-            <p className="work-control__caption" id="teams-summary-caption">Вузы и школы всех команд, незавершённые работы и обучение по последним данным Moodle. Режим только для чтения.</p>
+            <p className="work-control__caption" id="teams-summary-caption">Вузы и школы всех команд, незавершённые работы и обучение по последним данным Moodle. «Учатся сейчас» — обучающиеся минус завершившие в идущих потоках. Число «С риском или проблемой» в итоге открывает список «Моей работы» с этим отбором. Режим только для чтения.</p>
             <div className="work-control__scroll">
               <table className="work-control__table" aria-describedby="teams-summary-caption">
                 <thead>
@@ -249,8 +118,10 @@ export const TeamsSummary = ({ refreshKey, onSessionExpired, onProfileUnavailabl
                     <th scope="col">Просрочено</th>
                     <th scope="col">Без шага или срока</th>
                     <th scope="col">На этапе дольше {state.summary.stuckDays} дней</th>
+                    <th scope="col">С риском или проблемой</th>
                     <th scope="col">Вузов, где идёт обучение</th>
                     <th scope="col">Обучающихся</th>
+                    <th scope="col">Учатся сейчас</th>
                     <th scope="col">Преподавателей</th>
                   </tr>
                 </thead>

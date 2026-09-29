@@ -34,7 +34,12 @@ import ru.rtk.crm.catalog.ContactCreateRequest;
 import ru.rtk.crm.catalog.ContactService;
 import ru.rtk.crm.catalog.PersonalDataStatus;
 import ru.rtk.crm.interaction.InteractionCreateRequest;
+import ru.rtk.crm.interaction.InteractionFlagsRequest;
+import ru.rtk.crm.interaction.InteractionRiskLevel;
 import ru.rtk.crm.interaction.InteractionService;
+import ru.rtk.crm.interaction.ProductAgreementService;
+import ru.rtk.crm.interaction.ProductAgreementUpdateRequest;
+import ru.rtk.crm.interaction.ProductTransferStatus;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
@@ -73,11 +78,12 @@ class DemoBootstrapCommandTest {
     private final ContactService contactService = mock(ContactService.class);
     private final InteractionService interactionService = mock(InteractionService.class);
     private final AttachmentService attachmentService = mock(AttachmentService.class);
+    private final ProductAgreementService productAgreementService = mock(ProductAgreementService.class);
 
     @BeforeEach
     void setUp() {
         createSchema();
-        for (String table : List.of("agreements", "attachments", "contacts", "interactions", "products", "vendors", "programs", "directions",
+        for (String table : List.of("product_agreements", "agreements", "attachments", "contacts", "interactions", "products", "vendors", "programs", "directions",
                 "organizations", "crm_user_profiles", "teams")) {
             jdbcTemplate.update("DELETE FROM " + table);
         }
@@ -91,11 +97,35 @@ class DemoBootstrapCommandTest {
         });
         when(interactionService.create(any(), any(InteractionCreateRequest.class), anyString())).thenAnswer(invocation -> {
             InteractionCreateRequest request = invocation.getArgument(1);
+            UUID id = UUID.randomUUID();
             jdbcTemplate.update(
                     "INSERT INTO interactions (id, organization_id, title, next_action, current_stage_id) VALUES (?, ?, ?, ?, ?)",
-                    UUID.randomUUID(), request.organizationId(), request.title(), request.nextAction(), UUID.randomUUID());
+                    id, request.organizationId(), request.title(), request.nextAction(), UUID.randomUUID());
+            for (UUID productId : request.productIds()) {
+                jdbcTemplate.update("INSERT INTO product_agreements (id, interaction_id, product_id) VALUES (?, ?, ?)",
+                        UUID.randomUUID(), id, productId);
+            }
             return null;
         });
+        when(interactionService.updateFlags(any(), any(), any(InteractionFlagsRequest.class), anyString())).thenAnswer(invocation -> {
+            InteractionFlagsRequest request = invocation.getArgument(2);
+            assertThat(request.version()).isEqualTo(0);
+            jdbcTemplate.update("UPDATE interactions SET problem = ?, risk_level = ?, risk_reason = ?, version = version + 1 WHERE id = ?",
+                    request.problem(), request.riskLevel().name(), request.riskReason(), invocation.getArgument(1));
+            return null;
+        });
+        when(productAgreementService.update(any(), any(), any(), any(ProductAgreementUpdateRequest.class), anyString()))
+                .thenAnswer(invocation -> {
+                    ProductAgreementUpdateRequest request = invocation.getArgument(3);
+                    jdbcTemplate.update("""
+                            UPDATE product_agreements SET contract_number = ?, license_expiry_year = ?, transferred_kinds = ?
+                            WHERE id = ?
+                            """, request.contract().contractNumber(), request.contract().licenseExpiryYear(),
+                            request.transfers().stream().filter(transfer -> transfer.status() == ProductTransferStatus.TRANSFERRED)
+                                    .count(), invocation.getArgument(2));
+                    jdbcTemplate.update("UPDATE interactions SET version = version + 1 WHERE id = ?", invocation.<UUID>getArgument(1));
+                    return null;
+                });
         when(attachmentService.upload(any(), any(), any(), any(), anyString())).thenAnswer(invocation -> {
             MultipartFile file = invocation.getArgument(3);
             assertThat(new String(file.getBytes(), 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
@@ -142,6 +172,24 @@ class DemoBootstrapCommandTest {
                         tuple("Университет Б", 2L),
                         tuple("Школа № 1 (демо)", 1L));
         verify(interactionService, times(1)).create(any(), any(InteractionCreateRequest.class), anyString());
+    }
+
+    @Test
+    void demoWorkGetsARiskAContractAndLicensesWithTransferMarksAndRepeatsWithoutDuplicates() {
+        DemoBootstrapCommand command = command(demo());
+
+        command.run(null);
+        command.run(null);
+
+        verify(interactionService, times(1)).updateFlags(any(), any(), any(InteractionFlagsRequest.class), anyString());
+        verify(productAgreementService, times(2)).update(any(), any(), any(), any(ProductAgreementUpdateRequest.class), anyString());
+        assertThat(jdbcTemplate.queryForList("SELECT risk_level, problem FROM interactions"))
+                .extracting(row -> tuple(row.get("RISK_LEVEL"), row.get("PROBLEM")))
+                .containsExactly(tuple(InteractionRiskLevel.MEDIUM.name(), "Вуз задерживает подписанный акт передачи"));
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT contract_number, license_expiry_year, transferred_kinds FROM product_agreements ORDER BY contract_number
+                """)).extracting(row -> tuple(row.get("CONTRACT_NUMBER"), row.get("LICENSE_EXPIRY_YEAR"), row.get("TRANSFERRED_KINDS")))
+                .containsExactly(tuple("ДЕМО-А/ЛС-1", 2026, 2), tuple("ДЕМО-А/ЛС-2", 2028, 1));
     }
 
     @Test
@@ -282,7 +330,7 @@ class DemoBootstrapCommandTest {
 
     private DemoBootstrapCommand command(DemoBootstrapProperties properties) {
         return new DemoBootstrapCommand(properties, jdbcClient, new UserProfileRepository(jdbcClient), contactService,
-                interactionService, attachmentService);
+                interactionService, attachmentService, productAgreementService);
     }
 
     private static DemoBootstrapProperties demo() {
@@ -371,7 +419,15 @@ class DemoBootstrapCommandTest {
                 """
                 CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL, current_stage_id UUID,
+                    version INTEGER NOT NULL DEFAULT 0, problem VARCHAR(1000), risk_level VARCHAR(16), risk_reason VARCHAR(1000),
                     next_action VARCHAR(500), created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS product_agreements (
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, product_id UUID NOT NULL, contract_number VARCHAR(200),
+                    license_expiry_year INTEGER, transferred_kinds INTEGER,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 )
                 """,
                 """

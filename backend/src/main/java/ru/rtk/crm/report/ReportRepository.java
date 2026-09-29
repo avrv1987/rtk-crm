@@ -402,6 +402,7 @@ public class ReportRepository {
                                CAST(SUM(x.applications) AS BIGINT) AS applications,
                                CAST(SUM(x.participants) AS BIGINT) AS participants,
                                CAST(SUM(x.completed) AS BIGINT) AS completed,
+                               CAST(SUM(x.completed_base) AS BIGINT) AS completed_base,
                                CAST(SUM(x.parallel_runs) AS BIGINT) AS parallel_runs,
                                CAST(CASE WHEN COUNT(x.paid_order) = 0 THEN NULL ELSE COUNT(DISTINCT x.paid_order) END AS BIGINT)
                                    AS paid_orders,
@@ -675,15 +676,17 @@ public class ReportRepository {
         parameters.put("runsAsOf", request.runsAsOf());
         return new Selection(
                 "SELECT r.program_id, CAST(r.applications_count AS BIGINT) AS applications, CAST(NULL AS BIGINT) AS participants,"
-                        + " CAST(NULL AS BIGINT) AS completed, CAST(NULL AS BIGINT) AS parallel_runs,"
+                        + " CAST(NULL AS BIGINT) AS completed, CAST(NULL AS BIGINT) AS completed_base,"
+                        + " CAST(NULL AS BIGINT) AS parallel_runs,"
                         + " CAST(NULL AS VARCHAR(200)) AS paid_order, CAST(NULL AS VARCHAR(64)) AS paid_stream " + DEMAND_FROM
                         + applications.sql()
                         + " UNION ALL SELECT s.program_id, CAST(NULL AS BIGINT), CAST(f.participants_count AS BIGINT),"
                         + " CAST(f.completed_count AS BIGINT),"
+                        + " CAST(CASE WHEN f.completed_count IS NULL THEN NULL ELSE f.participants_count END AS BIGINT),"
                         + " CAST(CASE WHEN sm.run_starts_on <= :runsAsOf AND :runsAsOf < sm.run_ends_on THEN 1 ELSE 0 END"
                         + " AS BIGINT), CAST(NULL AS VARCHAR(200)), CAST(NULL AS VARCHAR(64)) " + LEARNING_FROM + learning.sql()
                         + " UNION ALL SELECT r.program_id, CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), CAST(NULL AS BIGINT),"
-                        + " CAST(NULL AS BIGINT), CAST(r.external_id AS VARCHAR(200)), CAST(r.payload_hash AS VARCHAR(64)) "
+                        + " CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), CAST(r.external_id AS VARCHAR(200)), CAST(r.payload_hash AS VARCHAR(64)) "
                         + DEMAND_FROM + paidOrders.sql(),
                 parameters
         );
@@ -965,6 +968,7 @@ public class ReportRepository {
                 null,
                 null,
                 null,
+                null,
                 null
         );
     }
@@ -1005,7 +1009,8 @@ public class ReportRepository {
                 resultSet.getObject("completed", Long.class),
                 null,
                 resultSet.getObject("paid_orders", Long.class),
-                resultSet.getObject("paid_streams", Long.class)
+                resultSet.getObject("paid_streams", Long.class),
+                resultSet.getObject("completed_base", Long.class)
         );
     }
 
@@ -1279,6 +1284,7 @@ public class ReportRepository {
                             confirmations,
                             links
                     ),
+                    null,
                     null,
                     null
             );

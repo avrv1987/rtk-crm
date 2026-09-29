@@ -2212,7 +2212,7 @@ class InteractionServiceTest {
         assertThat(flagged.marks().waitingOn()).isEqualTo(InteractionWaiting.UNIVERSITY);
         assertThat(flagged.marks().problem()).isEqualTo("У преподавателей нет доступа к стенду");
         assertThat(flagged.marks().riskLevel()).isEqualTo(InteractionRiskLevel.HIGH);
-        for (String flag : List.of("WAITING_UNIVERSITY", "PROBLEM", "RISK")) {
+        for (String flag : List.of("WAITING_UNIVERSITY", "PROBLEM", "RISK", "RISK_OR_PROBLEM")) {
             assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, flag))).containsExactly(waiting.id());
         }
         assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, "WAITING_RTK"))).isEmpty();
@@ -2249,6 +2249,7 @@ class InteractionServiceTest {
         assertThat(interactionService.events(profileA, waiting.id()).getLast().comment())
                 .isEqualTo("Ожидание снято; Проблема снята; Риск снят");
         assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, "RISK"))).isEmpty();
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, "RISK_OR_PROBLEM"))).isEmpty();
     }
 
     @Test

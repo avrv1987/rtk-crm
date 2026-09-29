@@ -6,7 +6,8 @@ import {
   type SourcesRefresh
 } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
-import { accessHandled, errorText, formatDateTime, requestIdOf, runPeriod } from '../sources/sourceFormat'
+import { accessHandled, errorText, formatDateTime, requestIdOf, runPeriod, todayIso } from '../sources/sourceFormat'
+import { notFinishedRow } from './learningRun'
 import '../sources/sources.css'
 
 type LearningSnapshotsProps = {
@@ -57,6 +58,11 @@ const SourceLine = ({ title, state, lms }: { title: string; state: SourceState; 
   )
 }
 
+const NotFinished = ({ snapshot }: { snapshot: LearningSnapshot }) => {
+  const row = notFinishedRow(snapshot, todayIso())
+  return row === null ? null : <div><dt>{row.label}</dt><dd>{row.value ?? 'нет данных'}</dd></div>
+}
+
 const SnapshotItem = ({ snapshot }: { snapshot: LearningSnapshot }) => (
   <li>
     <strong>
@@ -74,7 +80,7 @@ const SnapshotItem = ({ snapshot }: { snapshot: LearningSnapshot }) => (
       <dl>
         <div><dt>Обучающихся</dt><dd>{snapshot.participants}</dd></div>
         <div><dt>Завершили</dt><dd>{completionLabel(snapshot)}</dd></div>
-        <div><dt>Не завершили</dt><dd>{snapshot.notCompleted ?? 'нет данных'}</dd></div>
+        <NotFinished snapshot={snapshot} />
         <div><dt>Статус неизвестен</dt><dd>{snapshot.unknown}</dd></div>
         <div><dt>Поток обучения</dt><dd>{runPeriod(snapshot.runStartsOn, snapshot.runEndsOn)}</dd></div>
         {snapshot.groupId === null || snapshot.groupId === undefined

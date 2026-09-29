@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: CRM ИТ Школы РТК — REST API
-  version: 0.2.0
+  version: 1.4.0
   description: |
     API веб-клиента CRM и точка интеграции с корпоративными системами.
 
@@ -662,6 +662,69 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/history:
+    get:
+      tags: [Catalog]
+      summary: Общая история вуза
+      operationId: listOrganizationHistory
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - name: kinds
+          in: query
+          required: false
+          description: Виды событий; без параметра — все
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/OrganizationHistoryKind'
+        - name: from
+          in: query
+          required: false
+          description: Начало периода, дата по Москве
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          description: Конец периода включительно, дата по Москве
+          schema:
+            type: string
+            format: date
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+      responses:
+        '200':
+          description: >-
+            События всех работ вуза, назначения и передачи ответственного и изменения контактов одной лентой, новые сверху; доступно тем же ролям, что карточка вуза: USER своих вузов, LEADER команды, MANAGEMENT только для чтения; PARTNER получает 403, ADMIN — 404
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageOrganizationHistory'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/organizations/{id}/assignment:
     post:
       tags: [Catalog]
@@ -1024,10 +1087,10 @@ paths:
   /api/work/learning-trend:
     get:
       tags: [Work]
-      summary: Тренд числа обучающихся для сводки руководства
+      summary: Тренд числа обучающихся для сводки руководства и пульта руководителя команды
       operationId: getLearningTrend
       description: >-
-        Только роль MANAGEMENT. Сравнивает обучающихся на начало и конец периода (последние days дней) по истории
+        Роли MANAGEMENT (все команды) и LEADER (только своя команда). Сравнивает обучающихся на начало и конец периода (последние days дней) по истории
         наблюдений Moodle: по командам, ИТ-программам и вузам (до пяти растущих и падающих). Значение потока на дату —
         последнее наблюдение не позже этой даты; до начала потока и после его окончания значение 0. Поток, который уже шёл
         на начало периода, но наблюдений до этой даты нет, не входит в изменение (change), учитывается в значении на конец
@@ -1308,7 +1371,7 @@ paths:
           required: false
           description: >-
             WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — отмечена проблема;
-            RISK — отмечен риск любого уровня
+            RISK — отмечен риск любого уровня; RISK_OR_PROBLEM — отмечен риск или проблема
           schema:
             $ref: '#/components/schemas/InteractionFlag'
         - name: licenseExpiresBy
@@ -3739,7 +3802,7 @@ paths:
       responses:
         '200':
           description: >-
-            Профиль CRM обновлён; изменение роли, команды или активности увеличивает accessRevision, каждое изменение записывается в журнал профиля. Закрытие или открытие доступа также отключает или включает учётную запись Keycloak через Admin API; если Keycloak недоступен или подключение не настроено, изменение CRM сохраняется, accountSyncRequired равно true, а accountSyncError объясняет, почему учётная запись не была синхронизирована.
+            Профиль CRM обновлён; изменение роли, команды или активности увеличивает accessRevision, каждое изменение записывается в журнал профиля. Закрытие или открытие доступа также отключает или включает учётную запись Keycloak через Admin API; если Keycloak недоступен или подключение не настроено, изменение CRM сохраняется, accountSyncRequired равно true, а accountSyncError объясняет, почему учётная запись не была синхронизирована. Если меняется, нужен ли второй фактор (роль «Администратор» или флаг «Оператор зачисления»), CRM сразу меняет это в Keycloak; при недоступном Keycloak изменение не сохраняется (503).
           content:
             application/json:
               schema:
@@ -3754,6 +3817,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          description: ACCOUNT_SYNC_FAILED — Keycloak недоступен или отклонил изменение обязательного второго фактора; профиль не изменён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/admin/crm-profiles/{id}/events:
@@ -3882,6 +3951,42 @@ paths:
           $ref: '#/components/responses/Conflict'
         '503':
           description: ACCOUNT_SYNC_FAILED — Keycloak недоступен или отклонил запрос; сеансы не завершены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-profiles/{id}/account-second-factor-reset:
+    post:
+      tags: [Administration]
+      summary: Сбросить второй фактор сотрудника
+      operationId: resetCrmProfileSecondFactor
+      description: >-
+        Только администратор, не для своей учётной записи. Удаляет у пользователя Keycloak привязанные приложения-аутентификаторы (OTP). Администратору и оператору зачисления заново назначает обязательный второй фактор: при следующем входе Keycloak попросит подключить приложение. Сеансы не завершаются. Если Keycloak недоступен, ничего не меняется.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Второй фактор сброшен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrmProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          description: ACCOUNT_SYNC_FAILED — Keycloak недоступен или отклонил запрос; второй фактор не сброшен
           content:
             application/json:
               schema:
@@ -7772,6 +7877,55 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/Organization'
+    OrganizationHistoryKind:
+      type: string
+      enum: [CREATED, TRANSITIONED, COMMENTED, STAGES_EDITED, PLAN_UPDATED, DETAILS_UPDATED, STATUS_CHANGED, AGREEMENT_UPDATED, ATTACHMENT_DELETED, STAGE_COMPLETED, STAGE_COMPLETION_CLEARED, ASSIGNMENT, CONTACT]
+    OrganizationHistoryItem:
+      type: object
+      required: [id, kind, occurredAt, actorName, interactionId, interactionTitle, fromStageName, stageName, description, comment, contactId, contactName, changes]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/OrganizationHistoryKind'
+        occurredAt:
+          type: string
+          format: date-time
+        actorName:
+          type: [string, 'null']
+        interactionId:
+          type: [string, 'null']
+          format: uuid
+        interactionTitle:
+          type: [string, 'null']
+        fromStageName:
+          type: [string, 'null']
+        stageName:
+          type: [string, 'null']
+        description:
+          type: [string, 'null']
+        comment:
+          type: [string, 'null']
+        contactId:
+          type: [string, 'null']
+          format: uuid
+        contactName:
+          type: [string, 'null']
+        changes:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/ContactChange'
+    PageOrganizationHistory:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/OrganizationHistoryItem'
     OrganizationAssignmentCandidate:
       type: object
       required: [id, displayName]
@@ -7973,22 +8127,24 @@ components:
         changes:
           type: array
           items:
-            type: object
-            required: [field, previousValue, value]
-            properties:
-              field:
-                type: string
-                enum: [name, position, email, phone, role, primary, inactive, confirmed]
-              previousValue:
-                type: [string, 'null']
-              value:
-                type: [string, 'null']
+            $ref: '#/components/schemas/ContactChange'
         version:
           type: integer
           minimum: 0
         occurredAt:
           type: string
           format: date-time
+    ContactChange:
+      type: object
+      required: [field, previousValue, value]
+      properties:
+        field:
+          type: string
+          enum: [name, position, email, phone, role, primary, inactive, confirmed]
+        previousValue:
+          type: [string, 'null']
+        value:
+          type: [string, 'null']
     CatalogLookup:
       type: object
       required: [id, name, archived, version]
@@ -8525,7 +8681,7 @@ components:
           enum: [SCHEDULED, ACTIVE, ENDED]
     ManagerIndicators:
       type: object
-      required: [managerId, managerName, organizations, interactions, overdue, withoutNextStep, stuck]
+      required: [managerId, managerName, organizations, interactions, overdue, withoutNextStep, stuck, atRisk]
       properties:
         managerId:
           type: [string, 'null']
@@ -8548,6 +8704,10 @@ components:
         stuck:
           type: integer
           minimum: 0
+        atRisk:
+          type: integer
+          minimum: 0
+          description: Активные работы с отметкой риска или проблемы
     TeamIndicators:
       type: object
       required: [calculatedAt, stuckDays, unassignedOrganizations, managers]
@@ -8567,7 +8727,7 @@ components:
             $ref: '#/components/schemas/ManagerIndicators'
     TeamSummary:
       type: object
-      required: [teamId, teamName, organizations, unassignedOrganizations, interactions, overdue, withoutNextStep, stuck, organizationsWithLearning, participants, teachers]
+      required: [teamId, teamName, organizations, unassignedOrganizations, interactions, overdue, withoutNextStep, stuck, atRisk, organizationsWithLearning, participants, learningNow, teachers]
       properties:
         teamId:
           type: [string, 'null']
@@ -8593,6 +8753,10 @@ components:
         stuck:
           type: integer
           minimum: 0
+        atRisk:
+          type: integer
+          minimum: 0
+          description: Активные работы с отметкой риска или проблемы
         organizationsWithLearning:
           type: integer
           minimum: 0
@@ -8600,6 +8764,10 @@ components:
           type: integer
           minimum: 0
           description: Обучающиеся по последним снимкам Moodle
+        learningNow:
+          type: integer
+          minimum: 0
+          description: Учатся сейчас — обучающиеся минус завершившие в потоках, которые идут сегодня и где Moodle отслеживает завершение
         teachers:
           type: integer
           minimum: 0
@@ -8824,6 +8992,10 @@ components:
         completed:
           type: [integer, 'null']
           format: int64
+        completionPercent:
+          type: [integer, 'null']
+          format: int64
+          description: Доля завершивших, % (целое) — завершившие к обучающимся потоков, где Moodle отслеживает завершение; null — нет данных
     LearningTrend:
       type: object
       required: [calculatedAt, from, to, days, total, teams, programs, growing, falling, runsWithoutData]
@@ -10332,8 +10504,8 @@ components:
              AGREEMENT_UPDATED, ATTACHMENT_DELETED, STAGE_COMPLETED, STAGE_COMPLETION_CLEARED, ASSIGNMENT]
     InteractionFlag:
       type: string
-      description: WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — отмечена проблема; RISK — отмечен риск любого уровня
-      enum: [WAITING_UNIVERSITY, WAITING_RTK, PROBLEM, RISK]
+      description: WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — отмечена проблема; RISK — отмечен риск любого уровня; RISK_OR_PROBLEM — отмечен риск или проблема (только отбор списка работ)
+      enum: [WAITING_UNIVERSITY, WAITING_RTK, PROBLEM, RISK, RISK_OR_PROBLEM]
     ReportColumn:
       type: string
       description: >
@@ -10344,7 +10516,7 @@ components:
         до момента формирования отчёта; колонки по договору показывают само значение для одного продукта и пары
         «продукт: значение» для нескольких. EVENTS допускает EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE,
         FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND допускает DIRECTION, PROGRAM,
-        APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, PARALLEL_RUNS; заголовки колонок
+        APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, PARALLEL_RUNS; заголовки колонок
         DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков. PAID_ORDERS считает
         различные номера оплаченных заказов, а PAID_STREAMS — различные пары «курс и поток» применённых записей
         paid_order сервисной организации «Открытый набор (физлица)», видимой каждому USER и LEADER; период отчёта к
@@ -10356,7 +10528,7 @@ components:
         PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS.
       enum: [ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK,
              MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, EVENT_AT, EVENT_TYPE, FROM_STAGE, COMMENT, AUTHOR,
-             APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, PARALLEL_RUNS, VENDORS, CONTRACT_NUMBER,
+             APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, PARALLEL_RUNS, VENDORS, CONTRACT_NUMBER,
              LICENSE_SIGNED, LICENSE_EXPIRY_YEAR,
              TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON, TEAM, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS,
              AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME,
@@ -11722,7 +11894,7 @@ components:
                  REPORT_DOWNLOADED, JOURNAL_EXPORTED, CONFIRMATIONS_DOWNLOADED, SUBJECT_SEARCHED, SUBJECT_EXPORTED, CONTACT_RECTIFIED,
                  CONTACT_RESTRICTED, CONTACT_RESTRICTION_LIFTED, SUBJECT_ANONYMIZED, RETENTION_APPLIED,
                  ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_SYNC_FAILED, ACCOUNT_CREATED,
-                 ACCOUNT_PASSWORD_RESET, ACCOUNT_SESSIONS_ENDED, ACCOUNT_EMAIL_CHANGED,
+                 ACCOUNT_PASSWORD_RESET, ACCOUNT_SESSIONS_ENDED, ACCOUNT_EMAIL_CHANGED, ACCOUNT_SECOND_FACTOR_RESET,
                  LEARNER_RESTRICTED, LEARNER_RESTRICTION_LIFTED, PAID_ORDERS_UPLOADED, LEARNERS_SYNCED,
                  LEARNER_LIST_VIEWED, LEARNER_SEARCHED, LEARNER_VIEWED, LEARNER_FIELDS_REVEALED, LEARNER_CHANGED,
                  LEARNER_ENROLMENTS_MOVED, LEARNER_TEMPLATE_PREVIEWED, LEARNER_TEMPLATE_IMPORTED, LMS_ROSTER_EXPORTED,

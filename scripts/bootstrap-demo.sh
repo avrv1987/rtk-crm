@@ -93,6 +93,7 @@ defaults=(
     PUBLIC_ORIGIN=http://rtk.localhost:8081
     'SOURCES_SYNC_CRON=0 0 * * * *'
     ENROLMENT_ACTIVE_KEY_VERSION=v1
+    MFA_REQUIRED_FOR_PRIVILEGED=false
 )
 secrets=(
     POSTGRES_SUPERUSER_PASSWORD
@@ -104,6 +105,7 @@ secrets=(
     ENROLMENT_KEYS_V1
     ENROLMENT_FINGERPRINT_KEY
     SOURCES_SETTINGS_KEY
+    BACKUP_ENCRYPTION_KEY
 )
 if [[ ${values[DEMO_DATA]} == true ]]; then
     defaults+=(SITE_BASE_URL=$site_fixture_url DEMO_LMS=true ENROLMENT_ENABLED=true)
@@ -126,6 +128,8 @@ for key in "${secrets[@]}"; do
     fi
 done
 [[ ${values[DEMO_LMS]} == true || ${values[DEMO_LMS]} == false ]] || fail 'DEMO_LMS must be true or false'
+[[ ${values[MFA_REQUIRED_FOR_PRIVILEGED]} == true || ${values[MFA_REQUIRED_FOR_PRIVILEGED]} == false ]] \
+    || fail 'MFA_REQUIRED_FOR_PRIVILEGED must be true or false'
 write_env_file
 
 moodle_demo_url=http://moodle:8080
@@ -213,9 +217,71 @@ ensure_administrator() {
     subjects[$username]=$id
 }
 
+privileged_role=crm-privileged
+mfa_flow=crm-browser
+
+flow_id() {
+    kcadm get authentication/flows -r rtk-crm --fields id,alias --format csv --noquotes \
+        | awk -F, -v alias="$1" '$2 == alias { print $1 } $1 == alias { print $2 }'
+}
+
+add_execution() {
+    printf '{"parentFlow":"%s","authenticator":"%s","requirement":"%s","priority":%s,"authenticatorFlow":false}' "$@" \
+        | kcadm create authentication/executions -r rtk-crm -f - -i
+}
+
+add_subflow() {
+    local id
+    id=$(printf '{"alias":"%s","providerId":"basic-flow","topLevel":false,"builtIn":false}' "$2" \
+        | kcadm create authentication/flows -r rtk-crm -f - -i)
+    printf '{"parentFlow":"%s","flowId":"%s","requirement":"%s","priority":%s,"authenticatorFlow":true}' "$1" "$id" "$3" "$4" \
+        | kcadm create authentication/executions -r rtk-crm -f - -i >/dev/null
+    printf '%s' "$id"
+}
+
+clear_pending_totp() {
+    local id user actions
+    for id in $(kcadm get "roles/$privileged_role/users" -r rtk-crm -q max=10000 --fields id --format csv --noquotes); do
+        user=$(kcadm get "users/$id" -r rtk-crm --fields requiredActions)
+        [[ $user == *'"CONFIGURE_TOTP"'* ]] || continue
+        actions=$(grep -o '"[A-Z_]*"' <<< "$user" | grep -vx '"CONFIGURE_TOTP"' | paste -sd, - || true)
+        printf '{"requiredActions":[%s]}' "$actions" | kcadm update "users/$id" -r rtk-crm -f -
+    done
+}
+
+configure_privileged_mfa() {
+    local top forms otp condition
+    if ! kcadm get "roles/$privileged_role" -r rtk-crm >/dev/null 2>&1; then
+        kcadm create roles -r rtk-crm -s "name=$privileged_role" -s 'description=CRM: second factor is required at sign-in'
+    fi
+    kcadm update realms/rtk-crm -s browserFlow=browser
+    top=$(flow_id "$mfa_flow")
+    [[ -z $top ]] || kcadm delete "authentication/flows/$top" -r rtk-crm
+    if [[ ${values[MFA_REQUIRED_FOR_PRIVILEGED]} != true ]]; then
+        clear_pending_totp
+        return
+    fi
+    top=$(printf '{"alias":"%s","description":"Browser sign-in, OTP for %s","providerId":"basic-flow","topLevel":true,"builtIn":false}' \
+        "$mfa_flow" "$privileged_role" | kcadm create authentication/flows -r rtk-crm -f - -i)
+    add_execution "$top" auth-cookie ALTERNATIVE 10 >/dev/null
+    forms=$(add_subflow "$top" "$mfa_flow forms" ALTERNATIVE 20)
+    add_execution "$forms" auth-username-password-form REQUIRED 10 >/dev/null
+    otp=$(add_subflow "$forms" "$mfa_flow privileged OTP" CONDITIONAL 20)
+    condition=$(add_execution "$otp" conditional-user-role REQUIRED 10)
+    printf '{"alias":"%s role","config":{"condUserRole":"%s","negate":"false"}}' "$mfa_flow" "$privileged_role" \
+        | kcadm create "authentication/executions/$condition/config" -r rtk-crm -f -
+    add_execution "$otp" auth-otp-form REQUIRED 20 >/dev/null
+    kcadm update realms/rtk-crm -s "browserFlow=$mfa_flow"
+}
+
+require_second_factor() {
+    kcadm add-roles -r rtk-crm --uusername "$1" --rolename "$privileged_role"
+}
+
 compose up -d --wait postgres keycloak
 compose exec -T keycloak bash -c '/opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080 --realm master --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD"' >/dev/null
 kcadm update realms/rtk-crm -f /opt/keycloak/data/import/rtk-crm-realm.json
+configure_privileged_mfa
 
 public_origin=${values[PUBLIC_ORIGIN]}
 web_origins=("$public_origin")
@@ -283,6 +349,10 @@ if [[ ${values[DEMO_DATA]} == true ]]; then
     for entry in "${demo_identities[@]}" "${spare_accounts[@]}"; do
         IFS='|' read -r username display_name _ <<< "$entry"
         ensure_user "$username" "$display_name"
+    done
+    for entry in "${demo_identities[@]}"; do
+        IFS='|' read -r username _ role _ flag <<< "$entry"
+        [[ $role != ADMIN && $flag != operator ]] || require_second_factor "$username"
     done
     {
         cat <<'YAML'
@@ -366,6 +436,7 @@ YAML
     } > "$identity_file"
 else
     ensure_administrator
+    require_second_factor "${values[CRM_ADMIN_USERNAME]}"
     {
         printf 'app:\n  demo-bootstrap:\n    demo-data: false\n    identities:\n'
         identity_yaml "${values[CRM_ADMIN_USERNAME]}" "${values[CRM_ADMIN_DISPLAY_NAME]}" ADMIN
@@ -391,6 +462,11 @@ fi
 compose "${moodle_files[@]}" up -d --wait --build backend clamav web
 compose "${moodle_files[@]}" up -d --wait --force-recreate --no-deps web
 compose "${moodle_files[@]}" --profile demo-bootstrap run --rm --build backend-bootstrap
+if [[ ${values[MFA_REQUIRED_FOR_PRIVILEGED]} == true ]]; then
+    printf 'Second factor (authenticator app) is required at sign-in for administrators and enrolment operators\n'
+else
+    printf 'Second factor is not required: MFA_REQUIRED_FOR_PRIVILEGED=false in %s\n' "$env_file"
+fi
 if [[ ${values[DEMO_DATA]} == false ]]; then
     printf 'CRM bootstrap completed without demo data. Administrator %s: initial password CRM_ADMIN_PASSWORD in %s, it must be changed at first sign-in\n' \
         "${values[CRM_ADMIN_USERNAME]}" "$env_file"

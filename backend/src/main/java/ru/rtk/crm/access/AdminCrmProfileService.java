@@ -28,6 +28,8 @@ public class AdminCrmProfileService {
     private final AdminTeamRepository adminTeamRepository;
     private final OrganizationAssignmentRepository organizationAssignmentRepository;
     private final CommandIdempotencyRepository commandIdempotencyRepository;
+    private final AccountSyncRepository accountSyncRepository;
+    private final KeycloakAccountClient keycloakAccountClient;
     private final ObjectMapper objectMapper;
 
     public AdminCrmProfileService(
@@ -35,12 +37,16 @@ public class AdminCrmProfileService {
             AdminTeamRepository adminTeamRepository,
             OrganizationAssignmentRepository organizationAssignmentRepository,
             CommandIdempotencyRepository commandIdempotencyRepository,
+            AccountSyncRepository accountSyncRepository,
+            KeycloakAccountClient keycloakAccountClient,
             ObjectMapper objectMapper
     ) {
         this.adminCrmProfileRepository = adminCrmProfileRepository;
         this.adminTeamRepository = adminTeamRepository;
         this.organizationAssignmentRepository = organizationAssignmentRepository;
         this.commandIdempotencyRepository = commandIdempotencyRepository;
+        this.accountSyncRepository = accountSyncRepository;
+        this.keycloakAccountClient = keycloakAccountClient;
         this.objectMapper = objectMapper;
     }
 
@@ -167,6 +173,12 @@ public class AdminCrmProfileService {
                             ? OrganizationAssignmentReason.PROFILE_ROLE_CHANGED
                             : OrganizationAssignmentReason.PROFILE_TEAM_CHANGED;
             unassignOwnedOrganizations(target, actor, actorDisplayName, commandId, auditRequestId, reason, now);
+        }
+        if (previous.privileged() != next.privileged() && keycloakAccountClient.configured()) {
+            keycloakAccountClient.setPrivileged(
+                    accountSyncRepository.findAccount(profileId).orElseThrow(AdminCrmProfileNotFoundException::new).subject(),
+                    next.privileged()
+            );
         }
         AdminCrmProfile updated = adminCrmProfileRepository.findById(profileId)
                 .orElseThrow(AdminCrmProfileNotFoundException::new);

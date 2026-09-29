@@ -13,6 +13,8 @@ project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 env_file=${2:-$project_root/.env.local}
 [[ -f $env_file ]] || fail "$env_file not found"
 env_file=$(cd "$(dirname "$env_file")" && pwd)/$(basename "$env_file")
+source "$project_root/scripts/backup-crypto.sh"
+backup_key_setup "$env_file" generate
 
 umask 077
 mkdir -p -- "$1"
@@ -25,9 +27,16 @@ compose() {
     docker compose --env-file "$env_file" "$@"
 }
 
-compose run --rm --no-deps -T --entrypoint sh backend -c 'tar -C "$APP_REPORTS_STORAGE_ROOT" -cf - .' > "$backup_dir/reports.tar"
-compose exec -T postgres sh -c 'pg_dump --username="$POSTGRES_USER" --format=custom "$CRM_DB_NAME"' > "$backup_dir/crm.dump"
-compose exec -T postgres sh -c 'pg_dump --username="$POSTGRES_USER" --format=custom "$KEYCLOAK_DB_NAME"' > "$backup_dir/keycloak.dump"
-compose run --rm --no-deps -T --entrypoint sh backend -c 'tar -C "$APP_ATTACHMENTS_STORAGE_ROOT" -cf - .' > "$backup_dir/attachments.tar"
-(cd "$backup_dir" && sha256sum crm.dump keycloak.dump attachments.tar reports.tar > SHA256SUMS)
+compose run --rm --no-deps -T --entrypoint sh backend -c 'tar -C "$APP_REPORTS_STORAGE_ROOT" -cf - .' \
+    | backup_encrypt > "$backup_dir/reports.tar.enc"
+compose exec -T postgres sh -c 'pg_dump --username="$POSTGRES_USER" --format=custom "$CRM_DB_NAME"' \
+    | backup_encrypt > "$backup_dir/crm.dump.enc"
+compose exec -T postgres sh -c 'pg_dump --username="$POSTGRES_USER" --format=custom "$KEYCLOAK_DB_NAME"' \
+    | backup_encrypt > "$backup_dir/keycloak.dump.enc"
+compose run --rm --no-deps -T --entrypoint sh backend -c 'tar -C "$APP_ATTACHMENTS_STORAGE_ROOT" -cf - .' \
+    | backup_encrypt > "$backup_dir/attachments.tar.enc"
+for dump in crm.dump keycloak.dump; do
+    [[ $(backup_dump_header "$backup_dir/$dump.enc") == PGDMP ]] || fail "$dump is not a PostgreSQL custom-format dump"
+done
+(cd "$backup_dir" && sha256sum crm.dump.enc keycloak.dump.enc attachments.tar.enc reports.tar.enc > SHA256SUMS)
 printf 'Backup completed: %s\n' "$backup_dir"

@@ -90,7 +90,7 @@ const changeValue = (field: ContactEvent['changes'][number]['field'], value: str
   return value
 }
 
-const changeText = (change: ContactEvent['changes'][number]) => (
+export const changeText = (change: ContactEvent['changes'][number]) => (
   change.field === 'confirmed'
     ? `${fieldLabels.confirmed}${change.previousValue === null ? '' : ` повторно (прежняя отметка ${changeValue('confirmed', change.previousValue)})`}`
     : `${fieldLabels[change.field]}: ${changeValue(change.field, change.previousValue)} → ${changeValue(change.field, change.value)}`

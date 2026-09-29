@@ -37,6 +37,16 @@ export type ContactCreate = components['schemas']['ContactCreate']
 export type ContactUpdate = components['schemas']['ContactUpdate']
 export type ContactRole = components['schemas']['ContactRole']
 export type ContactEvent = components['schemas']['ContactEvent']
+export type OrganizationHistoryKind = components['schemas']['OrganizationHistoryKind']
+export type OrganizationHistoryItem = components['schemas']['OrganizationHistoryItem']
+export type PageOrganizationHistory = components['schemas']['PageOrganizationHistory']
+export type OrganizationHistoryQuery = {
+  kinds?: OrganizationHistoryKind[]
+  from?: string
+  to?: string
+  page?: number
+  size?: number
+}
 export type CatalogLookup = components['schemas']['CatalogLookup']
 export type PageCatalogLookup = components['schemas']['PageCatalogLookup']
 export type CatalogListParams = NonNullable<operations['listPrograms']['parameters']['query']>
@@ -415,6 +425,17 @@ export class ApiClient {
 
   async listOrganizationAssignmentEvents(id: Organization['id']): Promise<OrganizationAssignmentEvent[]> {
     return this.request<OrganizationAssignmentEvent[]>(`/api/organizations/${encodeURIComponent(id)}/assignment-events`)
+  }
+
+  async listOrganizationHistory(id: Organization['id'], query: OrganizationHistoryQuery = {}): Promise<PageOrganizationHistory> {
+    const searchParams = new URLSearchParams()
+    query.kinds?.forEach((kind) => searchParams.append('kinds', kind))
+    if (query.from) searchParams.set('from', query.from)
+    if (query.to) searchParams.set('to', query.to)
+    if (query.page !== undefined) searchParams.set('page', query.page.toString())
+    if (query.size !== undefined) searchParams.set('size', query.size.toString())
+    const suffix = searchParams.size === 0 ? '' : `?${searchParams.toString()}`
+    return this.request<PageOrganizationHistory>(`/api/organizations/${encodeURIComponent(id)}/history${suffix}`)
   }
 
   async assignOrganization(
@@ -906,6 +927,10 @@ export class ApiClient {
 
   async endCrmProfileSessions(id: CrmProfile['id'], idempotencyKey: string): Promise<CrmProfile> {
     return this.command<CrmProfile>(`/api/admin/crm-profiles/${encodeURIComponent(id)}/account-logout`, undefined, idempotencyKey)
+  }
+
+  async resetCrmProfileSecondFactor(id: CrmProfile['id'], idempotencyKey: string): Promise<CrmProfile> {
+    return this.command<CrmProfile>(`/api/admin/crm-profiles/${encodeURIComponent(id)}/account-second-factor-reset`, undefined, idempotencyKey)
   }
 
   async changeCrmProfileEmail(id: CrmProfile['id'], email: string, idempotencyKey: string): Promise<CrmProfile> {

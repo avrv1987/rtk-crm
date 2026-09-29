@@ -24,7 +24,8 @@ public final class WorkModels {
             long interactions,
             long overdue,
             long withoutNextStep,
-            long stuck
+            long stuck,
+            long atRisk
     ) {
     }
 
@@ -40,8 +41,10 @@ public final class WorkModels {
             long overdue,
             long withoutNextStep,
             long stuck,
+            long atRisk,
             long organizationsWithLearning,
             long participants,
+            long learningNow,
             long teachers
     ) {
     }

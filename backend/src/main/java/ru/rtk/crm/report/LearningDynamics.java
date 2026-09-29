@@ -40,7 +40,8 @@ public record LearningDynamics(
             String programName,
             long runs,
             long participants,
-            Long completed
+            Long completed,
+            Long completionPercent
     ) {
     }
 }

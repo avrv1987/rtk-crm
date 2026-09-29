@@ -32,9 +32,14 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.autoconfigure.jdbc.JdbcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ru.rtk.crm.access.CrmProfile;
+import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.report.LearningDynamics.SeriesBy;
+import ru.rtk.crm.work.LearningTrend;
+import ru.rtk.crm.work.LearningTrendService;
+import ru.rtk.crm.work.WorkAccessDeniedException;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
@@ -45,7 +50,8 @@ import ru.rtk.crm.report.LearningDynamics.SeriesBy;
         OrganizationRepository.class,
         ReportRepository.class,
         LearningHistoryRepository.class,
-        LearningDynamicsService.class
+        LearningDynamicsService.class,
+        LearningTrendService.class
 })
 class LearningDynamicsServiceTest {
     private static final LocalDate FROM = LocalDate.parse("2026-01-01");
@@ -53,6 +59,9 @@ class LearningDynamicsServiceTest {
 
     @Autowired
     private LearningDynamicsService service;
+
+    @Autowired
+    private LearningTrendService trendService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -89,13 +98,14 @@ class LearningDynamicsServiceTest {
                         tuple("Институт без КАМ", List.of(0L, 0L, 0L, 0L, 0L, 7L)),
                         tuple("Университет «Альфа»", List.of(0L, 10L, 12L, 12L, 12L, 0L)));
         assertThat(leader.rows()).extracting(LearningDynamics.Row::month, LearningDynamics.Row::organizationName,
-                        LearningDynamics.Row::runs, LearningDynamics.Row::participants, LearningDynamics.Row::completed)
+                        LearningDynamics.Row::runs, LearningDynamics.Row::participants, LearningDynamics.Row::completed,
+                        LearningDynamics.Row::completionPercent)
                 .containsExactly(
-                        tuple("2026-02", "Университет «Альфа»", 1L, 10L, 0L),
-                        tuple("2026-03", "Университет «Альфа»", 1L, 12L, 2L),
-                        tuple("2026-04", "Университет «Альфа»", 1L, 12L, 2L),
-                        tuple("2026-05", "Университет «Альфа»", 1L, 12L, 9L),
-                        tuple("2026-06", "Институт без КАМ", 1L, 7L, null));
+                        tuple("2026-02", "Университет «Альфа»", 1L, 10L, 0L, 0L),
+                        tuple("2026-03", "Университет «Альфа»", 1L, 12L, 2L, 17L),
+                        tuple("2026-04", "Университет «Альфа»", 1L, 12L, 2L, 17L),
+                        tuple("2026-05", "Университет «Альфа»", 1L, 12L, 9L, 75L),
+                        tuple("2026-06", "Институт без КАМ", 1L, 7L, null, null));
 
         LearningDynamics byProgram = service.dynamics(MANAGER_B_PROFILE, FROM, TO, SeriesBy.PROGRAM, null, null);
         assertThat(byProgram.series()).singleElement().satisfies(series -> {
@@ -110,6 +120,32 @@ class LearningDynamicsServiceTest {
             assertThat(empty.totalParticipants()).containsOnly(0L);
         });
         assertThat(leader.notes()).anyMatch(note -> note.contains("действовавшее на конец последнего дня месяца"));
+    }
+
+    @Test
+    void leaderTrendCoversOnlyOwnTeamWhileManagementSeesEveryTeamAndOthersAreRefused() {
+        LocalDate today = LocalDate.now(ReportRequest.ZONE);
+        UUID ownRun = run(ORGANIZATION_A, PROGRAM, today.minusDays(90).toString(), today.plusDays(90).toString(), "STUDENTS");
+        observe(ownRun, today.minusDays(40).toString(), 10, null);
+        observe(ownRun, today.minusDays(5).toString(), 14, null);
+        UUID foreignRun = run(ORGANIZATION_B, PROGRAM_DATA, today.minusDays(90).toString(), today.plusDays(90).toString(), "STUDENTS");
+        observe(foreignRun, today.minusDays(40).toString(), 4, null);
+        observe(foreignRun, today.minusDays(5).toString(), 6, null);
+        CrmProfile management = new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0);
+
+        LearningTrend leader = trendService.trend(LEADER_A_PROFILE, 30);
+        LearningTrend everyone = trendService.trend(management, 30);
+
+        assertThat(leader.teams()).extracting(LearningTrend.Item::name).containsExactly("Команда А");
+        assertThat(leader.programs()).extracting(LearningTrend.Item::name).doesNotContain("Анализ данных");
+        assertThat(leader.total().end()).isEqualTo(14L + 7L);
+        assertThat(everyone.teams()).extracting(LearningTrend.Item::name).contains("Команда А", "Команда Б");
+        assertThat(everyone.programs()).extracting(LearningTrend.Item::name).contains("Анализ данных");
+        assertThat(everyone.total().end()).isGreaterThan(leader.total().end());
+        assertThatThrownBy(() -> trendService.trend(MANAGER_A_PROFILE, 30)).isInstanceOf(WorkAccessDeniedException.class);
+        assertThatThrownBy(() -> trendService.trend(ADMIN_PROFILE, 30)).isInstanceOf(WorkAccessDeniedException.class);
+        assertThatThrownBy(() -> trendService.trend(new CrmProfile(UUID.randomUUID(), UserRole.PARTNER, null, 0), 30))
+                .isInstanceOf(WorkAccessDeniedException.class);
     }
 
     @Test
@@ -138,7 +174,10 @@ class LearningDynamicsServiceTest {
             assertThat(sheet.getRow(0).getCell(0).getStringCellValue()).isEqualTo(LearningDynamics.TITLE);
             assertThat(sheet.getRow(header).getCell(4).getStringCellValue()).isEqualTo("Обучающиеся (Moodle)");
             assertThat(sheet.getRow(header + 1).getCell(4).getNumericCellValue()).isEqualTo(10d);
+            assertThat(sheet.getRow(header).getCell(6).getStringCellValue()).isEqualTo("Доля завершивших, %");
+            assertThat(sheet.getRow(header + 2).getCell(6).getNumericCellValue()).isEqualTo(17d);
             assertThat(sheet.getRow(header + 5).getCell(5).getStringCellValue()).isEqualTo(ReportColumn.NO_DATA);
+            assertThat(sheet.getRow(header + 5).getCell(6).getStringCellValue()).isEqualTo(ReportColumn.NO_DATA);
         }
         ByteArrayOutputStream pdf = new ByteArrayOutputStream();
         service.write(dynamics, ReportFormat.PDF, pdf);

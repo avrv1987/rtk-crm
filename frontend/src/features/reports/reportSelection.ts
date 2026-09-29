@@ -150,7 +150,10 @@ export const reportColumns: Record<ReportKind, readonly ReportColumn[]> = {
     'EVENT_AT', 'ORGANIZATION', 'INTERACTION', 'EVENT_TYPE', 'FROM_STAGE', 'STAGE', 'COMMENT', 'AUTHOR',
     'MANAGER', 'DIRECTION', 'PROGRAM', 'PRODUCTS'
   ],
-  DEMAND: ['DIRECTION', 'PROGRAM', 'APPLICATIONS', 'PAID_ORDERS', 'PAID_STREAMS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'PARALLEL_RUNS'],
+  DEMAND: [
+    'DIRECTION', 'PROGRAM', 'APPLICATIONS', 'PAID_ORDERS', 'PAID_STREAMS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'COMPLETION_SHARE',
+    'PARALLEL_RUNS'
+  ],
   SNAPSHOT: ['ORGANIZATION', 'INTERACTION', 'DIRECTION', 'PROGRAM', 'PRODUCTS', 'STAGE', 'MANAGER', 'CREATED_AT', 'LAST_EVENT_AT'],
   DURATION: ['TEAM', 'PROGRAM', 'STAGE', 'COMPLETED', 'AVG_DAYS', 'MAX_DAYS', 'CURRENT', 'CURRENT_MAX_DAYS'],
   AGREEMENTS: [
@@ -187,6 +190,7 @@ const columnTitles: Record<ReportColumn, string> = {
   PAID_STREAMS: 'Потоки с оплатами (сайт)',
   PARTICIPANTS: 'Обучающиеся (Moodle)',
   LEARNERS_COMPLETED: 'Завершили (Moodle)',
+  COMPLETION_SHARE: 'Доля завершивших, %',
   PARALLEL_RUNS: 'Параллельные потоки (Moodle)',
   ...agreementColumnTitles,
   TEAM: 'Команда',

@@ -129,6 +129,7 @@ final class DurationReport {
                 null,
                 null,
                 null,
+                null,
                 null
         );
     }

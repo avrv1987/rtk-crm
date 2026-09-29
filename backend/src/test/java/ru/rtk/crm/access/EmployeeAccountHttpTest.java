@@ -2,6 +2,7 @@ package ru.rtk.crm.access;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -11,6 +12,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oidcLogin;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -238,6 +240,93 @@ class EmployeeAccountHttpTest {
     }
 
     @Test
+    void newAdministratorMustUseSecondFactorAndFailureIsShownWithoutLosingTheAccount() throws Exception {
+        String admin = NEW_EMPLOYEE.replace("\"role\":\"USER\"", "\"role\":\"ADMIN\"");
+        when(keycloakAccountClient.configured()).thenReturn(true);
+        when(keycloakAccountClient.createEmployeeUser(anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn("kc-petrova", "kc-petrova-2", "kc-ivanova");
+
+        mockMvc.perform(command(post("/api/admin/crm-profiles"), ADMIN, "create-admin").content(admin))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.profile.accountSyncError").doesNotExist());
+        verify(keycloakAccountClient).setPrivileged("kc-petrova", true);
+
+        jdbcTemplate.update("DELETE FROM crm_user_profiles WHERE login = 'petrova'");
+        doThrow(new AccountSyncException("Keycloak недоступен; учётная запись не изменена, повторите позже"))
+                .when(keycloakAccountClient).setPrivileged(anyString(), anyBoolean());
+        mockMvc.perform(command(post("/api/admin/crm-profiles"), ADMIN, "create-admin-down").content(admin))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.temporaryPassword").isNotEmpty())
+                .andExpect(jsonPath("$.profile.accountSyncError").value(containsString("Keycloak недоступен")));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT details FROM audit_events WHERE action = 'ACCOUNT_SYNC_FAILED'", String.class))
+                .startsWith("второй фактор не назначен");
+
+        mockMvc.perform(command(post("/api/admin/crm-profiles"), ADMIN, "create-kam")
+                        .content(NEW_EMPLOYEE.replace(" Petrova ", "ivanova").replace("Petrova@", "Ivanova@")))
+                .andExpect(status().isCreated());
+        verify(keycloakAccountClient, times(2)).setPrivileged(anyString(), anyBoolean());
+    }
+
+    @Test
+    void privilegeChangeIsSavedOnlyTogetherWithTheSecondFactorRequirementInKeycloak() throws Exception {
+        when(keycloakAccountClient.configured()).thenReturn(true);
+
+        mockMvc.perform(command(patch("/api/admin/crm-profiles/{id}", KAM), ADMIN, "operator-on")
+                        .content("{\"version\":0,\"enrolmentOperator\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enrolmentOperator").value(true));
+        verify(keycloakAccountClient).setPrivileged("kc-" + KAM, true);
+
+        mockMvc.perform(command(patch("/api/admin/crm-profiles/{id}", LEADER), ADMIN, "rename")
+                        .content("{\"version\":0,\"displayName\":\"Руководитель А\"}"))
+                .andExpect(status().isOk());
+        verify(keycloakAccountClient, never()).setPrivileged(eq("kc-" + LEADER), anyBoolean());
+
+        doThrow(new AccountSyncException("Keycloak недоступен; учётная запись не изменена, повторите позже"))
+                .when(keycloakAccountClient).setPrivileged(anyString(), anyBoolean());
+        int version = jdbcTemplate.queryForObject("SELECT version FROM crm_user_profiles WHERE id = ?", Integer.class, LEADER);
+        mockMvc.perform(command(patch("/api/admin/crm-profiles/{id}", LEADER), ADMIN, "operator-down")
+                        .content("{\"version\":" + version + ",\"enrolmentOperator\":true}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("ACCOUNT_SYNC_FAILED"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT enrolment_operator FROM crm_user_profiles WHERE id = ?", Boolean.class, LEADER)).isFalse();
+    }
+
+    @Test
+    void secondFactorResetUnbindsTheAppAndKeepsItRequiredForPrivilegedAccounts() throws Exception {
+        when(keycloakAccountClient.removeSecondFactor("kc-" + LEADER)).thenReturn(1);
+        jdbcTemplate.update("UPDATE crm_user_profiles SET enrolment_operator = TRUE WHERE id = ?", LEADER);
+
+        mockMvc.perform(command(post("/api/admin/crm-profiles/{id}/account-second-factor-reset", LEADER), ADMIN, "otp-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(LEADER.toString()));
+        mockMvc.perform(command(post("/api/admin/crm-profiles/{id}/account-second-factor-reset", LEADER), ADMIN, "otp-1"))
+                .andExpect(status().isOk());
+        verify(keycloakAccountClient, times(1)).removeSecondFactor("kc-" + LEADER);
+        verify(keycloakAccountClient).setPrivileged("kc-" + LEADER, true);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT details FROM audit_events WHERE action = 'ACCOUNT_SECOND_FACTOR_RESET'", String.class))
+                .isEqualTo("отвязано приложений: 1; при входе потребуется подключить заново");
+
+        mockMvc.perform(command(post("/api/admin/crm-profiles/{id}/account-second-factor-reset", KAM), ADMIN, "otp-kam"))
+                .andExpect(status().isOk());
+        verify(keycloakAccountClient).removeSecondFactor("kc-" + KAM);
+        verify(keycloakAccountClient, never()).setPrivileged(eq("kc-" + KAM), anyBoolean());
+        mockMvc.perform(command(post("/api/admin/crm-profiles/{id}/account-second-factor-reset", ADMIN), ADMIN, "otp-self"))
+                .andExpect(status().isBadRequest());
+
+        doThrow(new AccountSyncException("Keycloak недоступен; учётная запись не изменена, повторите позже"))
+                .when(keycloakAccountClient).removeSecondFactor(anyString());
+        mockMvc.perform(command(post("/api/admin/crm-profiles/{id}/account-second-factor-reset", MANAGEMENT), ADMIN, "otp-down"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("ACCOUNT_SYNC_FAILED"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_events WHERE action = 'ACCOUNT_SECOND_FACTOR_RESET'", Integer.class)).isEqualTo(2);
+    }
+
+    @Test
     void emailIsChangedForEmployeesButNotForUniversityRepresentatives() throws Exception {
         mockMvc.perform(command(put("/api/admin/crm-profiles/{id}/account-email", KAM), ADMIN, "email-1")
                         .content("{\"email\":\" New.Kam@Example.test \"}"))
@@ -271,6 +360,8 @@ class EmployeeAccountHttpTest {
                     .andExpect(status().isForbidden());
             mockMvc.perform(command(post("/api/admin/crm-profiles/{id}/account-logout", ADMIN), actor, "logout-" + actor))
                     .andExpect(status().isForbidden());
+            mockMvc.perform(command(post("/api/admin/crm-profiles/{id}/account-second-factor-reset", ADMIN), actor, "otp-" + actor))
+                    .andExpect(status().isForbidden());
             mockMvc.perform(command(put("/api/admin/crm-profiles/{id}/account-email", ADMIN), actor, "email-" + actor)
                             .content("{\"email\":\"admin@example.test\"}"))
                     .andExpect(status().isForbidden());
@@ -279,6 +370,7 @@ class EmployeeAccountHttpTest {
         verify(keycloakAccountClient, never()).resetTemporaryPassword(anyString(), anyString());
         verify(keycloakAccountClient, never()).logout(anyString());
         verify(keycloakAccountClient, never()).changeEmail(anyString(), anyString());
+        verify(keycloakAccountClient, never()).removeSecondFactor(anyString());
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM audit_events", Integer.class)).isZero();
     }
 

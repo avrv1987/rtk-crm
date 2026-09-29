@@ -95,7 +95,11 @@ const emptyFilters: WorkFilters = {
 
 const isDue = (value: string): value is InteractionDue => dueOptions.some((option) => option.value !== '' && option.value === value)
 
-const isFlag = (value: string): value is InteractionFlagFilter => reportFlags.some((flag) => flag === value)
+const workFlags: readonly InteractionFlagFilter[] = [...reportFlags, 'RISK_OR_PROBLEM']
+
+const workFlagLabels: Record<InteractionFlagFilter, string> = { ...reportFlagLabels, RISK_OR_PROBLEM: 'Есть риск или проблема' }
+
+const isFlag = (value: string): value is InteractionFlagFilter => workFlags.some((flag) => flag === value)
 
 const isStatus = (value: string): value is InteractionWorkStatusFilter => statusOptions.some((option) => option.value === value)
 
@@ -457,7 +461,7 @@ export const WorkScreen = ({ role, initialQuery, refreshSignal, onSessionExpired
                 onChange={(event) => changeFilter({ flag: isFlag(event.target.value) ? event.target.value : '' })}
               >
                 <option value="">Все работы</option>
-                {reportFlags.map((flag) => <option key={flag} value={flag}>{reportFlagLabels[flag]}</option>)}
+                {workFlags.map((flag) => <option key={flag} value={flag}>{workFlagLabels[flag]}</option>)}
               </select>
             </label>
             <label>

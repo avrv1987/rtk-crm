@@ -8,6 +8,8 @@ import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.AccountSyncRepository.Account;
@@ -26,6 +28,7 @@ public class EmployeeAccountService {
     private static final Pattern LOGIN = Pattern.compile("[a-z0-9][a-z0-9._-]{1,62}");
     private static final Pattern EMAIL = Pattern.compile("[^@\\s]+@[^@\\s]+\\.[^@\\s]+");
     private static final int EMAIL_LIMIT = 254;
+    private static final Logger LOGGER = LoggerFactory.getLogger(EmployeeAccountService.class);
 
     private final AdminCrmProfileRepository adminCrmProfileRepository;
     private final AdminTeamRepository adminTeamRepository;
@@ -95,6 +98,18 @@ public class EmployeeAccountService {
                 "сотрудник; логин " + employee.login() + "; временный пароль выдан", auditRequestId
         );
         AdminCrmProfile created = complete(commandId, profileId);
+        if (employee.role() == UserRole.ADMIN && keycloakAccountClient.configured()) {
+            try {
+                keycloakAccountClient.setPrivileged(subject, true);
+            } catch (AccountSyncException exception) {
+                LOGGER.warn("Second factor is not required for new CRM profile {}: {}", profileId, exception.getMessage());
+                auditJournalRepository.record(
+                        AuditAction.ACCOUNT_SYNC_FAILED, actor.id(), "PROFILE", profileId, employee.displayName(),
+                        "второй фактор не назначен: " + exception.getMessage(), auditRequestId
+                );
+                created = created.withAccountSyncError(exception.getMessage());
+            }
+        }
         return new AccountCredentials(created, employee.login(), password);
     }
 
@@ -138,6 +153,32 @@ public class EmployeeAccountService {
         auditJournalRepository.record(
                 AuditAction.ACCOUNT_SESSIONS_ENDED, actor.id(), "PROFILE", profileId, target.displayName(),
                 "сеансы Keycloak завершены; сеансов CRM завершено: " + crmSessions, auditRequestId
+        );
+        return complete(commandId, profileId);
+    }
+
+    @Transactional
+    public AdminCrmProfile resetSecondFactor(CrmProfile actor, UUID profileId, String idempotencyKey, String requestId) {
+        AdminAuthorization.requireAdmin(actor);
+        requireOtherProfile(actor, profileId);
+        String auditRequestId = AdminAuthorization.requiredRequestId(requestId);
+        UUID commandId = UUID.randomUUID();
+        Optional<AdminCrmProfile> replayed = reserve(
+                commandId, actor, CommandOperation.RESET_ACCOUNT_SECOND_FACTOR, idempotencyKey, new ProfileCommand(profileId, null)
+        );
+        if (replayed.isPresent()) {
+            return replayed.get();
+        }
+        AdminCrmProfile target = lockTarget(profileId);
+        String subject = subject(profileId);
+        int removed = keycloakAccountClient.removeSecondFactor(subject);
+        boolean required = ProfileState.of(target).privileged();
+        if (required) {
+            keycloakAccountClient.setPrivileged(subject, true);
+        }
+        auditJournalRepository.record(
+                AuditAction.ACCOUNT_SECOND_FACTOR_RESET, actor.id(), "PROFILE", profileId, target.displayName(),
+                "отвязано приложений: " + removed + (required ? "; при входе потребуется подключить заново" : ""), auditRequestId
         );
         return complete(commandId, profileId);
     }

@@ -84,6 +84,18 @@ public class AdminCrmProfilesApiController {
         );
     }
 
+    @PostMapping("/{id}/account-second-factor-reset")
+    public AdminCrmProfile resetSecondFactor(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            HttpServletRequest httpRequest
+    ) {
+        return employeeAccountService.resetSecondFactor(
+                currentProfileService.requireActiveProfile(user), parseProfileId(id), idempotencyKey, RequestId.from(httpRequest)
+        );
+    }
+
     @PutMapping("/{id}/account-email")
     public AdminCrmProfile changeEmail(
             @AuthenticationPrincipal OidcUser user,

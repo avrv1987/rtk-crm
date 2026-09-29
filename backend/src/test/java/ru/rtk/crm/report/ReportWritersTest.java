@@ -159,7 +159,7 @@ class ReportWritersTest {
                 .normalized();
         ReportRow row = new ReportRow(null, null, null, null, UUID.randomUUID(), "Программирование", UUID.randomUUID(),
                 "Java-разработчик", List.of(), null, null, null, null, null, null, null, null, null, null, null, null, null,
-                5L, null, null, null, List.of(), null, null, null, 2L, 1L);
+                5L, null, null, null, List.of(), null, null, null, 2L, 1L, null);
         ReportDocument document = new ReportDocument(request, OffsetDateTime.parse("2026-09-24T12:00:00+03:00"),
                 List.of("Сформирован: 24.09.2026 12:00"), List.of(row));
 
@@ -168,7 +168,7 @@ class ReportWritersTest {
             int headerIndex = document.notes().size() + 2;
             assertThat(texts(sheet.getRow(headerIndex))).containsExactly(
                     "ИТ-направление", "ИТ-программа", "Заявки (сайт)", "Оплаченные заявки (сайт)", "Потоки с оплатами (сайт)",
-                    "Обучающиеся (Moodle)", "Завершили (Moodle)", "Параллельные потоки (Moodle)");
+                    "Обучающиеся (Moodle)", "Завершили (Moodle)", "Доля завершивших, %", "Параллельные потоки (Moodle)");
             Row data = sheet.getRow(headerIndex + 1);
             assertThat(data.getCell(2).getCellType()).isEqualTo(CellType.NUMERIC);
             assertThat(data.getCell(2).getNumericCellValue()).isEqualTo(5.0);
@@ -177,6 +177,7 @@ class ReportWritersTest {
             assertThat(data.getCell(5).getStringCellValue()).isEqualTo("нет данных");
             assertThat(data.getCell(6).getStringCellValue()).isEqualTo("нет данных");
             assertThat(data.getCell(7).getStringCellValue()).isEqualTo("нет данных");
+            assertThat(data.getCell(8).getStringCellValue()).isEqualTo("нет данных");
         }
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -188,7 +189,7 @@ class ReportWritersTest {
         assertThat(json.path("totals").path("paidOrders").asLong()).isEqualTo(2);
         assertThat(json.path("rows").get(0).path("PAID_STREAMS").asLong()).isEqualTo(1);
         assertThat(json.path("quality").path("noData")).extracting(JsonNode::asText)
-                .containsExactly("PARTICIPANTS", "LEARNERS_COMPLETED", "PARALLEL_RUNS");
+                .containsExactly("PARTICIPANTS", "LEARNERS_COMPLETED", "COMPLETION_SHARE", "PARALLEL_RUNS");
     }
 
     @Test
@@ -250,6 +251,7 @@ class ReportWritersTest {
                 null,
                 new InteractionMarks(InteractionWorkStatus.ACTIVE, null, null, null, null, null, null),
                 List.of(),
+                null,
                 null,
                 null,
                 null,

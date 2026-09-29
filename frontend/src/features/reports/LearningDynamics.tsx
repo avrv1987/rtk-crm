@@ -252,6 +252,7 @@ export const LearningDynamicsReport = ({ organizationIds, programIds, onSessionE
                     <th scope="col">Потоков с данными</th>
                     <th scope="col">Обучающиеся (Moodle)</th>
                     <th scope="col">Завершили (Moodle)</th>
+                    <th scope="col">Доля завершивших, %</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -263,6 +264,7 @@ export const LearningDynamicsReport = ({ organizationIds, programIds, onSessionE
                       <td>{row.runs}</td>
                       <td>{cell(row.participants)}</td>
                       <td>{cell(row.completed)}</td>
+                      <td>{cell(row.completionPercent)}</td>
                     </tr>
                   ))}
                 </tbody>

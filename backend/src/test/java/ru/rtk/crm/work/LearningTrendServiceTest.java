@@ -114,10 +114,10 @@ class LearningTrendServiceTest {
     }
 
     @Test
-    void onlyManagementReadsTrendAndPeriodIsBounded() {
+    void onlyManagementAndLeaderReadTrendAndPeriodIsBounded() {
         LearningTrendService service = new LearningTrendService(null, null);
         CrmProfile management = new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0);
-        for (UserRole role : List.of(UserRole.USER, UserRole.LEADER, UserRole.ADMIN)) {
+        for (UserRole role : List.of(UserRole.USER, UserRole.ADMIN, UserRole.PARTNER)) {
             assertThatThrownBy(() -> service.trend(new CrmProfile(UUID.randomUUID(), role, TEAM_A, 0), 90))
                     .isInstanceOf(WorkAccessDeniedException.class);
         }

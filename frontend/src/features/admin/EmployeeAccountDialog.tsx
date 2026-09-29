@@ -15,6 +15,7 @@ export type AccountAction =
   | { kind: 'create' }
   | { kind: 'reset'; profile: CrmProfile }
   | { kind: 'logout'; profile: CrmProfile }
+  | { kind: 'otp'; profile: CrmProfile }
   | { kind: 'email'; profile: CrmProfile }
 
 type EmployeeAccountDialogProps = SessionHandlers & {
@@ -44,12 +45,14 @@ const titles: Record<AccountAction['kind'], string> = {
   create: 'Новый сотрудник',
   reset: 'Сбросить пароль',
   logout: 'Завершить сеансы',
+  otp: 'Сбросить второй фактор',
   email: 'Сменить почту'
 }
 
 const OneTimePassword = ({ credentials, created }: { credentials: AccountCredentials; created: boolean }) => {
   const [copied, setCopied] = useState<'yes' | 'failed' | null>(null)
   const password = credentials.temporaryPassword
+  const syncError = credentials.profile.accountSyncError
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(password ?? '')
@@ -84,6 +87,12 @@ const OneTimePassword = ({ credentials, created }: { credentials: AccountCredent
       <p className="interaction-field-hint">
         Пароль показан один раз и нигде не хранится. При первом входе Keycloak попросит задать свой пароль.
       </p>
+      {syncError && (
+        <p className="interaction-command-error" role="alert">
+          Второй фактор администратору не назначен ({syncError}). Когда связь восстановится, выберите в меню «⋯» у
+          профиля «Сбросить второй фактор».
+        </p>
+      )}
     </div>
   )
 }
@@ -140,6 +149,9 @@ export const EmployeeAccountDialog = ({
         setResult({ kind: 'credentials', credentials: await apiClient.createEmployeeAccount(payload, key) })
       } else if (action.kind === 'reset') {
         setResult({ kind: 'credentials', credentials: await apiClient.resetCrmProfilePassword(action.profile.id, key) })
+      } else if (action.kind === 'otp') {
+        await apiClient.resetCrmProfileSecondFactor(action.profile.id, key)
+        setResult({ kind: 'done', message: 'Второй фактор сброшен.' })
       } else if (action.kind === 'logout') {
         await apiClient.endCrmProfileSessions(action.profile.id, key)
         setResult({ kind: 'done', message: 'Сеансы завершены: сотруднику нужно войти заново.' })
@@ -302,6 +314,22 @@ export const EmployeeAccountDialog = ({
           </label>
           {renderError()}
           {renderActions('Сменить почту', email.trim() === '')}
+        </form>
+      )
+    }
+    if (action.kind === 'otp') {
+      const required = action.profile.role === 'ADMIN' || action.profile.enrolmentOperator
+      return (
+        <form className="employee-account__form" onSubmit={(event) => void run(event)}>
+          <p>
+            {`Приложение для кодов входа у «${name}» будет отвязано. `}
+            {required
+              ? 'При следующем входе система попросит подключить приложение заново.'
+              : 'Дальше сотрудник входит только по паролю, пока сам не подключит приложение.'}
+            {' Пароль и сеансы не меняются.'}
+          </p>
+          {renderError()}
+          {renderActions('Сбросить второй фактор', false, true)}
         </form>
       )
     }

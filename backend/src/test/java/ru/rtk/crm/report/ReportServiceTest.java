@@ -416,6 +416,36 @@ class ReportServiceTest {
     }
 
     @Test
+    void demandCompletionShareCountsOnlyRunsWithTrackedCompletionAndShowsNoDataInsteadOfZero() {
+        ReportTestData.insertDemand(jdbcTemplate);
+        assertThat(rows(LEADER_A_PROFILE, demand(null, null, filters(), null)))
+                .allSatisfy(row -> assertThat(row.completionPercent()).isNull());
+
+        jdbcTemplate.update(
+                "UPDATE learning_observations SET completed_count = 2, not_completed_count = 4 "
+                        + "WHERE mapping_id IN (SELECT id FROM source_mappings WHERE external_key = '2')");
+        jdbcTemplate.update(
+                "UPDATE learning_observations SET completed_count = 0, not_completed_count = 3 "
+                        + "WHERE mapping_id IN (SELECT id FROM source_mappings WHERE organization_id = ? AND program_id = ?)",
+                ReportTestData.ORGANIZATION_A_UNASSIGNED, ReportTestData.PROGRAM_DATA);
+
+        ReportPreview preview = reportService.preview(LEADER_A_PROFILE, demand(null, null, filters(), null), 0, 50);
+        assertThat(rows(LEADER_A_PROFILE, demand(null, null, filters(), null)))
+                .extracting(ReportRow::programName, ReportRow::completed, ReportRow::completionPercent)
+                .containsExactlyInAnyOrder(
+                        tuple("Java-разработчик", 2L, 33L),
+                        tuple(null, null, null),
+                        tuple("Анализ данных", 0L, 0L));
+        assertThat(preview.columns()).extracting(ReportColumnView::title)
+                .anyMatch(title -> title.startsWith("Доля завершивших, % (Moodle, на "));
+        assertThat(ReportRow.percentOf(1L, 8L)).isEqualTo(13L);
+        assertThat(ReportRow.percentOf(1L, 3L)).isEqualTo(33L);
+        assertThat(ReportRow.percentOf(2L, 3L)).isEqualTo(67L);
+        assertThat(ReportRow.percentOf(0L, 0L)).isNull();
+        assertThat(ReportRow.percentOf(null, 5L)).isNull();
+    }
+
+    @Test
     void demandRanksProgramsBySiteApplicationsAndMoodleSnapshotsInScopeWithoutZeroForMissingData() {
         ReportTestData.insertDemand(jdbcTemplate);
 
@@ -471,6 +501,7 @@ class ReportServiceTest {
                 tuple(ReportColumn.PAID_STREAMS, ReportColumn.NO_DATA),
                 tuple(ReportColumn.PARTICIPANTS, ReportColumn.NO_DATA),
                 tuple(ReportColumn.LEARNERS_COMPLETED, ReportColumn.NO_DATA),
+                tuple(ReportColumn.COMPLETION_SHARE, ReportColumn.NO_DATA),
                 tuple(ReportColumn.PARALLEL_RUNS, ReportColumn.NO_DATA)
         );
         assertThat(preview.columns()).extracting(ReportColumnView::title).contains("Заявки (сайт, весь период)")

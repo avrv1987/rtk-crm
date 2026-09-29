@@ -247,3 +247,87 @@
     font-size: var(--font-size-lg);
   }
 }
+
+.organization-history {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.organization-history__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.organization-history__header h4,
+.organization-history__total {
+  margin: 0;
+}
+
+.organization-history__total,
+.organization-history__actor {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+}
+
+.organization-history__filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  background: var(--color-canvas);
+}
+
+.organization-history__filters label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-label);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+}
+
+.organization-history__list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.organization-history__item {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  min-width: 0;
+}
+
+.organization-history__item p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.organization-history__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.organization-history__meta strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.organization-history__meta time {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+}

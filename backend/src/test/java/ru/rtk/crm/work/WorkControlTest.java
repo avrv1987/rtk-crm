@@ -2,6 +2,7 @@ package ru.rtk.crm.work;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -323,9 +324,9 @@ class WorkControlTest {
         assertThat(indicators.stuckDays()).isEqualTo(30);
         assertThat(indicators.unassignedOrganizations()).isEqualTo(1);
         assertThat(indicators.managers()).containsExactly(
-                new WorkModels.ManagerIndicators(KAM_A, "КАМ А", 1, 2, 1, 1, 1),
-                new WorkModels.ManagerIndicators(KAM_C, "КАМ В", 0, 0, 0, 0, 0),
-                new WorkModels.ManagerIndicators(null, null, 1, 1, 1, 1, 0)
+                new WorkModels.ManagerIndicators(KAM_A, "КАМ А", 1, 2, 1, 1, 1, 0),
+                new WorkModels.ManagerIndicators(KAM_C, "КАМ В", 0, 0, 0, 0, 0, 0),
+                new WorkModels.ManagerIndicators(null, null, 1, 1, 1, 1, 0, 0)
         );
         assertThat(workService.teamIndicators(leaderA, 1).managers())
                 .filteredOn(row -> KAM_A.equals(row.managerId()))
@@ -337,6 +338,52 @@ class WorkControlTest {
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
                     assertThat(exception.field()).isEqualTo("stuckDays");
                 });
+    }
+
+    @Test
+    void riskAndProblemMarksAreCountedForActiveWorkOfTheOwnTeamOnly() {
+        OffsetDateTime now = OffsetDateTime.now();
+        UUID risky = insertInteraction(UNIVERSITY_A, "С риском", "Позвонить", now.plusDays(1), now.minusDays(2), "ACTIVE");
+        UUID problem = insertInteraction(UNIVERSITY_A, "С проблемой", "Позвонить", now.plusDays(1), now.minusDays(2), "ACTIVE");
+        UUID both = insertInteraction(UNIVERSITY_C, "И риск, и проблема", "Позвонить", now.plusDays(1), now.minusDays(2), "ACTIVE");
+        UUID paused = insertInteraction(UNIVERSITY_A, "Приостановлена с риском", "Позвонить", now.plusDays(1), now.minusDays(2), "PAUSED");
+        UUID foreign = insertInteraction(UNIVERSITY_B, "Чужой риск", "Позвонить", now.plusDays(1), now.minusDays(2), "ACTIVE");
+        insertInteraction(UNIVERSITY_A, "Без отметок", "Позвонить", now.plusDays(1), now.minusDays(2), "ACTIVE");
+        markRisk(risky, "HIGH", null);
+        markRisk(problem, null, "Нет доступа к курсу");
+        markRisk(both, "MEDIUM", "Срыв сроков");
+        markRisk(paused, "HIGH", null);
+        markRisk(foreign, "HIGH", null);
+
+        WorkModels.TeamIndicators indicators = workService.teamIndicators(leaderA, null);
+        WorkModels.TeamsSummary summary = workService.teamsSummary(management, null);
+
+        assertThat(indicators.managers()).extracting(WorkModels.ManagerIndicators::managerId, WorkModels.ManagerIndicators::atRisk)
+                .containsExactly(tuple(KAM_A, 2L), tuple(KAM_C, 0L), tuple(null, 1L));
+        assertThat(summary.teams()).extracting(WorkModels.TeamSummary::teamId, WorkModels.TeamSummary::atRisk)
+                .containsExactly(tuple(TEAM_A, 3L), tuple(TEAM_B, 1L));
+        assertThat(summary.total().atRisk()).isEqualTo(4);
+        assertThatThrownBy(() -> workService.teamIndicators(kamA, null)).isInstanceOf(WorkAccessDeniedException.class);
+        assertThatThrownBy(() -> workService.teamsSummary(leaderA, null)).isInstanceOf(WorkAccessDeniedException.class);
+    }
+
+    @Test
+    void learningNowIsParticipantsMinusCompletedInRunsThatGoTodayAndTrackCompletion() {
+        LocalDate today = LocalDate.now(WorkProperties.ZONE);
+        insertLearning(UNIVERSITY_A, null, 10, 1, today.minusDays(10), "STUDENTS", today.plusDays(10), 4);
+        insertLearning(UNIVERSITY_A, 21L, 8, 1, today.minusDays(10), "STUDENTS", today.plusDays(10), null);
+        insertLearning(UNIVERSITY_A, 22L, 9, 1, today.minusDays(40), "STUDENTS", today.minusDays(1), 2);
+        insertLearning(UNIVERSITY_A, 23L, 7, 1, today.plusDays(3), "STUDENTS", today.plusDays(30), 0);
+        insertLearning(UNIVERSITY_A, 24L, 5, 1, today.minusDays(10), "TEACHERS", today.plusDays(10), 1);
+        insertLearning(UNIVERSITY_B, 25L, 6, 1, today.minusDays(5), "STUDENTS", today, 1);
+        insertLearning(UNIVERSITY_B, 26L, 6, 1, today.minusDays(5), "STUDENTS", today.plusDays(1), 1);
+
+        WorkModels.TeamsSummary summary = workService.teamsSummary(management, null);
+
+        assertThat(summary.teams()).extracting(WorkModels.TeamSummary::teamId, WorkModels.TeamSummary::learningNow)
+                .containsExactly(tuple(TEAM_A, 6L), tuple(TEAM_B, 5L));
+        assertThat(summary.total().learningNow()).isEqualTo(11);
+        assertThatThrownBy(() -> workService.teamsSummary(leaderA, null)).isInstanceOf(WorkAccessDeniedException.class);
     }
 
     @Test
@@ -380,11 +427,11 @@ class WorkControlTest {
         WorkModels.TeamsSummary summary = workService.teamsSummary(management, null);
 
         assertThat(summary.teams()).containsExactly(
-                new WorkModels.TeamSummary(TEAM_A, "Команда А", 2, 1, 1, 1, 0, 1, 1, 6, 2),
-                new WorkModels.TeamSummary(TEAM_B, "Команда Б", 1, 0, 1, 0, 1, 0, 1, 4, 1),
-                new WorkModels.TeamSummary(openTeam, "Открытый набор", 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                new WorkModels.TeamSummary(TEAM_A, "Команда А", 2, 1, 1, 1, 0, 1, 0, 1, 6, 0, 2),
+                new WorkModels.TeamSummary(TEAM_B, "Команда Б", 1, 0, 1, 0, 1, 0, 0, 1, 4, 0, 1),
+                new WorkModels.TeamSummary(openTeam, "Открытый набор", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         );
-        assertThat(summary.total()).isEqualTo(new WorkModels.TeamSummary(null, null, 3, 1, 2, 1, 1, 1, 2, 10, 3));
+        assertThat(summary.total()).isEqualTo(new WorkModels.TeamSummary(null, null, 3, 1, 2, 1, 1, 1, 0, 2, 10, 0, 3));
         assertThat(organizationRepository.findVisibleById(management, UNIVERSITY_B)).isPresent();
         assertThatThrownBy(() -> workService.teamsSummary(leaderA, null)).isInstanceOf(WorkAccessDeniedException.class);
         assertThatThrownBy(() -> workService.reminders(management)).isInstanceOf(WorkAccessDeniedException.class);
@@ -538,6 +585,13 @@ class WorkControlTest {
         return id;
     }
 
+    private void markRisk(UUID interactionId, String riskLevel, String problem) {
+        jdbcTemplate.update(
+                "UPDATE interactions SET risk_level = ?, risk_reason = ?, problem = ? WHERE id = ?",
+                riskLevel, riskLevel == null ? null : "Причина риска", problem, interactionId
+        );
+    }
+
     private UUID insertProduct(String name) {
         UUID id = UUID.randomUUID();
         jdbcTemplate.update("INSERT INTO products (id, name) VALUES (?, ?)", id, name);
@@ -571,17 +625,32 @@ class WorkControlTest {
             LocalDate runStartsOn,
             String runKind
     ) {
+        insertLearning(organizationId, groupId, participants, teachers, runStartsOn, runKind, null, null);
+    }
+
+    private void insertLearning(
+            UUID organizationId,
+            Long groupId,
+            int participants,
+            int teachers,
+            LocalDate runStartsOn,
+            String runKind,
+            LocalDate runEndsOn,
+            Integer completed
+    ) {
         UUID recordId = UUID.randomUUID();
         String externalId = "course:" + recordId;
         jdbcTemplate.update("INSERT INTO source_records (id, source, external_id) VALUES (?, 'MOODLE', ?)", recordId, externalId);
         jdbcTemplate.update(
-                "INSERT INTO source_mappings (id, source, kind, external_key, run_starts_on, run_kind) VALUES (?, 'MOODLE', ?, ?, ?, ?)",
-                UUID.randomUUID(), groupId == null ? "COURSE" : "GROUP", externalId, runStartsOn, runKind
+                "INSERT INTO source_mappings (id, source, kind, external_key, run_starts_on, run_ends_on, run_kind) "
+                        + "VALUES (?, 'MOODLE', ?, ?, ?, ?, ?)",
+                UUID.randomUUID(), groupId == null ? "COURSE" : "GROUP", externalId, runStartsOn, runEndsOn, runKind
         );
         jdbcTemplate.update("""
-                INSERT INTO learning_snapshots (source_record_id, organization_id, group_id, participants_count, teachers_count)
-                VALUES (?, ?, ?, ?, ?)
-                """, recordId, organizationId, groupId, participants, teachers);
+                INSERT INTO learning_snapshots (
+                    source_record_id, organization_id, group_id, participants_count, teachers_count, completed_count
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """, recordId, organizationId, groupId, participants, teachers, completed);
     }
 
     private void insertProfile(UUID id, String displayName, String role, UUID teamId, boolean active) {
@@ -665,7 +734,8 @@ class WorkControlTest {
                 CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL,
                     current_stage_id UUID NOT NULL, next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE,
-                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, work_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE'
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, work_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+                    problem VARCHAR(1000), risk_level VARCHAR(16), risk_reason VARCHAR(1000)
                 )
                 """,
                 """
@@ -695,7 +765,7 @@ class WorkControlTest {
                 """
                 CREATE TABLE IF NOT EXISTS learning_snapshots (
                     source_record_id UUID PRIMARY KEY, organization_id UUID NOT NULL, group_id BIGINT,
-                    participants_count INTEGER NOT NULL, teachers_count INTEGER NOT NULL
+                    participants_count INTEGER NOT NULL, teachers_count INTEGER NOT NULL, completed_count INTEGER
                 )
                 """,
                 """
@@ -706,7 +776,7 @@ class WorkControlTest {
                 """
                 CREATE TABLE IF NOT EXISTS source_mappings (
                     id UUID PRIMARY KEY, source VARCHAR(16) NOT NULL, kind VARCHAR(16) NOT NULL,
-                    external_key VARCHAR(310) NOT NULL, run_starts_on DATE, run_kind VARCHAR(16) DEFAULT 'STUDENTS' NOT NULL
+                    external_key VARCHAR(310) NOT NULL, run_starts_on DATE, run_ends_on DATE, run_kind VARCHAR(16) DEFAULT 'STUDENTS' NOT NULL
                 )
                 """,
                 """

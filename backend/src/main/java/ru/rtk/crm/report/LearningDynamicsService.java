@@ -40,8 +40,8 @@ public class LearningDynamicsService {
     private static final DateTimeFormatter MONTH_KEY = DateTimeFormatter.ofPattern("yyyy-MM");
     private static final DateTimeFormatter MONTH_LABEL = DateTimeFormatter.ofPattern("LLLL yyyy", Locale.forLanguageTag("ru"));
     private static final List<String> COLUMNS = List.of("Месяц", "Вуз", "ИТ-программа", "Потоков с данными", "Обучающиеся (Moodle)",
-            "Завершили (Moodle)");
-    private static final int[] WIDTHS = {12, 30, 30, 10, 12, 12};
+            "Завершили (Moodle)", "Доля завершивших, %");
+    private static final int[] WIDTHS = {12, 30, 30, 10, 12, 12, 12};
 
     private final LearningHistoryRepository historyRepository;
     private final OrganizationRepository organizationRepository;
@@ -150,7 +150,8 @@ public class LearningDynamicsService {
                 layout.table(COLUMNS, WIDTHS);
                 for (LearningDynamics.Row row : dynamics.rows()) {
                     layout.row(List.of(row.monthLabel(), row.organizationName(), row.programName(), Long.toString(row.runs()),
-                            Long.toString(row.participants()), row.completed() == null ? ReportColumn.NO_DATA : row.completed().toString()));
+                            Long.toString(row.participants()), row.completed() == null ? ReportColumn.NO_DATA : row.completed().toString(),
+                            row.completionPercent() == null ? ReportColumn.NO_DATA : row.completionPercent().toString()));
                 }
                 if (dynamics.rows().isEmpty()) {
                     layout.gap(PdfLayout.NOTE_SIZE);
@@ -197,6 +198,11 @@ public class LearningDynamicsService {
                 } else {
                     cells.createCell(5).setCellValue(row.completed());
                 }
+                if (row.completionPercent() == null) {
+                    cells.createCell(6).setCellValue(ReportColumn.NO_DATA);
+                } else {
+                    cells.createCell(6).setCellValue(row.completionPercent());
+                }
             }
             sheet.createRow(rowIndex + 1).createCell(0).setCellValue("Строк в отчёте: " + dynamics.rows().size());
             sheet.createFreezePane(0, headerRow + 1);
@@ -227,7 +233,8 @@ public class LearningDynamicsService {
                         + " Moodle, которые шли в нём хотя бы один день; число потока — наблюдение из истории, действовавшее"
                         + " на конец последнего дня месяца (у последнего месяца — на конец дня окончания периода)",
                 "Обучающиеся и завершившие — участия, а не уникальные люди; завершившие — только потоки, где Moodle"
-                        + " отслеживает завершение, иначе «нет данных»; поток без наблюдения к этой дате не учитывается;"
+                        + " отслеживает завершение, иначе «нет данных»; доля завершивших — завершившие к обучающимся тех же"
+                        + " потоков, округлена до целого; поток без наблюдения к этой дате не учитывается;"
                         + " потоки обучения преподавателей не учитываются",
                 "Фильтры: " + (filters.isEmpty() ? "не заданы" : String.join("; ", filters))
         );
@@ -253,6 +260,7 @@ public class LearningDynamicsService {
         private long runs;
         private long participants;
         private Long completed;
+        private Long completedBase;
 
         private RowTotals(LearningDynamics.Month month, Observation first) {
             this.month = month;
@@ -263,11 +271,15 @@ public class LearningDynamicsService {
             runs++;
             participants += observation.participants();
             completed = plus(completed, observation.completed());
+            if (observation.completed() != null) {
+                completedBase = plus(completedBase, observation.participants());
+            }
         }
 
         private LearningDynamics.Row view() {
             return new LearningDynamics.Row(month.key(), month.label(), first.organizationId(), first.organizationName(),
-                    first.programId(), first.programName(), runs, participants, completed);
+                    first.programId(), first.programName(), runs, participants, completed,
+                    ReportRow.percentOf(completed, completedBase));
         }
     }
 

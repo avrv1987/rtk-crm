@@ -7,6 +7,7 @@ import {
   type TeamIndicators as Indicators
 } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { LearningTrendPanel } from './LearningTrendPanel'
 import { LmsSignalList } from './LmsSignals'
 import { type AccessHandlers, formatDate, formatDateTime, handledAccessError, requestIdOf } from './workShared'
 import './workControl.css'
@@ -137,6 +138,12 @@ export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, on
                   href: `#/work?minDaysOnStage=${state.indicators.stuckDays}`,
                   tone: 'warning'
                 },
+                {
+                  label: 'С риском или проблемой',
+                  value: sum(state.indicators.managers, (manager) => manager.atRisk),
+                  href: '#/work?flag=RISK_OR_PROBLEM',
+                  tone: 'danger'
+                },
                 { label: 'Вузов без КАМ', value: state.indicators.unassignedOrganizations, href: '#/organizations?requiresAssignment=true', tone: 'danger' },
                 { label: 'Вузов ждут подтверждения', value: pending, href: '#/organizations?status=PENDING', tone: 'warning' }
               ].map((tile) => (
@@ -160,6 +167,7 @@ export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, on
                     <th scope="col">Просрочено</th>
                     <th scope="col">Без шага или срока</th>
                     <th scope="col">На этапе дольше {state.indicators.stuckDays} дней</th>
+                    <th scope="col">С риском или проблемой</th>
                     <th scope="col">Сигналы LMS</th>
                   </tr>
                 </thead>
@@ -188,6 +196,13 @@ export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, on
                             label={`${name}, на этапе дольше ${state.indicators.stuckDays} дней`}
                           />
                         </td>
+                        <td data-label="С риском или проблемой" className={heat(manager.atRisk, 'danger')}>
+                          <CountLink
+                            value={manager.atRisk}
+                            href={workLink(manager, { flag: 'RISK_OR_PROBLEM' })}
+                            label={`${name}, с риском или проблемой`}
+                          />
+                        </td>
                         {signals === null ? (
                           <td data-label="Сигналы LMS">—</td>
                         ) : (
@@ -214,6 +229,8 @@ export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, on
           </>
         )}
       </section>
+
+      <LearningTrendPanel ownTeam onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
 
       <div className="leader-aside">
         <section className="team-indicators" aria-labelledby="leader-unassigned-title">

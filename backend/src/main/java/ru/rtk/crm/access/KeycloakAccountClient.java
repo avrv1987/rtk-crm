@@ -41,6 +41,8 @@ public class KeycloakAccountClient {
             "; сеансы не завершены"
     );
     private static final String UPDATE_PASSWORD = "UPDATE_PASSWORD";
+    private static final String PRIVILEGED_ROLE = "crm-privileged";
+    private static final String OTP_CREDENTIAL = "otp";
     private static final long CREATION_CLOCK_SKEW_MILLIS = 60_000;
     private static final Logger LOGGER = LoggerFactory.getLogger(KeycloakAccountClient.class);
 
@@ -133,6 +135,55 @@ public class KeycloakAccountClient {
             throw KeycloakAccountConflictException.employee();
         }
         requireSuccess(updated, "смену почты", ACCOUNT_CHANGE);
+    }
+
+    public void setPrivileged(String userId, boolean privileged) {
+        requireConfiguration(ACCOUNT_CHANGE);
+        String token = accessToken(ACCOUNT_CHANGE);
+        String mappings = userPath(userId) + "/role-mappings/realm";
+        for (JsonNode role : readArray(token, privileged ? mappings + "/available" : mappings, "чтение ролей учётной записи")) {
+            if (PRIVILEGED_ROLE.equals(role.path("name").asText())) {
+                String body = json(List.of(role));
+                requireSuccess(send(HttpRequest.newBuilder(uri(mappings))
+                        .header("Authorization", "Bearer " + token)
+                        .header("Content-Type", "application/json")
+                        .method(privileged ? "POST" : "DELETE", HttpRequest.BodyPublishers.ofString(body)), ACCOUNT_CHANGE),
+                        privileged ? "назначение обязательного второго фактора" : "снятие обязательного второго фактора",
+                        ACCOUNT_CHANGE);
+                return;
+            }
+        }
+    }
+
+    public int removeSecondFactor(String userId) {
+        requireConfiguration(ACCOUNT_CHANGE);
+        String token = accessToken(ACCOUNT_CHANGE);
+        int removed = 0;
+        for (JsonNode credential : readArray(token, userPath(userId) + "/credentials", "чтение способов входа")) {
+            if (OTP_CREDENTIAL.equals(credential.path("type").asText())) {
+                requireSuccess(send(HttpRequest.newBuilder(uri(userPath(userId) + "/credentials/" + encode(credential.path("id").asText())))
+                        .header("Authorization", "Bearer " + token)
+                        .DELETE(), ACCOUNT_CHANGE), "сброс второго фактора", ACCOUNT_CHANGE);
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    private JsonNode readArray(String token, String path, String operation) {
+        HttpResponse<String> response = send(HttpRequest.newBuilder(uri(path))
+                .header("Authorization", "Bearer " + token)
+                .GET(), ACCOUNT_CHANGE);
+        requireSuccess(response, operation, ACCOUNT_CHANGE);
+        try {
+            JsonNode items = objectMapper.readTree(response.body());
+            if (items.isArray()) {
+                return items;
+            }
+        } catch (IOException exception) {
+            throw new AccountSyncException("Keycloak вернул ответ не в формате JSON" + ACCOUNT_CHANGE.rejectedSuffix(), exception);
+        }
+        throw new AccountSyncException("Keycloak вернул ответ не в формате списка" + ACCOUNT_CHANGE.rejectedSuffix());
     }
 
     private String createUser(

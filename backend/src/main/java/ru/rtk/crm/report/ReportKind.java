@@ -25,6 +25,7 @@ import static ru.rtk.crm.report.ReportColumn.EVENT_AT;
 import static ru.rtk.crm.report.ReportColumn.EVENT_TYPE;
 import static ru.rtk.crm.report.ReportColumn.FROM_STAGE;
 import static ru.rtk.crm.report.ReportColumn.INTERACTION;
+import static ru.rtk.crm.report.ReportColumn.COMPLETION_SHARE;
 import static ru.rtk.crm.report.ReportColumn.LEARNERS_COMPLETED;
 import static ru.rtk.crm.report.ReportColumn.LAST_EVENT_AT;
 import static ru.rtk.crm.report.ReportColumn.LICENSE_EXPIRY_YEAR;
@@ -81,7 +82,8 @@ public enum ReportKind {
             "востребованность",
             "заявки",
             "Число заявок",
-            List.of(DIRECTION, PROGRAM, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, PARALLEL_RUNS),
+            List.of(DIRECTION, PROGRAM, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE,
+                    PARALLEL_RUNS),
             List.of()
     ),
     SNAPSHOT(

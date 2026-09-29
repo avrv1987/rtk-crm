@@ -28,6 +28,7 @@ import org.springframework.security.oauth2.client.authentication.OAuth2Authentic
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.catalog.AdminOrganization;
 import ru.rtk.crm.catalog.AdminOrganizationRepository;
@@ -67,6 +68,7 @@ import ru.rtk.crm.security.CrmProfileRegistrationSuccessHandler;
         OrganizationAssignmentService.class,
         CommandIdempotencyRepository.class,
         AuditJournalRepository.class,
+        AccountSyncRepository.class,
         AdminCrmProfileServiceTest.JsonConfiguration.class
 })
 class AdminCrmProfileServiceTest {
@@ -122,6 +124,9 @@ class AdminCrmProfileServiceTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @MockitoBean
+    private KeycloakAccountClient keycloakAccountClient;
 
     @BeforeEach
     void setUp() {
