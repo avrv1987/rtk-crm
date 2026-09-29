@@ -119,13 +119,6 @@ public class PartnerAccessRepository {
                 .single();
     }
 
-    public Optional<String> findIssuer(UUID profileId) {
-        return jdbcClient.sql("SELECT issuer FROM crm_user_profiles WHERE id = :profileId")
-                .param("profileId", profileId)
-                .query(String.class)
-                .optional();
-    }
-
     public void insert(
             UUID profileId,
             String issuer,

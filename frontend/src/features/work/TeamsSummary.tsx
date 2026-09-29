@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiClient, type LearningTrend, type LearningTrendItem, type TeamSummary, type TeamsSummary as Summary } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { SigningPlanBlock } from './SigningPlanBlock'
 import { type AccessHandlers, formatDate, formatDateTime, handledAccessError, requestIdOf } from './workShared'
 import './workControl.css'
 
@@ -54,7 +55,10 @@ const TrendTable = ({ title, rows, total }: { title: string; rows: LearningTrend
             <th scope="row">{row.name ?? 'Без названия'}</th>
             <td>{row.start}</td>
             <td>{row.end}</td>
-            <td className={row.change < 0 ? 'work-control__cell--danger' : undefined}>{signed(row.change)}</td>
+            <td className={row.change < 0 ? 'work-control__cell--danger' : undefined}>
+              {signed(row.change)}
+              {row.runsWithoutData > 0 && <span className="work-control__hint">{` (потоков без данных: ${row.runsWithoutData})`}</span>}
+            </td>
           </tr>
         ))}
         {total && (
@@ -78,7 +82,9 @@ const TrendList = ({ title, items, empty }: { title: string; items: LearningTren
         {items.map((item) => (
           <li key={item.id ?? item.name}>
             <strong>{item.name}</strong>
-            <span>{`${signed(item.change)}: было ${item.start}, стало ${item.end}`}</span>
+            <span>{item.runsWithoutData > 0
+              ? `${signed(item.change)}: на конец ${item.end}, в потоках без данных на начало: ${item.runsWithoutData}`
+              : `${signed(item.change)}: было ${item.start}, стало ${item.end}`}</span>
           </li>
         ))}
       </ol>
@@ -147,9 +153,14 @@ const LearningTrendPanel = ({ onSessionExpired, onProfileUnavailable }: AccessHa
             ))}
           </ul>
           <p className="work-control__caption">
-            {`Обучающиеся в потоках занятий студентов Moodle на конец дня ${formatDate(state.trend.from)} и ${formatDate(state.trend.to)} по истории наблюдений; закончившийся к концу периода поток даёт ноль.`}
-            {state.trend.runsWithoutData > 0 && ` Потоков без наблюдения на одну из дат: ${state.trend.runsWithoutData}, в сравнение они не входят.`}
+            {`Обучающиеся в потоках занятий студентов Moodle на конец дня ${formatDate(state.trend.from)} и ${formatDate(state.trend.to)} по истории наблюдений: берётся последнее наблюдение не позже этой даты; до начала потока и после его окончания — ноль.`}
           </p>
+          {state.trend.runsWithoutData > 0 && (
+            <p className="notice" role="note">
+              <strong>{`Потоков без данных на начало периода: ${state.trend.runsWithoutData}.`}</strong>
+              <span>{`Обучение в них уже шло на ${formatDate(state.trend.from)}, но наблюдений до этой даты нет. Они входят в число обучающихся на ${formatDate(state.trend.to)}, но не в изменение за период.`}</span>
+            </p>
+          )}
           <TrendTable title="Команда" rows={state.trend.teams} total={state.trend.total} />
           <TrendTable title="ИТ-программа" rows={state.trend.programs} />
           <div className="leader-aside">
@@ -259,6 +270,7 @@ export const TeamsSummary = ({ refreshKey, onSessionExpired, onProfileUnavailabl
           </>
         )}
       </section>
+      <SigningPlanBlock refreshKey={refreshKey} onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
       <LearningTrendPanel onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
     </>
   )

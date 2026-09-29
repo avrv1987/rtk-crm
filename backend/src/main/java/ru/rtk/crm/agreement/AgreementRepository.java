@@ -24,6 +24,7 @@ import ru.rtk.crm.agreement.AgreementModels.Confirmation;
 import ru.rtk.crm.agreement.AgreementModels.ConfirmationQuery;
 import ru.rtk.crm.agreement.AgreementModels.LinkedAttachment;
 import ru.rtk.crm.agreement.AgreementModels.LinkedInteraction;
+import ru.rtk.crm.agreement.AgreementModels.PlanKind;
 import ru.rtk.crm.agreement.AgreementModels.Responsible;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
 
@@ -96,7 +97,8 @@ public class AgreementRepository {
 
     public List<AgreementSummary> findSummaries(UUID organizationId) {
         return jdbcClient.sql("""
-                SELECT ag.id, ag.organization_id, ag.number, ag.concluded_on, ag.valid_until, ag.status, ag.version,
+                SELECT ag.id, ag.organization_id, ag.number, ag.concluded_on, ag.valid_until, ag.planned_kind, ag.planned_on,
+                       ag.status, ag.version,
                        (SELECT COUNT(*) FROM agreement_activities ac WHERE ac.agreement_id = ag.id) AS activity_count,
                        (SELECT COUNT(*) FROM agreement_activity_attachments aa
                         JOIN agreement_activities ac ON ac.id = aa.activity_id
@@ -113,6 +115,8 @@ public class AgreementRepository {
                         resultSet.getString("number"),
                         resultSet.getObject("concluded_on", LocalDate.class),
                         resultSet.getObject("valid_until", LocalDate.class),
+                        planKind(resultSet.getString("planned_kind")),
+                        resultSet.getObject("planned_on", LocalDate.class),
                         AgreementStatus.valueOf(resultSet.getString("status")),
                         resultSet.getInt("activity_count"),
                         resultSet.getInt("confirmation_count"),
@@ -122,12 +126,14 @@ public class AgreementRepository {
     }
 
     public Optional<AgreementRow> findAgreementRow(UUID agreementId) {
-        return jdbcClient.sql("SELECT id, organization_id, version FROM agreements WHERE id = :id")
+        return jdbcClient.sql("SELECT id, organization_id, version, planned_kind, planned_on FROM agreements WHERE id = :id")
                 .param("id", agreementId)
                 .query((resultSet, rowNumber) -> new AgreementRow(
                         resultSet.getObject("id", UUID.class),
                         resultSet.getObject("organization_id", UUID.class),
-                        resultSet.getInt("version")
+                        resultSet.getInt("version"),
+                        planKind(resultSet.getString("planned_kind")),
+                        resultSet.getObject("planned_on", LocalDate.class)
                 ))
                 .optional();
     }
@@ -135,7 +141,8 @@ public class AgreementRepository {
     public Optional<Agreement> findAgreement(UUID agreementId) {
         return jdbcClient.sql("""
                 SELECT ag.id, ag.organization_id, o.name AS organization_name, ag.number, ag.concluded_on, ag.valid_until,
-                       ag.parties, ag.status, ag.version, ag.created_at, ag.updated_at, ag.file_attachment_id
+                       ag.planned_kind, ag.planned_on, ag.parties, ag.status, ag.version, ag.created_at, ag.updated_at,
+                       ag.file_attachment_id
                 FROM agreements ag
                 JOIN organizations o ON o.id = ag.organization_id
                 WHERE ag.id = :id
@@ -148,6 +155,8 @@ public class AgreementRepository {
                         resultSet.getString("number"),
                         resultSet.getObject("concluded_on", LocalDate.class),
                         resultSet.getObject("valid_until", LocalDate.class),
+                        planKind(resultSet.getString("planned_kind")),
+                        resultSet.getObject("planned_on", LocalDate.class),
                         resultSet.getString("parties"),
                         AgreementStatus.valueOf(resultSet.getString("status")),
                         resultSet.getInt("version"),
@@ -163,6 +172,8 @@ public class AgreementRepository {
                         header.number(),
                         header.concludedOn(),
                         header.validUntil(),
+                        header.plannedKind(),
+                        header.plannedOn(),
                         header.parties(),
                         header.status(),
                         header.fileAttachmentId() == null ? null : findAttachments(List.of(header.fileAttachmentId()))
@@ -177,11 +188,11 @@ public class AgreementRepository {
     public void insertAgreement(UUID id, UUID organizationId, AgreementValues values, UUID createdBy, OffsetDateTime now) {
         jdbcClient.sql("""
                 INSERT INTO agreements (
-                    id, organization_id, number, concluded_on, valid_until, parties, status, file_attachment_id,
-                    version, created_by, created_at, updated_at
+                    id, organization_id, number, concluded_on, valid_until, planned_kind, planned_on, planned_base_until,
+                    parties, status, file_attachment_id, version, created_by, created_at, updated_at
                 ) VALUES (
-                    :id, :organizationId, :number, :concludedOn, :validUntil, :parties, :status, :fileAttachmentId,
-                    0, :createdBy, :now, :now
+                    :id, :organizationId, :number, :concludedOn, :validUntil, :plannedKind, :plannedOn, :validUntil,
+                    :parties, :status, :fileAttachmentId, 0, :createdBy, :now, :now
                 )
                 """)
                 .param("id", id)
@@ -196,6 +207,11 @@ public class AgreementRepository {
         return jdbcClient.sql("""
                 UPDATE agreements
                 SET number = :number, concluded_on = :concludedOn, valid_until = :validUntil, parties = :parties,
+                    planned_base_until = CASE
+                        WHEN planned_kind IS DISTINCT FROM CAST(:plannedKind AS VARCHAR(16))
+                             OR planned_on IS DISTINCT FROM CAST(:plannedOn AS DATE) THEN CAST(:validUntil AS DATE)
+                        ELSE planned_base_until END,
+                    planned_kind = :plannedKind, planned_on = :plannedOn,
                     status = :status, file_attachment_id = :fileAttachmentId, version = version + 1, updated_at = :now
                 WHERE id = :id AND version = :version
                 """)
@@ -534,7 +550,11 @@ public class AgreementRepository {
         );
     }
 
-    public record AgreementRow(UUID id, UUID organizationId, int version) {
+    private static PlanKind planKind(String value) {
+        return value == null ? null : PlanKind.valueOf(value);
+    }
+
+    public record AgreementRow(UUID id, UUID organizationId, int version, PlanKind plannedKind, LocalDate plannedOn) {
     }
 
     public record ActivityRow(UUID id, UUID agreementId, UUID organizationId, UUID kindId, UUID responsibleProfileId, int version) {
@@ -549,7 +569,9 @@ public class AgreementRepository {
             LocalDate validUntil,
             String parties,
             AgreementStatus status,
-            UUID fileAttachmentId
+            UUID fileAttachmentId,
+            PlanKind plannedKind,
+            LocalDate plannedOn
     ) {
         Map<String, Object> parameters() {
             Map<String, Object> parameters = new HashMap<>();
@@ -559,6 +581,8 @@ public class AgreementRepository {
             parameters.put("parties", parties);
             parameters.put("status", status.name());
             parameters.put("fileAttachmentId", fileAttachmentId);
+            parameters.put("plannedKind", plannedKind == null ? null : plannedKind.name());
+            parameters.put("plannedOn", plannedOn);
             return parameters;
         }
     }
@@ -600,6 +624,8 @@ public class AgreementRepository {
             String number,
             LocalDate concludedOn,
             LocalDate validUntil,
+            PlanKind plannedKind,
+            LocalDate plannedOn,
             String parties,
             AgreementStatus status,
             int version,

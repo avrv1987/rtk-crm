@@ -200,8 +200,7 @@ export const LearningDynamicsReport = ({ organizationIds, programIds, onSessionE
   const periodProblem = from !== '' && to !== '' && from > to ? 'Дата окончания периода раньше даты начала.' : null
 
   return (
-    <section className="reports__statistics" aria-labelledby="learning-dynamics-title" aria-busy={state.kind === 'loading'}>
-      <h3 id="learning-dynamics-title">Динамика обучения</h3>
+    <section className="reports__statistics" aria-labelledby="report-page-title" aria-busy={state.kind === 'loading'}>
       <p className="reports__hint">
         Обучающиеся и завершившие по месяцам по истории наблюдений Moodle — вузы и ИТ-программы вашей области. Без периода — последние 12 месяцев.
       </p>
@@ -270,7 +269,7 @@ export const LearningDynamicsReport = ({ organizationIds, programIds, onSessionE
               </table>
             </div>
           </details>
-          <p className="reports__actions">
+          <p className="reports__footer">
             <span>Сформировано: {formatMoscowDateTime(state.result.generatedAt)}</span>
             <button type="button" className="button--secondary" disabled={download.format !== null} onClick={() => void save('XLSX')}>
               {download.format === 'XLSX' ? 'Готовим XLSX…' : 'Скачать XLSX'}

@@ -95,7 +95,7 @@ public class ApiExceptionHandler {
     @ExceptionHandler(KeycloakAccountConflictException.class)
     public ResponseEntity<ApiError> keycloakAccountConflict(KeycloakAccountConflictException exception, HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(ApiError.of("PARTNER_ACCOUNT_CONFLICT", exception.getMessage(), RequestId.from(request)));
+                .body(ApiError.of(exception.code(), exception.getMessage(), RequestId.from(request)));
     }
 
     @ExceptionHandler(OrganizationNotFoundException.class)

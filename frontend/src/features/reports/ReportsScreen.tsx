@@ -14,6 +14,7 @@ import { loadReportSelection, saveReportSelection } from '../interactions/drafts
 import { organizationTypeLabels } from '../organizations/OrganizationForm'
 import { KamReviewPanel } from './KamReviewPanel'
 import { LearningDynamicsReport } from './LearningDynamics'
+import { SigningPlanReport } from './SigningPlanReport'
 import { ReportBuilder, type FilterOptions, type OptionsState, type OrderTarget } from './ReportBuilder'
 import { catalogTitle, kindViews, ReportCatalog, viewKind, type ReportView } from './ReportCatalog'
 import { InfoTip, type FilterOption } from './ReportControls'
@@ -32,7 +33,7 @@ type ReportsScreenProps = {
 
 const reportViews: readonly ReportView[] = [
   'portfolio', 'events', 'snapshot', 'duration', 'demand', 'agreements', 'statistics', 'learning-dynamics', 'kam-review',
-  'confirmations'
+  'confirmations', 'signing-plan'
 ]
 
 const pollIntervalMs = 1000
@@ -318,6 +319,18 @@ export const ReportsScreen = ({ profileId, role, view, onSessionExpired, onProfi
           таблица строк «месяц × вуз × программа», выгрузка XLSX и PDF.
         </PageHeader>
         <LearningDynamicsReport onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
+      </section>
+    )
+  }
+
+  if (current === 'signing-plan') {
+    return (
+      <section className="reports report-page" aria-labelledby="report-page-title">
+        <PageHeader title={catalogTitle(role, current)}>
+          Плановые подписания и продления соглашений за квартал или год: строки по вузам, итоги по КАМ и командам,
+          статус «выполнено», «просрочено» или «впереди», выгрузка XLSX и PDF. «Руководство» видит все команды только для чтения.
+        </PageHeader>
+        <SigningPlanReport onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
       </section>
     )
   }

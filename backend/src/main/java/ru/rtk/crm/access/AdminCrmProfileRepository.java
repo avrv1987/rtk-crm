@@ -126,6 +126,47 @@ public class AdminCrmProfileRepository {
                 .optional();
     }
 
+    public Optional<String> findIssuer(UUID profileId) {
+        return jdbcClient.sql("SELECT issuer FROM crm_user_profiles WHERE id = :profileId")
+                .param("profileId", profileId)
+                .query(String.class)
+                .optional();
+    }
+
+    public void insertEmployee(
+            UUID profileId,
+            String issuer,
+            String subject,
+            String displayName,
+            String login,
+            UserRole role,
+            UUID teamId,
+            OffsetDateTime now
+    ) {
+        jdbcClient.sql("""
+                INSERT INTO crm_user_profiles (
+                    id, issuer, subject, display_name, login, role, team_id, active, pending_activation, idp_enabled, updated_at
+                ) VALUES (
+                    :id, :issuer, :subject, :displayName, :login, :role, :teamId, TRUE, FALSE, TRUE, :now
+                )
+                """)
+                .param("id", profileId)
+                .param("issuer", issuer)
+                .param("subject", subject)
+                .param("displayName", displayName)
+                .param("login", login)
+                .param("role", role.name())
+                .param("teamId", teamId)
+                .param("now", now)
+                .update();
+    }
+
+    public int deleteSessions(String login) {
+        return jdbcClient.sql("DELETE FROM spring_session WHERE principal_name = :login")
+                .param("login", login)
+                .update();
+    }
+
     public void insertEvent(
             UUID eventId,
             UUID profileId,

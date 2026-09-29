@@ -7,6 +7,7 @@ export type ReportView =
   | 'duration'
   | 'demand'
   | 'agreements'
+  | 'signing-plan'
   | 'statistics'
   | 'learning-dynamics'
   | 'kam-review'
@@ -70,6 +71,12 @@ export const reportCatalog = (role: Me['role']): CatalogCard[] => [
     title: 'Реализация соглашений',
     purpose: 'План и факт мероприятий по соглашениям с вузами за период.',
     data: 'Мероприятия, объёмы, сроки, связанные работы и подтверждения'
+  },
+  {
+    view: 'signing-plan',
+    title: 'План подписаний и продлений',
+    purpose: 'Какие соглашения вузов будут подписаны и продлены в квартале или году: по вузам, КАМ и командам, с отметкой «просрочено».',
+    data: 'Плановые даты и сроки действия соглашений'
   },
   {
     view: 'statistics',

@@ -62,11 +62,10 @@ public class LearningTrendService {
         for (Observation run : runs.values()) {
             Long start = value(run, atStart.get(run.mappingId()), from);
             Long end = value(run, atEnd.get(run.mappingId()), to);
-            if (start == null || end == null) {
+            if (start == null) {
                 withoutData++;
-                continue;
             }
-            if (start == 0 && end == 0) {
+            if (end == null || end == 0 && (start == null || start == 0)) {
                 continue;
             }
             total.add(start, end);
@@ -109,19 +108,26 @@ public class LearningTrendService {
         private final String name;
         private long start;
         private long end;
+        private long change;
+        private int withoutStart;
 
         private Totals(UUID id, String name) {
             this.id = id;
             this.name = name;
         }
 
-        private void add(long startValue, long endValue) {
-            start += startValue;
+        private void add(Long startValue, long endValue) {
             end += endValue;
+            if (startValue == null) {
+                withoutStart++;
+                return;
+            }
+            start += startValue;
+            change += endValue - startValue;
         }
 
         private LearningTrend.Item view() {
-            return new LearningTrend.Item(id, name, start, end, end - start);
+            return new LearningTrend.Item(id, name, start, end, change, withoutStart);
         }
     }
 }

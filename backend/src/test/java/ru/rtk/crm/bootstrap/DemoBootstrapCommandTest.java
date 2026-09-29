@@ -77,7 +77,7 @@ class DemoBootstrapCommandTest {
     @BeforeEach
     void setUp() {
         createSchema();
-        for (String table : List.of("attachments", "contacts", "interactions", "products", "vendors", "programs", "directions",
+        for (String table : List.of("agreements", "attachments", "contacts", "interactions", "products", "vendors", "programs", "directions",
                 "organizations", "crm_user_profiles", "teams")) {
             jdbcTemplate.update("DELETE FROM " + table);
         }
@@ -131,6 +131,16 @@ class DemoBootstrapCommandTest {
                         tuple("Школа № 1 (демо)", "SCHOOL", "Команда А"));
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_user_profiles", Integer.class)).isEqualTo(7);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM organizations", Integer.class)).isEqualTo(5);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM agreements", Integer.class)).isEqualTo(7);
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT o.name, COUNT(*) AS total FROM agreements a JOIN organizations o ON o.id = a.organization_id
+                WHERE a.planned_on IS NOT NULL AND a.created_by = o.owner_manager_id GROUP BY o.name ORDER BY o.name
+                """)).extracting(row -> tuple(row.get("NAME"), row.get("TOTAL")))
+                .containsExactly(
+                        tuple("Колледж связи (демо)", 1L),
+                        tuple("Университет А", 2L),
+                        tuple("Университет Б", 2L),
+                        tuple("Школа № 1 (демо)", 1L));
         verify(interactionService, times(1)).create(any(), any(InteractionCreateRequest.class), anyString());
     }
 
@@ -313,6 +323,15 @@ class DemoBootstrapCommandTest {
                 CREATE TABLE IF NOT EXISTS organizations (
                     id UUID PRIMARY KEY, name VARCHAR(300) NOT NULL UNIQUE, type VARCHAR(16) NOT NULL, team_id UUID NOT NULL,
                     owner_manager_id UUID, version INTEGER NOT NULL DEFAULT 0
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agreements (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, number VARCHAR(100) NOT NULL, concluded_on DATE,
+                    valid_until DATE, planned_kind VARCHAR(16), planned_on DATE, planned_base_until DATE, parties VARCHAR(2000),
+                    status VARCHAR(16) NOT NULL, version INTEGER NOT NULL DEFAULT 0, created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    UNIQUE (organization_id, number)
                 )
                 """,
                 """

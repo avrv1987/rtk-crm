@@ -2,8 +2,10 @@ package ru.rtk.crm.agreement;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -31,6 +33,7 @@ import ru.rtk.crm.agreement.AgreementModels.AgreementSummary;
 import ru.rtk.crm.agreement.AgreementModels.Confirmation;
 import ru.rtk.crm.agreement.AgreementModels.ConfirmationQuery;
 import ru.rtk.crm.agreement.AgreementModels.LinkOptions;
+import ru.rtk.crm.agreement.AgreementModels.PlanKind;
 import ru.rtk.crm.agreement.AgreementRepository.ActivityRow;
 import ru.rtk.crm.agreement.AgreementRepository.ActivityValues;
 import ru.rtk.crm.agreement.AgreementRepository.AgreementRow;
@@ -51,6 +54,8 @@ import ru.rtk.crm.interaction.InteractionValidationException;
 @Service
 public class AgreementService {
     public static final int CONFIRMATION_LIMIT = 500;
+
+    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
 
     private final OrganizationRepository organizationRepository;
     private final AgreementRepository repository;
@@ -141,8 +146,14 @@ public class AgreementService {
     }
 
     @Transactional
-    public Agreement create(CrmProfile profile, UUID organizationId, AgreementRequest request, String idempotencyKey) {
-        visibleOrganization(profile, organizationId);
+    public Agreement create(
+            CrmProfile profile,
+            UUID organizationId,
+            AgreementRequest request,
+            String idempotencyKey,
+            String requestId
+    ) {
+        Organization organization = visibleOrganization(profile, organizationId);
         ContactInteractionMutationAuthorization.requireCardEditor(profile);
         AgreementValues values = agreementValues(organizationId, request);
         return idempotent(
@@ -158,14 +169,16 @@ public class AgreementService {
                     } catch (DuplicateKeyException exception) {
                         throw numberTaken();
                     }
+                    recordPlanChange(profile, organization, id, values, null, null, requestId);
                     return repository.findAgreement(id).orElseThrow(AgreementException::agreementNotFound);
                 }
         );
     }
 
     @Transactional
-    public Agreement update(CrmProfile profile, UUID agreementId, AgreementRequest request, String idempotencyKey) {
+    public Agreement update(CrmProfile profile, UUID agreementId, AgreementRequest request, String idempotencyKey, String requestId) {
         AgreementRow agreement = visibleAgreement(profile, agreementId);
+        Organization organization = visibleOrganization(profile, agreement.organizationId());
         ContactInteractionMutationAuthorization.requireCardEditor(profile);
         int version = requiredVersion(request.version());
         AgreementValues values = agreementValues(agreement.organizationId(), request);
@@ -181,6 +194,7 @@ public class AgreementService {
                                 .map(AgreementRow::version)
                                 .orElse(agreement.version()));
                     }
+                    recordPlanChange(profile, organization, agreementId, values, agreement.plannedKind(), agreement.plannedOn(), requestId);
                     return repository.findAgreement(agreementId).orElseThrow(AgreementException::agreementNotFound);
                 }
         );
@@ -334,6 +348,15 @@ public class AgreementService {
             throw new InteractionValidationException("status", "Укажите статус соглашения");
         }
         requireOrder(request.concludedOn(), request.validUntil(), "validUntil", "Срок действия раньше даты заключения");
+        if ((request.plannedKind() == null) != (request.plannedOn() == null)) {
+            throw new InteractionValidationException(
+                    request.plannedKind() == null ? "plannedKind" : "plannedOn",
+                    "Укажите вид и дату плана вместе или очистите оба поля"
+            );
+        }
+        if (request.plannedKind() == PlanKind.RENEWAL) {
+            requireOrder(request.concludedOn(), request.plannedOn(), "plannedOn", "Плановое продление раньше даты заключения");
+        }
         if (request.fileAttachmentId() != null && repository.findOrganizationCleanAttachmentIds(
                 organizationId,
                 List.of(request.fileAttachmentId())
@@ -349,8 +372,32 @@ public class AgreementService {
                 request.validUntil(),
                 nullableText(request.parties()),
                 request.status(),
-                request.fileAttachmentId()
+                request.fileAttachmentId(),
+                request.plannedKind(),
+                request.plannedOn()
         );
+    }
+
+    private void recordPlanChange(
+            CrmProfile profile,
+            Organization organization,
+            UUID agreementId,
+            AgreementValues values,
+            PlanKind previousKind,
+            LocalDate previousOn,
+            String requestId
+    ) {
+        if (previousKind == values.plannedKind() && Objects.equals(previousOn, values.plannedOn())) {
+            return;
+        }
+        auditJournalRepository.record(AuditAction.AGREEMENT_PLAN_CHANGED, profile.id(), "AGREEMENT", agreementId,
+                organization.name() + ", соглашение № " + values.number(),
+                "план: " + planText(previousKind, previousOn) + " → " + planText(values.plannedKind(), values.plannedOn()),
+                requestId);
+    }
+
+    private static String planText(PlanKind kind, LocalDate on) {
+        return kind == null ? "не задан" : kind.title().toLowerCase(Locale.ROOT) + " " + DATE.format(on);
     }
 
     private ActivityValues activityValues(

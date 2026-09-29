@@ -32,6 +32,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import ru.rtk.crm.access.AdminCrmProfileAccessDeniedException;
+import ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.agreement.AgreementModels.Activity;
@@ -45,6 +46,7 @@ import ru.rtk.crm.agreement.AgreementModels.AgreementRequest;
 import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
 import ru.rtk.crm.agreement.AgreementModels.Confirmation;
 import ru.rtk.crm.agreement.AgreementModels.ConfirmationQuery;
+import ru.rtk.crm.agreement.AgreementModels.PlanKind;
 import ru.rtk.crm.attachment.AttachmentStorage;
 import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.catalog.OrganizationNotFoundException;
@@ -159,7 +161,7 @@ class AgreementServiceTest {
 
     @Test
     void managerKeepsAgreementPlanOfOwnUniversityAndOtherTeamsDoNotSeeIt() {
-        Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1");
+        Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1", "req");
         Activity training = agreementService.createActivity(
                 managerA, agreement.id(), trainingRequest(null, List.of(ACT_CLEAN)), "activity-1"
         );
@@ -185,29 +187,29 @@ class AgreementServiceTest {
         assertThatThrownBy(() -> agreementService.updateActivity(
                 managerB, training.id(), trainingRequest(training.version(), List.of()), "foreign-edit"
         )).isInstanceOfSatisfying(AgreementException.class, exception -> assertThat(exception.status().value()).isEqualTo(404));
-        assertThatThrownBy(() -> agreementService.create(admin, ORGANIZATION_A, agreementRequest(null, "8/2026"), "admin"))
+        assertThatThrownBy(() -> agreementService.create(admin, ORGANIZATION_A, agreementRequest(null, "8/2026"), "admin", "req"))
                 .isInstanceOf(OrganizationNotFoundException.class);
         assertThat(agreementService.confirmations(managerB, query(null, null))).isEmpty();
     }
 
     @Test
     void leaderEditsTeamAgreementWithVersionCheckAndRepeatedCommandIsNotDuplicated() {
-        Agreement created = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1");
-        Agreement replayed = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1");
+        Agreement created = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1", "req");
+        Agreement replayed = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1", "req");
 
         assertThat(replayed.id()).isEqualTo(created.id());
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agreements", Integer.class)).isEqualTo(1);
-        assertThatThrownBy(() -> agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "9/2026"), "create-1"))
+        assertThatThrownBy(() -> agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "9/2026"), "create-1", "req"))
                 .isInstanceOfSatisfying(InteractionConflictException.class, exception -> assertThat(exception.code())
                         .isEqualTo("IDEMPOTENCY_CONFLICT"));
-        assertThatThrownBy(() -> agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-2"))
+        assertThatThrownBy(() -> agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-2", "req"))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
                         .isEqualTo("number"));
 
-        Agreement updated = agreementService.update(leaderA, created.id(), agreementRequest(0, "7/2026-А"), "update-1");
+        Agreement updated = agreementService.update(leaderA, created.id(), agreementRequest(0, "7/2026-А"), "update-1", "req");
         assertThat(updated.version()).isEqualTo(1);
         assertThat(updated.number()).isEqualTo("7/2026-А");
-        assertThatThrownBy(() -> agreementService.update(managerA, created.id(), agreementRequest(0, "7/2026-Б"), "update-2"))
+        assertThatThrownBy(() -> agreementService.update(managerA, created.id(), agreementRequest(0, "7/2026-Б"), "update-2", "req"))
                 .isInstanceOfSatisfying(AgreementException.class, exception -> {
                     assertThat(exception.code()).isEqualTo("VERSION_CONFLICT");
                     assertThat(exception.currentVersion()).isEqualTo(1);
@@ -223,7 +225,7 @@ class AgreementServiceTest {
 
     @Test
     void planLinksOnlyCleanDocumentsAndWorksOfTheSameUniversityAndTeamResponsibles() {
-        Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1");
+        Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1", "req");
 
         assertThatThrownBy(() -> agreementService.createActivity(managerA, agreement.id(), trainingRequest(null, List.of(ACT_REJECTED)), "a1"))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
@@ -247,13 +249,13 @@ class AgreementServiceTest {
         ), "a5")).isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
                 .isEqualTo("kindId"));
         assertThatThrownBy(() -> agreementService.update(managerA, agreement.id(), new AgreementRequest(
-                0, "7/2026", LocalDate.parse("2026-02-01"), YEAR_END, null, AgreementStatus.ACTIVE, FOREIGN_CLEAN
-        ), "u1")).isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
+                0, "7/2026", LocalDate.parse("2026-02-01"), YEAR_END, null, AgreementStatus.ACTIVE, FOREIGN_CLEAN, null, null
+        ), "u1", "req")).isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
                 .isEqualTo("fileAttachmentId"));
 
         Agreement withFile = agreementService.update(managerA, agreement.id(), new AgreementRequest(
-                0, "7/2026", LocalDate.parse("2026-02-01"), YEAR_END, "РТК — Университет А", AgreementStatus.ACTIVE, PROGRAM_CLEAN
-        ), "u2");
+                0, "7/2026", LocalDate.parse("2026-02-01"), YEAR_END, "РТК — Университет А", AgreementStatus.ACTIVE, PROGRAM_CLEAN, null, null
+        ), "u2", "req");
         assertThat(withFile.file().originalName()).isEqualTo("рабочая-программа.docx");
         assertThat(agreementService.linkOptions(managerA, ORGANIZATION_A).attachments())
                 .extracting(AgreementModels.LinkedAttachment::id)
@@ -265,7 +267,7 @@ class AgreementServiceTest {
 
     @Test
     void confirmationsAreSelectedByUniversityPeriodAndKindAndDownloadedAsOneArchive() throws IOException {
-        Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1");
+        Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1", "req");
         agreementService.createActivity(managerA, agreement.id(), trainingRequest(null, List.of(ACT_CLEAN)), "activity-1");
         agreementService.createActivity(managerA, agreement.id(), new ActivityRequest(
                 null, KIND_PROGRAMS, "Актуализация программы «Сети»", "программа", 1, 1,
@@ -323,7 +325,7 @@ class AgreementServiceTest {
 
     @Test
     void agreementReportShowsPlanFactConfirmationsAndLearningAggregatesWithinScopeAndPeriod() {
-        Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1");
+        Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1", "req");
         Activity training = agreementService.createActivity(
                 managerA, agreement.id(), trainingRequest(null, List.of(ACT_CLEAN)), "activity-1"
         );
@@ -333,8 +335,8 @@ class AgreementServiceTest {
                 List.of(), List.of()
         ), "activity-2");
         Agreement empty = agreementService.create(managerA, ORGANIZATION_A, new AgreementRequest(
-                null, "1/2025", LocalDate.parse("2025-01-10"), LocalDate.parse("2025-12-31"), null, AgreementStatus.COMPLETED, null
-        ), "create-2");
+                null, "1/2025", LocalDate.parse("2025-01-10"), LocalDate.parse("2025-12-31"), null, AgreementStatus.COMPLETED, null, null, null
+        ), "create-2", "req");
 
         ReportPreview preview = reportService.preview(managerA, report(YEAR_START, YEAR_END), 0, 50);
 
@@ -383,7 +385,7 @@ class AgreementServiceTest {
 
     @Test
     void activityKeepsResponsibleWhoLeftTheTeamWhenActualVolumeIsEntered() {
-        Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1");
+        Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1", "req");
         Activity activity = agreementService.createActivity(managerA, agreement.id(), trainingRequest(null, List.of()), "activity-1");
         jdbc.update("UPDATE crm_user_profiles SET active = FALSE WHERE id = ?", LEADER_A);
 
@@ -424,6 +426,93 @@ class AgreementServiceTest {
         assertThat(agreementService.kinds(true)).hasSize(4);
     }
 
+    @Test
+    void planDateIsSavedByCardEditorsWithJournalEntryAndOnlyWhenChanged() {
+        Agreement created = agreementService.create(managerA, ORGANIZATION_A,
+                plannedRequest(null, "7/2026", AgreementStatus.DRAFT, "2027-12-31", PlanKind.SIGNING, "2026-11-15"), "plan-1", "req-1");
+
+        assertThat(created.plannedKind()).isEqualTo(PlanKind.SIGNING);
+        assertThat(created.plannedOn()).isEqualTo(LocalDate.parse("2026-11-15"));
+        assertThat(agreementService.list(managerA, ORGANIZATION_A)).singleElement().satisfies(summary -> {
+            assertThat(summary.plannedKind()).isEqualTo(PlanKind.SIGNING);
+            assertThat(summary.plannedOn()).isEqualTo(LocalDate.parse("2026-11-15"));
+        });
+        assertThat(jdbc.queryForMap("SELECT category, action, actor_profile_id, object_name, details, request_id FROM audit_events"))
+                .containsEntry("ACTION", "AGREEMENT_PLAN_CHANGED")
+                .containsEntry("CATEGORY", "ORGANIZATION")
+                .containsEntry("OBJECT_NAME", "Университет А, соглашение № 7/2026")
+                .containsEntry("DETAILS", "план: не задан → подписание 15.11.2026")
+                .containsEntry("REQUEST_ID", "req-1");
+
+        agreementService.update(leaderA, created.id(),
+                plannedRequest(0, "7/2026-А", AgreementStatus.DRAFT, "2027-12-31", PlanKind.SIGNING, "2026-11-15"), "plan-2", "req-2");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_events", Integer.class)).isEqualTo(1);
+
+        Agreement renewal = agreementService.update(managerA, created.id(),
+                plannedRequest(1, "7/2026-А", AgreementStatus.ACTIVE, "2027-12-31", PlanKind.RENEWAL, "2026-12-01"), "plan-3", "req-3");
+        assertThat(renewal.plannedKind()).isEqualTo(PlanKind.RENEWAL);
+        assertThat(jdbc.queryForObject("SELECT details FROM audit_events WHERE request_id = 'req-3'", String.class))
+                .isEqualTo("план: подписание 15.11.2026 → продление 01.12.2026");
+        assertThat(jdbc.queryForObject("SELECT planned_base_until FROM agreements", LocalDate.class)).isEqualTo(LocalDate.parse("2027-12-31"));
+
+        agreementService.update(managerA, created.id(),
+                plannedRequest(2, "7/2026-А", AgreementStatus.ACTIVE, "2028-12-31", PlanKind.RENEWAL, "2026-12-01"), "plan-4", "req-4");
+        assertThat(jdbc.queryForObject("SELECT planned_base_until FROM agreements", LocalDate.class)).isEqualTo(LocalDate.parse("2027-12-31"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_events", Integer.class)).isEqualTo(2);
+
+        Agreement cleared = agreementService.update(managerA, created.id(),
+                plannedRequest(3, "7/2026-А", AgreementStatus.ACTIVE, "2028-12-31", null, null), "plan-5", "req-5");
+        assertThat(cleared.plannedKind()).isNull();
+        assertThat(cleared.plannedOn()).isNull();
+        assertThat(jdbc.queryForObject("SELECT details FROM audit_events WHERE request_id = 'req-5'", String.class))
+                .isEqualTo("план: продление 01.12.2026 → не задан");
+    }
+
+    @Test
+    void planNeedsKindAndDateTogetherAndRenewalCannotPrecedeConclusion() {
+        assertThatThrownBy(() -> agreementService.create(managerA, ORGANIZATION_A,
+                plannedRequest(null, "1", AgreementStatus.DRAFT, "2027-12-31", PlanKind.SIGNING, null), "bad-1", "req"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("plannedOn"));
+        assertThatThrownBy(() -> agreementService.create(managerA, ORGANIZATION_A,
+                plannedRequest(null, "1", AgreementStatus.DRAFT, "2027-12-31", null, "2026-11-15"), "bad-2", "req"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("plannedKind"));
+        assertThatThrownBy(() -> agreementService.create(managerA, ORGANIZATION_A,
+                plannedRequest(null, "1", AgreementStatus.ACTIVE, "2027-12-31", PlanKind.RENEWAL, "2026-01-15"), "bad-3", "req"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("plannedOn"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agreements", Integer.class)).isZero();
+    }
+
+    @Test
+    void planIsEditedOnlyWithinTheUniversityScopeAndManagementOnlyReads() {
+        CrmProfile management = new CrmProfile(uuid(16), UserRole.MANAGEMENT, null, 0);
+        Agreement created = agreementService.create(managerA, ORGANIZATION_A,
+                plannedRequest(null, "7/2026", AgreementStatus.DRAFT, "2027-12-31", PlanKind.SIGNING, "2026-11-15"), "plan-1", "req");
+
+        assertThatThrownBy(() -> agreementService.update(managerB, created.id(),
+                plannedRequest(0, "7/2026", AgreementStatus.DRAFT, "2027-12-31", PlanKind.SIGNING, "2026-12-01"), "plan-2", "req"))
+                .isInstanceOfSatisfying(AgreementException.class, exception -> assertThat(exception.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> agreementService.update(leaderB, created.id(),
+                plannedRequest(0, "7/2026", AgreementStatus.DRAFT, "2027-12-31", PlanKind.SIGNING, "2026-12-01"), "plan-3", "req"))
+                .isInstanceOfSatisfying(AgreementException.class, exception -> assertThat(exception.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> agreementService.update(management, created.id(),
+                plannedRequest(0, "7/2026", AgreementStatus.DRAFT, "2027-12-31", PlanKind.SIGNING, "2026-12-01"), "plan-4", "req"))
+                .isInstanceOf(ContactInteractionMutationAccessDeniedException.class);
+        assertThat(agreementService.get(management, created.id()).plannedOn()).isEqualTo(LocalDate.parse("2026-11-15"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_events", Integer.class)).isEqualTo(1);
+    }
+
+    private static AgreementRequest plannedRequest(
+            Integer version,
+            String number,
+            AgreementStatus status,
+            String validUntil,
+            PlanKind kind,
+            String plannedOn
+    ) {
+        return new AgreementRequest(version, number, LocalDate.parse("2026-02-01"), LocalDate.parse(validUntil), null, status, null, kind,
+                plannedOn == null ? null : LocalDate.parse(plannedOn));
+    }
+
     private ReportRequest report(LocalDate from, LocalDate to) {
         return new ReportRequest(ReportKind.AGREEMENTS, from, to, null, ReportFilters.none(), List.of(), null, null, null);
     }
@@ -435,7 +524,7 @@ class AgreementServiceTest {
     private static AgreementRequest agreementRequest(Integer version, String number) {
         return new AgreementRequest(
                 version, number, LocalDate.parse("2026-02-01"), LocalDate.parse("2027-12-31"),
-                "ПАО «Ростелеком», ИТ Школа; Университет А", AgreementStatus.ACTIVE, null
+                "ПАО «Ростелеком», ИТ Школа; Университет А", AgreementStatus.ACTIVE, null, null, null
         );
     }
 
@@ -690,6 +779,9 @@ class AgreementServiceTest {
                     number VARCHAR(100) NOT NULL,
                     concluded_on DATE,
                     valid_until DATE,
+                    planned_kind VARCHAR(16),
+                    planned_on DATE,
+                    planned_base_until DATE,
                     parties VARCHAR(2000),
                     status VARCHAR(16) NOT NULL,
                     file_attachment_id UUID,

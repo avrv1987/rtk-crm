@@ -10,6 +10,7 @@ import {
   type PageCrmProfile,
   type Team
 } from '../../shared/api/client'
+import { CardMenu, type CardMenuItem } from '../interactions/cardUi'
 import { AdminOrganizationsPanel } from './AdminOrganizationsPanel'
 import { AdminTeamsPanel, type TeamsState } from './AdminTeamsPanel'
 import {
@@ -21,6 +22,7 @@ import {
   roleLabels,
   type SessionHandlers
 } from './adminShared'
+import { EmployeeAccountDialog, type AccountAction } from './EmployeeAccountDialog'
 import './security.css'
 
 type AdminProfilesScreenProps = SessionHandlers & {
@@ -183,6 +185,7 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
   const [accountSync, setAccountSync] = useState<AccountSyncState | null>(null)
   const [edit, setEdit] = useState<EditState | null>(null)
   const [journal, setJournal] = useState<JournalState | null>(null)
+  const [accountAction, setAccountAction] = useState<AccountAction | null>(null)
   const listRequestVersion = useRef(0)
   const journalRequestVersion = useRef(0)
   const teamsRequestVersion = useRef(0)
@@ -527,6 +530,23 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
     )
   }
 
+  const reloadAfterAccountChange = () => {
+    void loadProfiles(pageIndex, filter, search)
+    if (journal !== null) {
+      void loadJournal(journal.profileId)
+    }
+  }
+
+  const accountMenuItems = (profile: CrmProfile): CardMenuItem[] => [
+    ...(profile.id === currentProfile.id ? [] : [
+      { label: 'Сбросить пароль', onSelect: () => setAccountAction({ kind: 'reset', profile }) },
+      { label: 'Завершить сеансы', onSelect: () => setAccountAction({ kind: 'logout', profile }) }
+    ]),
+    ...(profile.role === 'PARTNER' ? [] : [
+      { label: 'Сменить почту', onSelect: () => setAccountAction({ kind: 'email', profile }) }
+    ])
+  ]
+
   const renderJournal = (profile: CrmProfile) => {
     if (journal === null || journal.profileId !== profile.id) {
       return null
@@ -574,13 +594,17 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
             <p className="eyebrow">Администрирование</p>
             <h2 id="admin-profiles-title">Профили CRM</h2>
           </div>
-          {profilesState.kind === 'ready' && <p className="admin-profiles__total">Всего: {profilesState.page.total}</p>}
+          <div className="security-actions">
+            {profilesState.kind === 'ready' && <p className="admin-profiles__total">Всего: {profilesState.page.total}</p>}
+            <button type="button" onClick={() => setAccountAction({ kind: 'create' })}>Новый сотрудник</button>
+          </div>
         </div>
 
         <p className="admin-profiles__intro">
-          Назначайте роль и команду, открывайте и закрывайте доступ. Новый сотрудник после первого входа появляется в списке «Ожидают активации».
-          Если связь с Keycloak настроена, закрытие доступа сразу отключает учётную запись в Keycloak, открытие — включает;
-          иначе профиль помечается «требует синхронизации» с причиной.
+          «Новый сотрудник» заводит учётную запись Keycloak и профиль CRM сразу с ролью и командой и выдаёт временный пароль.
+          Сброс пароля, завершение сеансов и смена почты — в меню «⋯» у профиля. Сотрудник, которого завели в Keycloak вручную,
+          после первого входа появляется в списке «Ожидают активации». Закрытие доступа сразу отключает учётную запись в Keycloak,
+          открытие — включает; если Keycloak недоступен, профиль помечается «требует синхронизации» с причиной.
         </p>
 
         {profilesState.kind === 'ready' && profilesState.page.pendingTotal > 0 && (
@@ -694,6 +718,7 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
                         <button type="button" className="admin-profiles__cancel" onClick={() => toggleJournal(profile.id)}>
                           {journal?.profileId === profile.id ? 'Скрыть журнал' : 'Журнал'}
                         </button>
+                        <CardMenu label={`Учётная запись Keycloak: ${profileName(profile)}`} items={accountMenuItems(profile)} />
                       </div>
                     </li>
                   )
@@ -723,6 +748,14 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
           </>
         )}
       </section>
+      <EmployeeAccountDialog
+        action={accountAction}
+        teams={teams}
+        onClose={() => setAccountAction(null)}
+        onChanged={reloadAfterAccountChange}
+        onSessionExpired={onSessionExpired}
+        onProfileUnavailable={onProfileUnavailable}
+      />
       <AdminTeamsPanel
         teamsState={teamsState}
         onReload={() => void loadTeams()}

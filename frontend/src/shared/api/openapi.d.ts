@@ -479,6 +479,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/reports/signing-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * План подписаний и продлений соглашений на квартал или год
+         * @description Плановые даты подписания и продления соглашений вузов за квартал (по умолчанию текущий) или за год; расторгнутые соглашения и архивные вузы не учитываются. Действующее соглашение без плановой даты попадает в отчёт продлением на дату окончания срока действия (source = EXPIRY). Область данных та же, что у отчётов: КАМ — свои вузы, руководитель — вузы команды, «Руководство» — все вузы, только чтение; администратор получает пустой ответ, представитель вуза — 403.
+         */
+        get: operations["getSigningPlan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/signing-plan/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Скачать план подписаний и продлений в XLSX или PDF
+         * @description Те же строки и итоги, что в ответе getSigningPlan; файл строится в запросе, скачивание записывается в журнал безопасности.
+         */
+        get: operations["downloadSigningPlan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/work/learning-trend": {
         parameters: {
             query?: never;
@@ -488,7 +528,7 @@ export interface paths {
         };
         /**
          * Тренд числа обучающихся для сводки руководства
-         * @description Только роль MANAGEMENT. Сравнивает обучающихся на начало и конец периода (последние days дней) по истории наблюдений Moodle: по командам, ИТ-программам и вузам (до пяти растущих и падающих). Поток, у которого на одну из дат нет наблюдения, в сравнение не входит и считается в runsWithoutData.
+         * @description Только роль MANAGEMENT. Сравнивает обучающихся на начало и конец периода (последние days дней) по истории наблюдений Moodle: по командам, ИТ-программам и вузам (до пяти растущих и падающих). Значение потока на дату — последнее наблюдение не позже этой даты; до начала потока и после его окончания значение 0. Поток, который уже шёл на начало периода, но наблюдений до этой даты нет, не входит в изменение (change), учитывается в значении на конец и считается в runsWithoutData.
          */
         get: operations["getLearningTrend"];
         put?: never;
@@ -1768,7 +1808,11 @@ export interface paths {
         /** Профили CRM */
         get: operations["listCrmProfiles"];
         put?: never;
-        post?: never;
+        /**
+         * Завести сотрудника с учётной записью Keycloak
+         * @description Только администратор. CRM создаёт пользователя Keycloak клиентом crm-account-sync с временным паролем и обязательной сменой пароля при первом входе, затем активный профиль CRM с ролью и командой. Пароль генерируется на сервере и возвращается один раз в этом ответе; в журнал, результат повтора и другие ответы не попадает. Повтор с тем же ключом возвращает профиль без пароля. Если Keycloak недоступен, профиль CRM не создаётся.
+         */
+        post: operations["createEmployeeAccount"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1823,6 +1867,66 @@ export interface paths {
          * @description Отключает учётную запись Keycloak заблокированного профиля и завершает её сессии либо включает учётную запись активного профиля. Ничего не делает, если учётная запись уже синхронизирована.
          */
         post: operations["syncCrmProfileAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/crm-profiles/{id}/account-password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Выдать новый временный пароль Keycloak
+         * @description Только администратор, не для своей учётной записи. Пароль генерируется на сервере, возвращается один раз и не хранится; при следующем входе Keycloak потребует сменить его. Включённость учётной записи и действующие сеансы не меняются. Повтор с тем же ключом возвращает профиль без пароля.
+         */
+        post: operations["resetCrmProfilePassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/crm-profiles/{id}/account-logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Завершить все сеансы сотрудника
+         * @description Только администратор, не для своей учётной записи. Завершает все сеансы пользователя в Keycloak и удаляет его сеансы CRM; следующий запрос потребует входа заново. Если Keycloak недоступен, ничего не меняется.
+         */
+        post: operations["endCrmProfileSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/crm-profiles/{id}/account-email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Изменить почту учётной записи Keycloak
+         * @description Только администратор. Меняет почту пользователя Keycloak, логин не меняется. Почту представителя вуза здесь не меняют: это данные контакта в карточке вуза. Почта в журнал не пишется.
+         */
+        put: operations["changeCrmProfileEmail"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3221,6 +3325,11 @@ export interface components {
          */
         AgreementStatus: "DRAFT" | "ACTIVE" | "COMPLETED" | "TERMINATED";
         /**
+         * @description SIGNING подписание, RENEWAL продление
+         * @enum {string}
+         */
+        AgreementPlanKind: "SIGNING" | "RENEWAL";
+        /**
          * @description PLANNED запланировано, IN_PROGRESS выполняется, DONE выполнено, CANCELLED отменено
          * @enum {string}
          */
@@ -3251,6 +3360,9 @@ export interface components {
             concludedOn: string | null;
             /** Format: date */
             validUntil: string | null;
+            plannedKind: components["schemas"]["AgreementPlanKind"] | null;
+            /** Format: date */
+            plannedOn: string | null;
             status: components["schemas"]["AgreementStatus"];
             activityCount: number;
             confirmationCount: number;
@@ -3275,6 +3387,13 @@ export interface components {
              * @description Документ CLEAN из работы той же организации, содержащий подписанное соглашение
              */
             fileAttachmentId?: string | null;
+            /** @description Вид плана; указывается вместе с plannedOn, оба поля пустые — плана нет. Изменение пишется в журнал администратора */
+            plannedKind?: components["schemas"]["AgreementPlanKind"] | null;
+            /**
+             * Format: date
+             * @description Плановая дата подписания или продления; для продления не раньше concludedOn
+             */
+            plannedOn?: string | null;
         };
         Agreement: {
             /** Format: uuid */
@@ -3287,6 +3406,9 @@ export interface components {
             concludedOn: string | null;
             /** Format: date */
             validUntil: string | null;
+            plannedKind: components["schemas"]["AgreementPlanKind"] | null;
+            /** Format: date */
+            plannedOn: string | null;
             parties: string | null;
             status: components["schemas"]["AgreementStatus"];
             file: components["schemas"]["AgreementLinkedDocument"] | null;
@@ -3528,7 +3650,7 @@ export interface components {
         };
         ApiError: {
             /** @enum {string} */
-            code: "VALIDATION_ERROR" | "BAD_REQUEST" | "UNAUTHENTICATED" | "FORBIDDEN" | "CRM_PROFILE_REQUIRED" | "CRM_PROFILE_PENDING" | "LAST_ACTIVE_ADMIN" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "CONFLICT" | "VERSION_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "DEPENDENCY_UNAVAILABLE" | "REPORT_NOT_READY" | "REPORT_ACCESS_CHANGED" | "REPORT_RESULT_UNAVAILABLE" | "REPORT_CAPACITY_EXCEEDED" | "REPORT_ROW_LIMIT" | "SOURCE_NOT_CONFIGURED" | "SYNC_ALREADY_RUNNING" | "SYNC_CAPACITY_EXCEEDED" | "LMS_NOT_MAPPED" | "LMS_SYNC_FAILED" | "ACCOUNT_SYNC_FAILED" | "PERSONAL_DATA_ANONYMIZED" | "PROFILE_ACTIVE" | "RETENTION_RUNNING" | "CONFIRMATION_LIMIT" | "PERSONAL_DATA_RESTRICTED" | "PARTNER_ACCESS_EXISTS" | "PARTNER_ACCOUNT_CONFLICT";
+            code: "VALIDATION_ERROR" | "BAD_REQUEST" | "UNAUTHENTICATED" | "FORBIDDEN" | "CRM_PROFILE_REQUIRED" | "CRM_PROFILE_PENDING" | "LAST_ACTIVE_ADMIN" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "CONFLICT" | "VERSION_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "DEPENDENCY_UNAVAILABLE" | "REPORT_NOT_READY" | "REPORT_ACCESS_CHANGED" | "REPORT_RESULT_UNAVAILABLE" | "REPORT_CAPACITY_EXCEEDED" | "REPORT_ROW_LIMIT" | "SOURCE_NOT_CONFIGURED" | "SYNC_ALREADY_RUNNING" | "SYNC_CAPACITY_EXCEEDED" | "LMS_NOT_MAPPED" | "LMS_SYNC_FAILED" | "ACCOUNT_SYNC_FAILED" | "PERSONAL_DATA_ANONYMIZED" | "PROFILE_ACTIVE" | "RETENTION_RUNNING" | "CONFIRMATION_LIMIT" | "PERSONAL_DATA_RESTRICTED" | "PARTNER_ACCESS_EXISTS" | "PARTNER_ACCOUNT_CONFLICT" | "ACCOUNT_CONFLICT";
             message: string;
             /** Format: uuid */
             requestId: string;
@@ -4031,6 +4153,63 @@ export interface components {
             totalCompleted: (number | null)[];
             rows: components["schemas"]["LearningDynamicsRow"][];
         };
+        SigningPlan: {
+            /** Format: date-time */
+            generatedAt: string;
+            timezone: string;
+            year: number;
+            /** @description null — отчёт за весь год */
+            quarter: number | null;
+            /** Format: date */
+            from: string;
+            /** Format: date */
+            to: string;
+            notes: string[];
+            rows: components["schemas"]["SigningPlanRow"][];
+            byManager: components["schemas"]["SigningPlanTotals"][];
+            byTeam: components["schemas"]["SigningPlanTotals"][];
+        };
+        SigningPlanRow: {
+            /** Format: uuid */
+            agreementId: string;
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            /** Format: uuid */
+            teamId: string;
+            teamName: string;
+            /** Format: uuid */
+            managerId: string | null;
+            managerName: string | null;
+            agreementNumber: string;
+            agreementStatus: components["schemas"]["AgreementStatus"];
+            kind: components["schemas"]["AgreementPlanKind"];
+            /** Format: date */
+            plannedOn: string;
+            /**
+             * @description PLAN — дата задана в плане, EXPIRY — по сроку действия действующего соглашения
+             * @enum {string}
+             */
+            source: "PLAN" | "EXPIRY";
+            /** Format: date */
+            validUntil: string | null;
+            /**
+             * @description DONE выполнено, OVERDUE просрочено (плановая дата раньше сегодняшней по МСК), UPCOMING впереди
+             * @enum {string}
+             */
+            state: "DONE" | "OVERDUE" | "UPCOMING";
+        };
+        SigningPlanTotals: {
+            /** Format: uuid */
+            id: string | null;
+            name: string;
+            teamName: string | null;
+            signing: number;
+            renewal: number;
+            done: number;
+            overdue: number;
+            upcoming: number;
+        };
         LearningDynamicsMonth: {
             /** @example 2026-09 */
             key: string;
@@ -4088,6 +4267,7 @@ export interface components {
             end: number;
             /** Format: int64 */
             change: number;
+            runsWithoutData: number;
         };
         ReminderStep: {
             /** Format: uuid */
@@ -4448,6 +4628,29 @@ export interface components {
             accountSyncError?: string | null;
             /** @description Вуз представителя (роль PARTNER); у сотрудников null */
             partnerOrganizationName?: string | null;
+        };
+        NewEmployee: {
+            /** @description ФИО; первое слово уходит в Keycloak фамилией, остальное — именем */
+            displayName: string;
+            /** @description Логин Keycloak; приводится к нижнему регистру и потом не меняется */
+            login: string;
+            email: string;
+            /** @enum {string} */
+            role: "USER" | "LEADER" | "ADMIN" | "MANAGEMENT";
+            /**
+             * Format: uuid
+             * @description Обязательна для USER и LEADER
+             */
+            teamId?: string | null;
+        };
+        AccountCredentials: {
+            profile: components["schemas"]["CrmProfile"];
+            login: string;
+            /** @description Показывается один раз; null при повторе запроса с тем же ключом */
+            temporaryPassword: string | null;
+        };
+        AccountEmailChange: {
+            email: string;
         };
         /** @description Изменяет только перечисленные поля. Профиль PARTNER здесь можно только переименовать или заблокировать, роль PARTNER не назначается и не снимается (400); доступ представителя вуза открывают в карточке вуза. Администратор не может изменить собственную роль, команду или активность; активному USER или LEADER нужна команда, MANAGEMENT (доступ на чтение ко всем командам) и ADMIN — нет; последнего активного ADMIN нельзя понизить или заблокировать (409 LAST_ACTIVE_ADMIN). enrolmentOperator разрешён только для USER и LEADER; смена роли на ADMIN или MANAGEMENT сбрасывает его в том же изменении */
         CrmProfileUpdate: {
@@ -5559,7 +5762,7 @@ export interface components {
             occurredAt: string;
             category: components["schemas"]["AuditCategory"];
             /** @enum {string} */
-            action: "PROFILE_CHANGED" | "ACTIVATION_REQUESTED" | "KAM_ASSIGNED" | "KAM_CHANGED" | "KAM_UNASSIGNED" | "ORGANIZATION_TEAM_CHANGED" | "TEAM_CREATED" | "TEAM_RENAMED" | "TEAM_ARCHIVED" | "TEAM_RESTORED" | "SYNC_STARTED" | "SOURCE_SETTINGS_CHANGED" | "ATTACHMENT_DOWNLOADED" | "ATTACHMENT_PREVIEWED" | "ENROLMENT_OPERATOR_CHANGED" | "REPORT_DOWNLOADED" | "JOURNAL_EXPORTED" | "CONFIRMATIONS_DOWNLOADED" | "SUBJECT_SEARCHED" | "SUBJECT_EXPORTED" | "CONTACT_RECTIFIED" | "CONTACT_RESTRICTED" | "CONTACT_RESTRICTION_LIFTED" | "SUBJECT_ANONYMIZED" | "RETENTION_APPLIED" | "ACCOUNT_DISABLED" | "ACCOUNT_ENABLED" | "ACCOUNT_SYNC_FAILED" | "ACCOUNT_CREATED" | "LEARNER_RESTRICTED" | "LEARNER_RESTRICTION_LIFTED" | "PAID_ORDERS_UPLOADED" | "LEARNERS_SYNCED" | "LEARNER_LIST_VIEWED" | "LEARNER_SEARCHED" | "LEARNER_VIEWED" | "LEARNER_FIELDS_REVEALED" | "LEARNER_CHANGED" | "LEARNER_ENROLMENTS_MOVED" | "LEARNER_TEMPLATE_PREVIEWED" | "LEARNER_TEMPLATE_IMPORTED" | "LMS_ROSTER_EXPORTED" | "LMS_ROSTER_MARKED" | "STREAM_END_DATE_CHANGED" | "TEACHER_ROSTER_EXPORTED" | "TEACHER_ROSTER_MARKED";
+            action: "PROFILE_CHANGED" | "ACTIVATION_REQUESTED" | "KAM_ASSIGNED" | "KAM_CHANGED" | "KAM_UNASSIGNED" | "ORGANIZATION_TEAM_CHANGED" | "AGREEMENT_PLAN_CHANGED" | "TEAM_CREATED" | "TEAM_RENAMED" | "TEAM_ARCHIVED" | "TEAM_RESTORED" | "SYNC_STARTED" | "SOURCE_SETTINGS_CHANGED" | "ATTACHMENT_DOWNLOADED" | "ATTACHMENT_PREVIEWED" | "ENROLMENT_OPERATOR_CHANGED" | "REPORT_DOWNLOADED" | "JOURNAL_EXPORTED" | "CONFIRMATIONS_DOWNLOADED" | "SUBJECT_SEARCHED" | "SUBJECT_EXPORTED" | "CONTACT_RECTIFIED" | "CONTACT_RESTRICTED" | "CONTACT_RESTRICTION_LIFTED" | "SUBJECT_ANONYMIZED" | "RETENTION_APPLIED" | "ACCOUNT_DISABLED" | "ACCOUNT_ENABLED" | "ACCOUNT_SYNC_FAILED" | "ACCOUNT_CREATED" | "ACCOUNT_PASSWORD_RESET" | "ACCOUNT_SESSIONS_ENDED" | "ACCOUNT_EMAIL_CHANGED" | "LEARNER_RESTRICTED" | "LEARNER_RESTRICTION_LIFTED" | "PAID_ORDERS_UPLOADED" | "LEARNERS_SYNCED" | "LEARNER_LIST_VIEWED" | "LEARNER_SEARCHED" | "LEARNER_VIEWED" | "LEARNER_FIELDS_REVEALED" | "LEARNER_CHANGED" | "LEARNER_ENROLMENTS_MOVED" | "LEARNER_TEMPLATE_PREVIEWED" | "LEARNER_TEMPLATE_IMPORTED" | "LMS_ROSTER_EXPORTED" | "LMS_ROSTER_MARKED" | "STREAM_END_DATE_CHANGED" | "TEACHER_ROSTER_EXPORTED" | "TEACHER_ROSTER_MARKED";
             actionLabel: string;
             /**
              * Format: uuid
@@ -5888,6 +6091,10 @@ export interface components {
         LearningDynamicsTo: string;
         LearningDynamicsOrganizations: string[];
         LearningDynamicsPrograms: string[];
+        /** @description Год от 2000 до 2100 (по умолчанию текущий); без квартала — весь год */
+        SigningPlanYear: number;
+        /** @description Квартал от 1 до 4; без year и quarter отчёт строится за текущий квартал */
+        SigningPlanQuarter: number;
         TeacherRosterId: string;
         TeacherRosterContactId: string;
         UuidId: string;
@@ -6798,6 +7005,66 @@ export interface operations {
                 to?: components["parameters"]["LearningDynamicsTo"];
                 organizationIds?: components["parameters"]["LearningDynamicsOrganizations"];
                 programIds?: components["parameters"]["LearningDynamicsPrograms"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Файл; Content-Disposition содержит имя файла в UTF-8 (filename*) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "application/pdf": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getSigningPlan: {
+        parameters: {
+            query?: {
+                /** @description Год от 2000 до 2100 (по умолчанию текущий); без квартала — весь год */
+                year?: components["parameters"]["SigningPlanYear"];
+                /** @description Квартал от 1 до 4; без year и quarter отчёт строится за текущий квартал */
+                quarter?: components["parameters"]["SigningPlanQuarter"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Строки плана и итоги по КАМ и командам */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SigningPlan"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    downloadSigningPlan: {
+        parameters: {
+            query: {
+                format: "XLSX" | "PDF";
+                /** @description Год от 2000 до 2100 (по умолчанию текущий); без квартала — весь год */
+                year?: components["parameters"]["SigningPlanYear"];
+                /** @description Квартал от 1 до 4; без year и quarter отчёт строится за текущий квартал */
+                quarter?: components["parameters"]["SigningPlanQuarter"];
             };
             header?: never;
             path?: never;
@@ -9414,6 +9681,56 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    createEmployeeAccount: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewEmployee"];
+            };
+        };
+        responses: {
+            /** @description Сотрудник заведён; ответ не кэшируется */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountCredentials"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description ACCOUNT_CONFLICT — в Keycloak уже есть учётная запись с таким логином или почтой; IDEMPOTENCY_CONFLICT — ключ повтора использован для другого запроса */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+            /** @description ACCOUNT_SYNC_FAILED — Keycloak недоступен, отклонил запрос либо сервисный клиент не настроен; профиль не создан */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     updateCrmProfile: {
         parameters: {
             query?: never;
@@ -9506,6 +9823,141 @@ export interface operations {
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
             /** @description ACCOUNT_SYNC_FAILED — Keycloak недоступен, отклонил запрос либо сервисный клиент не настроен */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    resetCrmProfilePassword: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Новый временный пароль; ответ не кэшируется */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountCredentials"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+            /** @description ACCOUNT_SYNC_FAILED — Keycloak недоступен или отклонил запрос; пароль не изменён */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    endCrmProfileSessions: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Сеансы завершены */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrmProfile"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+            /** @description ACCOUNT_SYNC_FAILED — Keycloak недоступен или отклонил запрос; сеансы не завершены */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    changeCrmProfileEmail: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountEmailChange"];
+            };
+        };
+        responses: {
+            /** @description Почта изменена */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrmProfile"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description ACCOUNT_CONFLICT — почта занята другой учётной записью; IDEMPOTENCY_CONFLICT — ключ повтора использован для другого запроса */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+            /** @description ACCOUNT_SYNC_FAILED — Keycloak недоступен или отклонил запрос; почта не изменена */
             503: {
                 headers: {
                     [name: string]: unknown;

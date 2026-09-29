@@ -38,6 +38,8 @@ export const useCommandKey = () => {
 const fieldLabels: Record<string, string> = {
   number: 'Номер',
   validUntil: 'Срок действия',
+  plannedKind: 'Вид плана',
+  plannedOn: 'Плановая дата',
   fileAttachmentId: 'Файл соглашения',
   kindId: 'Вид мероприятия',
   title: 'Мероприятие',

@@ -357,7 +357,7 @@ YAML
       - kind: COURSE
         external-key: $(yaml_literal "${values[MOODLE_DEMO_EMPTY_COURSE]}")
         organization: 'Школа № 1 (демо)'
-        program: 'Демо-программа: цифровой университет'
+        program: 'Демо-программа: анализ данных'
         run-started-days-ago: 30
         run-ends-in-days: 90
 YAML

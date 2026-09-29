@@ -94,7 +94,7 @@ app:
     realm: rtk-crm
     client-id: crm-account-sync
     client-secret: ${APP_KEYCLOAK_ACCOUNT_SYNC_CLIENT_SECRET:}
-    timeout: 5s
+    timeout: 15s
   work:
     stuck-days: 30
     upcoming-days: 7

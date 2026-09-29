@@ -31,6 +31,21 @@ public final class AgreementModels {
         }
     }
 
+    public enum PlanKind {
+        SIGNING("Подписание"),
+        RENEWAL("Продление");
+
+        private final String title;
+
+        PlanKind(String title) {
+            this.title = title;
+        }
+
+        public String title() {
+            return title;
+        }
+    }
+
     public enum ActivityStatus {
         PLANNED("Запланировано"),
         IN_PROGRESS("Выполняется"),
@@ -67,6 +82,8 @@ public final class AgreementModels {
             String number,
             LocalDate concludedOn,
             LocalDate validUntil,
+            PlanKind plannedKind,
+            LocalDate plannedOn,
             AgreementStatus status,
             int activityCount,
             int confirmationCount,
@@ -81,6 +98,8 @@ public final class AgreementModels {
             String number,
             LocalDate concludedOn,
             LocalDate validUntil,
+            PlanKind plannedKind,
+            LocalDate plannedOn,
             String parties,
             AgreementStatus status,
             LinkedAttachment file,
@@ -98,7 +117,9 @@ public final class AgreementModels {
             LocalDate validUntil,
             @Size(max = 2000) String parties,
             @NotNull AgreementStatus status,
-            UUID fileAttachmentId
+            UUID fileAttachmentId,
+            PlanKind plannedKind,
+            LocalDate plannedOn
     ) {
     }
 

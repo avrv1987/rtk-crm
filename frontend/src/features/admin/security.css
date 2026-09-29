@@ -323,3 +323,66 @@
     width: 100%;
   }
 }
+
+.employee-account__form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.employee-account__form p {
+  margin: 0;
+}
+
+.employee-account__form > .admin-profile-form__hint,
+.employee-account__form > .interaction-command-error,
+.employee-account__form > .confirm-dialog__actions {
+  grid-column: 1 / -1;
+}
+
+.employee-account__password {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  background: var(--color-warning-surface-soft);
+}
+
+.employee-account__password p,
+.employee-account__password dl {
+  margin: 0;
+}
+
+.employee-account__password dl {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.employee-account__password dt {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.employee-account__password dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.employee-account__password code {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+}
+
+.admin-profiles__actions .card-menu {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: var(--space-2);
+}
+
+@media (max-width: 767px) {
+  .admin-profiles__actions .card-menu__list {
+    right: auto;
+    left: 0;
+    min-width: min(320px, calc(100vw - 96px));
+  }
+}

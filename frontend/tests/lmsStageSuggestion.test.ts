@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { findLmsStageSuggestion } from '../src/features/training/lmsStageSuggestionRules.ts'
-import type { Interaction, InteractionStage, LearningSnapshot } from '../src/shared/api/client.ts'
+import { findDuplicateTraining, findLmsStageSuggestion } from '../src/features/training/lmsStageSuggestionRules.ts'
+import type { Interaction, InteractionStage, LearningSnapshot, TeacherTraining } from '../src/shared/api/client.ts'
 
 const today = '2026-09-28'
 
@@ -71,7 +71,7 @@ test('предложение появляется, когда есть заве�
   assert.equal(suggestion?.stage.id, 's2')
   assert.equal(suggestion?.isCurrentStage, true)
   assert.equal(suggestion?.offerCycle, false)
-  assert.equal(suggestion?.defaultTrainedOn, '2026-09-15')
+  assert.equal(suggestion?.defaultTrainedOn, '2026-08-01')
 })
 
 test('предложение исчезает без данных о завершивших', () => {
@@ -95,12 +95,27 @@ test('предложение исчезает после отметки этап
   assert.equal(findLmsStageSuggestion(work, [snapshot({})], today), null)
 })
 
-test('для «Повышения квалификации» дополнительно предлагается новый цикл, дата не позже сегодняшней', () => {
+test('для «Повышения квалификации» предлагается новый цикл; идущий поток даёт дату начала, закончившийся — последний день', () => {
   const work = interaction({ currentStageId: 's4', stages })
-  const suggestion = findLmsStageSuggestion(work, [snapshot({ runEndsOn: '2026-10-05' })], today)
-  assert.equal(suggestion?.stage.id, 's4')
-  assert.equal(suggestion?.offerCycle, true)
+  const running = findLmsStageSuggestion(work, [snapshot({ runEndsOn: '2026-10-05' })], today)
+  assert.equal(running?.stage.id, 's4')
+  assert.equal(running?.offerCycle, true)
+  assert.equal(running?.defaultTrainedOn, '2026-08-01')
+  const finished = findLmsStageSuggestion(work, [snapshot({})], today)
+  assert.equal(finished?.defaultTrainedOn, '2026-09-14')
+})
+
+test('дата обучения не позже сегодняшней, если поток начнётся в будущем', () => {
+  const work = interaction({ currentStageId: 's2', stages })
+  const suggestion = findLmsStageSuggestion(work, [snapshot({ runStartsOn: '2026-10-01', runEndsOn: '2026-12-01' })], today)
   assert.equal(suggestion?.defaultTrainedOn, today)
+})
+
+test('запись об обучении по тому же курсу считается возможным дублем', () => {
+  const training = { id: 't1', courseName: ' курс повышения квалификации ', trainedOn: '2026-08-01' } as unknown as TeacherTraining
+  const other = { id: 't2', courseName: 'Другой курс', trainedOn: '2026-08-01' } as unknown as TeacherTraining
+  assert.equal(findDuplicateTraining([other, training], snapshot({}))?.id, 't1')
+  assert.equal(findDuplicateTraining([other], snapshot({})), null)
 })
 
 test('без потока обучения преподавателей ничего не предлагается, даже если этап есть', () => {

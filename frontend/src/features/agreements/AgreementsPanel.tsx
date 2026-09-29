@@ -19,6 +19,7 @@ import {
   type AgreementStatus,
   type AgreementSummary
 } from './agreementsApi'
+import { planKindLabels, planKinds, type PlanKind } from '../reports/signingPlan'
 import { CommandError, useAccessErrorHandler, useCommandKey } from './agreementUi'
 import './agreements.css'
 
@@ -144,6 +145,9 @@ export const AgreementsPanel = ({ organizationId, role, onSessionExpired, onProf
                 </span>
                 <span className="agreements__item-meta">
                   {agreement.validUntil ? `до ${formatDate(agreement.validUntil)} · ` : ''}
+                  {agreement.plannedKind && agreement.plannedOn
+                    ? `план: ${planKindLabels[agreement.plannedKind].toLowerCase()} ${formatDate(agreement.plannedOn)} · `
+                    : ''}
                   мероприятий: {agreement.activityCount} · подтверждений: {agreement.confirmationCount}
                 </span>
               </button>
@@ -193,6 +197,8 @@ const AgreementForm = ({ organizationId, agreement, options, onSaved, onCancel, 
   const [number, setNumber] = useState(agreement?.number ?? '')
   const [concludedOn, setConcludedOn] = useState(agreement?.concludedOn ?? '')
   const [validUntil, setValidUntil] = useState(agreement?.validUntil ?? '')
+  const [plannedKind, setPlannedKind] = useState<PlanKind | ''>(agreement?.plannedKind ?? '')
+  const [plannedOn, setPlannedOn] = useState(agreement?.plannedOn ?? '')
   const [parties, setParties] = useState(agreement?.parties ?? '')
   const [status, setStatus] = useState<AgreementStatus>(agreement?.status ?? 'ACTIVE')
   const [fileId, setFileId] = useState(agreement?.file?.id ?? '')
@@ -209,7 +215,9 @@ const AgreementForm = ({ organizationId, agreement, options, onSaved, onCancel, 
       validUntil: orNull(validUntil),
       parties: orNull(parties),
       status,
-      fileAttachmentId: orNull(fileId)
+      fileAttachmentId: orNull(fileId),
+      plannedKind: plannedKind === '' ? null : plannedKind,
+      plannedOn: plannedKind === '' ? null : orNull(plannedOn)
     }
     setSaving(true)
     setError(null)
@@ -250,6 +258,38 @@ const AgreementForm = ({ organizationId, agreement, options, onSaved, onCancel, 
         <label>
           Действует до
           <input type="date" value={validUntil} min={concludedOn || undefined} onChange={(event) => setValidUntil(event.target.value)} />
+        </label>
+        <label>
+          План
+          <select
+            value={plannedKind}
+            onChange={(event) => {
+              const next = event.target.value as PlanKind | ''
+              setPlannedKind(next)
+              if (next === '') {
+                setPlannedOn('')
+              } else if (next === 'RENEWAL' && plannedOn === '' && validUntil !== '') {
+                setPlannedOn(validUntil)
+              }
+            }}
+          >
+            <option value="">Не запланировано</option>
+            {planKinds.map((item) => <option key={item} value={item}>{planKindLabels[item]}</option>)}
+          </select>
+        </label>
+        <label>
+          {plannedKind === 'RENEWAL' ? 'Плановая дата продления' : 'Плановая дата подписания'}
+          <input
+            type="date"
+            value={plannedOn}
+            required={plannedKind !== ''}
+            disabled={plannedKind === ''}
+            min={plannedKind === 'RENEWAL' ? concludedOn || undefined : undefined}
+            onChange={(event) => setPlannedOn(event.target.value)}
+          />
+          {plannedKind === 'RENEWAL' && validUntil !== '' && (
+            <span className="agreement-form__hint">{`Соглашение действует до ${formatDate(validUntil)}; продление планируют от этой даты.`}</span>
+          )}
         </label>
         <label className="agreement-form__wide">
           Стороны и подписанты
@@ -409,6 +449,14 @@ const AgreementDetail = ({
             <div>
               <dt>Срок действия</dt>
               <dd>{formatPeriod(agreement.concludedOn, agreement.validUntil)}</dd>
+            </div>
+            <div>
+              <dt>План подписания или продления</dt>
+              <dd>
+                {agreement.plannedKind && agreement.plannedOn
+                  ? `${planKindLabels[agreement.plannedKind]}: ${formatDate(agreement.plannedOn)}`
+                  : 'Не запланировано'}
+              </dd>
             </div>
             <div>
               <dt>Стороны и подписанты</dt>

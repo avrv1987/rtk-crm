@@ -1,4 +1,4 @@
-import type { Interaction, InteractionStage, LearningSnapshot } from '../../shared/api/client'
+import type { Interaction, InteractionStage, LearningSnapshot, TeacherTraining } from '../../shared/api/client'
 
 /** Этапы, которые LMS закрывает фактом обучения преподавателей. Порядок не важен — ищем оба. */
 const LMS_STAGE_NAMES = ['Обучение преподавателей', 'Повышение квалификации']
@@ -23,6 +23,21 @@ const dateOnly = (isoInstant: string): string => isoInstant.slice(0, 10)
 
 const minDate = (a: string, b: string): string => (a < b ? a : b)
 
+const dayBefore = (value: string): string => {
+  const shifted = new Date(`${value}T00:00:00Z`)
+  shifted.setUTCDate(shifted.getUTCDate() - 1)
+  return shifted.toISOString().slice(0, 10)
+}
+
+const courseKey = (name: string): string => name.trim().toLowerCase()
+
+export const findDuplicateTraining = (
+  trainings: TeacherTraining[],
+  snapshot: LearningSnapshot
+): TeacherTraining | null => (
+  trainings.find((training) => courseKey(training.courseName) === courseKey(snapshot.courseName)) ?? null
+)
+
 /**
  * Ищет ближайший не отмеченный этап «Обучение преподавателей»/«Повышение квалификации», для которого есть
  * поток LMS с известным числом завершивших. Возвращает null, если предлагать нечего — так решают,
@@ -46,7 +61,12 @@ export const findLmsStageSuggestion = (
     return null
   }
   const snapshot = [...withCompletion].sort((a, b) => b.changedAt.localeCompare(a.changedAt))[0]
-  const defaultTrainedOn = minDate(snapshot.runEndsOn ?? dateOnly(snapshot.observedAt), today)
+  const runStart = snapshot.runStartsOn ?? dateOnly(snapshot.observedAt)
+  const lastDay = snapshot.runEndsOn ? dayBefore(snapshot.runEndsOn) : null
+  const defaultTrainedOn = minDate(
+    pendingStage.name === 'Повышение квалификации' && lastDay !== null && lastDay <= today ? lastDay : runStart,
+    today
+  )
   return {
     stage: pendingStage,
     isCurrentStage: pendingStage.id === interaction.currentStageId,

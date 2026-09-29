@@ -207,7 +207,7 @@ export const SourceConnectionSettings = ({ onChanged, onSessionExpired, onProfil
       <p className="data-sources__hint">
         {settings.saved
           ? `Действуют значения, сохранённые на экране ${formatDateTime(settings.updatedAt)}${settings.updatedByName ? ` (${settings.updatedByName})` : ''}.`
-          : 'Действуют начальные значения из конфигурации развёртывания (.env.local).'}
+          : 'Действуют начальные значения, заданные при развёртывании.'}
         {' '}Изменения применяются без перезапуска сервера. Токены хранятся зашифрованными и не показываются:
         оставьте поле токена пустым, чтобы не менять его.
       </p>
@@ -343,7 +343,7 @@ export const SourceConnectionSettings = ({ onChanged, onSessionExpired, onProfil
       <ConfirmDialog
         open={confirmReset}
         title="Вернуть значения конфигурации развёртывания?"
-        description="Сохранённые на экране адреса, курсы, роли, расписание и токены будут удалены; снова начнут действовать значения из .env.local."
+        description="Сохранённые на экране адреса, курсы, роли, расписание и токены будут удалены; снова начнут действовать начальные значения, заданные при развёртывании."
         confirmLabel="Вернуть"
         onConfirm={() => void reset()}
         onCancel={() => setConfirmReset(false)}

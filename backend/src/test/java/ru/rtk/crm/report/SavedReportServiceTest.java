@@ -8,6 +8,7 @@ import static ru.rtk.crm.report.ReportTestData.MANAGER_B_PROFILE;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -22,6 +23,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ru.rtk.crm.access.CrmProfile;
+import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
 import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionValidationException;
@@ -82,6 +85,19 @@ class SavedReportServiceTest {
         savedReportService.delete(MANAGER_A_PROFILE, created.id(), 1, "save-5");
         savedReportService.delete(MANAGER_A_PROFILE, created.id(), 1, "save-5");
         assertThat(savedReportService.list(MANAGER_A_PROFILE)).isEmpty();
+    }
+
+    @Test
+    void managementKeepsItsOwnSavedReportsWithoutSeeingOthers() {
+        CrmProfile management = new CrmProfile(UUID.fromString("00000000-0000-0000-0000-0000000000f1"), UserRole.MANAGEMENT, null, 0);
+        SavedReport own = savedReportService.create(management, request("Сводка руководства", ORDERED, null), "mgmt-1");
+        SavedReport renamed = savedReportService.update(management, own.id(), request("Сводка за квартал", ORDERED, 0), "mgmt-2");
+
+        assertThat(savedReportService.list(management)).extracting(SavedReport::name).containsExactly("Сводка за квартал");
+        assertThat(renamed.version()).isEqualTo(1);
+        assertThat(savedReportService.list(MANAGER_A_PROFILE)).isEmpty();
+        savedReportService.delete(management, own.id(), 1, "mgmt-3");
+        assertThat(savedReportService.list(management)).isEmpty();
     }
 
     @Test

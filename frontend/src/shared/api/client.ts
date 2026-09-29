@@ -100,6 +100,16 @@ const learningDynamicsQuery = (query: LearningDynamicsQuery, extra: Record<strin
   query.programIds?.forEach((id) => searchParams.append('programIds', id))
   return searchParams.size === 0 ? '' : `?${searchParams.toString()}`
 }
+export type SigningPlan = components['schemas']['SigningPlan']
+export type SigningPlanRow = components['schemas']['SigningPlanRow']
+export type SigningPlanTotals = components['schemas']['SigningPlanTotals']
+export type SigningPlanQuery = { year: number; quarter?: number }
+const signingPlanQuery = (query: SigningPlanQuery, extra: Record<string, string> = {}) => {
+  const searchParams = new URLSearchParams(extra)
+  searchParams.set('year', query.year.toString())
+  if (query.quarter !== undefined) searchParams.set('quarter', query.quarter.toString())
+  return `?${searchParams.toString()}`
+}
 export type ReminderDigest = components['schemas']['ReminderDigest']
 export type ReminderSettings = components['schemas']['ReminderSettings']
 export type LmsSignals = components['schemas']['LmsSignals']
@@ -132,6 +142,8 @@ export type CrmProfile = components['schemas']['CrmProfile']
 export type PageCrmProfile = components['schemas']['PageCrmProfile']
 export type CrmProfileListParams = NonNullable<operations['listCrmProfiles']['parameters']['query']>
 export type CrmProfileUpdate = components['schemas']['CrmProfileUpdate']
+export type NewEmployee = components['schemas']['NewEmployee']
+export type AccountCredentials = components['schemas']['AccountCredentials']
 export type CrmProfileEvent = components['schemas']['CrmProfileEvent']
 export type Team = components['schemas']['Team']
 export type TeamCreate = components['schemas']['TeamCreate']
@@ -882,6 +894,24 @@ export class ApiClient {
     return this.post<CrmProfile>(`/api/admin/crm-profiles/${encodeURIComponent(id)}/account-sync`)
   }
 
+  async createEmployeeAccount(payload: NewEmployee, idempotencyKey: string): Promise<AccountCredentials> {
+    return this.command<AccountCredentials>('/api/admin/crm-profiles', payload, idempotencyKey)
+  }
+
+  async resetCrmProfilePassword(id: CrmProfile['id'], idempotencyKey: string): Promise<AccountCredentials> {
+    return this.command<AccountCredentials>(
+      `/api/admin/crm-profiles/${encodeURIComponent(id)}/account-password-reset`, undefined, idempotencyKey
+    )
+  }
+
+  async endCrmProfileSessions(id: CrmProfile['id'], idempotencyKey: string): Promise<CrmProfile> {
+    return this.command<CrmProfile>(`/api/admin/crm-profiles/${encodeURIComponent(id)}/account-logout`, undefined, idempotencyKey)
+  }
+
+  async changeCrmProfileEmail(id: CrmProfile['id'], email: string, idempotencyKey: string): Promise<CrmProfile> {
+    return this.command<CrmProfile>(`/api/admin/crm-profiles/${encodeURIComponent(id)}/account-email`, { email }, idempotencyKey, 'PUT')
+  }
+
   async requestProfileActivation(): Promise<ActivationRequest> {
     return this.post<ActivationRequest>('/api/me/activation-request')
   }
@@ -1293,6 +1323,14 @@ export class ApiClient {
     return this.download(`/api/reports/learning-dynamics/file${learningDynamicsQuery({ ...query, seriesBy: undefined }, { format })}`)
   }
 
+  async getSigningPlan(query: SigningPlanQuery): Promise<SigningPlan> {
+    return this.request<SigningPlan>(`/api/reports/signing-plan${signingPlanQuery(query)}`)
+  }
+
+  async downloadSigningPlan(query: SigningPlanQuery, format: 'XLSX' | 'PDF'): Promise<Blob> {
+    return this.download(`/api/reports/signing-plan/file${signingPlanQuery(query, { format })}`)
+  }
+
   async getReminders(): Promise<ReminderDigest> {
     return this.request<ReminderDigest>('/api/reminders')
   }
@@ -1558,7 +1596,7 @@ export class ApiClient {
     path: string,
     payload: object | undefined,
     idempotencyKey: string,
-    method: 'POST' | 'PATCH' | 'DELETE' = 'POST'
+    method: 'POST' | 'PUT' | 'PATCH' | 'DELETE' = 'POST'
   ): Promise<T> {
     if (idempotencyKey.length === 0) {
       throw new Error('An idempotency key is required for a command.')

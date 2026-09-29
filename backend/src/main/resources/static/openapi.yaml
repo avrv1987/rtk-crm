@@ -957,6 +957,70 @@ paths:
           $ref: '#/components/responses/CrmProfileRequired'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/reports/signing-plan:
+    get:
+      tags: [Reports]
+      summary: План подписаний и продлений соглашений на квартал или год
+      operationId: getSigningPlan
+      description: >-
+        Плановые даты подписания и продления соглашений вузов за квартал (по умолчанию текущий) или за год; расторгнутые
+        соглашения и архивные вузы не учитываются. Действующее соглашение без плановой даты попадает в отчёт продлением
+        на дату окончания срока действия (source = EXPIRY). Область данных та же, что у отчётов: КАМ — свои вузы,
+        руководитель — вузы команды, «Руководство» — все вузы, только чтение; администратор получает пустой ответ,
+        представитель вуза — 403.
+      parameters:
+        - $ref: '#/components/parameters/SigningPlanYear'
+        - $ref: '#/components/parameters/SigningPlanQuarter'
+      responses:
+        '200':
+          description: Строки плана и итоги по КАМ и командам
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SigningPlan'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/reports/signing-plan/file:
+    get:
+      tags: [Reports]
+      summary: Скачать план подписаний и продлений в XLSX или PDF
+      operationId: downloadSigningPlan
+      description: Те же строки и итоги, что в ответе getSigningPlan; файл строится в запросе, скачивание записывается в журнал безопасности.
+      parameters:
+        - name: format
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [XLSX, PDF]
+        - $ref: '#/components/parameters/SigningPlanYear'
+        - $ref: '#/components/parameters/SigningPlanQuarter'
+      responses:
+        '200':
+          description: Файл; Content-Disposition содержит имя файла в UTF-8 (filename*)
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/work/learning-trend:
     get:
       tags: [Work]
@@ -964,8 +1028,10 @@ paths:
       operationId: getLearningTrend
       description: >-
         Только роль MANAGEMENT. Сравнивает обучающихся на начало и конец периода (последние days дней) по истории
-        наблюдений Moodle: по командам, ИТ-программам и вузам (до пяти растущих и падающих). Поток, у которого на одну из
-        дат нет наблюдения, в сравнение не входит и считается в runsWithoutData.
+        наблюдений Moodle: по командам, ИТ-программам и вузам (до пяти растущих и падающих). Значение потока на дату —
+        последнее наблюдение не позже этой даты; до начала потока и после его окончания значение 0. Поток, который уже шёл
+        на начало периода, но наблюдений до этой даты нет, не входит в изменение (change), учитывается в значении на конец
+        и считается в runsWithoutData.
       parameters:
         - name: days
           in: query
@@ -3612,6 +3678,48 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Administration]
+      summary: Завести сотрудника с учётной записью Keycloak
+      operationId: createEmployeeAccount
+      description: >-
+        Только администратор. CRM создаёт пользователя Keycloak клиентом crm-account-sync с временным паролем и обязательной сменой пароля при первом входе, затем активный профиль CRM с ролью и командой. Пароль генерируется на сервере и возвращается один раз в этом ответе; в журнал, результат повтора и другие ответы не попадает. Повтор с тем же ключом возвращает профиль без пароля. Если Keycloak недоступен, профиль CRM не создаётся.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewEmployee'
+      responses:
+        '201':
+          description: Сотрудник заведён; ответ не кэшируется
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountCredentials'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: ACCOUNT_CONFLICT — в Keycloak уже есть учётная запись с таким логином или почтой; IDEMPOTENCY_CONFLICT — ключ повтора использован для другого запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: ACCOUNT_SYNC_FAILED — Keycloak недоступен, отклонил запрос либо сервисный клиент не настроен; профиль не создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/crm-profiles/{id}:
     patch:
       tags: [Administration]
@@ -3702,6 +3810,124 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           description: ACCOUNT_SYNC_FAILED — Keycloak недоступен, отклонил запрос либо сервисный клиент не настроен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-profiles/{id}/account-password-reset:
+    post:
+      tags: [Administration]
+      summary: Выдать новый временный пароль Keycloak
+      operationId: resetCrmProfilePassword
+      description: >-
+        Только администратор, не для своей учётной записи. Пароль генерируется на сервере, возвращается один раз и не хранится; при следующем входе Keycloak потребует сменить его. Включённость учётной записи и действующие сеансы не меняются. Повтор с тем же ключом возвращает профиль без пароля.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Новый временный пароль; ответ не кэшируется
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountCredentials'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          description: ACCOUNT_SYNC_FAILED — Keycloak недоступен или отклонил запрос; пароль не изменён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-profiles/{id}/account-logout:
+    post:
+      tags: [Administration]
+      summary: Завершить все сеансы сотрудника
+      operationId: endCrmProfileSessions
+      description: >-
+        Только администратор, не для своей учётной записи. Завершает все сеансы пользователя в Keycloak и удаляет его сеансы CRM; следующий запрос потребует входа заново. Если Keycloak недоступен, ничего не меняется.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Сеансы завершены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrmProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          description: ACCOUNT_SYNC_FAILED — Keycloak недоступен или отклонил запрос; сеансы не завершены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-profiles/{id}/account-email:
+    put:
+      tags: [Administration]
+      summary: Изменить почту учётной записи Keycloak
+      operationId: changeCrmProfileEmail
+      description: >-
+        Только администратор. Меняет почту пользователя Keycloak, логин не меняется. Почту представителя вуза здесь не меняют: это данные контакта в карточке вуза. Почта в журнал не пишется.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountEmailChange'
+      responses:
+        '200':
+          description: Почта изменена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrmProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: ACCOUNT_CONFLICT — почта занята другой учётной записью; IDEMPOTENCY_CONFLICT — ключ повтора использован для другого запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: ACCOUNT_SYNC_FAILED — Keycloak недоступен или отклонил запрос; почта не изменена
           content:
             application/json:
               schema:
@@ -5928,6 +6154,24 @@ components:
         items:
           type: string
           format: uuid
+    SigningPlanYear:
+      name: year
+      in: query
+      required: false
+      description: Год от 2000 до 2100 (по умолчанию текущий); без квартала — весь год
+      schema:
+        type: integer
+        minimum: 2000
+        maximum: 2100
+    SigningPlanQuarter:
+      name: quarter
+      in: query
+      required: false
+      description: Квартал от 1 до 4; без year и quarter отчёт строится за текущий квартал
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 4
     TeacherRosterId:
       name: rosterId
       in: path
@@ -6785,6 +7029,10 @@ components:
       type: string
       description: DRAFT проект, ACTIVE действует, COMPLETED завершено, TERMINATED расторгнуто
       enum: [DRAFT, ACTIVE, COMPLETED, TERMINATED]
+    AgreementPlanKind:
+      type: string
+      description: SIGNING подписание, RENEWAL продление
+      enum: [SIGNING, RENEWAL]
     AgreementActivityStatus:
       type: string
       description: PLANNED запланировано, IN_PROGRESS выполняется, DONE выполнено, CANCELLED отменено
@@ -6829,7 +7077,8 @@ components:
           type: boolean
     AgreementSummary:
       type: object
-      required: [id, organizationId, number, concludedOn, validUntil, status, activityCount, confirmationCount, version]
+      required: [id, organizationId, number, concludedOn, validUntil, plannedKind, plannedOn, status, activityCount,
+                 confirmationCount, version]
       properties:
         id:
           type: string
@@ -6843,6 +7092,13 @@ components:
           type: [string, 'null']
           format: date
         validUntil:
+          type: [string, 'null']
+          format: date
+        plannedKind:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementPlanKind'
+            - type: 'null'
+        plannedOn:
           type: [string, 'null']
           format: date
         status:
@@ -6885,10 +7141,19 @@ components:
           type: [string, 'null']
           format: uuid
           description: Документ CLEAN из работы той же организации, содержащий подписанное соглашение
+        plannedKind:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementPlanKind'
+            - type: 'null'
+          description: Вид плана; указывается вместе с plannedOn, оба поля пустые — плана нет. Изменение пишется в журнал администратора
+        plannedOn:
+          type: [string, 'null']
+          format: date
+          description: Плановая дата подписания или продления; для продления не раньше concludedOn
     Agreement:
       type: object
-      required: [id, organizationId, organizationName, number, concludedOn, validUntil, parties, status, file, version,
-                 createdAt, updatedAt, activities]
+      required: [id, organizationId, organizationName, number, concludedOn, validUntil, plannedKind, plannedOn, parties,
+                 status, file, version, createdAt, updatedAt, activities]
       properties:
         id:
           type: string
@@ -6904,6 +7169,13 @@ components:
           type: [string, 'null']
           format: date
         validUntil:
+          type: [string, 'null']
+          format: date
+        plannedKind:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementPlanKind'
+            - type: 'null'
+        plannedOn:
           type: [string, 'null']
           format: date
         parties:
@@ -7394,6 +7666,7 @@ components:
             - PERSONAL_DATA_RESTRICTED
             - PARTNER_ACCESS_EXISTS
             - PARTNER_ACCOUNT_CONFLICT
+            - ACCOUNT_CONFLICT
         message:
           type: string
         requestId:
@@ -8393,6 +8666,106 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LearningDynamicsRow'
+    SigningPlan:
+      type: object
+      required: [generatedAt, timezone, year, quarter, from, to, notes, rows, byManager, byTeam]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        timezone:
+          type: string
+        year:
+          type: integer
+        quarter:
+          type: [integer, 'null']
+          description: null — отчёт за весь год
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        notes:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/SigningPlanRow'
+        byManager:
+          type: array
+          items:
+            $ref: '#/components/schemas/SigningPlanTotals'
+        byTeam:
+          type: array
+          items:
+            $ref: '#/components/schemas/SigningPlanTotals'
+    SigningPlanRow:
+      type: object
+      required: [agreementId, organizationId, organizationName, teamId, teamName, managerId, managerName, agreementNumber,
+                 agreementStatus, kind, plannedOn, source, validUntil, state]
+      properties:
+        agreementId:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        teamId:
+          type: string
+          format: uuid
+        teamName:
+          type: string
+        managerId:
+          type: [string, 'null']
+          format: uuid
+        managerName:
+          type: [string, 'null']
+        agreementNumber:
+          type: string
+        agreementStatus:
+          $ref: '#/components/schemas/AgreementStatus'
+        kind:
+          $ref: '#/components/schemas/AgreementPlanKind'
+        plannedOn:
+          type: string
+          format: date
+        source:
+          type: string
+          description: PLAN — дата задана в плане, EXPIRY — по сроку действия действующего соглашения
+          enum: [PLAN, EXPIRY]
+        validUntil:
+          type: [string, 'null']
+          format: date
+        state:
+          type: string
+          description: DONE выполнено, OVERDUE просрочено (плановая дата раньше сегодняшней по МСК), UPCOMING впереди
+          enum: [DONE, OVERDUE, UPCOMING]
+    SigningPlanTotals:
+      type: object
+      required: [id, name, teamName, signing, renewal, done, overdue, upcoming]
+      properties:
+        id:
+          type: [string, 'null']
+          format: uuid
+        name:
+          type: string
+        teamName:
+          type: [string, 'null']
+        signing:
+          type: integer
+        renewal:
+          type: integer
+        done:
+          type: integer
+        overdue:
+          type: integer
+        upcoming:
+          type: integer
     LearningDynamicsMonth:
       type: object
       required: [key, label, asOf]
@@ -8488,7 +8861,7 @@ components:
           type: integer
     LearningTrendItem:
       type: object
-      required: [start, end, change]
+      required: [start, end, change, runsWithoutData]
       properties:
         id:
           type: [string, 'null']
@@ -8504,6 +8877,8 @@ components:
         change:
           type: integer
           format: int64
+        runsWithoutData:
+          type: integer
     ReminderStep:
       type: object
       required: [interactionId, organizationId, title, organizationName, nextAction, nextActionAt, ownerManagerName]
@@ -9196,6 +9571,47 @@ components:
         partnerOrganizationName:
           type: [string, 'null']
           description: Вуз представителя (роль PARTNER); у сотрудников null
+    NewEmployee:
+      type: object
+      required: [displayName, login, email, role]
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: ФИО; первое слово уходит в Keycloak фамилией, остальное — именем
+        login:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$'
+          description: Логин Keycloak; приводится к нижнему регистру и потом не меняется
+        email:
+          type: string
+          maxLength: 254
+        role:
+          type: string
+          enum: [USER, LEADER, ADMIN, MANAGEMENT]
+        teamId:
+          type: [string, 'null']
+          format: uuid
+          description: Обязательна для USER и LEADER
+    AccountCredentials:
+      type: object
+      required: [profile, login, temporaryPassword]
+      properties:
+        profile:
+          $ref: '#/components/schemas/CrmProfile'
+        login:
+          type: string
+        temporaryPassword:
+          type: [string, 'null']
+          description: Показывается один раз; null при повторе запроса с тем же ключом
+    AccountEmailChange:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          maxLength: 254
     CrmProfileUpdate:
       type: object
       additionalProperties: false
@@ -11301,11 +11717,12 @@ components:
         action:
           type: string
           enum: [PROFILE_CHANGED, ACTIVATION_REQUESTED, KAM_ASSIGNED, KAM_CHANGED, KAM_UNASSIGNED,
-                 ORGANIZATION_TEAM_CHANGED, TEAM_CREATED, TEAM_RENAMED, TEAM_ARCHIVED, TEAM_RESTORED,
+                 ORGANIZATION_TEAM_CHANGED, AGREEMENT_PLAN_CHANGED, TEAM_CREATED, TEAM_RENAMED, TEAM_ARCHIVED, TEAM_RESTORED,
                  SYNC_STARTED, SOURCE_SETTINGS_CHANGED, ATTACHMENT_DOWNLOADED, ATTACHMENT_PREVIEWED, ENROLMENT_OPERATOR_CHANGED,
                  REPORT_DOWNLOADED, JOURNAL_EXPORTED, CONFIRMATIONS_DOWNLOADED, SUBJECT_SEARCHED, SUBJECT_EXPORTED, CONTACT_RECTIFIED,
                  CONTACT_RESTRICTED, CONTACT_RESTRICTION_LIFTED, SUBJECT_ANONYMIZED, RETENTION_APPLIED,
                  ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_SYNC_FAILED, ACCOUNT_CREATED,
+                 ACCOUNT_PASSWORD_RESET, ACCOUNT_SESSIONS_ENDED, ACCOUNT_EMAIL_CHANGED,
                  LEARNER_RESTRICTED, LEARNER_RESTRICTION_LIFTED, PAID_ORDERS_UPLOADED, LEARNERS_SYNCED,
                  LEARNER_LIST_VIEWED, LEARNER_SEARCHED, LEARNER_VIEWED, LEARNER_FIELDS_REVEALED, LEARNER_CHANGED,
                  LEARNER_ENROLMENTS_MOVED, LEARNER_TEMPLATE_PREVIEWED, LEARNER_TEMPLATE_IMPORTED, LMS_ROSTER_EXPORTED,

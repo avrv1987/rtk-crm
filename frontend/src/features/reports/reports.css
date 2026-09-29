@@ -831,6 +831,20 @@
   outline: none;
 }
 
+.reports__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+}
+
+.reports__footer > span {
+  flex: 1 1 100%;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
 .reports__notes {
   display: grid;
   gap: 2px;
@@ -892,6 +906,34 @@
 
 .reports__table-scroll tr:last-child td {
   border-bottom: 0;
+}
+
+.signing-plan__summary {
+  margin: 0 0 var(--space-3);
+}
+
+.signing-plan .reports__table-scroll {
+  margin-block: var(--space-4);
+}
+
+.signing-plan__sub {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.signing-plan__state {
+  font-weight: 600;
+}
+
+.signing-plan__state--done {
+  color: var(--color-success);
+}
+
+.signing-plan__state--overdue,
+.signing-plan__cell--overdue {
+  color: var(--color-danger);
+  font-weight: 600;
 }
 
 .reports__pagination,

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { apiClient, createIdempotencyKey, type Interaction } from '../../shared/api/client'
+import { apiClient, createIdempotencyKey, type Interaction, type TeacherTraining } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { todayInMoscow } from '../../shared/format/datetime'
-import { accessHandled, errorText, fieldErrors, formatDate, requestIdOf } from '../sources/sourceFormat'
-import { findLmsStageSuggestion, type LmsStageSuggestion } from './lmsStageSuggestionRules'
+import { accessHandled, errorText, fieldErrors, formatDate, requestIdOf, runPeriod } from '../sources/sourceFormat'
+import { findDuplicateTraining, findLmsStageSuggestion, type LmsStageSuggestion } from './lmsStageSuggestionRules'
 import '../sources/sources.css'
 
 type LmsStageSuggestionPanelProps = {
@@ -18,7 +18,7 @@ type LmsStageSuggestionPanelProps = {
 
 type SnapshotsState =
   | { kind: 'loading' }
-  | { kind: 'ready'; suggestion: LmsStageSuggestion | null }
+  | { kind: 'ready'; suggestion: LmsStageSuggestion | null; trainings: TeacherTraining[] | null }
   | { kind: 'failed' }
 
 type Draft = {
@@ -67,15 +67,18 @@ export const LmsStageSuggestionPanel = ({
 
   useEffect(() => {
     if (interaction.program === null) {
-      setState({ kind: 'ready', suggestion: null })
+      setState({ kind: 'ready', suggestion: null, trainings: null })
       return
     }
     let active = true
     setState({ kind: 'loading' })
-    apiClient.listInteractionLearningSnapshots(interaction.id)
-      .then((snapshots) => {
+    Promise.all([
+      apiClient.listInteractionLearningSnapshots(interaction.id),
+      apiClient.listTeacherTrainings(interaction.id).catch(() => null)
+    ])
+      .then(([snapshots, trainings]) => {
         if (active) {
-          setState({ kind: 'ready', suggestion: findLmsStageSuggestion(interaction, snapshots, todayInMoscow()) })
+          setState({ kind: 'ready', suggestion: findLmsStageSuggestion(interaction, snapshots, todayInMoscow()), trainings })
         }
       })
       .catch((error: unknown) => {
@@ -91,10 +94,12 @@ export const LmsStageSuggestionPanel = ({
   if (!canEdit || state.kind === 'loading' || state.kind === 'failed') {
     return null
   }
-  const { suggestion } = state
+  const { suggestion, trainings } = state
   if (suggestion === null) {
     return null
   }
+
+  const duplicate = trainings === null ? null : findDuplicateTraining(trainings, suggestion.snapshot)
 
   const openConfirm = () => {
     trainingKey.current = null
@@ -173,6 +178,14 @@ export const LmsStageSuggestionPanel = ({
         записано {suggestion.snapshot.participants}, завершили {suggestion.snapshot.completed}. Этап «{suggestion.stage.name}» этой
         работы ещё не отмечен выполненным.
       </p>
+      {duplicate !== null && (
+        <p className="notice" role="note">
+          <strong>Возможен дубль записи.</strong>
+          <span>
+            {`По курсу «${duplicate.courseName}» запись об обучении преподавателей уже есть: ${formatDate(duplicate.trainedOn)}, записано ${duplicate.enrolledCount}. Подтверждение создаст ещё одну такую запись.`}
+          </span>
+        </p>
+      )}
       {!confirming && (
         <div className="source-panel__row">
           <button type="button" onClick={openConfirm}>Отметить этап выполненным по данным LMS</button>
@@ -243,7 +256,7 @@ export const LmsStageSuggestionPanel = ({
           )}
         </form>
       )}
-      <p className="data-sources__hint">Поток: {formatDate(suggestion.snapshot.runStartsOn)} — {formatDate(suggestion.snapshot.runEndsOn)}.</p>
+      <p className="data-sources__hint">Поток: {runPeriod(suggestion.snapshot.runStartsOn, suggestion.snapshot.runEndsOn)}</p>
     </section>
   )
 }

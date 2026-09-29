@@ -8,7 +8,9 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +46,16 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     private static final Logger LOGGER = LoggerFactory.getLogger(DemoBootstrapCommand.class);
     private static final String DEMO_ORGANIZATION_NAME = "Университет А";
     private static final String DEMO_INTERACTION_TITLE = "Демо: внедрение цифрового университета";
+    private static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
+    private static final List<DemoAgreement> DEMO_AGREEMENTS = List.of(
+            new DemoAgreement("Университет А", "kam-a", "ДЕМО-А/1", "DRAFT", null, null, "SIGNING", 20),
+            new DemoAgreement("Университет А", "kam-a", "ДЕМО-А/2", "ACTIVE", -340, 15, "RENEWAL", 10),
+            new DemoAgreement("Университет А", "kam-a", "ДЕМО-А/3", "ACTIVE", -700, -3, null, null),
+            new DemoAgreement("Университет Б", "kam-b", "ДЕМО-Б/1", "DRAFT", null, null, "SIGNING", -6),
+            new DemoAgreement("Университет Б", "kam-b", "ДЕМО-Б/2", "ACTIVE", -30, 700, "SIGNING", -12),
+            new DemoAgreement("Колледж связи (демо)", "kam-b", "ДЕМО-К/1", "ACTIVE", -200, 60, "RENEWAL", 45),
+            new DemoAgreement("Школа № 1 (демо)", "kam-d", "ДЕМО-Ш/1", "DRAFT", null, null, "SIGNING", 5)
+    );
     private static final List<DemoDocument> PARTNER_DOCUMENTS = List.of(
             new DemoDocument("plan", "Демо: план сотрудничества.pdf", AttachmentKind.OTHER, "План сотрудничества вуза и ИТ Школы РТК"),
             new DemoDocument("program", "Демо: рабочая программа.pdf", AttachmentKind.CURRICULUM, "Рабочая программа дисциплины")
@@ -89,6 +101,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         Map<String, UUID> organizationIds = createOrganizations(organizations, identitiesByKey, teamIds, profileIds);
         DemoCatalog catalog = createCatalogs();
         createDemoScenario(identitiesByKey, organizationIds, catalog);
+        createDemoAgreements(organizationIds, profileIds);
         createPartners(identities, identitiesByKey, organizationIds);
         LOGGER.info("Demo CRM bootstrap completed");
     }
@@ -415,6 +428,41 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         );
     }
 
+    private void createDemoAgreements(Map<String, UUID> organizationIds, Map<String, UUID> profileIds) {
+        LocalDate today = LocalDate.now(ZONE);
+        OffsetDateTime now = OffsetDateTime.now();
+        for (DemoAgreement agreement : DEMO_AGREEMENTS) {
+            UUID organizationId = organizationIds.get(agreement.organization());
+            UUID createdBy = profileIds.get(agreement.ownerKey());
+            if (organizationId == null || createdBy == null) {
+                continue;
+            }
+            LocalDate validUntil = agreement.validUntilDays() == null ? null : today.plusDays(agreement.validUntilDays());
+            jdbcClient.sql("""
+                    INSERT INTO agreements (
+                        id, organization_id, number, concluded_on, valid_until, planned_kind, planned_on, planned_base_until,
+                        parties, status, version, created_by, created_at, updated_at
+                    ) VALUES (
+                        :id, :organizationId, :number, :concludedOn, :validUntil, :plannedKind, :plannedOn, :validUntil,
+                        :parties, :status, 0, :createdBy, :now, :now
+                    )
+                    ON CONFLICT DO NOTHING
+                    """)
+                    .param("id", stableId("agreement:" + agreement.organization() + "\u0000" + agreement.number()))
+                    .param("organizationId", organizationId)
+                    .param("number", agreement.number())
+                    .param("concludedOn", agreement.concludedDays() == null ? null : today.plusDays(agreement.concludedDays()))
+                    .param("validUntil", validUntil)
+                    .param("plannedKind", agreement.plannedKind())
+                    .param("plannedOn", agreement.plannedDays() == null ? null : today.plusDays(agreement.plannedDays()))
+                    .param("parties", "Демо: РТК и " + agreement.organization())
+                    .param("status", agreement.status())
+                    .param("createdBy", createdBy)
+                    .param("now", now)
+                    .update();
+        }
+    }
+
     private void createPartners(
             List<DemoBootstrapProperties.Identity> identities,
             Map<String, DemoBootstrapProperties.Identity> identitiesByKey,
@@ -570,6 +618,18 @@ public class DemoBootstrapCommand implements ApplicationRunner {
 
     private boolean blank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private record DemoAgreement(
+            String organization,
+            String ownerKey,
+            String number,
+            String status,
+            Integer concludedDays,
+            Integer validUntilDays,
+            String plannedKind,
+            Integer plannedDays
+    ) {
     }
 
     private record DemoCatalog(UUID programId, List<UUID> productIds) {

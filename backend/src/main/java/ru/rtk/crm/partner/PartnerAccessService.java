@@ -21,6 +21,7 @@ import ru.rtk.crm.access.AdminCrmProfileRepository;
 import ru.rtk.crm.access.AdminCrmProfileRepository.ProfileState;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.KeycloakAccountClient;
+import ru.rtk.crm.access.TemporaryPassword;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.audit.AuditAction;
 import ru.rtk.crm.audit.AuditJournalRepository;
@@ -45,8 +46,6 @@ import ru.rtk.crm.security.RequestId;
 @Service
 public class PartnerAccessService {
     private static final Logger LOGGER = LoggerFactory.getLogger(PartnerAccessService.class);
-    private static final String PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-    private static final int PASSWORD_LENGTH = 16;
     private static final int KEYCLOAK_NAME_LIMIT = 255;
     private static final String SYSTEM_REQUEST = "system";
 
@@ -102,12 +101,12 @@ public class PartnerAccessService {
         if (existing != null && existing.active()) {
             throw PartnerException.accessExists();
         }
-        String password = temporaryPassword();
+        String password = TemporaryPassword.generate();
         OffsetDateTime now = OffsetDateTime.now();
         UUID profileId;
         String login;
         if (existing == null) {
-            String issuer = partnerAccessRepository.findIssuer(actor.id())
+            String issuer = adminCrmProfileRepository.findIssuer(actor.id())
                     .orElseThrow(() -> new IllegalStateException("Actor profile is unavailable for partner access"));
             String email = contact.email() == null || contact.email().isBlank() ? null : contact.email().strip().toLowerCase(Locale.ROOT);
             login = email == null ? "vuz-" + HexFormat.of().formatHex(randomBytes(4)) : email;
@@ -239,20 +238,6 @@ public class PartnerAccessService {
             throw PartnerException.managementForbidden();
         }
         return organization;
-    }
-
-    private String temporaryPassword() {
-        while (true) {
-            StringBuilder password = new StringBuilder(PASSWORD_LENGTH);
-            for (int index = 0; index < PASSWORD_LENGTH; index++) {
-                password.append(PASSWORD_ALPHABET.charAt(random.nextInt(PASSWORD_ALPHABET.length())));
-            }
-            String value = password.toString();
-            if (value.chars().anyMatch(Character::isUpperCase) && value.chars().anyMatch(Character::isLowerCase)
-                    && value.chars().anyMatch(Character::isDigit)) {
-                return value;
-            }
-        }
     }
 
     private byte[] randomBytes(int length) {

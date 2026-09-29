@@ -17,6 +17,6 @@ public record LearningTrend(
         List<Item> falling,
         int runsWithoutData
 ) {
-    public record Item(UUID id, String name, long start, long end, long change) {
+    public record Item(UUID id, String name, long start, long end, long change, int runsWithoutData) {
     }
 }

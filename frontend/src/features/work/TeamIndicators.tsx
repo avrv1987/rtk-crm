@@ -151,7 +151,7 @@ export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, on
             <h3 className="team-indicators__subtitle">Где команде нужна помощь</h3>
             <p className="work-control__caption" id="team-indicators-caption">Незавершённые работы по ответственным КАМ. Число открывает список «Моей работы» с тем же отбором.</p>
             <div className="work-control__scroll">
-              <table className="work-control__table" aria-describedby="team-indicators-caption">
+              <table className="work-control__table work-control__table--cards" aria-describedby="team-indicators-caption">
                 <thead>
                   <tr>
                     <th scope="col">Ответственный</th>
@@ -169,19 +169,19 @@ export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, on
                     return (
                       <tr key={manager.managerId ?? 'unassigned'} className={manager.managerId === null ? 'work-control__row--attention' : undefined}>
                         <th scope="row">{name}</th>
-                        <td>{manager.organizations}</td>
-                        <td><CountLink value={manager.interactions} href={workLink(manager, {})} label={`${name}, работ`} /></td>
-                        <td className={heat(manager.overdue, 'danger')}>
+                        <td data-label="Вузов">{manager.organizations}</td>
+                        <td data-label="Работ"><CountLink value={manager.interactions} href={workLink(manager, {})} label={`${name}, работ`} /></td>
+                        <td data-label="Просрочено" className={heat(manager.overdue, 'danger')}>
                           <CountLink value={manager.overdue} href={workLink(manager, { due: 'OVERDUE' })} label={`${name}, просрочено`} />
                         </td>
-                        <td className={heat(manager.withoutNextStep, 'warning')}>
+                        <td data-label="Без шага или срока" className={heat(manager.withoutNextStep, 'warning')}>
                           <CountLink
                             value={manager.withoutNextStep}
                             href={workLink(manager, { due: 'NO_NEXT_STEP' })}
                             label={`${name}, без шага или срока`}
                           />
                         </td>
-                        <td className={heat(manager.stuck, 'warning')}>
+                        <td data-label={`На этапе дольше ${state.indicators.stuckDays} дней`} className={heat(manager.stuck, 'warning')}>
                           <CountLink
                             value={manager.stuck}
                             href={workLink(manager, { minDaysOnStage: state.indicators.stuckDays.toString() })}
@@ -189,9 +189,9 @@ export const TeamIndicators = ({ organizations, refreshKey, onSessionExpired, on
                           />
                         </td>
                         {signals === null ? (
-                          <td>—</td>
+                          <td data-label="Сигналы LMS">—</td>
                         ) : (
-                          <td className={heat(signalCount(signals, state.indicators.managers, manager), 'warning')}>
+                          <td data-label="Сигналы LMS" className={heat(signalCount(signals, state.indicators.managers, manager), 'warning')}>
                             {signalCount(signals, state.indicators.managers, manager)}
                           </td>
                         )}

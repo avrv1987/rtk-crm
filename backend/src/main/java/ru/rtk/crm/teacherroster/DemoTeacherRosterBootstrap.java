@@ -73,7 +73,7 @@ public class DemoTeacherRosterBootstrap implements ApplicationRunner {
                 .flatMap(identity -> userProfileRepository.findActiveByIdentity(identity.issuer(), identity.subject()))
                 .orElseThrow(() -> new IllegalStateException("Demo teacher roster requires active kam-a profile"));
         TeacherRoster roster = rosterService.create(kam, work.get().interactionId(),
-                new TeacherRosterRequest("ППС 2026: цифровой университет", ORGANIZATION_NAME));
+                new TeacherRosterRequest("Демо: обучение преподавателей", ORGANIZATION_NAME));
         for (DemoTeacher teacher : TEACHERS) {
             Contact contact = contactService.create(
                     kam,

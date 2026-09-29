@@ -50,6 +50,9 @@ export const commandErrorMessage = (error: unknown) => {
   if (error.code === 'IDEMPOTENCY_CONFLICT') {
     return 'Команда уже выполнялась с другими данными. Повторите действие.'
   }
+  if (error.code === 'ACCOUNT_CONFLICT' || error.code === 'ACCOUNT_SYNC_FAILED') {
+    return error.message
+  }
   if (error.code === 'NOT_FOUND') {
     return 'Запись не найдена. Обновите список.'
   }

@@ -100,9 +100,16 @@ public class AgreementsApiController {
             @AuthenticationPrincipal OidcUser user,
             @PathVariable String id,
             @RequestHeader(name = IDEMPOTENCY_KEY, required = false) String idempotencyKey,
-            @Valid @RequestBody AgreementRequest request
+            @Valid @RequestBody AgreementRequest request,
+            HttpServletRequest httpRequest
     ) {
-        Agreement created = agreementService.create(currentProfileService.requireActiveProfile(user), uuid(id), request, idempotencyKey);
+        Agreement created = agreementService.create(
+                currentProfileService.requireActiveProfile(user),
+                uuid(id),
+                request,
+                idempotencyKey,
+                RequestId.from(httpRequest)
+        );
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
 
@@ -121,9 +128,16 @@ public class AgreementsApiController {
             @AuthenticationPrincipal OidcUser user,
             @PathVariable String id,
             @RequestHeader(name = IDEMPOTENCY_KEY, required = false) String idempotencyKey,
-            @Valid @RequestBody AgreementRequest request
+            @Valid @RequestBody AgreementRequest request,
+            HttpServletRequest httpRequest
     ) {
-        return agreementService.update(currentProfileService.requireActiveProfile(user), uuid(id), request, idempotencyKey);
+        return agreementService.update(
+                currentProfileService.requireActiveProfile(user),
+                uuid(id),
+                request,
+                idempotencyKey,
+                RequestId.from(httpRequest)
+        );
     }
 
     @PostMapping("/agreements/{id}/activities")

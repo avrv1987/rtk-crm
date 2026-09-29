@@ -47,6 +47,13 @@
   font-weight: 700;
 }
 
+.work-control__hint {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+}
+
 .work-control__row--attention th {
   color: var(--color-warning);
 }
@@ -663,4 +670,48 @@ a.desk-tile:hover .desk-tile__label {
 
 .work-item__heading a {
   padding: var(--space-1) 0;
+}
+
+@media (max-width: 640px) {
+  .work-control__table--cards,
+  .work-control__table--cards tbody,
+  .work-control__table--cards tr,
+  .work-control__table--cards th,
+  .work-control__table--cards td {
+    display: block;
+  }
+
+  .work-control__table--cards thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .work-control__table--cards tr {
+    border-top: 1px solid var(--color-border);
+    padding: var(--space-2) 0;
+  }
+
+  .work-control__table--cards tr:first-child {
+    border-top: 0;
+  }
+
+  .work-control__table--cards th,
+  .work-control__table--cards td {
+    border-top: 0;
+  }
+
+  .work-control__table--cards td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .work-control__table--cards td::before {
+    content: attr(data-label);
+    color: var(--color-text-label);
+  }
 }

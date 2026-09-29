@@ -2334,7 +2334,10 @@ export const InteractionsPanel = ({
           {readOnlyNote}
           {noticeSlot}
 
-          <CardTabs label="Разделы карточки взаимодействия" idPrefix="work-card" tabs={cardTabs} active={cardTab} onChange={setCardTab} />
+          <CardTabs label="Разделы карточки взаимодействия" idPrefix="work-card" tabs={cardTabs} active={cardTab} onChange={(tab) => {
+            setCardTab(tab)
+            setNotice(null)
+          }} />
           <CardTabPanel idPrefix="work-card" active={cardTab}>
             {cardTab === 'history' && (
               <section className="interaction-events" aria-labelledby="interaction-events-title">

@@ -5,6 +5,8 @@ import java.util.UUID;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
@@ -12,11 +14,15 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import ru.rtk.crm.access.EmployeeAccountService.AccountCredentials;
+import ru.rtk.crm.access.EmployeeAccountService.AccountEmailRequest;
+import ru.rtk.crm.access.EmployeeAccountService.NewEmployeeRequest;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.security.RequestId;
 
@@ -26,15 +32,70 @@ public class AdminCrmProfilesApiController {
     private final CurrentProfileService currentProfileService;
     private final AdminCrmProfileService adminCrmProfileService;
     private final AccountSyncService accountSyncService;
+    private final EmployeeAccountService employeeAccountService;
 
     public AdminCrmProfilesApiController(
             CurrentProfileService currentProfileService,
             AdminCrmProfileService adminCrmProfileService,
-            AccountSyncService accountSyncService
+            AccountSyncService accountSyncService,
+            EmployeeAccountService employeeAccountService
     ) {
         this.currentProfileService = currentProfileService;
         this.adminCrmProfileService = adminCrmProfileService;
         this.accountSyncService = accountSyncService;
+        this.employeeAccountService = employeeAccountService;
+    }
+
+    @PostMapping
+    public ResponseEntity<AccountCredentials> create(
+            @AuthenticationPrincipal OidcUser user,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody NewEmployeeRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        AccountCredentials created = employeeAccountService.create(
+                currentProfileService.requireActiveProfile(user), request, idempotencyKey, RequestId.from(httpRequest)
+        );
+        return ResponseEntity.status(HttpStatus.CREATED).header(HttpHeaders.CACHE_CONTROL, "no-store").body(created);
+    }
+
+    @PostMapping("/{id}/account-password-reset")
+    public ResponseEntity<AccountCredentials> resetPassword(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            HttpServletRequest httpRequest
+    ) {
+        AccountCredentials credentials = employeeAccountService.resetPassword(
+                currentProfileService.requireActiveProfile(user), parseProfileId(id), idempotencyKey, RequestId.from(httpRequest)
+        );
+        return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store").body(credentials);
+    }
+
+    @PostMapping("/{id}/account-logout")
+    public AdminCrmProfile endSessions(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            HttpServletRequest httpRequest
+    ) {
+        return employeeAccountService.endSessions(
+                currentProfileService.requireActiveProfile(user), parseProfileId(id), idempotencyKey, RequestId.from(httpRequest)
+        );
+    }
+
+    @PutMapping("/{id}/account-email")
+    public AdminCrmProfile changeEmail(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody AccountEmailRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        return employeeAccountService.changeEmail(
+                currentProfileService.requireActiveProfile(user), parseProfileId(id), request, idempotencyKey,
+                RequestId.from(httpRequest)
+        );
     }
 
     @GetMapping
