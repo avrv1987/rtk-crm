@@ -164,7 +164,7 @@ class InteractionServiceTemplateLockTest {
                         PROFILE_ID,
                         now,
                         now,
-                        new InteractionMarks(InteractionWorkStatus.ACTIVE, null, null, null, null, null, null),
+                        new InteractionMarks(InteractionWorkStatus.ACTIVE, null, null, null, 0, 0, null, null, null),
                         false
                 )
         ));

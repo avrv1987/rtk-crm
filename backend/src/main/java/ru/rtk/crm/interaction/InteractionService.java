@@ -944,15 +944,7 @@ public class InteractionService {
         if (current.status() == request.status()) {
             throw new InteractionValidationException("status", "Работа уже в этом статусе");
         }
-        InteractionMarks next = new InteractionMarks(
-                request.status(),
-                reason,
-                current.waitingOn(),
-                current.waitingNote(),
-                current.problem(),
-                current.riskLevel(),
-                current.riskReason()
-        );
+        InteractionMarks next = current.withStatus(request.status(), reason);
         return saveMarks(profile, visible, commandId, expectedVersion, next, InteractionEventType.STATUS_CHANGED,
                 statusDescription(request.status(), reason), now);
     }
@@ -974,23 +966,12 @@ public class InteractionService {
         if (request.waitingOn() == null && waitingNote != null) {
             throw new InteractionValidationException("waitingOn", "Выберите, чьего ответа ждём");
         }
-        String problem = optionalText(request.problem(), "problem", 1_000);
-        String riskReason = optionalText(request.riskReason(), "riskReason", 1_000);
-        if (request.riskLevel() != null && riskReason == null) {
-            throw new InteractionValidationException("riskReason", "Укажите причину риска");
-        }
-        if (request.riskLevel() == null && riskReason != null) {
-            throw new InteractionValidationException("riskLevel", "Выберите уровень риска");
-        }
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
         UpdateFlagsCommand command = new UpdateFlagsCommand(
                 interactionId,
                 expectedVersion,
                 request.waitingOn(),
-                waitingNote,
-                problem,
-                request.riskLevel(),
-                riskReason
+                waitingNote
         );
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
@@ -1008,15 +989,7 @@ public class InteractionService {
         InteractionRepository.InteractionRow row = visible.row();
         requireExpectedVersion(row, expectedVersion);
         InteractionMarks current = row.marks();
-        InteractionMarks next = new InteractionMarks(
-                current.status(),
-                current.statusReason(),
-                request.waitingOn(),
-                waitingNote,
-                problem,
-                request.riskLevel(),
-                riskReason
-        );
+        InteractionMarks next = current.withWaiting(request.waitingOn(), waitingNote);
         List<String> changes = flagChanges(current, next);
         if (changes.isEmpty()) {
             return storeInteraction(commandId, toInteraction(row));
@@ -1073,14 +1046,6 @@ public class InteractionService {
             changes.add(next.waitingOn() == null
                     ? "Ожидание снято"
                     : next.waitingOn().label() + (next.waitingNote() == null ? "" : ": «" + next.waitingNote() + "»"));
-        }
-        if (!Objects.equals(current.problem(), next.problem())) {
-            changes.add(next.problem() == null ? "Проблема снята" : "Есть проблема: «" + next.problem() + "»");
-        }
-        if (current.riskLevel() != next.riskLevel() || !Objects.equals(current.riskReason(), next.riskReason())) {
-            changes.add(next.riskLevel() == null
-                    ? "Риск снят"
-                    : "Риск " + next.riskLevel().label() + ": «" + next.riskReason() + "»");
         }
         return changes;
     }
@@ -1569,7 +1534,7 @@ public class InteractionService {
         return InteractionConflictException.version(currentVersion);
     }
 
-    private Interaction replayInteraction(
+    Interaction replayInteraction(
             UUID actorProfileId,
             CommandOperation operation,
             String idempotencyKey,
@@ -1604,7 +1569,7 @@ public class InteractionService {
         }
     }
 
-    private Interaction storeInteraction(UUID commandId, Interaction interaction) {
+    Interaction storeInteraction(UUID commandId, Interaction interaction) {
         String resultJson = write(interaction);
         commandIdempotencyRepository.complete(commandId, resultJson);
         return readInteraction(resultJson);
@@ -1636,14 +1601,14 @@ public class InteractionService {
         }
     }
 
-    private int requiredVersion(Integer version) {
+    int requiredVersion(Integer version) {
         if (version == null || version < 0) {
             throw new InteractionValidationException("version", "Некорректная версия записи; обновите страницу");
         }
         return version;
     }
 
-    private String requiredIdempotencyKey(String value) {
+    String requiredIdempotencyKey(String value) {
         if (value == null || value.isBlank()) {
             throw new InteractionValidationException("Idempotency-Key", "Не передан ключ повтора запроса Idempotency-Key");
         }
@@ -1788,10 +1753,7 @@ public class InteractionService {
             UUID interactionId,
             int version,
             InteractionWaiting waitingOn,
-            String waitingNote,
-            String problem,
-            InteractionRiskLevel riskLevel,
-            String riskReason
+            String waitingNote
     ) {
     }
 }

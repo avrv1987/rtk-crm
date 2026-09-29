@@ -529,6 +529,7 @@ export const OrganizationsScreen = ({
               view="card"
               organizationId={detailState.organization.id}
               initialInteractionId={selectedInteractionId}
+              openIssues={new URLSearchParams(query).get('issues') === '1'}
               profileId={profileId}
               role={role}
               onContactsChanged={() => void refreshOrganization(detailState.organization.id)}

@@ -114,7 +114,7 @@ class PartnerCabinetHttpTest {
         createSchema();
         for (String table : new String[] {
                 "audit_events", "crm_profile_events", "contact_events", "agreement_activities", "agreements", "attachments",
-                "product_agreements", "products", "interaction_stage_completions", "interaction_events", "interactions",
+                "product_agreements", "products", "interaction_stage_completions", "interaction_events", "interaction_issues", "interactions",
                 "interaction_stages", "programs", "command_idempotency_records", "crm_user_profiles", "contacts", "organizations",
                 "teams"
         }) {
@@ -224,6 +224,23 @@ class PartnerCabinetHttpTest {
                 .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/partner/cabinet").with(login(KAM_A)))
                 .andExpect(status().isForbidden());
+        for (String path : new String[] {"/api/issues", "/api/issues/file", "/api/interactions/" + WORK_A + "/issues"}) {
+            mockMvc.perform(get(path).with(partnerLogin(PARTNER_A))).andExpect(status().isForbidden());
+        }
+        mockMvc.perform(post("/api/interactions/{id}/issues", WORK_A)
+                        .with(partnerLogin(PARTNER_A)).with(csrf())
+                        .header("Idempotency-Key", "partner-issue")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":0,\"kind\":\"PROBLEM\",\"description\":\"Вуз\"}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/interactions/{id}/issues", WORK_A)
+                        .with(login(KAM_A))
+                        .header("Idempotency-Key", "kam-issue-no-csrf")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":0,\"kind\":\"PROBLEM\",\"description\":\"Без CSRF\"}"))
+                .andExpect(status().isForbidden());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM interaction_issues WHERE interaction_id = ?", Integer.class,
+                WORK_A)).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM contacts", Integer.class)).isEqualTo(3);
         assertThat(jdbcTemplate.queryForObject("SELECT partner_visible FROM attachments WHERE id = ?", Boolean.class,
                 INTERNAL_DOCUMENT)).isFalse();
@@ -506,10 +523,15 @@ class PartnerCabinetHttpTest {
         jdbcTemplate.update("""
                 INSERT INTO interactions (
                     id, organization_id, title, current_stage_id, next_action, next_action_at, program_id, work_status,
-                    next_step_partner_visible, problem, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, 'внутренний комментарий', CURRENT_TIMESTAMP)
+                    next_step_partner_visible, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, CURRENT_TIMESTAMP)
                 """, id, organizationId, title, stages[currentIndex], nextAction,
                 OffsetDateTime.parse("2026-10-01T10:00:00+03:00"), programId, nextStepVisible);
+        jdbcTemplate.update("""
+                INSERT INTO interaction_issues (
+                    id, interaction_id, kind, description, risk_level, responsible_profile_id, created_by, created_at
+                ) VALUES (?, ?, 'RISK', 'внутренний комментарий', 'HIGH', ?, ?, CURRENT_TIMESTAMP)
+                """, UUID.randomUUID(), id, UUID.randomUUID(), UUID.randomUUID());
         return stages;
     }
 
@@ -604,11 +626,19 @@ class PartnerCabinetHttpTest {
                 "CREATE TABLE IF NOT EXISTS programs (id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL)",
                 "CREATE TABLE IF NOT EXISTS products (id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL)",
                 """
+                CREATE TABLE IF NOT EXISTS interaction_issues (
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
+                    description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
+                    status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, resolved_by UUID, resolved_at TIMESTAMP WITH TIME ZONE
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS interactions (
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL, current_stage_id UUID NOT NULL,
                     next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE, program_id UUID,
                     work_status VARCHAR(16) NOT NULL, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL,
-                    problem VARCHAR(1000), created_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
                 """

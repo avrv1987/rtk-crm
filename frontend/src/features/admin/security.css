@@ -373,10 +373,31 @@
   font-weight: 700;
 }
 
+.admin-profiles__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.admin-profiles__actions .admin-profiles__current {
+  flex: 1 1 100%;
+}
+
 .admin-profiles__actions .card-menu {
   display: inline-block;
   vertical-align: middle;
-  margin-left: var(--space-2);
+}
+
+.data-sources,
+.data-sources__list,
+.data-sources__item,
+.data-sources__records {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.data-sources__mapping details > * + * {
+  margin-top: var(--space-2);
 }
 
 @media (max-width: 767px) {

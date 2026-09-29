@@ -446,6 +446,16 @@ a.interaction-list-item {
 }
 
 @media (max-width: 640px) {
+  .interaction-detail.work-card {
+    padding: var(--space-3);
+  }
+
+  .interaction-path__stage .interaction-path__optional {
+    grid-column: 2;
+    grid-row: auto;
+    justify-self: start;
+  }
+
   .work-card__actions > button {
     flex: 1 1 calc(50% - var(--space-2));
   }

@@ -5,8 +5,17 @@ public record InteractionMarks(
         String statusReason,
         InteractionWaiting waitingOn,
         String waitingNote,
-        String problem,
+        int problemCount,
+        int riskCount,
         InteractionRiskLevel riskLevel,
-        String riskReason
+        String problems,
+        String risks
 ) {
+    InteractionMarks withStatus(InteractionWorkStatus nextStatus, String nextReason) {
+        return new InteractionMarks(nextStatus, nextReason, waitingOn, waitingNote, problemCount, riskCount, riskLevel, problems, risks);
+    }
+
+    InteractionMarks withWaiting(InteractionWaiting nextWaitingOn, String nextWaitingNote) {
+        return new InteractionMarks(status, statusReason, nextWaitingOn, nextWaitingNote, problemCount, riskCount, riskLevel, problems, risks);
+    }
 }

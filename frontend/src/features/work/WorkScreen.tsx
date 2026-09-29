@@ -13,6 +13,7 @@ import {
 import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { InteractionMarkBadges } from '../interactions/InteractionMarkBadges'
+import { issuesHref } from '../issues/issueModel'
 import { reportFlagLabels, reportFlags } from '../reports/reportSelection'
 import { KamDesk } from './KamDesk'
 import { TeamIndicators } from './TeamIndicators'
@@ -566,7 +567,7 @@ export const WorkScreen = ({ role, initialQuery, refreshSignal, onSessionExpired
                 <div className="work-item__heading">
                   <a className="work-item__title" href={`#/organizations/${item.organizationId}/${item.id}`}>{item.title}</a>
                   <a className="work-item__organization" href={`#/organizations/${item.organizationId}`}>{item.organizationName}</a>
-                  <InteractionMarkBadges marks={item.marks} />
+                  <InteractionMarkBadges marks={item.marks} issuesHref={issuesHref(item.organizationId, item.id)} />
                 </div>
                 <dl className="work-item__facts">
                   <div>

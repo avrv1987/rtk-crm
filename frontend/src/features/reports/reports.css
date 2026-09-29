@@ -908,6 +908,13 @@
   border-bottom: 0;
 }
 
+.signing-plan .reports__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-3) 0 0;
+}
+
 .signing-plan__summary {
   margin: 0 0 var(--space-3);
 }
@@ -1206,9 +1213,30 @@
     flex-basis: 100%;
   }
 
+  .report-chip {
+    max-width: 100%;
+  }
+
   .report-chip__toggle {
-    max-width: calc(100vw - 64px);
+    max-width: 100%;
     min-height: var(--control-height);
+  }
+
+  .report-chip__toggle {
+    flex-wrap: wrap;
+    padding-block: var(--space-1);
+  }
+
+  .report-chip__label {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .report-chip__value {
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .report-period__preset {
@@ -1281,6 +1309,14 @@
 
   .report-column-order ol {
     padding-left: var(--space-5);
+  }
+
+  .report-column-order li {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .report-column-order li > span {
+    grid-column: 1 / -1;
   }
 
   .saved-report__actions {

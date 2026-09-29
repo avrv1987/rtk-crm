@@ -2673,7 +2673,7 @@ p.structured-api-error {
 
 .work-item__facts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
   gap: var(--space-3);
   margin: 0;
 }
@@ -2693,7 +2693,8 @@ p.structured-api-error {
 .work-item__facts dd {
   margin: 0;
   font-weight: 600;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  hyphens: auto;
 }
 
 @media (min-width: 1200px) {

@@ -43,6 +43,7 @@ import ru.rtk.crm.attachment.AttachmentTooLargeException;
 import ru.rtk.crm.attachment.AttachmentValidationException;
 import ru.rtk.crm.enrolment.LearnerNotFoundException;
 import ru.rtk.crm.interaction.InteractionConflictException;
+import ru.rtk.crm.interaction.InteractionIssueNotFoundException;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.interaction.ProductAgreementNotFoundException;
@@ -138,6 +139,12 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiError> interactionNotFound(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiError.of("NOT_FOUND", "Взаимодействие не найдено или недоступно", RequestId.from(request)));
+    }
+
+    @ExceptionHandler(InteractionIssueNotFoundException.class)
+    public ResponseEntity<ApiError> interactionIssueNotFound(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of("NOT_FOUND", "Запись не найдена в этой работе", RequestId.from(request)));
     }
 
     @ExceptionHandler(ProductAgreementNotFoundException.class)

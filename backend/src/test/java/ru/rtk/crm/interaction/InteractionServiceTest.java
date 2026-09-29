@@ -14,6 +14,7 @@ import java.io.ByteArrayInputStream;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -83,6 +84,8 @@ import ru.rtk.crm.catalog.OrganizationRepository;
         ProductAgreementService.class,
         CommandIdempotencyRepository.class,
         InteractionService.class,
+        InteractionIssueRepository.class,
+        InteractionIssueService.class,
         InteractionServiceTest.JsonConfiguration.class
 })
 class InteractionServiceTest {
@@ -103,6 +106,9 @@ class InteractionServiceTest {
 
     @Autowired
     private InteractionService interactionService;
+
+    @Autowired
+    private InteractionIssueService interactionIssueService;
 
     @Autowired
     private ProductAgreementService productAgreementService;
@@ -138,6 +144,7 @@ class InteractionServiceTest {
         jdbcTemplate.update("DELETE FROM attachments");
         jdbcTemplate.update("DELETE FROM interaction_event_contacts");
         jdbcTemplate.update("DELETE FROM organization_assignment_events");
+        jdbcTemplate.update("DELETE FROM interaction_issues");
         jdbcTemplate.update("DELETE FROM interaction_events");
         jdbcTemplate.update("DELETE FROM command_idempotency_records");
         jdbcTemplate.update("DELETE FROM interaction_contacts");
@@ -2193,63 +2200,176 @@ class InteractionServiceTest {
     }
 
     @Test
-    void flagsAreSavedWithHistoryAndSelectWorkInTheList() {
+    void waitingFlagIsSavedWithHistoryAndSelectsWorkInTheList() {
         Interaction waiting = createA("Ждём доступы", "flags-waiting");
-        Interaction plain = createA("Без признаков", "flags-plain");
-        InteractionFlagsRequest flags = new InteractionFlagsRequest(
-                0,
-                InteractionWaiting.UNIVERSITY,
-                "Ждём доступы для преподавателей",
-                "У преподавателей нет доступа к стенду",
-                InteractionRiskLevel.HIGH,
-                "Вуз не отвечает три недели"
-        );
+        createA("Без признаков", "flags-plain");
+        InteractionFlagsRequest flags = new InteractionFlagsRequest(0, InteractionWaiting.UNIVERSITY, "Ждём доступы для преподавателей");
 
         Interaction flagged = interactionService.updateFlags(profileA, waiting.id(), flags, "flags");
         Interaction replayed = interactionService.updateFlags(profileA, waiting.id(), flags, "flags");
 
         assertThat(replayed).isEqualTo(flagged);
         assertThat(flagged.marks().waitingOn()).isEqualTo(InteractionWaiting.UNIVERSITY);
-        assertThat(flagged.marks().problem()).isEqualTo("У преподавателей нет доступа к стенду");
-        assertThat(flagged.marks().riskLevel()).isEqualTo(InteractionRiskLevel.HIGH);
-        for (String flag : List.of("WAITING_UNIVERSITY", "PROBLEM", "RISK", "RISK_OR_PROBLEM")) {
-            assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, flag))).containsExactly(waiting.id());
-        }
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, "WAITING_UNIVERSITY"))).containsExactly(waiting.id());
         assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, "WAITING_RTK"))).isEmpty();
-        assertThat(interactionService.list(
-                profileA,
-                InteractionFilter.from(null, null, null, null),
-                InteractionQuery.from(0, 25, "createdAt,asc")
-        ).items()).filteredOn(item -> item.id().equals(waiting.id())).singleElement()
-                .satisfies(item -> assertThat(item.marks().riskReason()).isEqualTo("Вуз не отвечает три недели"));
         assertThat(interactionService.events(profileA, waiting.id()).getLast()).satisfies(event -> {
             assertThat(event.type()).isEqualTo(InteractionEventType.DETAILS_UPDATED);
-            assertThat(event.comment()).isEqualTo(
-                    "Ждём вуз: «Ждём доступы для преподавателей»; Есть проблема: «У преподавателей нет доступа к стенду»; "
-                            + "Риск высокий: «Вуз не отвечает три недели»"
-            );
+            assertThat(event.comment()).isEqualTo("Ждём вуз: «Ждём доступы для преподавателей»");
         });
-
         assertThatThrownBy(() -> interactionService.updateFlags(
-                profileA,
-                plain.id(),
-                new InteractionFlagsRequest(0, null, null, null, InteractionRiskLevel.MEDIUM, null),
-                "no-reason"
-        )).isInstanceOfSatisfying(InteractionValidationException.class,
-                exception -> assertThat(exception.field()).isEqualTo("riskReason"));
-        assertThatThrownBy(() -> interactionService.updateFlags(
-                profileB, waiting.id(), new InteractionFlagsRequest(1, null, null, null, null, null), "foreign"
+                profileB, waiting.id(), new InteractionFlagsRequest(1, null, null), "foreign"
         )).isInstanceOf(InteractionNotFoundException.class);
 
         Interaction cleared = interactionService.updateFlags(
-                profileA, waiting.id(), new InteractionFlagsRequest(1, null, null, null, null, null), "flags-clear"
+                profileA, waiting.id(), new InteractionFlagsRequest(1, null, null), "flags-clear"
         );
         assertThat(cleared.marks())
-                .isEqualTo(new InteractionMarks(InteractionWorkStatus.ACTIVE, null, null, null, null, null, null));
-        assertThat(interactionService.events(profileA, waiting.id()).getLast().comment())
-                .isEqualTo("Ожидание снято; Проблема снята; Риск снят");
-        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, "RISK"))).isEmpty();
-        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, "RISK_OR_PROBLEM"))).isEmpty();
+                .isEqualTo(new InteractionMarks(InteractionWorkStatus.ACTIVE, null, null, null, 0, 0, null, null, null));
+        assertThat(interactionService.events(profileA, waiting.id()).getLast().comment()).isEqualTo("Ожидание снято");
+    }
+
+    @Test
+    void issueRegistryKeepsSeveralProblemsAndRisksWithHistoryAndDrivesMarksAndFilters() {
+        jdbcTemplate.update("UPDATE crm_user_profiles SET team_id = ? WHERE id IN (?, ?)", TEAM_A, MANAGER_A, LEADER_A);
+        jdbcTemplate.update("UPDATE crm_user_profiles SET role = 'LEADER' WHERE id = ?", LEADER_A);
+        jdbcTemplate.update("UPDATE crm_user_profiles SET team_id = ? WHERE id = ?", TEAM_B, MANAGER_B);
+        Interaction work = createA("Внедрение", "issues-work");
+        createA("Без проблем", "issues-plain");
+        LocalDate yesterday = LocalDate.now(InteractionIssueService.ZONE).minusDays(1);
+        String yesterdayText = yesterday.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+        InteractionIssueRequest problem = new InteractionIssueRequest(
+                0, InteractionIssueKind.PROBLEM, " Нет доступа к стенду ", InteractionRiskLevel.HIGH, null, yesterday
+        );
+
+        Interaction first = interactionIssueService.create(profileA, work.id(), problem, "issue-problem");
+        Interaction replayed = interactionIssueService.create(profileA, work.id(), problem, "issue-problem");
+        interactionIssueService.create(leaderA, work.id(), new InteractionIssueRequest(
+                1, InteractionIssueKind.RISK, "Срыв сроков", InteractionRiskLevel.MEDIUM, LEADER_A, null
+        ), "issue-risk-medium");
+        Interaction third = interactionIssueService.create(profileA, work.id(), new InteractionIssueRequest(
+                2, InteractionIssueKind.RISK, "Вуз не отвечает", InteractionRiskLevel.HIGH, null, null
+        ), "issue-risk-high");
+
+        assertThat(replayed).isEqualTo(first);
+        assertThat(first.version()).isEqualTo(1);
+        assertThat(third.marks()).satisfies(marks -> {
+            assertThat(marks.problemCount()).isEqualTo(1);
+            assertThat(marks.riskCount()).isEqualTo(2);
+            assertThat(marks.riskLevel()).isEqualTo(InteractionRiskLevel.HIGH);
+            assertThat(marks.problems()).isEqualTo("Нет доступа к стенду");
+            assertThat(marks.risks()).isEqualTo("высокий: Вуз не отвечает; средний: Срыв сроков");
+        });
+        InteractionIssueList list = interactionIssueService.list(profileA, work.id());
+        assertThat(list.responsibleOptions()).extracting(InteractionIssueList.ResponsibleOption::id)
+                .containsExactlyInAnyOrder(MANAGER_A, LEADER_A);
+        assertThat(list.items()).extracting(InteractionIssue::kind, InteractionIssue::riskLevel, InteractionIssue::responsibleId)
+                .containsExactly(
+                        tuple(InteractionIssueKind.PROBLEM, null, MANAGER_A),
+                        tuple(InteractionIssueKind.RISK, InteractionRiskLevel.MEDIUM, LEADER_A),
+                        tuple(InteractionIssueKind.RISK, InteractionRiskLevel.HIGH, MANAGER_A)
+                );
+        assertThat(list.items().getFirst().createdByName()).isEqualTo("Анна Смирнова");
+        assertThat(interactionService.events(profileA, work.id())).extracting(InteractionEvent::comment).contains(
+                "Добавлена проблема: «Нет доступа к стенду». Ответственный: Анна Смирнова, срок " + yesterdayText,
+                "Добавлен риск (средний): «Срыв сроков». Ответственный: Вера Ковалёва"
+        );
+        for (String flag : List.of("PROBLEM", "RISK", "RISK_OR_PROBLEM")) {
+            assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, flag))).containsExactly(work.id());
+        }
+
+        UUID problemId = list.items().getFirst().id();
+        UUID mediumRiskId = list.items().get(1).id();
+        assertThatThrownBy(() -> interactionIssueService.update(profileA, work.id(), problemId, new InteractionIssueRequest(
+                1, null, "Старая версия", null, null, null
+        ), "issue-stale")).isInstanceOf(InteractionConflictException.class);
+        assertThatThrownBy(() -> interactionIssueService.create(profileA, work.id(), new InteractionIssueRequest(
+                3, InteractionIssueKind.RISK, "Без уровня", null, null, null
+        ), "issue-no-level")).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("riskLevel"));
+        assertThatThrownBy(() -> interactionIssueService.create(profileA, work.id(), new InteractionIssueRequest(
+                3, InteractionIssueKind.PROBLEM, " ", null, null, null
+        ), "issue-empty")).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("description"));
+        assertThatThrownBy(() -> interactionIssueService.create(profileA, work.id(), new InteractionIssueRequest(
+                3, InteractionIssueKind.PROBLEM, "Чужой ответственный", null, MANAGER_B, null
+        ), "issue-foreign-responsible")).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("responsibleId"));
+        assertThatThrownBy(() -> interactionIssueService.create(profileA, work.id(), problem, null))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.field()).isEqualTo("Idempotency-Key"));
+        assertThatThrownBy(() -> interactionIssueService.create(profileB, work.id(), problem, "issue-foreign"))
+                .isInstanceOf(InteractionNotFoundException.class);
+        assertThatThrownBy(() -> interactionIssueService.list(profileB, work.id()))
+                .isInstanceOf(InteractionNotFoundException.class);
+        CrmProfile management = new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0);
+        assertThat(interactionIssueService.list(management, work.id()).items()).hasSize(3);
+        assertThatThrownBy(() -> interactionIssueService.resolve(management, work.id(), problemId,
+                new InteractionIssueResolution(3, "Руководство"), "issue-management"))
+                .isInstanceOf(ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException.class);
+
+        Interaction unchanged = interactionIssueService.update(profileA, work.id(), problemId, new InteractionIssueRequest(
+                3, null, "Нет доступа к стенду", null, MANAGER_A, yesterday
+        ), "issue-same");
+        assertThat(unchanged.version()).isEqualTo(3);
+        Interaction edited = interactionIssueService.update(leaderA, work.id(), mediumRiskId, new InteractionIssueRequest(
+                3, InteractionIssueKind.RISK, "Срыв сроков запуска", InteractionRiskLevel.HIGH, MANAGER_A, yesterday
+        ), "issue-edit");
+        assertThat(edited.version()).isEqualTo(4);
+        assertThat(interactionService.events(profileA, work.id()).getLast().comment()).isEqualTo(
+                "Изменён риск «Срыв сроков»: описание: «Срыв сроков» → «Срыв сроков запуска»; уровень: средний → высокий; "
+                        + "ответственный: Вера Ковалёва → Анна Смирнова; срок: не указан → " + yesterdayText
+        );
+        assertThatThrownBy(() -> interactionIssueService.update(profileA, work.id(), problemId, new InteractionIssueRequest(
+                4, InteractionIssueKind.RISK, "Нет доступа к стенду", InteractionRiskLevel.HIGH, null, null
+        ), "issue-kind")).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("kind"));
+        assertThatThrownBy(() -> interactionIssueService.resolve(profileA, work.id(), problemId,
+                new InteractionIssueResolution(4, " "), "issue-no-resolution"))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.field()).isEqualTo("resolution"));
+
+        Interaction resolved = interactionIssueService.resolve(profileA, work.id(), problemId,
+                new InteractionIssueResolution(4, "Доступы выданы"), "issue-resolve");
+        assertThat(resolved.marks().problemCount()).isZero();
+        assertThat(resolved.marks().problems()).isNull();
+        assertThat(interactionService.events(profileA, work.id()).getLast().comment())
+                .isEqualTo("Решена проблема «Нет доступа к стенду». Решение: Доступы выданы");
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, null, "PROBLEM"))).isEmpty();
+        assertThatThrownBy(() -> interactionIssueService.resolve(profileA, work.id(), problemId,
+                new InteractionIssueResolution(5, "Ещё раз"), "issue-resolve-again"))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.field()).isEqualTo("status"));
+        assertThatThrownBy(() -> interactionIssueService.resolve(profileA, work.id(), UUID.randomUUID(),
+                new InteractionIssueResolution(5, "Нет такой"), "issue-missing"))
+                .isInstanceOf(InteractionIssueNotFoundException.class);
+        assertThat(interactionIssueService.list(profileA, work.id()).items().getLast()).satisfies(issue -> {
+            assertThat(issue.status()).isEqualTo(InteractionIssueStatus.RESOLVED);
+            assertThat(issue.resolution()).isEqualTo("Доступы выданы");
+            assertThat(issue.resolvedByName()).isEqualTo("Анна Смирнова");
+        });
+
+        assertThat(registry(profileA, InteractionIssueFilter.from(null, null, null, null, false, null)))
+                .extracting(InteractionIssue::description).containsExactly("Срыв сроков запуска", "Вуз не отвечает");
+        assertThat(registry(profileA, InteractionIssueFilter.from(null, null, null, null, true, null)))
+                .extracting(InteractionIssue::description).containsExactly("Срыв сроков запуска");
+        assertThat(registry(leaderA, InteractionIssueFilter.from(null, null, null, null, false, "RESOLVED")))
+                .extracting(InteractionIssue::description).containsExactly("Нет доступа к стенду");
+        assertThat(registry(leaderA, InteractionIssueFilter.from(
+                "RISK", "HIGH", MANAGER_A.toString(), ORGANIZATION_A.toString(), false, "ALL"
+        ))).hasSize(2);
+        assertThat(registry(management, InteractionIssueFilter.from("PROBLEM", null, null, null, false, "ALL"))).hasSize(1);
+        assertThat(registry(profileB, InteractionIssueFilter.from(null, null, null, null, false, "ALL"))).isEmpty();
+        assertThat(registry(new CrmProfile(UUID.randomUUID(), UserRole.ADMIN, null, 0),
+                InteractionIssueFilter.from(null, null, null, null, false, "ALL"))).isEmpty();
+        assertThat(interactionIssueService.registry(
+                leaderA, InteractionIssueFilter.from(null, null, null, null, false, "ALL"), 0, 2
+        ).total()).isEqualTo(3);
+        assertThatThrownBy(() -> InteractionIssueFilter.from("OTHER", null, null, null, false, null))
+                .isInstanceOf(InteractionValidationException.class);
+    }
+
+    private List<InteractionIssue> registry(CrmProfile profile, InteractionIssueFilter filter) {
+        return interactionIssueService.registry(profile, filter, 0, 100).items();
     }
 
     @Test
@@ -2875,8 +2995,16 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS interaction_issues (
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
+                    description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
+                    status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, resolved_by UUID, resolved_at TIMESTAMP WITH TIME ZONE
+                )
+                """);
+        jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
-                    work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500), problem VARCHAR(1000), risk_level VARCHAR(16), risk_reason VARCHAR(1000),
+                    work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500),
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
                     title VARCHAR(200) NOT NULL,

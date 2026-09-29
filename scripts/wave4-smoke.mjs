@@ -598,9 +598,11 @@ sections.workStatus = async () => {
   const completed = requireStatus(await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/status', { body: { version: paused.version, status: 'COMPLETED', reason: 'Договор подписан' } }), 200, 'Completion failed')
   const resumed = requireStatus(await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/status', { body: { version: completed.version, status: 'ACTIVE' } }), 200, 'Resume failed')
   const renamed = requireStatus(await api(kamA, 'PATCH', '/api/interactions/' + interaction.id, { body: { version: resumed.version, title: 'W4 статус ' + nonce + ' (уточнено)', lastContactAt: new Date(Date.now() - 86400000).toISOString() } }), 200, 'Details edit failed')
-  const riskWithout = await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/flags', { body: { version: renamed.version, waitingOn: 'UNIVERSITY', waitingNote: 'Ждём подписи', problem: 'Нет ответа юристов', riskLevel: 'HIGH', riskReason: null } })
-  const flagged = requireStatus(await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/flags', { body: { version: renamed.version, waitingOn: 'UNIVERSITY', waitingNote: 'Ждём подписи', problem: 'Нет ответа юристов', riskLevel: 'HIGH', riskReason: 'Срыв срока внедрения' } }), 200, 'Flags failed')
-  const sameFlags = requireStatus(await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/flags', { body: { version: flagged.version, waitingOn: 'UNIVERSITY', waitingNote: 'Ждём подписи', problem: 'Нет ответа юристов', riskLevel: 'HIGH', riskReason: 'Срыв срока внедрения' } }), 200, 'Repeated flags failed')
+  const riskWithout = await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/issues', { body: { version: renamed.version, kind: 'RISK', description: 'Срыв срока внедрения', riskLevel: null } })
+  const waiting = requireStatus(await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/flags', { body: { version: renamed.version, waitingOn: 'UNIVERSITY', waitingNote: 'Ждём подписи' } }), 200, 'Flags failed')
+  const withProblem = requireStatus(await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/issues', { body: { version: waiting.version, kind: 'PROBLEM', description: 'Нет ответа юристов' } }), 200, 'Problem failed')
+  const flagged = requireStatus(await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/issues', { body: { version: withProblem.version, kind: 'RISK', description: 'Срыв срока внедрения', riskLevel: 'HIGH' } }), 200, 'Risk failed')
+  const sameFlags = requireStatus(await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/flags', { body: { version: flagged.version, waitingOn: 'UNIVERSITY', waitingNote: 'Ждём подписи' } }), 200, 'Repeated flags failed')
   const riskList = await listAll(kamA, '/api/interactions?flag=RISK&q=' + encodeURIComponent(nonce), 'Risk list failed')
   const waitingList = await listAll(leader, '/api/interactions?flag=WAITING_UNIVERSITY&q=' + encodeURIComponent(nonce), 'Waiting list failed')
   const rtkList = await listAll(kamA, '/api/interactions?flag=WAITING_RTK&q=' + encodeURIComponent(nonce), 'Waiting RTK list failed')
@@ -618,8 +620,8 @@ sections.workStatus = async () => {
   assert(!defaultList.some((item) => item.id === interaction.id) && pausedList.some((item) => item.id === interaction.id), 'Paused work is not filtered')
   assert(statusEvents.length === 3 && statusEvents.some((event) => event.comment?.includes('Вуз на каникулах')) && statusEvents.some((event) => event.comment?.includes('Договор подписан')), 'Status history is incomplete')
   assert(renamed.title.endsWith('(уточнено)') && history.some((event) => event.type === 'DETAILS_UPDATED' && event.comment?.includes('Название')), 'Title change is not in history')
-  requireError(riskWithout, 400, 'High risk without a reason was accepted')
-  assert(flagged.marks.waitingOn === 'UNIVERSITY' && flagged.marks.problem && flagged.marks.riskLevel === 'HIGH', 'Flags are not stored')
+  requireError(riskWithout, 400, 'Risk without a level was accepted')
+  assert(flagged.marks.waitingOn === 'UNIVERSITY' && flagged.marks.problemCount === 1 && flagged.marks.riskLevel === 'HIGH', 'Flags are not stored')
   assert(sameFlags.version === flagged.version, 'Repeated flags created a new version')
   assert(riskList.some((item) => item.id === interaction.id) && waitingList.some((item) => item.id === interaction.id) && !rtkList.some((item) => item.id === interaction.id), 'Flag filters are wrong')
   assert(row && row.WORK_STATUS && row.WAITING && row.PROBLEM && row.RISK, 'Report does not show work marks')
@@ -1452,7 +1454,7 @@ sections.screens = async () => {
   const organization = await testOrganization()
   const work = ctx.documentsInteraction ?? await createInteraction(kamA, organization.id, 'W4 экран ' + nonce)
   const result = {
-    kamCard: await screenTexts(kamA, '/#/organizations/' + organization.id + '/' + work.id, ['Перейти к следующему этапу', 'Следующий шаг', 'Комментарий', 'Файл', 'Маршрут этапов', 'Приостановить или завершить работу', 'Ожидание, проблема и риск', 'Отметить этап выполненным', 'История', 'Документы', 'Договор и лицензия', 'Отметки передачи', 'Маршрут', 'Обучение', 'Циклы'], 'KAM card lacks wave 4 blocks'),
+    kamCard: await screenTexts(kamA, '/#/organizations/' + organization.id + '/' + work.id, ['Перейти к следующему этапу', 'Следующий шаг', 'Комментарий', 'Файл', 'Маршрут этапов', 'Приостановить или завершить работу', 'Проблемы и риски', 'Чего ждём', 'Отметить этап выполненным', 'История', 'Документы', 'Договор и лицензия', 'Отметки передачи', 'Маршрут', 'Обучение', 'Циклы'], 'KAM card lacks wave 4 blocks'),
     kamOrganization: await screenTexts(kamA, '/#/organizations/' + organization.id, ['Сводка по работам', 'Работы', 'Контакты', 'Документы и соглашения', 'История назначений', 'Новое взаимодействие'], 'KAM organization card lacks tabs'),
     leaderWork: await screenTexts(leader, '/#/work', ['Пульт команды', 'Где команде нужна помощь', 'Требует назначения', 'Вузы без ответственного', 'Заместители'], 'Leader work lacks indicators'),
     kamDesk: await screenTexts(kamA, '/#/work', ['Задачи по срокам', 'Шаги на этой неделе', 'Без следующего шага', 'Лицензии истекают', 'Фильтры', 'Все работы'], 'KAM desk lacks blocks'),

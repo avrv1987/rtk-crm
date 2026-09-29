@@ -5,14 +5,7 @@ import { changedDraft, conflictKeys, keepDraftValues, mergedValues, parseBasedDr
 import { DraftConflictNotice } from './DraftConflictNotice'
 import { recordOf, textOf, useFormDraft } from './formDraft'
 import { useUnsavedDraft } from './unsavedDrafts'
-import {
-  commandFailureMessage,
-  handledAccessError,
-  type RiskLevel,
-  riskLabels,
-  type WaitingOn,
-  waitingLabels
-} from './workMarks'
+import { commandFailureMessage, handledAccessError, type WaitingOn, waitingLabels } from './workMarks'
 import './workCard.css'
 
 type InteractionFlagsFormProps = {
@@ -26,8 +19,6 @@ type InteractionFlagsFormProps = {
 
 type FlagsValues = {
   waiting: { on: WaitingOn | ''; note: string }
-  problem: { on: boolean; text: string }
-  risk: { level: RiskLevel | ''; reason: string }
 }
 
 type CommandState =
@@ -36,32 +27,21 @@ type CommandState =
   | { kind: 'failed'; error: unknown }
 
 const waitingOptions: WaitingOn[] = ['UNIVERSITY', 'RTK']
-const riskOptions: RiskLevel[] = ['MEDIUM', 'HIGH']
-
 const groupLabels: Record<keyof FlagsValues, string> = {
-  waiting: 'Чего ждём',
-  problem: 'Проблема',
-  risk: 'Риск'
+  waiting: 'Чего ждём'
 }
 
 const fromMarks = (marks: InteractionMarks): FlagsValues => ({
-  waiting: { on: marks.waitingOn ?? '', note: marks.waitingNote ?? '' },
-  problem: { on: marks.problem !== null, text: marks.problem ?? '' },
-  risk: { level: marks.riskLevel ?? '', reason: marks.riskReason ?? '' }
+  waiting: { on: marks.waitingOn ?? '', note: marks.waitingNote ?? '' }
 })
 
 const parseValues = (value: unknown): FlagsValues | null => {
-  const record = recordOf(value)
-  const waiting = recordOf(record?.waiting)
-  const problem = recordOf(record?.problem)
-  const risk = recordOf(record?.risk)
-  if (waiting === null || problem === null || risk === null) {
+  const waiting = recordOf(recordOf(value)?.waiting)
+  if (waiting === null) {
     return null
   }
   return {
-    waiting: { on: waitingOptions.find((item) => item === waiting.on) ?? '', note: textOf(waiting.note) },
-    problem: { on: problem.on === true, text: textOf(problem.text) },
-    risk: { level: riskOptions.find((item) => item === risk.level) ?? '', reason: textOf(risk.reason) }
+    waiting: { on: waitingOptions.find((item) => item === waiting.on) ?? '', note: textOf(waiting.note) }
   }
 }
 
@@ -69,21 +49,12 @@ const parseDraft = (value: unknown) => parseBasedDraft(value, parseValues)
 
 const payloadOf = (values: FlagsValues) => ({
   waitingOn: values.waiting.on === '' ? null : values.waiting.on,
-  waitingNote: values.waiting.on === '' ? null : values.waiting.note.trim() || null,
-  problem: values.problem.on ? values.problem.text.trim() || null : null,
-  riskLevel: values.risk.level === '' ? null : values.risk.level,
-  riskReason: values.risk.level === '' ? null : values.risk.reason.trim() || null
+  waitingNote: values.waiting.on === '' ? null : values.waiting.note.trim() || null
 })
 
-const shownGroup = (group: keyof FlagsValues, values: FlagsValues) => {
-  if (group === 'waiting') {
-    const note = values.waiting.note.trim()
-    return values.waiting.on === '' ? 'ничего не ждём' : `${waitingLabels[values.waiting.on]}${note ? `: ${note}` : ''}`
-  }
-  if (group === 'problem') {
-    return values.problem.on ? values.problem.text.trim() || 'есть' : 'нет'
-  }
-  return values.risk.level === '' ? 'нет риска' : `${riskLabels[values.risk.level]}: ${values.risk.reason.trim()}`
+const shownGroup = (values: FlagsValues) => {
+  const note = values.waiting.note.trim()
+  return values.waiting.on === '' ? 'ничего не ждём' : `${waitingLabels[values.waiting.on]}${note ? `: ${note}` : ''}`
 }
 
 export const InteractionFlagsForm = ({
@@ -103,9 +74,7 @@ export const InteractionFlagsForm = ({
   const payload = payloadOf(values)
   const current = payloadOf(currentValues)
   const changed = JSON.stringify(payload) !== JSON.stringify(current)
-  const missingProblem = values.problem.on && payload.problem === null
-  const missingRiskReason = payload.riskLevel !== null && payload.riskReason === null
-  useUnsavedDraft(`card:${interaction.id}:flags`, `отметки ожидания и риска в карточке «${interaction.title}»`, draft !== null && changed)
+  useUnsavedDraft(`card:${interaction.id}:flags`, `отметку ожидания в карточке «${interaction.title}»`, draft !== null && changed)
 
   const change = (next: Partial<FlagsValues>) => {
     commandKey.current = null
@@ -129,7 +98,7 @@ export const InteractionFlagsForm = ({
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!changed || conflicts.length > 0 || missingProblem || missingRiskReason) {
+    if (!changed || conflicts.length > 0) {
       return
     }
     setState({ kind: 'saving' })
@@ -152,15 +121,15 @@ export const InteractionFlagsForm = ({
 
   return (
     <form className="interaction-plan-form work-flags" onSubmit={(event) => void submit(event)}>
-      <h6>Ожидание, проблема и риск</h6>
-      <p>Отметки видны в «Моей работе» и отбираются фильтром. Каждое изменение попадает в историю.</p>
+      <h6>Чего ждём</h6>
+      <p>Отметка видна в «Моей работе» и отбирается фильтром. Каждое изменение попадает в историю. Проблемы и риски ведутся в окне «Проблемы и риски».</p>
       {draft !== null && (
         <DraftConflictNotice
           conflicts={conflicts.map((group) => ({
             key: group,
             label: groupLabels[group],
-            current: shownGroup(group, currentValues),
-            draft: shownGroup(group, draft.values)
+            current: shownGroup(currentValues),
+            draft: shownGroup(draft.values)
           }))}
           onKeepDraft={() => resolveConflicts(true)}
           onTakeCurrent={() => resolveConflicts(false)}
@@ -194,49 +163,9 @@ export const InteractionFlagsForm = ({
           />
         </label>
       )}
-      <label className="checkbox-field">
-        <input
-          type="checkbox"
-          checked={values.problem.on}
-          onChange={(event) => change({ problem: { ...values.problem, on: event.target.checked } })}
-        />
-        Есть проблема
-      </label>
-      {values.problem.on && (
-        <label>
-          <span>Описание проблемы<span className="required-mark" aria-hidden="true"> *</span></span>
-          <textarea
-            value={values.problem.text}
-            maxLength={1000}
-            required
-            onChange={(event) => change({ problem: { ...values.problem, text: event.target.value } })}
-          />
-        </label>
-      )}
-      <label>
-        Риск
-        <select
-          value={values.risk.level}
-          onChange={(event) => change({ risk: { ...values.risk, level: riskOptions.find((item) => item === event.target.value) ?? '' } })}
-        >
-          <option value="">Нет риска</option>
-          {riskOptions.map((option) => <option key={option} value={option}>{riskLabels[option]}</option>)}
-        </select>
-      </label>
-      {values.risk.level !== '' && (
-        <label>
-          <span>Причина риска<span className="required-mark" aria-hidden="true"> *</span></span>
-          <textarea
-            value={values.risk.reason}
-            maxLength={1000}
-            required
-            onChange={(event) => change({ risk: { ...values.risk, reason: event.target.value } })}
-          />
-        </label>
-      )}
       <div className="interaction-plan-form__actions">
-        <button type="submit" disabled={state.kind === 'saving' || !changed || conflicts.length > 0 || missingProblem || missingRiskReason}>
-          {state.kind === 'saving' ? 'Сохраняем…' : 'Сохранить отметки'}
+        <button type="submit" disabled={state.kind === 'saving' || !changed || conflicts.length > 0}>
+          {state.kind === 'saving' ? 'Сохраняем…' : 'Сохранить отметку'}
         </button>
         {draft !== null && (
           <button type="button" className="button--secondary" disabled={state.kind === 'saving'} onClick={reset}>Отменить изменения</button>

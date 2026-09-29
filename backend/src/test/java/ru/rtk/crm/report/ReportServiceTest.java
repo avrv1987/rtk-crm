@@ -42,6 +42,7 @@ import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.interaction.InteractionFlag;
+import ru.rtk.crm.interaction.InteractionRiskLevel;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.interaction.InteractionWorkStatus;
 import ru.rtk.crm.interaction.ProductTransferKind;
@@ -252,11 +253,13 @@ class ReportServiceTest {
     @Test
     void portfolioShowsWaitingProblemAndRiskAndSelectsWorkByThem() {
         jdbcTemplate.update(
-                "UPDATE interactions SET waiting_on = 'UNIVERSITY', waiting_note = 'доступы', risk_level = 'HIGH', "
-                        + "risk_reason = 'вуз не отвечает три недели' WHERE id = ?",
+                "UPDATE interactions SET waiting_on = 'UNIVERSITY', waiting_note = 'доступы' WHERE id = ?",
                 INTERACTION_TWO_PRODUCTS
         );
-        jdbcTemplate.update("UPDATE interactions SET problem = 'нет доступа к стенду' WHERE id = ?", INTERACTION_UNASSIGNED);
+        insertIssue(INTERACTION_TWO_PRODUCTS, "RISK", "HIGH", "вуз не отвечает три недели", "OPEN");
+        insertIssue(INTERACTION_TWO_PRODUCTS, "RISK", "MEDIUM", "срок сдвигается", "OPEN");
+        insertIssue(INTERACTION_TWO_PRODUCTS, "PROBLEM", null, "решённая проблема", "RESOLVED");
+        insertIssue(INTERACTION_UNASSIGNED, "PROBLEM", null, "нет доступа к стенду", "OPEN");
 
         assertThat(interactionIds(LEADER_A_PROFILE, portfolio(filters().flags(InteractionFlag.RISK))))
                 .containsExactly(INTERACTION_TWO_PRODUCTS);
@@ -269,8 +272,11 @@ class ReportServiceTest {
                 .filteredOn(row -> row.interactionId().equals(INTERACTION_TWO_PRODUCTS)).singleElement()
                 .satisfies(row -> {
                     assertThat(ReportColumn.WAITING.text(row)).isEqualTo("Ждём вуз: доступы");
-                    assertThat(ReportColumn.RISK.text(row)).isEqualTo("высокий: вуз не отвечает три недели");
+                    assertThat(ReportColumn.RISK.text(row)).isEqualTo("высокий: вуз не отвечает три недели; средний: срок сдвигается");
                     assertThat(ReportColumn.PROBLEM.text(row)).isEmpty();
+                    assertThat(row.marks().riskLevel()).isEqualTo(InteractionRiskLevel.HIGH);
+                    assertThat(row.marks().riskCount()).isEqualTo(2);
+                    assertThat(row.marks().problemCount()).isZero();
                 });
         assertThatThrownBy(() -> reportService.document(
                 LEADER_A_PROFILE,
@@ -611,6 +617,17 @@ class ReportServiceTest {
 
     private static ReportRequest demand(LocalDate from, LocalDate to, Filters filters, ReportColumn sortBy) {
         return new ReportRequest(ReportKind.DEMAND, from, to, null, filters.build(), null, null, null, sortBy);
+    }
+
+    private void insertIssue(UUID interactionId, String kind, String riskLevel, String description, String status) {
+        boolean resolved = "RESOLVED".equals(status);
+        jdbcTemplate.update("""
+                INSERT INTO interaction_issues (
+                    id, interaction_id, kind, description, risk_level, responsible_profile_id, status, resolution,
+                    created_by, created_at, resolved_by, resolved_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+                """, UUID.randomUUID(), interactionId, kind, description, riskLevel, MANAGER_A, status,
+                resolved ? "Решено" : null, MANAGER_A, resolved ? MANAGER_A : null, resolved ? OffsetDateTime.now() : null);
     }
 
     private List<UUID> interactionIds(CrmProfile profile, ReportRequest request) {

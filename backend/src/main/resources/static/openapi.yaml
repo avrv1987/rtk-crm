@@ -1084,6 +1084,89 @@ paths:
           $ref: '#/components/responses/CrmProfileRequired'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/issues:
+    get:
+      tags: [Work]
+      summary: Реестр проблем и рисков по работам
+      operationId: listIssues
+      description: >-
+        Записи реестра по работам в области видимости роли: USER — свои вузы и вузы, где он заместитель; LEADER — своя команда;
+        MANAGEMENT — все команды; ADMIN получает пустую страницу, PARTNER — 403. Порядок: сначала записи со сроком (ближайший
+        раньше), затем без срока, внутри — по времени отметки.
+      parameters:
+        - $ref: '#/components/parameters/IssueKind'
+        - $ref: '#/components/parameters/IssueRiskLevel'
+        - $ref: '#/components/parameters/IssueResponsible'
+        - $ref: '#/components/parameters/IssueOrganization'
+        - $ref: '#/components/parameters/IssueOverdue'
+        - $ref: '#/components/parameters/IssueStatus'
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+      responses:
+        '200':
+          description: Страница записей реестра
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InteractionIssuePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/issues/file:
+    get:
+      tags: [Work]
+      summary: Выгрузить реестр проблем и рисков в XLSX
+      operationId: downloadIssues
+      description: >-
+        Те же отборы и права, что у listIssues, все строки без постраничного деления. Если строк больше app.reports.max-rows,
+        ответ 422 REPORT_ROW_LIMIT. Скачивание записывается в журнал безопасности.
+      parameters:
+        - $ref: '#/components/parameters/IssueKind'
+        - $ref: '#/components/parameters/IssueRiskLevel'
+        - $ref: '#/components/parameters/IssueResponsible'
+        - $ref: '#/components/parameters/IssueOrganization'
+        - $ref: '#/components/parameters/IssueOverdue'
+        - $ref: '#/components/parameters/IssueStatus'
+      responses:
+        '200':
+          description: Файл XLSX; Content-Disposition содержит имя файла в UTF-8 (filename*)
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '422':
+          description: REPORT_ROW_LIMIT — строк по отбору больше app.reports.max-rows; сузьте отбор
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/work/learning-trend:
     get:
       tags: [Work]
@@ -1370,8 +1453,8 @@ paths:
           in: query
           required: false
           description: >-
-            WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — отмечена проблема;
-            RISK — отмечен риск любого уровня; RISK_OR_PROBLEM — отмечен риск или проблема
+            WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — есть открытая проблема в реестре;
+            RISK — есть открытый риск любого уровня; RISK_OR_PROBLEM — есть открытый риск или проблема
           schema:
             $ref: '#/components/schemas/InteractionFlag'
         - name: licenseExpiresBy
@@ -2267,11 +2350,11 @@ paths:
   /api/interactions/{id}/flags:
     post:
       tags: [Interaction]
-      summary: Отметить ожидание, проблему и риск работы
+      summary: Отметить, чего ждёт работа
       operationId: updateInteractionFlags
       x-implementation-stage: 4
       description: >-
-        Заменяет флаги работы: от кого ожидается ответ (вуз или РТК) с примечанием, открытую проблему и уровень риска с причиной. Отсутствующие или null значения снимают флаг; уровень риска требует причину. Эффективное изменение записывает одно событие истории DETAILS_UPDATED; запрос без изменений возвращает карточку без изменений.
+        Заменяет отметку ожидания: от кого ожидается ответ (вуз или РТК) с примечанием; null снимает отметку. Проблемы и риски ведутся в реестре (/api/interactions/{id}/issues). Эффективное изменение записывает одно событие истории DETAILS_UPDATED; запрос без изменений возвращает карточку без изменений.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -2285,6 +2368,145 @@ paths:
       responses:
         '200':
           description: Взаимодействие после обновления флагов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/issues:
+    get:
+      tags: [Interaction]
+      summary: Проблемы и риски работы
+      operationId: listInteractionIssues
+      description: >-
+        Все записи реестра проблем и рисков работы: сначала открытые, затем решённые, внутри — по времени отметки. Видны тем, кто
+        видит карточку работы (USER, LEADER, MANAGEMENT); PARTNER и ADMIN получают 403 или 404. responsibleOptions — активные
+        сотрудники (USER, LEADER) команды вуза, которых можно назначить ответственными.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Записи реестра и варианты ответственного
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InteractionIssueList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Interaction]
+      summary: Добавить проблему или риск работы
+      operationId: createInteractionIssue
+      description: >-
+        Только USER и LEADER, которые могут вести карточку. Описание обязательно, для риска обязателен уровень. Без responsibleId
+        ответственным становится КАМ вуза (или автор, если КАМ не назначен); ответственным можно выбрать только сотрудника из
+        responsibleOptions. Повышает версию работы и пишет событие истории DETAILS_UPDATED.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionIssueRequest'
+      responses:
+        '200':
+          description: Работа после добавления записи
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/issues/{issueId}:
+    patch:
+      tags: [Interaction]
+      summary: Изменить открытую проблему или риск
+      operationId: updateInteractionIssue
+      description: >-
+        Заменяет описание, уровень риска, ответственного и срок открытой записи; вид записи не меняется, решённую запись
+        изменить нельзя. Запрос без изменений возвращает работу без новой версии. Изменение пишет событие DETAILS_UPDATED с перечнем правок.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/IssueId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionIssueRequest'
+      responses:
+        '200':
+          description: Работа после изменения записи
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/issues/{issueId}/resolution:
+    post:
+      tags: [Interaction]
+      summary: Отметить проблему или риск решённым
+      operationId: resolveInteractionIssue
+      description: Комментарий о решении обязателен. Запись остаётся в реестре со статусом RESOLVED; пишет событие DETAILS_UPDATED.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/IssueId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionIssueResolution'
+      responses:
+        '200':
+          description: Работа после решения записи
           content:
             application/json:
               schema:
@@ -6406,6 +6628,59 @@ components:
       schema:
         type: string
         format: date
+    IssueId:
+      name: issueId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IssueKind:
+      name: kind
+      in: query
+      required: false
+      description: PROBLEM — проблемы, RISK — риски
+      schema:
+        type: string
+        enum: [PROBLEM, RISK]
+    IssueRiskLevel:
+      name: riskLevel
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [MEDIUM, HIGH]
+    IssueResponsible:
+      name: responsible
+      in: query
+      required: false
+      description: Идентификатор профиля ответственного
+      schema:
+        type: string
+        format: uuid
+    IssueOrganization:
+      name: organizationId
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+    IssueOverdue:
+      name: overdue
+      in: query
+      required: false
+      description: true — только открытые записи со сроком раньше сегодняшнего дня (МСК)
+      schema:
+        type: boolean
+        default: false
+    IssueStatus:
+      name: status
+      in: query
+      required: false
+      description: Без параметра — только открытые; RESOLVED — только решённые; ALL — все
+      schema:
+        type: string
+        enum: [OPEN, RESOLVED, ALL]
     CsrfHeader:
       name: X-CSRF-TOKEN
       in: header
@@ -8331,7 +8606,7 @@ components:
           type: boolean
     InteractionMarks:
       type: object
-      required: [status, statusReason, waitingOn, waitingNote, problem, riskLevel, riskReason]
+      required: [status, statusReason, waitingOn, waitingNote, problemCount, riskCount, riskLevel, problems, risks]
       properties:
         status:
           type: string
@@ -8346,14 +8621,154 @@ components:
           enum: [UNIVERSITY, RTK, null]
         waitingNote:
           type: [string, 'null']
-        problem:
-          description: Описание нерешённой проблемы; null — проблемы нет
-          type: [string, 'null']
+        problemCount:
+          description: Число открытых проблем в реестре работы
+          type: integer
+        riskCount:
+          description: Число открытых рисков в реестре работы
+          type: integer
         riskLevel:
+          description: Наибольший уровень открытых рисков; null — открытых рисков нет
           type: [string, 'null']
           enum: [MEDIUM, HIGH, null]
-        riskReason:
+        problems:
+          description: Описания открытых проблем через точку с запятой
           type: [string, 'null']
+        risks:
+          description: 'Открытые риски в виде «уровень: описание» через точку с запятой, сначала высокие'
+          type: [string, 'null']
+    InteractionIssue:
+      type: object
+      required: [id, interactionId, interactionTitle, organizationId, organizationName, ownerManagerName, kind, description, riskLevel,
+                 responsibleId, responsibleName, dueOn, status, resolution, createdBy, createdByName, createdAt, resolvedByName, resolvedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        interactionId:
+          type: string
+          format: uuid
+        interactionTitle:
+          type: string
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        ownerManagerName:
+          description: КАМ вуза; null — КАМ не назначен
+          type: [string, 'null']
+        kind:
+          type: string
+          description: PROBLEM — проблема, RISK — риск
+          enum: [PROBLEM, RISK]
+        description:
+          type: string
+        riskLevel:
+          description: Уровень риска; у проблемы null
+          type: [string, 'null']
+          enum: [MEDIUM, HIGH, null]
+        responsibleId:
+          type: string
+          format: uuid
+        responsibleName:
+          type: string
+        dueOn:
+          description: Срок решения
+          type: [string, 'null']
+          format: date
+        status:
+          type: string
+          description: OPEN — открыта, RESOLVED — решена
+          enum: [OPEN, RESOLVED]
+        resolution:
+          description: Комментарий о решении
+          type: [string, 'null']
+        createdBy:
+          type: string
+          format: uuid
+        createdByName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        resolvedByName:
+          type: [string, 'null']
+        resolvedAt:
+          type: [string, 'null']
+          format: date-time
+    InteractionIssueList:
+      type: object
+      required: [items, responsibleOptions]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InteractionIssue'
+        responsibleOptions:
+          type: array
+          items:
+            $ref: '#/components/schemas/IssueResponsibleOption'
+    IssueResponsibleOption:
+      type: object
+      required: [id, displayName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+    InteractionIssuePage:
+      type: object
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InteractionIssue'
+        page:
+          type: integer
+        size:
+          type: integer
+        total:
+          type: integer
+          format: int64
+    InteractionIssueRequest:
+      type: object
+      required: [version, description]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+          description: Текущая версия работы
+        kind:
+          description: Обязателен при добавлении; при изменении должен совпадать с видом записи или отсутствовать
+          type: [string, 'null']
+          enum: [PROBLEM, RISK, null]
+        description:
+          type: string
+          maxLength: 1000
+        riskLevel:
+          description: Обязателен для риска, для проблемы не учитывается
+          type: [string, 'null']
+          enum: [MEDIUM, HIGH, null]
+        responsibleId:
+          description: Без значения — КАМ вуза при добавлении и прежний ответственный при изменении
+          type: [string, 'null']
+          format: uuid
+        dueOn:
+          type: [string, 'null']
+          format: date
+    InteractionIssueResolution:
+      type: object
+      required: [version, resolution]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        resolution:
+          type: string
+          maxLength: 1000
     InteractionSummary:
       type: object
       required: [id, organizationId, title, currentStageId, currentStageName, nextAction, nextActionAt, contactIds, programId, productIds, lastContactAt, version, createdBy, createdAt, updatedAt, marks]
@@ -9344,15 +9759,6 @@ components:
         waitingNote:
           type: [string, 'null']
           maxLength: 500
-        problem:
-          type: [string, 'null']
-          maxLength: 1000
-        riskLevel:
-          type: [string, 'null']
-          enum: [MEDIUM, HIGH, null]
-        riskReason:
-          type: [string, 'null']
-          maxLength: 1000
     InteractionStageEdit:
       type: object
       required: [version, operations]
@@ -10504,7 +10910,7 @@ components:
              AGREEMENT_UPDATED, ATTACHMENT_DELETED, STAGE_COMPLETED, STAGE_COMPLETION_CLEARED, ASSIGNMENT]
     InteractionFlag:
       type: string
-      description: WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — отмечена проблема; RISK — отмечен риск любого уровня; RISK_OR_PROBLEM — отмечен риск или проблема (только отбор списка работ)
+      description: WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — есть открытая проблема в реестре; RISK — есть открытый риск любого уровня; RISK_OR_PROBLEM — есть открытый риск или проблема (только отбор списка работ)
       enum: [WAITING_UNIVERSITY, WAITING_RTK, PROBLEM, RISK, RISK_OR_PROBLEM]
     ReportColumn:
       type: string

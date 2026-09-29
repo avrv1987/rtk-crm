@@ -12,6 +12,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
+import ru.rtk.crm.interaction.InteractionFlag;
 import ru.rtk.crm.interaction.InteractionRepository;
 import ru.rtk.crm.work.WorkModels.ReminderLicense;
 import ru.rtk.crm.work.WorkModels.ReminderStep;
@@ -30,8 +31,7 @@ public class WorkRepository {
                    CASE WHEN i.next_action_at < :now THEN 1 ELSE 0 END AS overdue,
                    CASE WHEN i.next_action IS NULL OR i.next_action_at IS NULL THEN 1 ELSE 0 END AS without_next_step,
                    CASE WHEN %s <= :stuckBefore THEN 1 ELSE 0 END AS stuck,
-                   CASE WHEN i.risk_level IS NOT NULL OR i.problem IS NOT NULL THEN 1 ELSE 0 END AS at_risk
-            """;
+            """ + "CASE WHEN " + InteractionFlag.RISK_OR_PROBLEM.condition() + " THEN 1 ELSE 0 END AS at_risk\n";
 
     private static final String COUNTED_LEARNING = """
             FROM learning_snapshots snapshot

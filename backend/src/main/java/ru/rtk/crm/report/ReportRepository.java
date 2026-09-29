@@ -27,15 +27,15 @@ import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
 import ru.rtk.crm.interaction.InteractionMarks;
 import ru.rtk.crm.interaction.InteractionRepository;
-import ru.rtk.crm.interaction.InteractionRiskLevel;
-import ru.rtk.crm.interaction.InteractionWaiting;
-import ru.rtk.crm.interaction.InteractionWorkStatus;
+import ru.rtk.crm.interaction.InteractionIssueRepository;
 import ru.rtk.crm.interaction.ProductAgreementRules;
 
 @Repository
 public class ReportRepository {
     private static final int PRODUCT_BATCH_SIZE = 500;
     private static final String NO_ROWS = "1 = 0";
+    private static final String MARKS = "i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note,\n"
+            + InteractionIssueRepository.MARK_COLUMNS + ",\n";
     private static final String STAGE_ENTERED = """
             COALESCE((SELECT MAX(ce.occurred_at) FROM interaction_events ce
                       WHERE ce.interaction_id = i.id AND ce.stage_id = i.current_stage_id
@@ -56,7 +56,7 @@ public class ReportRepository {
                    d.id AS direction_id, d.name AS direction_name,
                    p.id AS program_id, p.name AS program_name,
                    s.name AS stage_name,
-                   i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note, i.problem, i.risk_level, i.risk_reason,
+            """ + MARKS + """
                    o.owner_manager_id AS manager_id, m.display_name AS manager_name,
                    i.created_at, i.next_action, i.next_action_at,
                    (SELECT MAX(le.occurred_at) FROM interaction_events le WHERE le.interaction_id = i.id) AS last_event_at,
@@ -77,7 +77,7 @@ public class ReportRepository {
                    d.id AS direction_id, d.name AS direction_name,
                    p.id AS program_id, p.name AS program_name,
                    sn.stage_name AS stage_name,
-                   i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note, i.problem, i.risk_level, i.risk_reason,
+            """ + MARKS + """
                    sn.manager_id AS manager_id, m.display_name AS manager_name,
                    i.created_at, i.next_action, i.next_action_at,
                    sn.last_event_at AS last_event_at,
@@ -115,7 +115,7 @@ public class ReportRepository {
                    d.id AS direction_id, d.name AS direction_name,
                    p.id AS program_id, p.name AS program_name,
                    e.stage_name_snapshot AS stage_name,
-                   i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note, i.problem, i.risk_level, i.risk_reason,
+            """ + MARKS + """
                    e.owner_manager_id_snapshot AS manager_id, m.display_name AS manager_name,
                    i.created_at, i.next_action, i.next_action_at,
                    CAST(NULL AS TIMESTAMP WITH TIME ZONE) AS last_event_at,
@@ -146,8 +146,9 @@ public class ReportRepository {
                    CAST(NULL AS VARCHAR(200)) AS stage_name,
                    CAST(NULL AS VARCHAR(16)) AS work_status, CAST(NULL AS VARCHAR(1000)) AS work_status_reason,
                    CAST(NULL AS VARCHAR(16)) AS waiting_on, CAST(NULL AS VARCHAR(500)) AS waiting_note,
-                   CAST(NULL AS VARCHAR(1000)) AS problem, CAST(NULL AS VARCHAR(16)) AS risk_level,
-                   CAST(NULL AS VARCHAR(1000)) AS risk_reason,
+                   CAST(NULL AS BIGINT) AS problem_count, CAST(NULL AS BIGINT) AS risk_count,
+                   CAST(NULL AS VARCHAR(16)) AS risk_level, CAST(NULL AS VARCHAR(4000)) AS problems,
+                   CAST(NULL AS VARCHAR(4000)) AS risks,
                    ae.owner_manager_id AS manager_id, m.display_name AS manager_name,
                    CAST(NULL AS TIMESTAMP WITH TIME ZONE) AS created_at, CAST(NULL AS VARCHAR(500)) AS next_action,
                    CAST(NULL AS TIMESTAMP WITH TIME ZONE) AS next_action_at,
@@ -975,20 +976,7 @@ public class ReportRepository {
 
     private InteractionMarks mapMarks(ResultSet resultSet) throws SQLException {
         String workStatus = resultSet.getString("work_status");
-        if (workStatus == null) {
-            return null;
-        }
-        String waitingOn = resultSet.getString("waiting_on");
-        String riskLevel = resultSet.getString("risk_level");
-        return new InteractionMarks(
-                InteractionWorkStatus.valueOf(workStatus),
-                resultSet.getString("work_status_reason"),
-                waitingOn == null ? null : InteractionWaiting.valueOf(waitingOn),
-                resultSet.getString("waiting_note"),
-                resultSet.getString("problem"),
-                riskLevel == null ? null : InteractionRiskLevel.valueOf(riskLevel),
-                resultSet.getString("risk_reason")
-        );
+        return workStatus == null ? null : InteractionIssueRepository.mapMarks(resultSet);
     }
 
     private ReportRow mapDemandRow(ResultSet resultSet, int rowNumber) throws SQLException {

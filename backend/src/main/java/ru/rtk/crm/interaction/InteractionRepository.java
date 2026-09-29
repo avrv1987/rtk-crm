@@ -95,7 +95,8 @@ public class InteractionRepository {
                 SELECT i.id, i.organization_id, i.title, i.current_stage_id, current_stage.name AS current_stage_name,
                        i.next_action, i.next_action_at, i.program_id, i.last_contact_at,
                        i.version, i.created_by, i.created_at, i.updated_at, i.next_step_partner_visible,
-                       i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note, i.problem, i.risk_level, i.risk_reason,
+                       i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note,
+                       %s,
                        o.name AS organization_name, program.name AS program_name,
                        owner_profile.display_name AS owner_manager_name,
                        %s AS last_event_type,
@@ -113,6 +114,7 @@ public class InteractionRepository {
                 ORDER BY %s
                 LIMIT :size OFFSET :offset
                 """.formatted(
+                        InteractionIssueRepository.MARK_COLUMNS,
                         LAST_EVENT.formatted("type"),
                         LAST_EVENT.formatted("occurred_at"),
                         STAGE_ENTERED_AT,
@@ -653,8 +655,7 @@ public class InteractionRepository {
         return jdbcClient.sql("""
                 UPDATE interactions
                 SET work_status = :workStatus, work_status_reason = :workStatusReason,
-                    waiting_on = :waitingOn, waiting_note = :waitingNote, problem = :problem,
-                    risk_level = :riskLevel, risk_reason = :riskReason,
+                    waiting_on = :waitingOn, waiting_note = :waitingNote,
                     version = version + 1, updated_at = :updatedAt
                 WHERE id = :interactionId AND version = :expectedVersion
                 """)
@@ -664,9 +665,6 @@ public class InteractionRepository {
                 .param("workStatusReason", marks.statusReason())
                 .param("waitingOn", marks.waitingOn() == null ? null : marks.waitingOn().name())
                 .param("waitingNote", marks.waitingNote())
-                .param("problem", marks.problem())
-                .param("riskLevel", marks.riskLevel() == null ? null : marks.riskLevel().name())
-                .param("riskReason", marks.riskReason())
                 .param("updatedAt", updatedAt)
                 .update() == 1;
     }
@@ -830,12 +828,13 @@ public class InteractionRepository {
                 SELECT i.id, i.organization_id, i.title, i.current_stage_id, current_stage.name AS current_stage_name,
                        i.next_action, i.next_action_at, i.program_id, i.last_contact_at,
                        i.version, i.created_by, i.created_at, i.updated_at, i.next_step_partner_visible,
-                       i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note, i.problem, i.risk_level, i.risk_reason
+                       i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note,
+                       %s
                 FROM interactions i
                 JOIN interaction_stages current_stage
                   ON current_stage.id = i.current_stage_id AND current_stage.interaction_id = i.id
                 WHERE i.id = :interactionId
-                """ + lock))
+                """.formatted(InteractionIssueRepository.MARK_COLUMNS) + lock))
                 .param("interactionId", interactionId)
                 .query(this::mapInteractionRow)
                 .optional();
@@ -856,22 +855,8 @@ public class InteractionRepository {
                 resultSet.getObject("created_by", UUID.class),
                 resultSet.getObject("created_at", OffsetDateTime.class),
                 resultSet.getObject("updated_at", OffsetDateTime.class),
-                mapMarks(resultSet),
+                InteractionIssueRepository.mapMarks(resultSet),
                 resultSet.getBoolean("next_step_partner_visible")
-        );
-    }
-
-    private InteractionMarks mapMarks(ResultSet resultSet) throws SQLException {
-        String waitingOn = resultSet.getString("waiting_on");
-        String riskLevel = resultSet.getString("risk_level");
-        return new InteractionMarks(
-                InteractionWorkStatus.valueOf(resultSet.getString("work_status")),
-                resultSet.getString("work_status_reason"),
-                waitingOn == null ? null : InteractionWaiting.valueOf(waitingOn),
-                resultSet.getString("waiting_note"),
-                resultSet.getString("problem"),
-                riskLevel == null ? null : InteractionRiskLevel.valueOf(riskLevel),
-                resultSet.getString("risk_reason")
         );
     }
 

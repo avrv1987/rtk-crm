@@ -536,6 +536,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Реестр проблем и рисков по работам
+         * @description Записи реестра по работам в области видимости роли: USER — свои вузы и вузы, где он заместитель; LEADER — своя команда; MANAGEMENT — все команды; ADMIN получает пустую страницу, PARTNER — 403. Порядок: сначала записи со сроком (ближайший раньше), затем без срока, внутри — по времени отметки.
+         */
+        get: operations["listIssues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/issues/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Выгрузить реестр проблем и рисков в XLSX
+         * @description Те же отборы и права, что у listIssues, все строки без постраничного деления. Если строк больше app.reports.max-rows, ответ 422 REPORT_ROW_LIMIT. Скачивание записывается в журнал безопасности.
+         */
+        get: operations["downloadIssues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/work/learning-trend": {
         parameters: {
             query?: never;
@@ -1150,10 +1190,74 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Отметить ожидание, проблему и риск работы
-         * @description Заменяет флаги работы: от кого ожидается ответ (вуз или РТК) с примечанием, открытую проблему и уровень риска с причиной. Отсутствующие или null значения снимают флаг; уровень риска требует причину. Эффективное изменение записывает одно событие истории DETAILS_UPDATED; запрос без изменений возвращает карточку без изменений.
+         * Отметить, чего ждёт работа
+         * @description Заменяет отметку ожидания: от кого ожидается ответ (вуз или РТК) с примечанием; null снимает отметку. Проблемы и риски ведутся в реестре (/api/interactions/{id}/issues). Эффективное изменение записывает одно событие истории DETAILS_UPDATED; запрос без изменений возвращает карточку без изменений.
          */
         post: operations["updateInteractionFlags"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interactions/{id}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Проблемы и риски работы
+         * @description Все записи реестра проблем и рисков работы: сначала открытые, затем решённые, внутри — по времени отметки. Видны тем, кто видит карточку работы (USER, LEADER, MANAGEMENT); PARTNER и ADMIN получают 403 или 404. responsibleOptions — активные сотрудники (USER, LEADER) команды вуза, которых можно назначить ответственными.
+         */
+        get: operations["listInteractionIssues"];
+        put?: never;
+        /**
+         * Добавить проблему или риск работы
+         * @description Только USER и LEADER, которые могут вести карточку. Описание обязательно, для риска обязателен уровень. Без responsibleId ответственным становится КАМ вуза (или автор, если КАМ не назначен); ответственным можно выбрать только сотрудника из responsibleOptions. Повышает версию работы и пишет событие истории DETAILS_UPDATED.
+         */
+        post: operations["createInteractionIssue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interactions/{id}/issues/{issueId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить открытую проблему или риск
+         * @description Заменяет описание, уровень риска, ответственного и срок открытой записи; вид записи не меняется, решённую запись изменить нельзя. Запрос без изменений возвращает работу без новой версии. Изменение пишет событие DETAILS_UPDATED с перечнем правок.
+         */
+        patch: operations["updateInteractionIssue"];
+        trace?: never;
+    };
+    "/api/interactions/{id}/issues/{issueId}/resolution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Отметить проблему или риск решённым
+         * @description Комментарий о решении обязателен. Запись остаётся в реестре со статусом RESOLVED; пишет событие DETAILS_UPDATED.
+         */
+        post: operations["resolveInteractionIssue"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3994,11 +4098,107 @@ export interface components {
              */
             waitingOn: "UNIVERSITY" | "RTK" | null;
             waitingNote: string | null;
-            /** @description Описание нерешённой проблемы; null — проблемы нет */
-            problem: string | null;
-            /** @enum {string|null} */
+            /** @description Число открытых проблем в реестре работы */
+            problemCount: number;
+            /** @description Число открытых рисков в реестре работы */
+            riskCount: number;
+            /**
+             * @description Наибольший уровень открытых рисков; null — открытых рисков нет
+             * @enum {string|null}
+             */
             riskLevel: "MEDIUM" | "HIGH" | null;
-            riskReason: string | null;
+            /** @description Описания открытых проблем через точку с запятой */
+            problems: string | null;
+            /** @description Открытые риски в виде «уровень: описание» через точку с запятой, сначала высокие */
+            risks: string | null;
+        };
+        InteractionIssue: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            interactionId: string;
+            interactionTitle: string;
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            /** @description КАМ вуза; null — КАМ не назначен */
+            ownerManagerName: string | null;
+            /**
+             * @description PROBLEM — проблема, RISK — риск
+             * @enum {string}
+             */
+            kind: "PROBLEM" | "RISK";
+            description: string;
+            /**
+             * @description Уровень риска; у проблемы null
+             * @enum {string|null}
+             */
+            riskLevel: "MEDIUM" | "HIGH" | null;
+            /** Format: uuid */
+            responsibleId: string;
+            responsibleName: string;
+            /**
+             * Format: date
+             * @description Срок решения
+             */
+            dueOn: string | null;
+            /**
+             * @description OPEN — открыта, RESOLVED — решена
+             * @enum {string}
+             */
+            status: "OPEN" | "RESOLVED";
+            /** @description Комментарий о решении */
+            resolution: string | null;
+            /** Format: uuid */
+            createdBy: string;
+            createdByName: string;
+            /** Format: date-time */
+            createdAt: string;
+            resolvedByName: string | null;
+            /** Format: date-time */
+            resolvedAt: string | null;
+        };
+        InteractionIssueList: {
+            items: components["schemas"]["InteractionIssue"][];
+            responsibleOptions: components["schemas"]["IssueResponsibleOption"][];
+        };
+        IssueResponsibleOption: {
+            /** Format: uuid */
+            id: string;
+            displayName: string;
+        };
+        InteractionIssuePage: {
+            items: components["schemas"]["InteractionIssue"][];
+            page: number;
+            size: number;
+            /** Format: int64 */
+            total: number;
+        };
+        InteractionIssueRequest: {
+            /** @description Текущая версия работы */
+            version: number;
+            /**
+             * @description Обязателен при добавлении; при изменении должен совпадать с видом записи или отсутствовать
+             * @enum {string|null}
+             */
+            kind?: "PROBLEM" | "RISK" | null;
+            description: string;
+            /**
+             * @description Обязателен для риска, для проблемы не учитывается
+             * @enum {string|null}
+             */
+            riskLevel?: "MEDIUM" | "HIGH" | null;
+            /**
+             * Format: uuid
+             * @description Без значения — КАМ вуза при добавлении и прежний ответственный при изменении
+             */
+            responsibleId?: string | null;
+            /** Format: date */
+            dueOn?: string | null;
+        };
+        InteractionIssueResolution: {
+            version: number;
+            resolution: string;
         };
         InteractionSummary: {
             /** Format: uuid */
@@ -4494,10 +4694,6 @@ export interface components {
             /** @enum {string|null} */
             waitingOn?: "UNIVERSITY" | "RTK" | null;
             waitingNote?: string | null;
-            problem?: string | null;
-            /** @enum {string|null} */
-            riskLevel?: "MEDIUM" | "HIGH" | null;
-            riskReason?: string | null;
         };
         InteractionStageEdit: {
             version: number;
@@ -5107,7 +5303,7 @@ export interface components {
          */
         ReportEventType: "CREATED" | "TRANSITIONED" | "COMMENTED" | "STAGES_EDITED" | "PLAN_UPDATED" | "DETAILS_UPDATED" | "STATUS_CHANGED" | "AGREEMENT_UPDATED" | "ATTACHMENT_DELETED" | "STAGE_COMPLETED" | "STAGE_COMPLETION_CLEARED" | "ASSIGNMENT";
         /**
-         * @description WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — отмечена проблема; RISK — отмечен риск любого уровня; RISK_OR_PROBLEM — отмечен риск или проблема (только отбор списка работ)
+         * @description WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — есть открытая проблема в реестре; RISK — есть открытый риск любого уровня; RISK_OR_PROBLEM — есть открытый риск или проблема (только отбор списка работ)
          * @enum {string}
          */
         InteractionFlag: "WAITING_UNIVERSITY" | "WAITING_RTK" | "PROBLEM" | "RISK" | "RISK_OR_PROBLEM";
@@ -6187,6 +6383,17 @@ export interface components {
         AgreementConfirmationKind: string;
         AgreementConfirmationFrom: string;
         AgreementConfirmationTo: string;
+        IssueId: string;
+        /** @description PROBLEM — проблемы, RISK — риски */
+        IssueKind: "PROBLEM" | "RISK";
+        IssueRiskLevel: "MEDIUM" | "HIGH";
+        /** @description Идентификатор профиля ответственного */
+        IssueResponsible: string;
+        IssueOrganization: string;
+        /** @description true — только открытые записи со сроком раньше сегодняшнего дня (МСК) */
+        IssueOverdue: boolean;
+        /** @description Без параметра — только открытые; RESOLVED — только решённые; ALL — все */
+        IssueStatus: "OPEN" | "RESOLVED" | "ALL";
         /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
         CsrfHeader: string;
         IdempotencyKey: string;
@@ -7197,6 +7404,87 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    listIssues: {
+        parameters: {
+            query?: {
+                /** @description PROBLEM — проблемы, RISK — риски */
+                kind?: components["parameters"]["IssueKind"];
+                riskLevel?: components["parameters"]["IssueRiskLevel"];
+                /** @description Идентификатор профиля ответственного */
+                responsible?: components["parameters"]["IssueResponsible"];
+                organizationId?: components["parameters"]["IssueOrganization"];
+                /** @description true — только открытые записи со сроком раньше сегодняшнего дня (МСК) */
+                overdue?: components["parameters"]["IssueOverdue"];
+                /** @description Без параметра — только открытые; RESOLVED — только решённые; ALL — все */
+                status?: components["parameters"]["IssueStatus"];
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Страница записей реестра */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionIssuePage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    downloadIssues: {
+        parameters: {
+            query?: {
+                /** @description PROBLEM — проблемы, RISK — риски */
+                kind?: components["parameters"]["IssueKind"];
+                riskLevel?: components["parameters"]["IssueRiskLevel"];
+                /** @description Идентификатор профиля ответственного */
+                responsible?: components["parameters"]["IssueResponsible"];
+                organizationId?: components["parameters"]["IssueOrganization"];
+                /** @description true — только открытые записи со сроком раньше сегодняшнего дня (МСК) */
+                overdue?: components["parameters"]["IssueOverdue"];
+                /** @description Без параметра — только открытые; RESOLVED — только решённые; ALL — все */
+                status?: components["parameters"]["IssueStatus"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Файл XLSX; Content-Disposition содержит имя файла в UTF-8 (filename*) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            /** @description REPORT_ROW_LIMIT — строк по отбору больше app.reports.max-rows; сузьте отбор */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
     getLearningTrend: {
         parameters: {
             query?: {
@@ -7463,7 +7751,7 @@ export interface operations {
                 stage?: string;
                 /** @description Статус работы; без параметра показываются только активные работы, ALL снимает отбор */
                 status?: "ACTIVE" | "PAUSED" | "COMPLETED" | "ALL";
-                /** @description WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — отмечена проблема; RISK — отмечен риск любого уровня; RISK_OR_PROBLEM — отмечен риск или проблема */
+                /** @description WAITING_UNIVERSITY — ждём ответа вуза; WAITING_RTK — ждём действия РТК; PROBLEM — есть открытая проблема в реестре; RISK — есть открытый риск любого уровня; RISK_OR_PROBLEM — есть открытый риск или проблема */
                 flag?: components["schemas"]["InteractionFlag"];
                 /** @description Только взаимодействия с продуктом, у которого год окончания лицензии меньше или равен этому году */
                 licenseExpiresBy?: number;
@@ -8351,6 +8639,143 @@ export interface operations {
         };
         responses: {
             /** @description Взаимодействие после обновления флагов */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Interaction"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listInteractionIssues: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Записи реестра и варианты ответственного */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionIssueList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createInteractionIssue: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InteractionIssueRequest"];
+            };
+        };
+        responses: {
+            /** @description Работа после добавления записи */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Interaction"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateInteractionIssue: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+                issueId: components["parameters"]["IssueId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InteractionIssueRequest"];
+            };
+        };
+        responses: {
+            /** @description Работа после изменения записи */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Interaction"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resolveInteractionIssue: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+                issueId: components["parameters"]["IssueId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InteractionIssueResolution"];
+            };
+        };
+        responses: {
+            /** @description Работа после решения записи */
             200: {
                 headers: {
                     [name: string]: unknown;

@@ -91,7 +91,7 @@ class WorkControlTest {
     void setUp() {
         createSchema();
         for (String table : List.of(
-                "reminder_settings", "learning_snapshots", "source_mappings", "source_records", "product_agreements", "products", "interaction_events",
+                "reminder_settings", "learning_snapshots", "source_mappings", "source_records", "product_agreements", "products", "interaction_events", "interaction_issues",
                 "interactions", "organization_deputies", "organization_assignment_events", "command_idempotency_records",
                 "organizations", "crm_user_profiles", "teams"
         )) {
@@ -348,12 +348,13 @@ class WorkControlTest {
         UUID both = insertInteraction(UNIVERSITY_C, "И риск, и проблема", "Позвонить", now.plusDays(1), now.minusDays(2), "ACTIVE");
         UUID paused = insertInteraction(UNIVERSITY_A, "Приостановлена с риском", "Позвонить", now.plusDays(1), now.minusDays(2), "PAUSED");
         UUID foreign = insertInteraction(UNIVERSITY_B, "Чужой риск", "Позвонить", now.plusDays(1), now.minusDays(2), "ACTIVE");
-        insertInteraction(UNIVERSITY_A, "Без отметок", "Позвонить", now.plusDays(1), now.minusDays(2), "ACTIVE");
+        UUID quiet = insertInteraction(UNIVERSITY_A, "Без отметок", "Позвонить", now.plusDays(1), now.minusDays(2), "ACTIVE");
         markRisk(risky, "HIGH", null);
         markRisk(problem, null, "Нет доступа к курсу");
         markRisk(both, "MEDIUM", "Срыв сроков");
         markRisk(paused, "HIGH", null);
         markRisk(foreign, "HIGH", null);
+        insertIssue(quiet, "RISK", "Риск снят", "HIGH", "RESOLVED");
 
         WorkModels.TeamIndicators indicators = workService.teamIndicators(leaderA, null);
         WorkModels.TeamsSummary summary = workService.teamsSummary(management, null);
@@ -586,10 +587,22 @@ class WorkControlTest {
     }
 
     private void markRisk(UUID interactionId, String riskLevel, String problem) {
-        jdbcTemplate.update(
-                "UPDATE interactions SET risk_level = ?, risk_reason = ?, problem = ? WHERE id = ?",
-                riskLevel, riskLevel == null ? null : "Причина риска", problem, interactionId
-        );
+        if (riskLevel != null) {
+            insertIssue(interactionId, "RISK", "Причина риска", riskLevel, "OPEN");
+        }
+        if (problem != null) {
+            insertIssue(interactionId, "PROBLEM", problem, null, "OPEN");
+        }
+    }
+
+    private void insertIssue(UUID interactionId, String kind, String description, String riskLevel, String status) {
+        jdbcTemplate.update("""
+                INSERT INTO interaction_issues (
+                    id, interaction_id, kind, description, risk_level, responsible_profile_id, status, resolution,
+                    created_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, UUID.randomUUID(), interactionId, kind, description, riskLevel, KAM_A, status,
+                "OPEN".equals(status) ? null : "Решено", KAM_A);
     }
 
     private UUID insertProduct(String name) {
@@ -731,11 +744,18 @@ class WorkControlTest {
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS interaction_issues (
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
+                    description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
+                    status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, resolved_by UUID, resolved_at TIMESTAMP WITH TIME ZONE
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL,
                     current_stage_id UUID NOT NULL, next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE,
-                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, work_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
-                    problem VARCHAR(1000), risk_level VARCHAR(16), risk_reason VARCHAR(1000)
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, work_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE'
                 )
                 """,
                 """

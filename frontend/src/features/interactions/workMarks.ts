@@ -1,9 +1,9 @@
 import { ApiError, type ContactRole, type InteractionMarks } from '../../shared/api/client'
+import { issueBadges } from '../issues/issueModel'
 import { formatMoscowDateTime } from './moscowTime'
 
 export type WorkStatus = InteractionMarks['status']
 export type WaitingOn = NonNullable<InteractionMarks['waitingOn']>
-export type RiskLevel = NonNullable<InteractionMarks['riskLevel']>
 
 export const workStatusLabels: Record<WorkStatus, string> = {
   ACTIVE: 'Активна',
@@ -14,11 +14,6 @@ export const workStatusLabels: Record<WorkStatus, string> = {
 export const waitingLabels: Record<WaitingOn, string> = {
   UNIVERSITY: 'Ждём вуз',
   RTK: 'Ждём РТК'
-}
-
-export const riskLabels: Record<RiskLevel, string> = {
-  MEDIUM: 'средний',
-  HIGH: 'высокий'
 }
 
 export const contactRoleLabels: Record<ContactRole, string> = {
@@ -36,6 +31,7 @@ export type MarkBadge = {
   tone: 'overdue' | 'missing' | 'planned'
   label: string
   title?: string
+  issues?: boolean
 }
 
 export const markBadges = (marks: InteractionMarks): MarkBadge[] => {
@@ -46,17 +42,7 @@ export const markBadges = (marks: InteractionMarks): MarkBadge[] => {
   if (marks.waitingOn !== null) {
     badges.push({ key: 'waiting', tone: 'missing', label: waitingLabels[marks.waitingOn], title: marks.waitingNote ?? undefined })
   }
-  if (marks.problem !== null) {
-    badges.push({ key: 'problem', tone: 'overdue', label: 'Есть проблема', title: marks.problem })
-  }
-  if (marks.riskLevel !== null) {
-    badges.push({
-      key: 'risk',
-      tone: marks.riskLevel === 'HIGH' ? 'overdue' : 'missing',
-      label: `Риск: ${riskLabels[marks.riskLevel]}`,
-      title: marks.riskReason ?? undefined
-    })
-  }
+  issueBadges(marks).forEach((badge) => badges.push({ ...badge, issues: true }))
   return badges
 }
 

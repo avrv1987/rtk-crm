@@ -34,8 +34,10 @@ import ru.rtk.crm.catalog.ContactCreateRequest;
 import ru.rtk.crm.catalog.ContactService;
 import ru.rtk.crm.catalog.PersonalDataStatus;
 import ru.rtk.crm.interaction.InteractionCreateRequest;
-import ru.rtk.crm.interaction.InteractionFlagsRequest;
-import ru.rtk.crm.interaction.InteractionRiskLevel;
+import ru.rtk.crm.interaction.InteractionIssueKind;
+import ru.rtk.crm.interaction.InteractionIssueRequest;
+import ru.rtk.crm.interaction.InteractionIssueResolution;
+import ru.rtk.crm.interaction.InteractionIssueService;
 import ru.rtk.crm.interaction.InteractionService;
 import ru.rtk.crm.interaction.ProductAgreementService;
 import ru.rtk.crm.interaction.ProductAgreementUpdateRequest;
@@ -77,13 +79,14 @@ class DemoBootstrapCommandTest {
 
     private final ContactService contactService = mock(ContactService.class);
     private final InteractionService interactionService = mock(InteractionService.class);
+    private final InteractionIssueService interactionIssueService = mock(InteractionIssueService.class);
     private final AttachmentService attachmentService = mock(AttachmentService.class);
     private final ProductAgreementService productAgreementService = mock(ProductAgreementService.class);
 
     @BeforeEach
     void setUp() {
         createSchema();
-        for (String table : List.of("product_agreements", "agreements", "attachments", "contacts", "interactions", "products", "vendors", "programs", "directions",
+        for (String table : List.of("product_agreements", "agreements", "attachments", "contacts", "interaction_issues", "interactions", "products", "vendors", "programs", "directions",
                 "organizations", "crm_user_profiles", "teams")) {
             jdbcTemplate.update("DELETE FROM " + table);
         }
@@ -107,11 +110,26 @@ class DemoBootstrapCommandTest {
             }
             return null;
         });
-        when(interactionService.updateFlags(any(), any(), any(InteractionFlagsRequest.class), anyString())).thenAnswer(invocation -> {
-            InteractionFlagsRequest request = invocation.getArgument(2);
-            assertThat(request.version()).isEqualTo(0);
-            jdbcTemplate.update("UPDATE interactions SET problem = ?, risk_level = ?, risk_reason = ?, version = version + 1 WHERE id = ?",
-                    request.problem(), request.riskLevel().name(), request.riskReason(), invocation.getArgument(1));
+        when(interactionIssueService.create(any(), any(), any(InteractionIssueRequest.class), anyString())).thenAnswer(invocation -> {
+            InteractionIssueRequest request = invocation.getArgument(2);
+            UUID interactionId = invocation.getArgument(1);
+            assertThat(request.version()).isEqualTo(jdbcTemplate.queryForObject(
+                    "SELECT version FROM interactions WHERE id = ?", Integer.class, interactionId));
+            jdbcTemplate.update("""
+                    INSERT INTO interaction_issues (id, interaction_id, kind, description, risk_level, due_on,
+                        responsible_profile_id, created_by, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """, UUID.randomUUID(), interactionId, request.kind().name(), request.description(),
+                    request.riskLevel() == null ? null : request.riskLevel().name(), request.dueOn(),
+                    UUID.randomUUID(), UUID.randomUUID());
+            jdbcTemplate.update("UPDATE interactions SET version = version + 1 WHERE id = ?", interactionId);
+            return null;
+        });
+        when(interactionIssueService.resolve(any(), any(), any(), any(InteractionIssueResolution.class), anyString())).thenAnswer(invocation -> {
+            InteractionIssueResolution request = invocation.getArgument(3);
+            jdbcTemplate.update("UPDATE interaction_issues SET status = 'RESOLVED', resolution = ? WHERE id = ?",
+                    request.resolution(), invocation.getArgument(2));
+            jdbcTemplate.update("UPDATE interactions SET version = version + 1 WHERE id = ?", (UUID) invocation.getArgument(1));
             return null;
         });
         when(productAgreementService.update(any(), any(), any(), any(ProductAgreementUpdateRequest.class), anyString()))
@@ -181,11 +199,16 @@ class DemoBootstrapCommandTest {
         command.run(null);
         command.run(null);
 
-        verify(interactionService, times(1)).updateFlags(any(), any(), any(InteractionFlagsRequest.class), anyString());
+        verify(interactionIssueService, times(3)).create(any(), any(), any(InteractionIssueRequest.class), anyString());
+        verify(interactionIssueService, times(1)).resolve(any(), any(), any(), any(InteractionIssueResolution.class), anyString());
         verify(productAgreementService, times(2)).update(any(), any(), any(), any(ProductAgreementUpdateRequest.class), anyString());
-        assertThat(jdbcTemplate.queryForList("SELECT risk_level, problem FROM interactions"))
-                .extracting(row -> tuple(row.get("RISK_LEVEL"), row.get("PROBLEM")))
-                .containsExactly(tuple(InteractionRiskLevel.MEDIUM.name(), "Вуз задерживает подписанный акт передачи"));
+        assertThat(jdbcTemplate.queryForList("SELECT kind, risk_level, status FROM interaction_issues ORDER BY kind, status"))
+                .extracting(row -> tuple(row.get("KIND"), row.get("RISK_LEVEL"), row.get("STATUS")))
+                .containsExactly(
+                        tuple(InteractionIssueKind.PROBLEM.name(), null, "OPEN"),
+                        tuple(InteractionIssueKind.PROBLEM.name(), null, "RESOLVED"),
+                        tuple(InteractionIssueKind.RISK.name(), "MEDIUM", "OPEN")
+                );
         assertThat(jdbcTemplate.queryForList("""
                 SELECT contract_number, license_expiry_year, transferred_kinds FROM product_agreements ORDER BY contract_number
                 """)).extracting(row -> tuple(row.get("CONTRACT_NUMBER"), row.get("LICENSE_EXPIRY_YEAR"), row.get("TRANSFERRED_KINDS")))
@@ -330,7 +353,7 @@ class DemoBootstrapCommandTest {
 
     private DemoBootstrapCommand command(DemoBootstrapProperties properties) {
         return new DemoBootstrapCommand(properties, jdbcClient, new UserProfileRepository(jdbcClient), contactService,
-                interactionService, attachmentService, productAgreementService);
+                interactionService, interactionIssueService, attachmentService, productAgreementService);
     }
 
     private static DemoBootstrapProperties demo() {
@@ -417,9 +440,17 @@ class DemoBootstrapCommandTest {
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS interaction_issues (
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
+                    description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
+                    status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, resolved_by UUID, resolved_at TIMESTAMP WITH TIME ZONE
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL, current_stage_id UUID,
-                    version INTEGER NOT NULL DEFAULT 0, problem VARCHAR(1000), risk_level VARCHAR(16), risk_reason VARCHAR(1000),
+                    version INTEGER NOT NULL DEFAULT 0,
                     next_action VARCHAR(500), created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 )
                 """,

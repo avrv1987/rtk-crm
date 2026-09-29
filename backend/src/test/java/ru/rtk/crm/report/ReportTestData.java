@@ -121,8 +121,16 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS interaction_issues (
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
+                    description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
+                    status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, resolved_by UUID, resolved_at TIMESTAMP WITH TIME ZONE
+                )
+                """);
+        jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
-                    work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500), problem VARCHAR(1000), risk_level VARCHAR(16), risk_reason VARCHAR(1000),
+                    work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500),
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
                     title VARCHAR(200) NOT NULL,
@@ -333,7 +341,7 @@ final class ReportTestData {
                 """);
         for (String table : new String[]{
                 "learning_observations", "learning_snapshots", "source_mappings", "source_records", "report_jobs", "interaction_event_contacts", "contacts", "interaction_events", "product_transfers", "product_agreements", "interaction_stages",
-                "interactions", "products", "vendors", "programs", "directions", "organizations", "crm_user_profiles", "teams", "organization_assignment_events",
+                "interaction_issues", "interactions", "products", "vendors", "programs", "directions", "organizations", "crm_user_profiles", "teams", "organization_assignment_events",
                 "command_idempotency_records", "saved_reports"
         }) {
             jdbc.update("DELETE FROM " + table);

@@ -24,6 +24,7 @@ import {
 } from '../features/interactions/drafts'
 import { UnsavedDraftNotice } from '../features/interactions/UnsavedDraftNotice'
 import { HelpScreen } from '../features/help/HelpScreen'
+import { IssuesScreen } from '../features/issues/IssuesScreen'
 import { isSameRouteClick } from './routing'
 import { LandingPage } from '../features/landing/LandingPage'
 import { OrganizationsScreen } from '../features/organizations/OrganizationsScreen'
@@ -42,10 +43,11 @@ type SessionState =
   | { kind: 'failed' }
   | { kind: 'logoutFailed' }
 
-type Section = 'work' | 'organizations' | 'reports' | 'admin' | 'enrolment' | 'partner' | 'help'
+type Section = 'work' | 'issues' | 'organizations' | 'reports' | 'admin' | 'enrolment' | 'partner' | 'help'
 
 const sectionTitles: Record<Section, string> = {
   work: 'Моя работа',
+  issues: 'Проблемы и риски',
   organizations: 'Вузы',
   reports: 'Отчёты и статистика',
   admin: 'Администрирование',
@@ -65,7 +67,7 @@ const sectionsFor = (profile: Me): Section[] => {
   if (profile.role === 'PARTNER') {
     return ['partner', 'help']
   }
-  const sections: Section[] = ['work', 'organizations', 'reports']
+  const sections: Section[] = ['work', 'issues', 'organizations', 'reports']
   if (profile.enrolmentOperator) {
     sections.push('enrolment')
   }
@@ -334,6 +336,15 @@ export const App = () => {
               role={state.profile.role}
               initialQuery={route.query}
               refreshSignal={routePulse}
+              onSessionExpired={handleSessionExpired}
+              onProfileUnavailable={handleProfileUnavailable}
+            />
+          )}
+          {section === 'issues' && (
+            <IssuesScreen
+              key={routePulse}
+              profile={state.profile}
+              initialQuery={route.query}
               onSessionExpired={handleSessionExpired}
               onProfileUnavailable={handleProfileUnavailable}
             />

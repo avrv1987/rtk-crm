@@ -5,9 +5,9 @@ import java.util.Arrays;
 public enum InteractionFlag {
     WAITING_UNIVERSITY("Ждём вуз", "i.waiting_on = 'UNIVERSITY'"),
     WAITING_RTK("Ждём РТК", "i.waiting_on = 'RTK'"),
-    PROBLEM("Есть проблема", "i.problem IS NOT NULL"),
-    RISK("Есть риск", "i.risk_level IS NOT NULL"),
-    RISK_OR_PROBLEM("Есть риск или проблема", "(i.risk_level IS NOT NULL OR i.problem IS NOT NULL)");
+    PROBLEM("Есть проблема", openIssue("AND open_issue.kind = 'PROBLEM'")),
+    RISK("Есть риск", openIssue("AND open_issue.kind = 'RISK'")),
+    RISK_OR_PROBLEM("Есть риск или проблема", openIssue(""));
 
     private final String label;
     private final String condition;
@@ -15,6 +15,11 @@ public enum InteractionFlag {
     InteractionFlag(String label, String condition) {
         this.label = label;
         this.condition = condition;
+    }
+
+    private static String openIssue(String kind) {
+        return "EXISTS (SELECT 1 FROM interaction_issues open_issue WHERE open_issue.interaction_id = i.id"
+                + " AND open_issue.status = 'OPEN' " + kind + ")";
     }
 
     static InteractionFlag from(String value) {

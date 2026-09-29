@@ -1,15 +1,19 @@
 package ru.rtk.crm.interaction;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oidcLogin;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -25,6 +29,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.CurrentProfileService;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.catalog.Organization;
 import ru.rtk.crm.catalog.OrganizationListStatus;
 import ru.rtk.crm.catalog.OrganizationPage;
@@ -68,6 +73,12 @@ class WorkListsHttpTest {
     @MockitoBean
     private OrganizationRepository organizationRepository;
 
+    @MockitoBean
+    private InteractionIssueService interactionIssueService;
+
+    @MockitoBean
+    private AuditJournalRepository auditJournalRepository;
+
     @BeforeEach
     void setUp() {
         when(currentProfileService.requireActiveProfile(any())).thenReturn(PROFILE);
@@ -100,9 +111,11 @@ class WorkListsHttpTest {
                         "Вуз перенёс старт",
                         InteractionWaiting.UNIVERSITY,
                         "Ждём доступы",
-                        null,
+                        0,
+                        1,
                         InteractionRiskLevel.HIGH,
-                        "Вуз не отвечает три недели"
+                        null,
+                        "высокий: Вуз не отвечает три недели"
                 ),
                 "COMMENTED",
                 changedAt,
@@ -270,5 +283,63 @@ class WorkListsHttpTest {
                 .andExpect(jsonPath("$.fieldErrors.requiresAssignment").value("Значение в неверном формате"));
 
         verifyNoInteractions(organizationRepository);
+    }
+
+    @Test
+    void issueRegistryPassesFiltersAndExportsXlsxWithAJournalRecord() throws Exception {
+        UUID organizationId = ORGANIZATION_A;
+        UUID responsibleId = PROFILE.id();
+        OffsetDateTime markedAt = OffsetDateTime.parse("2026-09-20T10:00:00+03:00");
+        InteractionIssue issue = new InteractionIssue(
+                UUID.fromString("00000000-0000-0000-0000-000000000401"),
+                UUID.fromString("00000000-0000-0000-0000-000000000201"),
+                "Встреча с деканом",
+                organizationId,
+                "Колледж А2",
+                "Анна Смирнова",
+                InteractionIssueKind.RISK,
+                "=HYPERLINK(\"x\")",
+                InteractionRiskLevel.HIGH,
+                responsibleId,
+                "Анна Смирнова",
+                LocalDate.parse("2026-09-25"),
+                InteractionIssueStatus.OPEN,
+                null,
+                responsibleId,
+                "Анна Смирнова",
+                markedAt,
+                null,
+                null
+        );
+        InteractionIssueFilter filter = new InteractionIssueFilter(
+                InteractionIssueKind.RISK, InteractionRiskLevel.HIGH, responsibleId, organizationId, true, null
+        );
+        when(interactionIssueService.registry(any(), any(), anyInt(), anyInt()))
+                .thenReturn(new InteractionIssuePage(List.of(issue), 0, 25, 1));
+        when(interactionIssueService.registryRows(any(), any(), anyInt())).thenReturn(List.of(issue));
+
+        mockMvc.perform(get("/api/issues")
+                        .with(oidcLogin())
+                        .param("kind", "RISK")
+                        .param("riskLevel", "HIGH")
+                        .param("responsible", responsibleId.toString())
+                        .param("organizationId", organizationId.toString())
+                        .param("overdue", "true")
+                        .param("status", "ALL"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].interactionTitle").value("Встреча с деканом"))
+                .andExpect(jsonPath("$.items[0].riskLevel").value("HIGH"))
+                .andExpect(jsonPath("$.items[0].dueOn").value("2026-09-25"));
+        verify(interactionIssueService).registry(eq(PROFILE), eq(filter), eq(0), eq(25));
+
+        mockMvc.perform(get("/api/issues/file").with(oidcLogin()).param("kind", "RISK"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString("attachment")));
+        verify(auditJournalRepository).recordReportFileDownload(eq(PROFILE.id()), anyString(), eq("формат XLSX, строк: 1"), any());
+
+        mockMvc.perform(get("/api/issues").with(oidcLogin()).param("kind", "OTHER"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.kind").value("Такое значение не поддерживается"));
     }
 }

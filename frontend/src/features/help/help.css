@@ -125,6 +125,11 @@
   overflow-wrap: anywhere;
 }
 
+.help__table-scroll code {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
 .help__table-scroll th {
   color: var(--color-text-label);
   background: var(--color-surface-accent);

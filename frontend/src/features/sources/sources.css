@@ -132,6 +132,10 @@
   background: var(--color-canvas);
 }
 
+* + .source-panel {
+  margin-top: var(--space-6);
+}
+
 .source-panel h2,
 .source-panel h3 {
   margin: 0;
@@ -146,7 +150,7 @@
 
 @media (max-width: 640px) {
   .source-form {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

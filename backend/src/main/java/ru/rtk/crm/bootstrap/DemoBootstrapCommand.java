@@ -36,7 +36,10 @@ import ru.rtk.crm.catalog.Contact;
 import ru.rtk.crm.catalog.ContactCreateRequest;
 import ru.rtk.crm.catalog.ContactService;
 import ru.rtk.crm.interaction.InteractionCreateRequest;
-import ru.rtk.crm.interaction.InteractionFlagsRequest;
+import ru.rtk.crm.interaction.InteractionIssueKind;
+import ru.rtk.crm.interaction.InteractionIssueRequest;
+import ru.rtk.crm.interaction.InteractionIssueResolution;
+import ru.rtk.crm.interaction.InteractionIssueService;
 import ru.rtk.crm.interaction.InteractionRiskLevel;
 import ru.rtk.crm.interaction.InteractionService;
 import ru.rtk.crm.interaction.ProductAgreementContract;
@@ -54,6 +57,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     private static final Logger LOGGER = LoggerFactory.getLogger(DemoBootstrapCommand.class);
     private static final String DEMO_ORGANIZATION_NAME = "Университет А";
     private static final String DEMO_INTERACTION_TITLE = "Демо: внедрение цифрового университета";
+    private static final String DEMO_RESOLVED_PROBLEM = "У преподавателей нет доступа к учебному стенду";
     private static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
     private static final List<DemoAgreement> DEMO_AGREEMENTS = List.of(
             new DemoAgreement("Университет А", "kam-a", "ДЕМО-А/1", "DRAFT", null, null, "SIGNING", 20),
@@ -78,6 +82,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     private final UserProfileRepository userProfileRepository;
     private final ContactService contactService;
     private final InteractionService interactionService;
+    private final InteractionIssueService interactionIssueService;
     private final AttachmentService attachmentService;
     private final ProductAgreementService productAgreementService;
 
@@ -87,6 +92,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             UserProfileRepository userProfileRepository,
             ContactService contactService,
             InteractionService interactionService,
+            InteractionIssueService interactionIssueService,
             AttachmentService attachmentService,
             ProductAgreementService productAgreementService
     ) {
@@ -95,6 +101,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         this.userProfileRepository = userProfileRepository;
         this.contactService = contactService;
         this.interactionService = interactionService;
+        this.interactionIssueService = interactionIssueService;
         this.attachmentService = attachmentService;
         this.productAgreementService = productAgreementService;
     }
@@ -462,25 +469,12 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         }
         CrmProfile kam = userProfileRepository.findActiveByIdentity(kamIdentity.issuer(), kamIdentity.subject())
                 .orElseThrow(() -> new IllegalStateException("Demo bootstrap requires active kam-a profile"));
-        boolean unmarked = jdbcClient.sql("SELECT COUNT(*) FROM interactions WHERE id = :id AND risk_level IS NULL AND problem IS NULL")
+        boolean unmarked = jdbcClient.sql("SELECT COUNT(*) FROM interaction_issues WHERE interaction_id = :id")
                 .param("id", interactionId)
                 .query(Long.class)
-                .single() > 0;
+                .single() == 0;
         if (unmarked) {
-            int version = interactionVersion(interactionId);
-            interactionService.updateFlags(
-                    kam,
-                    interactionId,
-                    new InteractionFlagsRequest(
-                            version,
-                            null,
-                            null,
-                            "Вуз задерживает подписанный акт передачи",
-                            InteractionRiskLevel.MEDIUM,
-                            "Согласование лицензий идёт дольше плана"
-                    ),
-                    "demo-bootstrap/v1/flags:university-a:" + version
-            );
+            createDemoIssues(kam, interactionId);
         }
         List<UUID> agreementIds = jdbcClient.sql("""
                 SELECT agreement.id FROM product_agreements agreement
@@ -507,6 +501,46 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                     "demo-bootstrap/v1/agreement:" + agreementIds.get(index) + ":" + version
             );
         }
+    }
+
+    private void createDemoIssues(CrmProfile kam, UUID interactionId) {
+        LocalDate today = LocalDate.now(ZONE);
+        addDemoIssue(kam, interactionId, InteractionIssueKind.PROBLEM, "Вуз задерживает подписанный акт передачи", null,
+                today.minusDays(2), "act");
+        addDemoIssue(kam, interactionId, InteractionIssueKind.RISK, "Согласование лицензий идёт дольше плана",
+                InteractionRiskLevel.MEDIUM, today.plusDays(14), "licenses");
+        addDemoIssue(kam, interactionId, InteractionIssueKind.PROBLEM, DEMO_RESOLVED_PROBLEM, null, null, "access");
+        UUID resolvedId = jdbcClient.sql("SELECT id FROM interaction_issues WHERE interaction_id = :id AND description = :description")
+                .param("id", interactionId)
+                .param("description", DEMO_RESOLVED_PROBLEM)
+                .query(UUID.class)
+                .single();
+        int version = interactionVersion(interactionId);
+        interactionIssueService.resolve(
+                kam,
+                interactionId,
+                resolvedId,
+                new InteractionIssueResolution(version, "ИТ-служба вуза выдала доступы всем преподавателям"),
+                "demo-bootstrap/v1/issue-resolved:university-a:" + version
+        );
+    }
+
+    private void addDemoIssue(
+            CrmProfile kam,
+            UUID interactionId,
+            InteractionIssueKind kind,
+            String description,
+            InteractionRiskLevel riskLevel,
+            LocalDate dueOn,
+            String key
+    ) {
+        int version = interactionVersion(interactionId);
+        interactionIssueService.create(
+                kam,
+                interactionId,
+                new InteractionIssueRequest(version, kind, description, riskLevel, null, dueOn),
+                "demo-bootstrap/v1/issue:university-a:" + key + ":" + version
+        );
     }
 
     private int interactionVersion(UUID interactionId) {

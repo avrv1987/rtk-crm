@@ -74,14 +74,11 @@ public record ReportRow(
     }
 
     public String problem() {
-        return marks == null ? null : marks.problem();
+        return marks == null ? null : marks.problems();
     }
 
     public String risk() {
-        if (marks == null || marks.riskLevel() == null) {
-            return null;
-        }
-        return marks.riskLevel().label() + ": " + marks.riskReason();
+        return marks == null ? null : marks.risks();
     }
 
     public String vendorNames() {

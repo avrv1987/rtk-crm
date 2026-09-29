@@ -358,3 +358,20 @@
 .enrolment__move-compare p {
   margin: 0;
 }
+
+.catalog-import__table-scroll table[aria-label="Потоки зачисления"] {
+  min-width: 980px;
+}
+
+.catalog-import__table-scroll table[aria-label="Потоки зачисления"] th {
+  white-space: nowrap;
+  hyphens: manual;
+}
+
+.catalog-import__table-scroll table[aria-label="Потоки зачисления"] :is(th, td):nth-child(n + 4):nth-child(-n + 6) {
+  min-width: 0;
+}
+
+.catalog-import__table-scroll table[aria-label="Потоки зачисления"] td button {
+  white-space: nowrap;
+}

@@ -1443,7 +1443,7 @@ scenario('UAT-ОБЩ-11', 'Что передано по продукту и че
   })
   card = await step(3, 'Три отметки передачи', async () => requireStatus(await api(kamA, 'PATCH', '/api/interactions/' + work.id + '/product-agreements/' + agreementOf(card, secure).id, { body: { version: card.version, transfers: [{ kind: 'MATERIALS', status: 'TRANSFERRED', transferredOn: today, attachmentId: null }, { kind: 'LICENSE', status: 'TRANSFERRED', transferredOn: today, attachmentId: scan.id }, { kind: 'DOCUMENTATION', status: 'NOT_TRANSFERRED', transferredOn: null, attachmentId: null }] } }), 200, 'Отметки'))
   await step(4, '«Ждём вуз» и отбор', async () => {
-    requireStatus(await api(kamA, 'POST', '/api/interactions/' + work.id + '/flags', { body: { version: card.version, waitingOn: 'UNIVERSITY', waitingNote: 'Ждём документацию от вуза', problem: null, riskLevel: null, riskReason: null } }), 200, 'Ожидание')
+    requireStatus(await api(kamA, 'POST', '/api/interactions/' + work.id + '/flags', { body: { version: card.version, waitingOn: 'UNIVERSITY', waitingNote: 'Ждём документацию от вуза' } }), 200, 'Ожидание')
     const list = await listAll(kamA, '/api/interactions?flag=WAITING_UNIVERSITY&q=' + encodeURIComponent('UAT-ОБЩ-11 ' + nonce), 'Отбор')
     const report = requireStatus(await preview(kamA, { kind: 'PORTFOLIO', from: today, to: today, filters: { organizationIds: [university.id], flags: ['WAITING_UNIVERSITY'] }, columns: ['INTERACTION', 'WAITING'] }), 200, 'Отчёт')
     assert(list.length === 1 && report.items.some((row) => row.INTERACTION === work.title), 'Отбор ожидания')

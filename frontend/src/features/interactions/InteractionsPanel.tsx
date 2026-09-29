@@ -33,6 +33,7 @@ import {
 } from './drafts'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { InteractionDetailsForm } from './InteractionDetailsForm'
+import { InteractionIssuesPanel } from '../issues/InteractionIssuesPanel'
 import { InteractionFlagsForm } from './InteractionFlagsForm'
 import { InteractionMarkBadges } from './InteractionMarkBadges'
 import { InteractionStatusPanel } from './InteractionStatusPanel'
@@ -67,6 +68,7 @@ type InteractionsPanelProps = {
   view: InteractionsPanelView
   organizationId: Organization['id']
   initialInteractionId?: Interaction['id']
+  openIssues?: boolean
   profileId: string
   role: Me['role']
   partnerAccess?: PartnerAccessRights
@@ -504,7 +506,7 @@ const attachmentMessage = (error: unknown, action: 'upload' | 'download' | 'refr
 const attachmentLimitMegabytes = 20
 const attachmentLimitBytes = attachmentLimitMegabytes * 1024 * 1024
 
-type CardDialogKind = 'contact' | 'create' | 'transition' | 'step' | 'comment' | 'upload' | 'status' | 'flags' | 'stageEdit' | 'stageCompletion' | 'details'
+type CardDialogKind = 'contact' | 'create' | 'transition' | 'step' | 'comment' | 'upload' | 'status' | 'flags' | 'issues' | 'stageEdit' | 'stageCompletion' | 'details'
 
 type CardTabId = 'history' | 'documents' | 'contract' | 'transfers' | 'route' | 'learning' | 'cycles' | 'contacts' | 'teacherRoster'
 
@@ -548,6 +550,7 @@ export const InteractionsPanel = ({
   view,
   organizationId,
   initialInteractionId,
+  openIssues = false,
   profileId,
   role,
   partnerAccess,
@@ -1088,6 +1091,15 @@ export const InteractionsPanel = ({
     && (!stageEditNeedsName || stageEditName.trim().length > 0)
     && (stageEditType !== 'MOVE_AFTER' || stageEditId !== stageEditAfterId)
   const selectedInteractionId = currentInteraction?.id
+
+  const issuesOpenedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (openIssues && selectedInteractionId !== undefined && selectedInteractionId === initialInteractionId
+      && issuesOpenedFor.current !== selectedInteractionId) {
+      issuesOpenedFor.current = selectedInteractionId
+      setDialog('issues')
+    }
+  }, [initialInteractionId, openIssues, selectedInteractionId])
     ?? (detailState.kind === 'loading' || detailState.kind === 'failed' ? detailState.id : undefined)
 
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
@@ -2212,7 +2224,8 @@ export const InteractionsPanel = ({
   const allowedFromCurrent = currentInteraction?.transitions.filter((transition) => transition.fromStageId === currentInteraction.currentStageId) ?? []
   const workStatus = currentInteraction?.marks.status
   const cardMenuItems: CardMenuItem[] = canManageDailyWork ? [
-    { label: 'Ожидание, проблема и риск…', onSelect: () => setDialog('flags') },
+    { label: 'Проблемы и риски…', onSelect: () => setDialog('issues') },
+    { label: 'Чего ждём…', onSelect: () => setDialog('flags') },
     { label: 'Изменить данные работы…', onSelect: () => setDialog('details') },
     { label: 'Отметить этап выполненным…', onSelect: () => setDialog('stageCompletion') },
     { label: 'Изменить этапы этой работы…', onSelect: () => setDialog('stageEdit') },
@@ -2269,7 +2282,7 @@ export const InteractionsPanel = ({
                 {currentInteraction.marks.status === 'ACTIVE' && (
                   <span className="status status--planned">{workStatusLabels.ACTIVE}</span>
                 )}
-                <InteractionMarkBadges marks={currentInteraction.marks} />
+                <InteractionMarkBadges marks={currentInteraction.marks} onOpenIssues={() => setDialog('issues')} />
               </div>
               <p className="work-card__meta">
                 Программа: {currentInteraction.program === null ? 'не указана' : currentInteraction.program.name}
@@ -2678,6 +2691,18 @@ export const InteractionsPanel = ({
             )}
           </CardTabPanel>
 
+          <CardDialog open={dialog === 'issues'} title="Проблемы и риски" onClose={closeDialog}>
+            <InteractionIssuesPanel
+              key={`issues:${currentInteraction.id}`}
+              interaction={currentInteraction}
+              canEdit={canManageDailyWork}
+              onChanged={(interaction) => applyUpdatedInteraction(interaction)}
+              onRefresh={reload}
+              onSessionExpired={onSessionExpired}
+              onProfileUnavailable={onProfileUnavailable}
+            />
+          </CardDialog>
+
           {canManageDailyWork && (
             <>
               <CardDialog open={dialog === 'transition'} title="Переход этапа" onClose={closeDialog}>
@@ -3028,12 +3053,12 @@ export const InteractionsPanel = ({
                 />
               </CardDialog>
 
-              <CardDialog open={dialog === 'flags'} title="Ожидание, проблема и риск" onClose={closeDialog}>
+              <CardDialog open={dialog === 'flags'} title="Чего ждём" onClose={closeDialog}>
                 <InteractionFlagsForm
                   key={`flags:${currentInteraction.id}`}
                   interaction={currentInteraction}
                   profileId={profileId}
-                  onChanged={(interaction) => applyUpdatedInteraction(interaction, 'Отметки ожидания, проблемы и риска сохранены.')}
+                  onChanged={(interaction) => applyUpdatedInteraction(interaction, 'Отметка ожидания сохранена.')}
                   onRefresh={reload}
                   onSessionExpired={onSessionExpired}
                   onProfileUnavailable={onProfileUnavailable}

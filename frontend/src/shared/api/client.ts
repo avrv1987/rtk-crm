@@ -77,6 +77,12 @@ export type InteractionNextStep = components['schemas']['InteractionNextStep']
 export type InteractionMarks = components['schemas']['InteractionMarks']
 export type InteractionStatusChange = components['schemas']['InteractionStatusChange']
 export type InteractionFlagsUpdate = components['schemas']['InteractionFlagsUpdate']
+export type InteractionIssue = components['schemas']['InteractionIssue']
+export type InteractionIssueList = components['schemas']['InteractionIssueList']
+export type InteractionIssuePage = components['schemas']['InteractionIssuePage']
+export type InteractionIssueRequest = components['schemas']['InteractionIssueRequest']
+export type InteractionIssueResolution = components['schemas']['InteractionIssueResolution']
+export type IssueListParams = NonNullable<operations['listIssues']['parameters']['query']>
 export type InteractionListParams = NonNullable<operations['listInteractions']['parameters']['query']>
 export type InteractionDue = NonNullable<InteractionListParams['due']>
 export type InteractionStatusFilter = NonNullable<InteractionListParams['status']>
@@ -756,6 +762,49 @@ export class ApiClient {
     idempotencyKey: string
   ): Promise<Interaction> {
     return this.command<Interaction>(`/api/interactions/${encodeURIComponent(id)}/flags`, payload, idempotencyKey)
+  }
+
+  async listInteractionIssues(id: Interaction['id']): Promise<InteractionIssueList> {
+    return this.request<InteractionIssueList>(`/api/interactions/${encodeURIComponent(id)}/issues`)
+  }
+
+  async createInteractionIssue(id: Interaction['id'], payload: InteractionIssueRequest, idempotencyKey: string): Promise<Interaction> {
+    return this.command<Interaction>(`/api/interactions/${encodeURIComponent(id)}/issues`, payload, idempotencyKey)
+  }
+
+  async updateInteractionIssue(
+    id: Interaction['id'],
+    issueId: InteractionIssue['id'],
+    payload: InteractionIssueRequest,
+    idempotencyKey: string
+  ): Promise<Interaction> {
+    return this.command<Interaction>(
+      `/api/interactions/${encodeURIComponent(id)}/issues/${encodeURIComponent(issueId)}`,
+      payload,
+      idempotencyKey,
+      'PATCH'
+    )
+  }
+
+  async resolveInteractionIssue(
+    id: Interaction['id'],
+    issueId: InteractionIssue['id'],
+    payload: InteractionIssueResolution,
+    idempotencyKey: string
+  ): Promise<Interaction> {
+    return this.command<Interaction>(
+      `/api/interactions/${encodeURIComponent(id)}/issues/${encodeURIComponent(issueId)}/resolution`,
+      payload,
+      idempotencyKey
+    )
+  }
+
+  async listIssues(query: IssueListParams): Promise<InteractionIssuePage> {
+    return this.request<InteractionIssuePage>(`/api/issues${querySuffix(query)}`)
+  }
+
+  async downloadIssues(query: Omit<IssueListParams, 'page' | 'size'>): Promise<Blob> {
+    return this.download(`/api/issues/file${querySuffix(query)}`)
   }
 
   async editInteractionStages(
