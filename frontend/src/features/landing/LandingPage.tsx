@@ -409,7 +409,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
 
         <section id="lp-integrations" className="landing-section">
           <div className="landing-container">
-            <h2>Работает рядом с учебной платформой и сайтом</h2>
+            <h2>Работает вместе с учебной платформой</h2>
             <div className="landing-integrations">
               {integrations.map(([title, text]) => (
                 <div key={title} className="landing-integration">
