@@ -469,13 +469,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         }
         CrmProfile kam = userProfileRepository.findActiveByIdentity(kamIdentity.issuer(), kamIdentity.subject())
                 .orElseThrow(() -> new IllegalStateException("Demo bootstrap requires active kam-a profile"));
-        boolean unmarked = jdbcClient.sql("SELECT COUNT(*) FROM interaction_issues WHERE interaction_id = :id")
-                .param("id", interactionId)
-                .query(Long.class)
-                .single() == 0;
-        if (unmarked) {
-            createDemoIssues(kam, interactionId);
-        }
+        ensureDemoIssues(kam, interactionId);
         List<UUID> agreementIds = jdbcClient.sql("""
                 SELECT agreement.id FROM product_agreements agreement
                 JOIN products product ON product.id = agreement.product_id
@@ -503,18 +497,25 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         }
     }
 
-    private void createDemoIssues(CrmProfile kam, UUID interactionId) {
+    private void ensureDemoIssues(CrmProfile kam, UUID interactionId) {
         LocalDate today = LocalDate.now(ZONE);
         addDemoIssue(kam, interactionId, InteractionIssueKind.PROBLEM, "Вуз задерживает подписанный акт передачи", null,
                 today.minusDays(2), "act");
         addDemoIssue(kam, interactionId, InteractionIssueKind.RISK, "Согласование лицензий идёт дольше плана",
                 InteractionRiskLevel.MEDIUM, today.plusDays(14), "licenses");
         addDemoIssue(kam, interactionId, InteractionIssueKind.PROBLEM, DEMO_RESOLVED_PROBLEM, null, null, "access");
-        UUID resolvedId = jdbcClient.sql("SELECT id FROM interaction_issues WHERE interaction_id = :id AND description = :description")
+        List<UUID> openResolvable = jdbcClient.sql("""
+                SELECT id FROM interaction_issues
+                WHERE interaction_id = :id AND description = :description AND status = 'OPEN'
+                """)
                 .param("id", interactionId)
                 .param("description", DEMO_RESOLVED_PROBLEM)
                 .query(UUID.class)
-                .single();
+                .list();
+        if (openResolvable.isEmpty()) {
+            return;
+        }
+        UUID resolvedId = openResolvable.getFirst();
         int version = interactionVersion(interactionId);
         interactionIssueService.resolve(
                 kam,
@@ -534,6 +535,14 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             LocalDate dueOn,
             String key
     ) {
+        boolean present = jdbcClient.sql("SELECT COUNT(*) FROM interaction_issues WHERE interaction_id = :id AND description = :description")
+                .param("id", interactionId)
+                .param("description", description)
+                .query(Long.class)
+                .single() > 0;
+        if (present) {
+            return;
+        }
         int version = interactionVersion(interactionId);
         interactionIssueService.create(
                 kam,
