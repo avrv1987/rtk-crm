@@ -88,11 +88,14 @@ class DemoBootstrapCommandTest {
     private final InteractionIssueService interactionIssueService = mock(InteractionIssueService.class);
     private final AttachmentService attachmentService = mock(AttachmentService.class);
     private final ProductAgreementService productAgreementService = mock(ProductAgreementService.class);
+    private final ru.rtk.crm.agreement.AgreementFileService agreementFileService = mock(ru.rtk.crm.agreement.AgreementFileService.class);
 
     @BeforeEach
     void setUp() {
         createSchema();
-        for (String table : List.of("interaction_events", "product_agreements", "agreements", "attachments", "contacts", "interaction_issues", "interactions", "products", "vendors", "programs", "directions",
+        for (String table : List.of("interaction_events", "product_agreements", "agreement_status_events", "agreement_interactions",
+                "agreement_programs", "agreement_files", "agreement_supplements", "agreements", "attachments", "contacts",
+                "interaction_issues", "interactions", "products", "vendors", "programs", "directions",
                 "organizations", "crm_user_profiles", "teams")) {
             jdbcTemplate.update("DELETE FROM " + table);
         }
@@ -365,7 +368,7 @@ class DemoBootstrapCommandTest {
             UUID id = UUID.randomUUID();
             List<InteractionStage> stages = new ArrayList<>();
             for (int order = 0; order < 13; order++) {
-                stages.add(new InteractionStage(UUID.randomUUID(), "Этап " + order, order, false));
+                stages.add(new InteractionStage(UUID.randomUUID(), order == 5 ? "Подписание" : "Этап " + order, order, false));
             }
             jdbcTemplate.update("""
                     INSERT INTO interactions (id, organization_id, title, next_action, current_stage_id) VALUES (?, ?, ?, ?, ?)
@@ -389,7 +392,10 @@ class DemoBootstrapCommandTest {
                     """, UUID.randomUUID(), id, before.version() + 1);
             jdbcTemplate.update("UPDATE interactions SET version = version + 1, current_stage_id = ? WHERE id = ?",
                     request.toStageId(), id);
-            Interaction moved = interaction(id, before.organizationId(), before.title(), before.stages(), before.version() + 1);
+            InteractionStage target = before.stages().stream().filter(stage -> stage.id().equals(request.toStageId())).findFirst().orElseThrow();
+            Interaction moved = new Interaction(id, before.organizationId(), before.title(), target.id(), target.name(), before.stages(),
+                    List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), List.of(), List.of(), null,
+                    before.version() + 1, UUID.randomUUID(), OffsetDateTime.now(), OffsetDateTime.now(), null, false, null);
             interactions.put(id, moved);
             return moved;
         });
@@ -425,6 +431,17 @@ class DemoBootstrapCommandTest {
                 SELECT occurred_at FROM interaction_events WHERE interaction_id = ? AND type = 'TRANSITIONED' ORDER BY version
                 """, OffsetDateTime.class, interactionId);
         assertThat(moves).hasSize(7);
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT ag.status, ag.concluded_on IS NOT NULL AS signed FROM agreements ag
+                JOIN agreement_interactions ai ON ai.agreement_id = ag.id WHERE ai.interaction_id = ?
+                """, interactionId)).singleElement().satisfies(row -> {
+                    assertThat(row.get("STATUS")).isEqualTo("ACTIVE");
+                    assertThat(row.get("SIGNED")).isEqualTo(true);
+                });
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM agreement_status_events e JOIN agreement_interactions ai ON ai.agreement_id = e.agreement_id
+                WHERE ai.interaction_id = ?
+                """, Integer.class, interactionId)).isEqualTo(4);
         assertThat(ChronoUnit.DAYS.between(moves.getLast(), OffsetDateTime.now())).isBetween(11L, 12L);
         assertThat(ChronoUnit.DAYS.between(moves.getFirst(), moves.getLast())).isEqualTo(36);
         OffsetDateTime created = jdbcTemplate.queryForObject("SELECT created_at FROM interactions WHERE id = ?",
@@ -434,7 +451,7 @@ class DemoBootstrapCommandTest {
 
     private DemoBootstrapCommand command(DemoBootstrapProperties properties) {
         return new DemoBootstrapCommand(properties, jdbcClient, new UserProfileRepository(jdbcClient), contactService,
-                interactionService, interactionIssueService, attachmentService, productAgreementService);
+                interactionService, interactionIssueService, attachmentService, productAgreementService, agreementFileService);
     }
 
     private static Interaction interaction(UUID id, UUID organizationId, String title, List<InteractionStage> stages, int version) {
@@ -466,7 +483,7 @@ class DemoBootstrapCommandTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, issuer VARCHAR(512) NOT NULL, subject VARCHAR(512) NOT NULL,
                     display_name VARCHAR(200) NOT NULL, login VARCHAR(200), role VARCHAR(16) NOT NULL, team_id UUID,
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE, activation_requested_at TIMESTAMP WITH TIME ZONE,
@@ -489,7 +506,37 @@ class DemoBootstrapCommandTest {
                     valid_until DATE, planned_kind VARCHAR(16), planned_on DATE, planned_base_until DATE, parties VARCHAR(2000),
                     status VARCHAR(16) NOT NULL, version INTEGER NOT NULL DEFAULT 0, created_by UUID NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    sent_on DATE, status_changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    university_signer_id UUID, school_signer_id UUID,
                     UNIQUE (organization_id, number)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agreement_status_events (
+                    id UUID PRIMARY KEY, agreement_id UUID NOT NULL, from_status VARCHAR(16), to_status VARCHAR(16) NOT NULL,
+                    comment VARCHAR(2000), actor_profile_id UUID, interaction_id UUID, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agreement_interactions (
+                    agreement_id UUID NOT NULL, interaction_id UUID NOT NULL, PRIMARY KEY (agreement_id, interaction_id)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agreement_programs (
+                    agreement_id UUID NOT NULL, program_id UUID NOT NULL, PRIMARY KEY (agreement_id, program_id)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agreement_supplements (
+                    id UUID PRIMARY KEY, agreement_id UUID NOT NULL, number VARCHAR(100) NOT NULL, concluded_on DATE,
+                    subject VARCHAR(2000), status VARCHAR(16) NOT NULL, version INTEGER NOT NULL DEFAULT 0, created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agreement_files (
+                    id UUID PRIMARY KEY, agreement_id UUID NOT NULL, supplement_id UUID, version_number INTEGER NOT NULL
                 )
                 """,
                 """
@@ -558,6 +605,7 @@ class DemoBootstrapCommandTest {
                 """
                 CREATE TABLE IF NOT EXISTS contacts (
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, name VARCHAR(200) NOT NULL,
+                    decision_role VARCHAR(32), inactive BOOLEAN DEFAULT FALSE NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 )
                 """,

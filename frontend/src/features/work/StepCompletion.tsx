@@ -112,7 +112,7 @@ export const StepCompletion = ({
             <input type="datetime-local" value={nextActionAt} onChange={(event) => edit(() => setNextActionAt(event.target.value))} />
           </label>
           {nextAction.trim().length === 0 && nextActionAt.length === 0 && (
-            <p className="step-completion__hint">Если новый шаг не указать, у работы не будет следующего шага и срока.</p>
+            <p className="step-completion__hint">Если новый шаг не указать, у взаимодействия не будет следующего шага и срока.</p>
           )}
           {state.kind === 'failed' && (
             <div className="interaction-command-error" role="alert">

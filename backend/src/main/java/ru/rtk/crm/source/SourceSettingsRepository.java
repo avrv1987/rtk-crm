@@ -16,7 +16,7 @@ public class SourceSettingsRepository {
     private static final String COLUMNS = """
             moodle_base_url, moodle_token_encrypted, moodle_token_changed_at, moodle_course_ids, moodle_student_roles,
             moodle_teacher_roles, website_base_url, website_token_encrypted, website_token_changed_at, sync_cron,
-            updated_by, updated_at""";
+            crm_base_url, crm_token_encrypted, crm_token_changed_at, updated_by, updated_at""";
 
     private final JdbcClient jdbcClient;
 
@@ -28,7 +28,8 @@ public class SourceSettingsRepository {
         return jdbcClient.sql("""
                         SELECT s.moodle_base_url, s.moodle_token_encrypted, s.moodle_token_changed_at, s.moodle_course_ids,
                                s.moodle_student_roles, s.moodle_teacher_roles, s.website_base_url, s.website_token_encrypted,
-                               s.website_token_changed_at, s.sync_cron, s.updated_at, p.display_name AS updated_by_name
+                               s.website_token_changed_at, s.sync_cron, s.crm_base_url, s.crm_token_encrypted,
+                               s.crm_token_changed_at, s.updated_at, p.display_name AS updated_by_name
                         FROM source_settings s
                         LEFT JOIN crm_user_profiles p ON p.id = s.updated_by
                         WHERE s.id = 1
@@ -44,6 +45,9 @@ public class SourceSettingsRepository {
                         rs.getString("website_token_encrypted"),
                         rs.getObject("website_token_changed_at", OffsetDateTime.class),
                         rs.getString("sync_cron"),
+                        rs.getString("crm_base_url"),
+                        rs.getString("crm_token_encrypted"),
+                        rs.getObject("crm_token_changed_at", OffsetDateTime.class),
                         rs.getObject("updated_at", OffsetDateTime.class),
                         rs.getString("updated_by_name")
                 ))
@@ -56,7 +60,7 @@ public class SourceSettingsRepository {
         jdbcClient.sql("INSERT INTO source_settings (id, " + COLUMNS + """
                         ) VALUES (1, :moodleBaseUrl, :moodleToken, :moodleTokenChangedAt, :moodleCourseIds, :moodleStudentRoles,
                                   :moodleTeacherRoles, :websiteBaseUrl, :websiteToken, :websiteTokenChangedAt, :syncCron,
-                                  :updatedBy, :updatedAt)
+                                  :crmBaseUrl, :crmToken, :crmTokenChangedAt, :updatedBy, :updatedAt)
                         """)
                 .param("moodleBaseUrl", settings.moodleBaseUrl())
                 .param("moodleToken", settings.moodleTokenEncrypted())
@@ -68,6 +72,9 @@ public class SourceSettingsRepository {
                 .param("websiteToken", settings.websiteTokenEncrypted())
                 .param("websiteTokenChangedAt", settings.websiteTokenChangedAt())
                 .param("syncCron", settings.syncCron())
+                .param("crmBaseUrl", settings.crmBaseUrl())
+                .param("crmToken", settings.crmTokenEncrypted())
+                .param("crmTokenChangedAt", settings.crmTokenChangedAt())
                 .param("updatedBy", actorProfileId)
                 .param("updatedAt", settings.updatedAt())
                 .update();
@@ -96,6 +103,9 @@ public class SourceSettingsRepository {
             String websiteTokenEncrypted,
             OffsetDateTime websiteTokenChangedAt,
             String syncCron,
+            String crmBaseUrl,
+            String crmTokenEncrypted,
+            OffsetDateTime crmTokenChangedAt,
             OffsetDateTime updatedAt,
             String updatedByName
     ) {

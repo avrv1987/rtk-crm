@@ -9,10 +9,10 @@ import {
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { useUnsavedDraft } from '../interactions/unsavedDrafts'
-import { OrganizationAssignmentHistory } from './OrganizationAssignmentHistory'
 import { OrganizationDeputyPanel } from './OrganizationDeputyPanel'
 
 type OrganizationAssignmentPanelProps = {
+  part: 'assignment' | 'deputy'
   organization: Organization
   profileId: string
   onOrganizationChanged: (organization: Organization) => void
@@ -64,6 +64,7 @@ const commandMessage = (error: unknown) => {
 }
 
 export const OrganizationAssignmentPanel = ({
+  part,
   organization,
   profileId,
   onOrganizationChanged,
@@ -72,7 +73,6 @@ export const OrganizationAssignmentPanel = ({
   onProfileUnavailable
 }: OrganizationAssignmentPanelProps) => {
   const [optionsState, setOptionsState] = useState<OptionsState>({ kind: 'loading' })
-  const [historyRevision, setHistoryRevision] = useState(0)
   const [selectedOwnerManagerId, setSelectedOwnerManagerId] = useState('')
   const [handoverNote, setHandoverNote] = useState('')
   const [commandState, setCommandState] = useState<CommandState>({ kind: 'idle' })
@@ -155,7 +155,6 @@ export const OrganizationAssignmentPanel = ({
       setSelectedOwnerManagerId('')
       setHandoverNote('')
       setCommandState({ kind: 'idle' })
-      setHistoryRevision((revision) => revision + 1)
       onOrganizationChanged(result.organization)
       await loadOptions()
     } catch (error) {
@@ -180,7 +179,6 @@ export const OrganizationAssignmentPanel = ({
   }
 
   const reloadAfterConflict = async () => {
-    setHistoryRevision((revision) => revision + 1)
     await Promise.all([onReload(), loadOptions()])
   }
 
@@ -193,14 +191,22 @@ export const OrganizationAssignmentPanel = ({
     void submitAssignment(null)
   }
 
+  if (part === 'deputy') {
+    return (
+      <OrganizationDeputyPanel
+        organization={organization}
+        onChanged={onReload}
+        onSessionExpired={onSessionExpired}
+        onProfileUnavailable={onProfileUnavailable}
+      />
+    )
+  }
+
   return (
     <section className="organization-assignment" aria-labelledby="organization-assignment-title">
       <div className="organization-assignment__header">
-        <div>
-          <p className="eyebrow">Руководителю команды</p>
-          <h4 id="organization-assignment-title">Назначение ответственного</h4>
-        </div>
-        <p className="organization-assignment__current">Текущий: {currentOwnerLabel}</p>
+        <h4 id="organization-assignment-title" className="visually-hidden">Назначение ответственного</h4>
+        <p className="organization-assignment__current">Сейчас: {currentOwnerLabel}</p>
       </div>
 
       {optionsState.kind === 'loading' && (
@@ -290,23 +296,6 @@ export const OrganizationAssignmentPanel = ({
         </div>
       )}
 
-      <OrganizationDeputyPanel
-        organization={organization}
-        onChanged={async () => {
-          await onReload()
-          setHistoryRevision((value) => value + 1)
-        }}
-        onSessionExpired={onSessionExpired}
-        onProfileUnavailable={onProfileUnavailable}
-      />
-
-      <OrganizationAssignmentHistory
-        organizationId={organization.id}
-        revision={historyRevision}
-        includeDeputies
-        onSessionExpired={onSessionExpired}
-        onProfileUnavailable={onProfileUnavailable}
-      />
     </section>
   )
 }

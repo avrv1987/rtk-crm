@@ -20,7 +20,7 @@ import {
   toAgreementFilters,
   type AgreementSelection
 } from './reportAgreement'
-import { periodPresets } from './reportPeriods'
+import { defaultPeriod } from './reportPeriods'
 
 export type DemandSort = 'APPLICATIONS' | 'PAID_ORDERS' | 'PAID_STREAMS' | 'PARTICIPANTS' | 'LEARNERS_COMPLETED' | 'PARALLEL_RUNS'
 
@@ -93,7 +93,7 @@ export const kindLabels: Record<ReportKind, string> = {
   SNAPSHOT: 'Состояние портфеля на дату',
   DURATION: 'Длительность этапов и цикла',
   DEMAND: 'Востребованность программ',
-  AGREEMENTS: 'Реализация соглашений',
+  AGREEMENTS: 'Реализация договоров',
   MANAGER_WORK: 'Работа менеджеров за период'
 }
 
@@ -124,8 +124,8 @@ export const eventTypeTitles: Record<ReportEventType, string> = {
   COMMENTED: 'Комментарий',
   STAGES_EDITED: 'Изменены этапы карточки',
   PLAN_UPDATED: 'Изменён план',
-  DETAILS_UPDATED: 'Изменены данные работы',
-  STATUS_CHANGED: 'Изменён статус работы',
+  DETAILS_UPDATED: 'Изменены данные взаимодействия',
+  STATUS_CHANGED: 'Изменён статус взаимодействия',
   AGREEMENT_UPDATED: 'Изменены договор и передача',
   ATTACHMENT_DELETED: 'Удалён документ',
   STAGE_COMPLETED: 'Этап отмечен выполненным',
@@ -150,9 +150,9 @@ const chartTypes: readonly ChartType[] = ['BAR', 'LINE']
 export const managerWorkChanges: readonly (ManagerWorkChange | '')[] = ['', 'MOVED', 'NEW', 'COMPLETED']
 
 export const managerWorkChangeLabels: Record<ManagerWorkChange | '', string> = {
-  '': 'Все работы',
+  '': 'Все взаимодействия',
   MOVED: 'Перешли на другой этап',
-  NEW: 'Новые работы',
+  NEW: 'Новые взаимодействия',
   COMPLETED: 'Завершённые'
 }
 
@@ -167,7 +167,7 @@ export const reportColumns: Record<ReportKind, readonly ReportColumn[]> = {
   ],
   DEMAND: [
     'DIRECTION', 'PROGRAM', 'APPLICATIONS', 'PAID_ORDERS', 'PAID_STREAMS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'COMPLETION_SHARE',
-    'PARALLEL_RUNS'
+    'PARALLEL_RUNS', 'MARKET_VACANCIES', 'MARKET_TREND'
   ],
   SNAPSHOT: ['ORGANIZATION', 'INTERACTION', 'DIRECTION', 'PROGRAM', 'PRODUCTS', 'STAGE', 'MANAGER', 'CREATED_AT', 'LAST_EVENT_AT'],
   DURATION: ['TEAM', 'PROGRAM', 'STAGE', 'COMPLETED', 'AVG_DAYS', 'MAX_DAYS', 'CURRENT', 'CURRENT_MAX_DAYS'],
@@ -178,7 +178,8 @@ export const reportColumns: Record<ReportKind, readonly ReportColumn[]> = {
   ],
   MANAGER_WORK: [
     'MANAGER', 'ORGANIZATION', 'PRODUCTS', 'PROGRAM', 'STAGE_AT_START', 'STAGE_AT_END', 'TRANSITIONS', 'PERIOD_COMMENTS',
-    'NEXT_ACTION', 'NEXT_ACTION_AT', 'OVERDUE_DAYS', 'TEAM', 'DIRECTION', 'INTERACTION', 'STAGE_POSITION', 'DUE_STATE',
+    'NEXT_ACTION', 'NEXT_ACTION_AT', 'OVERDUE_DAYS', 'LMS_LEARNING', 'LMS_CHECK', 'TEAM', 'DIRECTION', 'INTERACTION',
+    'STAGE_POSITION', 'DUE_STATE',
     'DAYS_ON_STAGE', 'WORK_STATUS', 'PROBLEM', 'RISK'
   ]
 }
@@ -186,7 +187,7 @@ export const reportColumns: Record<ReportKind, readonly ReportColumn[]> = {
 export const availableColumns = (kind: ReportKind): ReportColumn[] => (
   kind === 'DEMAND' ? withoutPaymentColumns(reportColumns.DEMAND, getModules()) : [...reportColumns[kind]]
 )
-export const managerWorkDefaultColumns: readonly ReportColumn[] = reportColumns.MANAGER_WORK.slice(0, 11)
+export const managerWorkDefaultColumns: readonly ReportColumn[] = reportColumns.MANAGER_WORK.slice(0, 13)
 
 const columnTitles: Record<ReportColumn, string> = {
   ORGANIZATION: 'Вуз',
@@ -196,7 +197,7 @@ const columnTitles: Record<ReportColumn, string> = {
   PRODUCTS: 'ИТ-продукты',
   STAGE: 'Этап',
   DAYS_ON_STAGE: 'Дней на этапе',
-  WORK_STATUS: 'Статус работы',
+  WORK_STATUS: 'Статус взаимодействия',
   WAITING: 'Ожидание',
   PROBLEM: 'Проблема',
   RISK: 'Риск',
@@ -217,6 +218,8 @@ const columnTitles: Record<ReportColumn, string> = {
   LEARNERS_COMPLETED: 'Завершили (Moodle)',
   COMPLETION_SHARE: 'Доля завершивших, %',
   PARALLEL_RUNS: 'Параллельные потоки (Moodle)',
+  MARKET_VACANCIES: 'Спрос рынка: вакансии',
+  MARKET_TREND: 'Тренд спроса, %',
   ...agreementColumnTitles,
   TEAM: 'Команда',
   COMPLETED: 'Завершённых прохождений',
@@ -224,8 +227,8 @@ const columnTitles: Record<ReportColumn, string> = {
   MAX_DAYS: 'Максимальная длительность, дн.',
   CURRENT: 'На этапе на конец периода',
   CURRENT_MAX_DAYS: 'Дольше всех на этапе, дн.',
-  AGREEMENT: 'Соглашение',
-  AGREEMENT_STATUS: 'Статус соглашения',
+  AGREEMENT: 'Договор',
+  AGREEMENT_STATUS: 'Статус договора',
   AGREEMENT_TERM: 'Срок действия',
   ACTIVITY_KIND: 'Вид мероприятия',
   ACTIVITY: 'Мероприятие',
@@ -235,7 +238,7 @@ const columnTitles: Record<ReportColumn, string> = {
   PLANNED_DATES: 'Плановые сроки',
   ACTUAL_DATES: 'Фактические сроки',
   ACTIVITY_STATUS: 'Статус мероприятия',
-  WORKS: 'Связанные работы',
+  WORKS: 'Связанные взаимодействия',
   CONFIRMATIONS: 'Подтверждения',
   CONFIRMATION_LINKS: 'Ссылки на подтверждения',
   STAGE_AT_START: 'Этап на начало периода',
@@ -244,13 +247,16 @@ const columnTitles: Record<ReportColumn, string> = {
   TRANSITIONS: 'Переходов за период',
   PERIOD_COMMENTS: 'Комментарии за период',
   DUE_STATE: 'Состояние срока',
-  OVERDUE_DAYS: 'Просрочено, дн.'
+  OVERDUE_DAYS: 'Просрочено, дн.',
+  LMS_LEARNING: 'Обучение (LMS) сейчас',
+  LMS_CHECK: 'Сверка этапа с LMS'
 }
 
 const kindColumnTitles: Partial<Record<ReportKind, Partial<Record<ReportColumn, string>>>> = {
   EVENTS: { MANAGER: 'Ответственный на момент события' },
   SNAPSHOT: { STAGE: 'Этап на дату', MANAGER: 'Ответственный на дату', LAST_EVENT_AT: 'Последнее событие до даты' },
-  MANAGER_WORK: { MANAGER: 'Менеджер' }
+  DEMAND: { PARTICIPANTS: 'Обучающиеся в потоках периода (Moodle)' },
+  MANAGER_WORK: { MANAGER: 'Менеджер на конец периода' }
 }
 
 export const columnTitle = (kind: ReportKind, column: ReportColumn) => (
@@ -259,12 +265,10 @@ export const columnTitle = (kind: ReportKind, column: ReportColumn) => (
 
 export const maxDaysOnStage = 3650
 
-const currentMonth = (today: Date) => periodPresets(todayInMoscow(today))[1]
-
-export const defaultSelection = (today: Date = new Date()): ReportSelection => ({
-  kind: 'PORTFOLIO',
-  from: currentMonth(today).from,
-  to: currentMonth(today).to,
+export const defaultSelection = (today: Date = new Date(), kind: ReportKind = 'PORTFOLIO'): ReportSelection => ({
+  kind,
+  from: defaultPeriod(kind, todayInMoscow(today)).from,
+  to: defaultPeriod(kind, todayInMoscow(today)).to,
   asOf: todayInMoscow(today),
   periodBasis: 'CREATED',
   organizationIds: [],
@@ -333,10 +337,12 @@ export const normalizeSelection = (value: unknown, today: Date = new Date()): Re
   const columns = typeof record.columns === 'object' && record.columns !== null
     ? record.columns as Record<string, unknown>
     : {}
+  const kind = oneOf(record.kind, reportKinds, defaults.kind)
+  const period = defaultPeriod(kind, todayInMoscow(today))
   return {
-    kind: oneOf(record.kind, reportKinds, defaults.kind),
-    from: dateValue(record.from, defaults.from),
-    to: dateValue(record.to, defaults.to),
+    kind,
+    from: dateValue(record.from, period.from),
+    to: dateValue(record.to, period.to),
     asOf: dateValue(record.asOf, defaults.asOf),
     periodBasis: oneOf(record.periodBasis, periodBases, defaults.periodBasis),
     organizationIds: strings(record.organizationIds),
@@ -430,7 +436,7 @@ export const lineChartSelected = (selection: ReportSelection) => (
 
 export const groupingProblem = (selection: ReportSelection): string | null => {
   if (selection.kind === 'AGREEMENTS') {
-    return 'Для отчёта «Реализация соглашений» диаграмма не строится.'
+    return 'Для отчёта «Реализация договоров» диаграмма не строится.'
   }
   if (selection.kind === 'MANAGER_WORK') {
     return 'Для отчёта «Работа менеджеров за период» диаграмма не строится.'

@@ -95,13 +95,22 @@ public class AdminCatalogRepository {
                 .update();
     }
 
-    public boolean update(CatalogKind kind, UUID id, int expectedVersion, String name, boolean archived, OffsetDateTime now) {
+    public boolean update(
+            CatalogKind kind,
+            UUID id,
+            int expectedVersion,
+            String name,
+            boolean archived,
+            boolean laborMarket,
+            OffsetDateTime now
+    ) {
         return jdbcClient.sql("""
                 UPDATE %s
-                SET name = :name, archived = :archived, version = version + 1, updated_at = :now
+                SET name = :name, archived = :archived%s, version = version + 1, updated_at = :now
                 WHERE id = :id AND version = :expectedVersion
-                """.formatted(kind.table()))
+                """.formatted(kind.table(), kind == CatalogKind.DIRECTIONS ? ", labor_market = :laborMarket" : ""))
                 .param("id", id)
+                .param("laborMarket", laborMarket)
                 .param("expectedVersion", expectedVersion)
                 .param("name", name)
                 .param("archived", archived)
@@ -112,12 +121,14 @@ public class AdminCatalogRepository {
     private static String select(CatalogKind kind) {
         if (!kind.hasParent()) {
             return """
-                    SELECT entry.id, entry.name, NULL AS parent_id, NULL AS parent_name, entry.archived, entry.version
+                    SELECT entry.id, entry.name, NULL AS parent_id, NULL AS parent_name, entry.archived, entry.version,
+                           %s AS labor_market
                     FROM %s entry
-                    """.formatted(kind.table());
+                    """.formatted(kind == CatalogKind.DIRECTIONS ? "entry.labor_market" : "NULL", kind.table());
         }
         return """
-                SELECT entry.id, entry.name, parent.id AS parent_id, parent.name AS parent_name, entry.archived, entry.version
+                SELECT entry.id, entry.name, parent.id AS parent_id, parent.name AS parent_name, entry.archived, entry.version,
+                       NULL AS labor_market
                 FROM %s entry
                 JOIN %s parent ON parent.id = entry.%s
                 """.formatted(kind.table(), kind.parentTable(), kind.parentColumn());
@@ -130,7 +141,8 @@ public class AdminCatalogRepository {
                 resultSet.getObject("parent_id", UUID.class),
                 resultSet.getString("parent_name"),
                 resultSet.getBoolean("archived"),
-                resultSet.getInt("version")
+                resultSet.getInt("version"),
+                resultSet.getObject("labor_market", Boolean.class)
         );
     }
 }

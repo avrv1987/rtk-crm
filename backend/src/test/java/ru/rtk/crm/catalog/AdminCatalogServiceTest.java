@@ -188,6 +188,51 @@ class AdminCatalogServiceTest {
     }
 
     @Test
+    void laborMarketFlagIsSwitchedOnlyOnDirectionsByAdministratorAndJournaled() {
+        assertThat(service.list(admin, CatalogKind.DIRECTIONS, null, null, 0, 25).items())
+                .extracting(AdminCatalogEntry::laborMarket).containsExactly(false);
+        assertThat(service.list(admin, CatalogKind.PROGRAMS, null, null, 0, 25).items())
+                .extracting(AdminCatalogEntry::laborMarket).containsOnlyNulls();
+
+        AdminCatalogEntry on = service.update(admin, CatalogKind.DIRECTIONS, DIRECTION,
+                new CatalogEntryRequest(null, null, null, 0, true), "market-on", REQUEST_ID);
+        AdminCatalogEntry replayed = service.update(admin, CatalogKind.DIRECTIONS, DIRECTION,
+                new CatalogEntryRequest(null, null, null, 0, true), "market-on", REQUEST_ID);
+
+        assertThat(on.laborMarket()).isTrue();
+        assertThat(on.version()).isEqualTo(1);
+        assertThat(replayed).isEqualTo(on);
+        assertThatThrownBy(() -> service.update(admin, CatalogKind.DIRECTIONS, DIRECTION,
+                new CatalogEntryRequest(null, null, null, 1, true), "market-same", REQUEST_ID))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                        assertThat(exception.getMessage()).contains("уже имеет указанные значения"));
+        assertThatThrownBy(() -> service.update(admin, CatalogKind.PROGRAMS, PROGRAM,
+                new CatalogEntryRequest(null, null, null, 0, true), "market-program", REQUEST_ID))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                        assertThat(exception.field()).isEqualTo("laborMarket"));
+        assertThatThrownBy(() -> service.update(leader, CatalogKind.DIRECTIONS, DIRECTION,
+                new CatalogEntryRequest(null, null, null, 1, false), "market-leader", REQUEST_ID))
+                .isInstanceOf(AdminCrmProfileAccessDeniedException.class);
+
+        AdminCatalogEntry renamed = service.update(admin, CatalogKind.DIRECTIONS, DIRECTION,
+                new CatalogEntryRequest("Кибербезопасность и защита данных", null, null, 1, null), "market-rename", REQUEST_ID);
+        AdminCatalogEntry off = service.update(admin, CatalogKind.DIRECTIONS, DIRECTION,
+                new CatalogEntryRequest(null, null, null, renamed.version(), false), "market-off", REQUEST_ID);
+
+        assertThat(renamed.laborMarket()).isTrue();
+        assertThat(off.laborMarket()).isFalse();
+        assertThat(catalogChangeEventRepository.findPage(CatalogEntityType.DIRECTION, 0, 10).items())
+                .extracting(CatalogChangeEvent::action, CatalogChangeEvent::changes)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(CatalogChangeAction.UPDATE,
+                                "Учитывать спрос рынка труда: «нет» → «да»"),
+                        org.assertj.core.groups.Tuple.tuple(CatalogChangeAction.UPDATE,
+                                "Название: «Кибербезопасность» → «Кибербезопасность и защита данных»"),
+                        org.assertj.core.groups.Tuple.tuple(CatalogChangeAction.UPDATE,
+                                "Учитывать спрос рынка труда: «да» → «нет»"));
+    }
+
+    @Test
     void archivedProgramDisappearsFromChoiceAndRenameIsJournaledWithVersionCheck() {
         AdminCatalogEntry renamed = service.update(admin, CatalogKind.PROGRAMS, PROGRAM,
                 new CatalogEntryRequest("UAT-программа (испр.)", null, null, 0), "program-rename", REQUEST_ID);
@@ -227,12 +272,12 @@ class AdminCatalogServiceTest {
     private void createSchema() {
         List.of(
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL)
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL)
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS directions (
                     id UUID PRIMARY KEY, external_key VARCHAR(200) UNIQUE, name VARCHAR(200) NOT NULL UNIQUE,
-                    archived BOOLEAN NOT NULL, version INTEGER NOT NULL,
+                    archived BOOLEAN NOT NULL, version INTEGER NOT NULL, labor_market BOOLEAN DEFAULT FALSE NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 )

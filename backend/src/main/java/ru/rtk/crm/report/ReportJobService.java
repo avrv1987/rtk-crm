@@ -68,6 +68,8 @@ public class ReportJobService {
         this.objectMapper = objectMapper;
     }
 
+    // Задание ставится в очередь и выполняется отдельным потоком, чтобы тяжёлый отчёт не держал HTTP-запрос.
+    // Повтор запроса с тем же ключом возвращает то же задание; тот же ключ с другим телом — конфликт.
     public ReportJobCreated submit(CrmProfile profile, ReportRequest request, String idempotencyKey) {
         String key = requiredIdempotencyKey(idempotencyKey);
         ReportRequest normalized = reportService.normalize(request);
@@ -90,11 +92,14 @@ public class ReportJobService {
         try {
             repository.insert(jobId, profile, key, fingerprint, requestJson, normalized, OffsetDateTime.now());
         } catch (DuplicateKeyException exception) {
+            // Две одновременные отправки с одним ключом: вторая вставка нарушает уникальность и получает задание первой.
             return replay(repository.findByIdempotencyKey(profile.id(), key).orElseThrow(() -> exception), fingerprint);
         }
         try {
             executor.execute(() -> run(jobId));
         } catch (TaskRejectedException exception) {
+            // Очередь и число одновременных построений ограничены (память): при переполнении задание удаляется,
+            // а пользователь получает понятный отказ и может повторить позже.
             repository.delete(jobId);
             throw ReportException.capacityExceeded();
         }
@@ -130,11 +135,15 @@ public class ReportJobService {
 
     @EventListener
     public void onApplicationReady(ApplicationReadyEvent event) {
+        // Только в веб-контексте: служебные запуски без веб-сервера не должны помечать задания работающего
+        // сервера прерванными.
         if (event.getApplicationContext() instanceof WebServerApplicationContext) {
             failInterruptedJobs();
         }
     }
 
+    // После перезапуска сервера задания «в очереди» и «в работе», созданные до запуска этого процесса, никто не
+    // выполнит: они помечаются ошибкой, а недописанные файлы удаляются. Задания нового процесса не затрагиваются.
     public void failInterruptedJobs() {
         int failed = repository.failUnfinishedCreatedBefore(
                 processStartedAt,
@@ -148,17 +157,22 @@ public class ReportJobService {
     }
 
     void run(UUID jobId) {
+        // Захват PENDING → RUNNING одним UPDATE: задание выполнится ровно одним потоком, повторный запуск ничего не делает.
         if (!repository.claim(jobId, OffsetDateTime.now())) {
             return;
         }
         Path partial = null;
         try {
             StoredJob job = repository.findById(jobId).orElseThrow(ReportException::jobNotFound);
+            // Права владельца проверяются в момент построения, а не только при заказе: если роль, команда или доступ
+            // изменились за время ожидания, отчёт не строится по прежней области данных.
             CrmProfile owner = repository.findActiveProfile(job.ownerProfileId())
                     .filter(job::grantedTo)
                     .orElseThrow(ReportException::accessChanged);
             ReportRequest request = read(job.requestJson());
             UUID storageKey = UUID.randomUUID();
+            // Файл пишется во временное имя и публикуется целиком (publish): незавершённый файл никогда не доступен
+            // для скачивания; при любой ошибке он удаляется в finally.
             partial = storage.partialFile(storageKey);
             String fileName;
             try (OutputStream output = Files.newOutputStream(partial, StandardOpenOption.CREATE_NEW)) {
@@ -169,6 +183,7 @@ public class ReportJobService {
             long sizeBytes = Files.size(partial);
             storage.publish(partial, storageKey);
             partial = null;
+            // Если задание уже не в состоянии RUNNING (его пометили ошибкой после перезапуска), готовый файл удаляется.
             if (!repository.succeed(jobId, storageKey, fileName, sizeBytes, OffsetDateTime.now())) {
                 storage.delete(storage.resultFile(storageKey));
             }
@@ -216,6 +231,7 @@ public class ReportJobService {
         switch (format) {
             case XLSX, XLS -> excelWriter.write(document, format, output);
             case PDF -> {
+                // Число строк PDF ограничено (читаемость и память); для больших выборок пользователю предлагается Excel.
                 if (document.rows().size() > properties.maxPdfRows()) {
                     throw ReportException.pdfRowLimit(properties.maxPdfRows());
                 }

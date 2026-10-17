@@ -53,6 +53,7 @@ import ru.rtk.crm.interaction.WorkflowTemplateRepository;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
+        "app.agreements.signing-stage-rule=false",
         "spring.datasource.url=jdbc:h2:mem:catalogimport;MODE=PostgreSQL;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -70,6 +71,7 @@ import ru.rtk.crm.interaction.WorkflowTemplateRepository;
         AttachmentRepository.class,
         CommandIdempotencyRepository.class,
         InteractionService.class,
+        ru.rtk.crm.agreement.AgreementStages.class,
         VendorContactImport.class,
         CatalogImportServiceTest.ImportTestConfiguration.class
 })
@@ -847,7 +849,7 @@ class CatalogImportServiceTest {
                 CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL, default_workflow_template_id UUID)
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, login VARCHAR(200), idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     activation_requested_at TIMESTAMP WITH TIME ZONE, anonymized_at TIMESTAMP WITH TIME ZONE, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL, access_revision INTEGER NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL

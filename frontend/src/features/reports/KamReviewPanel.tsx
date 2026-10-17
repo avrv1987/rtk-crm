@@ -1,6 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useId, useState } from 'react'
 import {
   apiClient,
+  type Me,
   type ReportColumn,
   type ReportManagerOption,
   type ReportPreview
@@ -8,10 +9,14 @@ import {
 import { formatCalendarDate, formatMoscowDateTime, todayInMoscow } from '../../shared/format/datetime'
 import { CardTabPanel, CardTabs } from '../interactions/cardUi'
 import { handledAccessError } from '../interactions/workMarks'
+import { reportMeta } from './ReportCatalog'
 import { PeriodPicker } from './ReportControls'
 import { ErrorNotice } from './ReportErrorNotice'
+import { ReportHeader } from './ReportHeader'
+import { pageHints } from './reportHints'
 
 type KamReviewPanelProps = {
+  role: Me['role']
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
@@ -90,7 +95,7 @@ const Truncated = ({ preview, what, source }: { preview: ReportPreview; what: st
     : null
 )
 
-export const KamReviewPanel = ({ onSessionExpired, onProfileUnavailable }: KamReviewPanelProps) => {
+export const KamReviewPanel = ({ role, onSessionExpired, onProfileUnavailable }: KamReviewPanelProps) => {
   const [managersState, setManagersState] = useState<ManagersState>({ kind: 'loading' })
   const [managerId, setManagerId] = useState('')
   const [from, setFrom] = useState(defaultFrom)
@@ -142,13 +147,21 @@ export const KamReviewPanel = ({ onSessionExpired, onProfileUnavailable }: KamRe
   const review = reviewState.kind === 'ready' ? reviewState.review : null
   const markedWorks = review?.works.items.filter(hasMark) ?? []
 
+  const meta = reportMeta(role, 'kam-review')
+
   return (
-    <div className="kam-review">
+    <section className="reports report-page kam-review" aria-labelledby="report-page-title">
+      <ReportHeader
+        id="report-page-title"
+        group={meta.group}
+        title={meta.title}
+        hint={`${pageHints['kam-review']} Данные: ${meta.data}.`}
+      />
       {managersState.kind === 'failed' && (
         <ErrorNotice error={managersState.error} message="Не удалось загрузить список КАМ." onRetry={() => void loadManagers()} />
       )}
-      <form className="report-builder__panel kam-review__form" onSubmit={(event) => void submit(event)}>
-        <div className="report-builder__main">
+      <form className="reports__form report-toolbar kam-review__form" onSubmit={(event) => void submit(event)}>
+        <div className="report-toolbar__row">
           <div className="report-field">
             <label htmlFor={managerFieldId}>КАМ</label>
             <select id={managerFieldId} value={managerId} disabled={managers.length === 0} onChange={(event) => setManagerId(event.target.value)}>
@@ -172,13 +185,13 @@ export const KamReviewPanel = ({ onSessionExpired, onProfileUnavailable }: KamRe
         {(from === '' || to === '' || from > to) && (
           <p className="reports__problem" role="alert">Укажите обе даты периода; дата начала не может быть позже даты окончания.</p>
         )}
-        <div className="report-actions reports__actions">
+        <div className="report-toolbar__actions reports__actions">
           <button type="submit" disabled={managerId === '' || from === '' || to === '' || from > to || reviewState.kind === 'loading'}>
-            {reviewState.kind === 'loading' ? 'Собираем разбор…' : 'Показать разбор'}
+            {reviewState.kind === 'loading' ? 'Собираем разбор…' : 'Показать'}
           </button>
         </div>
       </form>
-      {reviewState.kind === 'idle' && <p className="report-empty">Выберите КАМ и период и нажмите «Показать разбор».</p>}
+      {reviewState.kind === 'idle' && <p className="report-empty">Выберите КАМ и период и нажмите «Показать».</p>}
       {reviewState.kind === 'loading' && <p className="report-empty report-loading" role="status">Собираем разбор…</p>}
       {reviewState.kind === 'failed' && (
         <ErrorNotice error={reviewState.error} message="Не удалось собрать разбор. Повторите попытку." />
@@ -190,7 +203,7 @@ export const KamReviewPanel = ({ onSessionExpired, onProfileUnavailable }: KamRe
           </p>
           <ul className="kam-review__tiles">
             <li><strong>{review.events.total}</strong> событий за период</li>
-            <li><strong>{review.works.total}</strong> активных работ</li>
+            <li><strong>{review.works.total}</strong> активных взаимодействий</li>
             <li><strong>{markedWorks.length}</strong> с отметками ожидания, проблемы или риска</li>
           </ul>
           <CardTabs
@@ -216,9 +229,9 @@ export const KamReviewPanel = ({ onSessionExpired, onProfileUnavailable }: KamRe
             {tab === 'steps' && (
               <>
                 {review.works.total === 0
-                  ? <p className="report-empty">Активных работ нет.</p>
+                  ? <p className="report-empty">Активных взаимодействий нет.</p>
                   : <ReviewTable preview={review.works} rows={review.works.items} columns={stepColumns} label="Открытые шаги КАМ" />}
-                <Truncated preview={review.works} what="работ" source="Портфель взаимодействий" />
+                <Truncated preview={review.works} what="взаимодействий" source="Портфель взаимодействий" />
               </>
             )}
             {tab === 'marks' && (
@@ -229,6 +242,6 @@ export const KamReviewPanel = ({ onSessionExpired, onProfileUnavailable }: KamRe
           </CardTabPanel>
         </div>
       )}
-    </div>
+    </section>
   )
 }

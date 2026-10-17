@@ -3,14 +3,16 @@ import { getModules } from '../../shared/modules'
 import { ApiError, apiClient, type Me, type Organization, type PageOrganization } from '../../shared/api/client'
 import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { Toast } from '../../shared/ui/Toast'
 import { AgreementsPanel } from '../agreements/AgreementsPanel'
 import { InteractionsPanel } from '../interactions/InteractionsPanel'
-import { CardTabPanel, CardTabs, type CardTab } from '../interactions/cardUi'
+import { CardDialog, CardSection, CardTabPanel, CardTabs, type CardTab } from '../interactions/cardUi'
+import { PendingSourceRecords } from '../sources/PendingSourceRecords'
 import { OrganizationAssignmentHistory } from './OrganizationAssignmentHistory'
 import { OrganizationAssignmentPanel } from './OrganizationAssignmentPanel'
 import { OrganizationHistoryFeed } from './OrganizationHistoryFeed'
 import { OrganizationStatusBadge } from './OrganizationCatalogPanel'
-import { OrganizationCardHeader, OrganizationSummary, deputyLabel } from './OrganizationCard'
+import { OrganizationCardHeader, OrganizationSummary, deputyLabel, type OrganizationCounts } from './OrganizationCard'
 import { OrganizationForm, organizationTypeLabels } from './OrganizationForm'
 import { OrganizationBulkTransfer } from './OrganizationBulkTransfer'
 
@@ -26,7 +28,7 @@ type OrganizationsScreenProps = {
 
 type ListStatus = 'CURRENT' | 'PENDING' | 'ARCHIVED'
 
-type OrganizationTab = 'works' | 'contacts' | 'documents' | 'timeline' | 'history'
+type OrganizationTab = 'works' | 'contacts' | 'documents' | 'timeline'
 
 const listStatusOf: Record<Organization['status'], ListStatus> = {
   ACTIVE: 'CURRENT',
@@ -114,6 +116,10 @@ export const OrganizationsScreen = ({
   const [selected, setSelected] = useState<Record<string, Organization>>({})
   const [organizationTab, setOrganizationTab] = useState<OrganizationTab>('works')
   const [cardMessage, setCardMessage] = useState<string | null>(null)
+  const [assignmentDialog, setAssignmentDialog] = useState<'assignment' | 'deputy' | null>(null)
+  const [cardRevision, setCardRevision] = useState(0)
+  const [counts, setCounts] = useState<OrganizationCounts | null>(null)
+  const [pendingRecords, setPendingRecords] = useState(0)
   const listRequestVersion = useRef(0)
   const detailRequestVersion = useRef(0)
   const detailHeading = useRef<HTMLHeadingElement>(null)
@@ -215,16 +221,41 @@ export const OrganizationsScreen = ({
     window.history.replaceState(null, '', `${path}${listSuffix}`)
   }, [listSuffix, query])
 
+  const linkedAgreementId = new URLSearchParams(query).get('agreement') ?? undefined
+
   useEffect(() => {
-    setOrganizationTab('works')
+    if (role !== 'USER' && role !== 'LEADER') {
+      return
+    }
+    let active = true
+    apiClient.listPendingSourceRecords()
+      .then((records) => {
+        if (active) {
+          setPendingRecords(records.length)
+        }
+      })
+      .catch((error: unknown) => {
+        if (active && !handleAccessError(error)) {
+          setPendingRecords(0)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [handleAccessError, role])
+
+  useEffect(() => {
+    setOrganizationTab(linkedAgreementId === undefined ? 'works' : 'documents')
     setCardMessage(null)
+    setCounts(null)
+    setAssignmentDialog(null)
     if (selectedOrganizationId === undefined) {
       detailRequestVersion.current += 1
       setDetailState({ kind: 'idle' })
       return
     }
     void loadOrganization(selectedOrganizationId)
-  }, [loadOrganization, selectedOrganizationId])
+  }, [linkedAgreementId, loadOrganization, selectedOrganizationId])
 
   useEffect(() => () => {
     listRequestVersion.current += 1
@@ -301,25 +332,20 @@ export const OrganizationsScreen = ({
     }
   }
 
-  const openAssignment = () => {
-    setOrganizationTab('history')
-    window.requestAnimationFrame(() => document.getElementById('organization-assignment-title')?.scrollIntoView({ block: 'start' }))
-  }
-
   const organizationTabs: CardTab<OrganizationTab>[] = [
-    { id: 'works', label: 'Работы' },
-    { id: 'contacts', label: 'Контакты' },
-    { id: 'documents', label: 'Документы и соглашения' },
-    { id: 'timeline', label: 'История' },
-    { id: 'history', label: role === 'LEADER' ? 'Назначение и история' : 'История назначений' }
+    { id: 'works', label: 'Взаимодействия', count: counts?.works },
+    { id: 'contacts', label: 'Контакты', count: counts?.contacts },
+    { id: 'documents', label: 'Договоры и документы', count: counts?.agreements },
+    { id: 'timeline', label: 'История' }
   ]
+  const cardChanged = () => setCardRevision((value) => value + 1)
 
   return (
     <section className="organizations-panel" aria-labelledby="organizations-title">
       <div className={`organizations-layout${selectedOrganizationId === undefined ? '' : ' organizations-layout--has-selection'}`}>
         <div className="organizations-column">
           <div className="organizations-header">
-            <h2 id="organizations-title">Вузы</h2>
+            <h2 id="organizations-title" className="visually-hidden">Вузы</h2>
             <p className="organizations-total" role="status">
               {listState.kind === 'ready' && (listState.refreshing ? 'Обновляем…' : `Найдено: ${listState.page.total}`)}
             </p>
@@ -334,17 +360,17 @@ export const OrganizationsScreen = ({
                 setCreating(true)
               }}
             >
-              Добавить организацию
+              Добавить вуз
             </button>
           )}
           {createdMessage !== null && <p className="notice" role="status">{createdMessage}</p>}
           {role !== 'MANAGEMENT' && creating && (
             <OrganizationForm
-              title="Новая организация"
-              submitLabel={role === 'LEADER' ? 'Создать организацию' : 'Создать и отправить на подтверждение'}
+              title="Новый вуз"
+              submitLabel={role === 'LEADER' ? 'Создать' : 'Создать и отправить на подтверждение'}
               hint={role === 'LEADER'
-                ? 'Организация появится в команде без ответственного; назначьте КАМ в карточке.'
-                : 'Вы станете ответственным. Руководитель команды подтвердит организацию; работу можно вести сразу.'}
+                ? 'Вуз появится в команде без КАМ; назначьте его в карточке через «⋯».'
+                : 'Вы станете КАМ вуза. Руководитель команды подтвердит вуз; взаимодействия можно вести сразу.'}
               linkDuplicates
               onSubmit={async (payload, idempotencyKey) => {
                 organizationCreated(await apiClient.createOrganization(payload, idempotencyKey))
@@ -354,7 +380,19 @@ export const OrganizationsScreen = ({
             />
           )}
 
-          <form className="organizations-filters" role="search" aria-label="Отбор вузов" onSubmit={(event) => event.preventDefault()}>
+          {pendingRecords > 0 && role === 'LEADER' && (
+            <p className="organizations-pending">
+              <a href="#/admin/pending-source-records">Заявки с сайта ждут разбора: {pendingRecords}</a>
+            </p>
+          )}
+          {pendingRecords > 0 && role === 'USER' && (
+            <details className="organizations-pending">
+              <summary>Заявки с сайта ждут разбора: {pendingRecords}</summary>
+              <PendingSourceRecords role={role} onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
+            </details>
+          )}
+
+          <form className="organizations-filters" role="search" aria-label="Фильтры вузов" onSubmit={(event) => event.preventDefault()}>
             <label>
               Поиск по названию
               <input
@@ -531,6 +569,7 @@ export const OrganizationsScreen = ({
               organizationId={detailState.organization.id}
               initialInteractionId={selectedInteractionId}
               openIssues={new URLSearchParams(query).get('issues') === '1'}
+              organization={detailState.organization}
               profileId={profileId}
               role={role}
               onContactsChanged={() => void refreshOrganization(detailState.organization.id)}
@@ -547,19 +586,17 @@ export const OrganizationsScreen = ({
                 profileId={profileId}
                 headingRef={detailHeading}
                 onChanged={organizationChanged}
-                onOpenAssignment={openAssignment}
+                onOpenAssignment={setAssignmentDialog}
                 onSessionError={handleAccessError}
               />
-              <div className="card-notice-slot" role="status" aria-live="polite">
-                {cardMessage !== null && <p className="card-notice">{cardMessage}</p>}
-              </div>
               <OrganizationSummary
                 key={`summary:${detailState.organization.id}`}
                 organizationId={detailState.organization.id}
-                workHref={(id) => `#/organizations/${detailState.organization.id}/${id}${listSuffix}`}
-                onShowWorks={() => setOrganizationTab('works')}
+                revision={cardRevision}
+                onCounts={setCounts}
                 onSessionError={handleAccessError}
               />
+              <Toast message={cardMessage} onClose={() => setCardMessage(null)} />
               <CardTabs
                 label="Разделы карточки вуза"
                 idPrefix="organization-card"
@@ -579,7 +616,10 @@ export const OrganizationsScreen = ({
                       canManage: role === 'LEADER' || role === 'USER' && detailState.organization.ownerManagerId === profileId,
                       canOpen: detailState.organization.status === 'ACTIVE' && detailState.organization.type !== 'OPEN_ENROLLMENT'
                     } : undefined}
-                    onContactsChanged={() => void refreshOrganization(detailState.organization.id)}
+                    onContactsChanged={() => {
+                      cardChanged()
+                      void refreshOrganization(detailState.organization.id)
+                    }}
                     onSessionExpired={onSessionExpired}
                     onProfileUnavailable={onProfileUnavailable}
                   />
@@ -589,43 +629,62 @@ export const OrganizationsScreen = ({
                     key={`agreements:${detailState.organization.id}`}
                     organizationId={detailState.organization.id}
                     role={role}
+                    initialAgreementId={linkedAgreementId}
+                    onChanged={cardChanged}
                     onSessionExpired={onSessionExpired}
                     onProfileUnavailable={onProfileUnavailable}
                   />
                 )}
                 {organizationTab === 'timeline' && (
-                  <OrganizationHistoryFeed
-                    key={detailState.organization.id}
-                    organizationId={detailState.organization.id}
-                    workHref={(id) => `#/organizations/${detailState.organization.id}/${id}${listSuffix}`}
-                    onSessionExpired={onSessionExpired}
-                    onProfileUnavailable={onProfileUnavailable}
-                  />
-                )}
-                {organizationTab === 'history' && role === 'LEADER' && (
-                  <OrganizationAssignmentPanel
-                    key={detailState.organization.id}
-                    organization={detailState.organization}
-                    profileId={profileId}
-                    onOrganizationChanged={(organization) => {
-                      setCardMessage('Назначение ответственного сохранено.')
-                      replaceOrganization(organization)
-                    }}
-                    onReload={() => loadOrganization(detailState.organization.id)}
-                    onSessionExpired={onSessionExpired}
-                    onProfileUnavailable={onProfileUnavailable}
-                  />
-                )}
-                {organizationTab === 'history' && role !== 'LEADER' && (
-                  <OrganizationAssignmentHistory
-                    key={detailState.organization.id}
-                    organizationId={detailState.organization.id}
-                    revision={0}
-                    onSessionExpired={onSessionExpired}
-                    onProfileUnavailable={onProfileUnavailable}
-                  />
+                  <div className="org-history">
+                    <CardSection title={role === 'LEADER' ? 'История назначений и замещений' : 'История назначений'}>
+                      <OrganizationAssignmentHistory
+                        key={`${detailState.organization.id}:${cardRevision}`}
+                        organizationId={detailState.organization.id}
+                        revision={cardRevision}
+                        includeDeputies={role === 'LEADER'}
+                        onSessionExpired={onSessionExpired}
+                        onProfileUnavailable={onProfileUnavailable}
+                      />
+                    </CardSection>
+                    <OrganizationHistoryFeed
+                      key={`${detailState.organization.id}:${cardRevision}`}
+                      organizationId={detailState.organization.id}
+                      workHref={(id) => `#/organizations/${detailState.organization.id}/${id}${listSuffix}`}
+                      onSessionExpired={onSessionExpired}
+                      onProfileUnavailable={onProfileUnavailable}
+                    />
+                  </div>
                 )}
               </CardTabPanel>
+              {role === 'LEADER' && (
+                <CardDialog
+                  open={assignmentDialog !== null}
+                  title={assignmentDialog === 'deputy' ? 'Заместитель на время отсутствия' : 'Назначить или сменить ответственного'}
+                  onClose={() => setAssignmentDialog(null)}
+                >
+                  {assignmentDialog !== null && (
+                    <OrganizationAssignmentPanel
+                      key={`${assignmentDialog}:${detailState.organization.id}`}
+                      part={assignmentDialog}
+                      organization={detailState.organization}
+                      profileId={profileId}
+                      onOrganizationChanged={(organization) => {
+                        setAssignmentDialog(null)
+                        setCardMessage('Назначение ответственного сохранено.')
+                        replaceOrganization(organization)
+                        cardChanged()
+                      }}
+                      onReload={async () => {
+                        await refreshOrganization(detailState.organization.id)
+                        cardChanged()
+                      }}
+                      onSessionExpired={onSessionExpired}
+                      onProfileUnavailable={onProfileUnavailable}
+                    />
+                  )}
+                </CardDialog>
+              )}
             </div>
           )}
         </section>

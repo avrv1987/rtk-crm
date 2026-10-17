@@ -40,6 +40,9 @@ final class PlannedRow {
         }
     }
 
+    // Заявка (claim) — «эта строка утверждает о записи X следующее». Две строки об одной записи с разными
+    // утверждениями противоречат друг другу, и обе получают конфликт. У договора описание пустое: любая вторая
+    // строка про тот же договор недопустима, даже если значения те же, чтобы файл не задавал договор дважды.
     static void resolveConflicts(List<PlannedRow> rows) {
         List<PlannedRow> candidates = rows.stream().filter(row -> !row.hasErrors()).toList();
         Map<String, PlannedRow> firstByClaim = new HashMap<>();
@@ -99,6 +102,8 @@ final class PlannedRow {
         return !errors.isEmpty();
     }
 
+    // Приоритет статуса: конфликт важнее ошибки, ошибка важнее «создать», «создать» важнее «обновить».
+    // Строка с ошибкой или конфликтом применена быть не может (canApply).
     CatalogImportRowStatus status() {
         if (conflicted) {
             return CatalogImportRowStatus.CONFLICT;

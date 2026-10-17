@@ -127,6 +127,11 @@ public class InteractionIssueRepository {
             UUID createdBy,
             OffsetDateTime createdAt
     ) {
+        // Реестр упорядочен по created_at; при совпадении времени порядок решал бы случайный id, поэтому время записи
+        // внутри взаимодействия строго растёт.
+        OffsetDateTime last = jdbcClient.sql("SELECT MAX(created_at) FROM interaction_issues WHERE interaction_id = :interactionId")
+                .param("interactionId", interactionId).query(OffsetDateTime.class).optional().orElse(null);
+        OffsetDateTime at = last != null && !createdAt.isAfter(last) ? last.plusNanos(1_000) : createdAt;
         jdbcClient.sql("""
                 INSERT INTO interaction_issues (
                     id, interaction_id, kind, description, risk_level, responsible_profile_id, due_on, status, created_by, created_at
@@ -142,7 +147,7 @@ public class InteractionIssueRepository {
                 .param("responsibleId", responsibleId)
                 .param("dueOn", dueOn)
                 .param("createdBy", createdBy)
-                .param("createdAt", createdAt)
+                .param("createdAt", at)
                 .update();
     }
 

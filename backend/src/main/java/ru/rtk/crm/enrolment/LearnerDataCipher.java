@@ -35,6 +35,8 @@ public class LearnerDataCipher {
     private final String activeVersion;
     private final SecretKey fingerprintKey;
 
+    // При выключенном модуле ключи не читаются: стенд без ПДн не должен требовать секретов.
+    // Включённый модуль без ключей не стартует (ошибки ниже), чтобы не записать анкету открытым текстом.
     public LearnerDataCipher(EnrolmentProperties properties, ModuleProperties modules) {
         if (modules.enrolmentEnabled()) {
             keys = encryptionKeys(properties);
@@ -47,11 +49,15 @@ public class LearnerDataCipher {
         }
     }
 
+    // Формат хранимого значения: «версия:iv:шифротекст». Версия ключа нужна для ротации: старые записи
+    // читаются старым ключом, пока LearnerRekeyJob не перешифрует их активным.
     public String encrypt(String plaintext, String context) {
         if (plaintext == null) {
             return null;
         }
         requireEnabled();
+        // IV случайный на каждую запись: повтор IV с тем же ключом в GCM раскрывает ключевой поток.
+        // Контекст (слушатель и поле) входит в AAD, поэтому шифротекст нельзя перенести в другую анкету или поле.
         byte[] aad = aad(activeVersion, context);
         byte[] iv = new byte[IV_BYTES];
         random.nextBytes(iv);
@@ -80,6 +86,7 @@ public class LearnerDataCipher {
         if (key == null) {
             throw new IllegalStateException("Нет ключа шифрования версии «" + parts[0] + "»");
         }
+        // AAD строится из версии, записанной в самом значении: подмена версии или контекста даёт отказ проверки тега.
         byte[] aad = aad(parts[0], context);
         try {
             Base64.Decoder decoder = Base64.getDecoder();
@@ -118,6 +125,8 @@ public class LearnerDataCipher {
         return stored != null && stored.startsWith(activeVersion + ":");
     }
 
+    // Отпечатки (HMAC) нужны для поиска и поиска дублей без расшифровки. Значение приводится к канонической
+    // форме до хеширования, а префикс вида исключает совпадение отпечатков разных полей.
     public String emailFingerprint(String email) {
         return email == null ? null : fingerprint("email", LearnerRules.emailKey(email));
     }
@@ -156,6 +165,8 @@ public class LearnerDataCipher {
         return fingerprint("request", canonicalRequest);
     }
 
+    // Ключ отпечатков отдельный от ключей шифрования: утечка одного не раскрывает другое (см. fingerprintKey).
+    // Отпечаток не зависит от версии ключа шифрования, поэтому ротация шифрования поиск не ломает.
     private String fingerprint(String kind, String value) {
         requireEnabled();
         try {
@@ -206,6 +217,7 @@ public class LearnerDataCipher {
     }
 
     private static String activeVersion(EnrolmentProperties properties, Map<String, SecretKey> keys) {
+        // Активная версия обязана иметь ключ: иначе новые записи нечем шифровать, а сервис должен упасть при старте.
         String active = properties.activeKeyVersion() == null ? "" : properties.activeKeyVersion().strip();
         if (!keys.containsKey(active)) {
             String variable = active.isEmpty() ? "APP_ENROLMENT_KEYS_<версия>" : "APP_ENROLMENT_KEYS_" + active.toUpperCase(Locale.ROOT);
@@ -228,6 +240,7 @@ public class LearnerDataCipher {
         if (key.length < KEY_BYTES) {
             throw new IllegalStateException("Ключ отпечатков должен содержать не меньше " + KEY_BYTES + " байт в Base64");
         }
+        // Совпадение ключа отпечатков с ключом шифрования запрещено: тогда отпечаток был бы связан с шифром общим секретом.
         keys.forEach((version, encryptionKey) -> {
             if (MessageDigest.isEqual(encryptionKey.getEncoded(), key)) {
                 throw new IllegalStateException("Ключ отпечатков APP_ENROLMENT_FINGERPRINT_KEY совпадает с ключом шифрования "
@@ -239,6 +252,7 @@ public class LearnerDataCipher {
 
     private static byte[] decode(String value, String name) {
         try {
+            // Допускается и стандартный Base64, и URL-вариант: ключи выдают разные генераторы.
             return Base64.getDecoder().decode(value.strip().replace('-', '+').replace('_', '/'));
         } catch (IllegalArgumentException exception) {
             throw new IllegalStateException(name + " должен быть записан в Base64");

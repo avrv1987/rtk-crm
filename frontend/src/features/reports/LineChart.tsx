@@ -8,6 +8,7 @@ type Line = {
   label: string
   values: number[]
   unspecified: boolean
+  others: boolean
 }
 
 const plotTop = 36
@@ -20,8 +21,14 @@ const widthPercent = 94
 
 export const chartLines = (result: StatisticsResult): Line[] => (
   result.seriesBy === null || result.seriesBy === undefined
-    ? [{ key: 'total', label: countTitles[result.kind], values: result.items.map((item) => item.count), unspecified: false }]
-    : result.series.map((series) => ({ key: series.key, label: series.label, values: series.counts, unspecified: series.unspecified }))
+    ? [{ key: 'total', label: countTitles[result.kind], values: result.items.map((item) => item.count), unspecified: false, others: false }]
+    : result.series.map((series) => ({
+      key: series.key,
+      label: series.label,
+      values: series.counts,
+      unspecified: series.unspecified,
+      others: series.others === true
+    }))
 )
 
 const monthLabel = (key: string) => `${key.slice(5, 7)}.${key.slice(0, 4)}`
@@ -47,7 +54,9 @@ export const LineChart = ({ result }: LineChartProps) => {
   let colorIndex = 0
   const colored = lines.map((line) => ({
     ...line,
-    className: line.unspecified ? 'line-chart__series--unspecified' : `line-chart__series--${colorIndex++ % 5}`
+    className: line.unspecified
+      ? 'line-chart__series--unspecified'
+      : line.others ? 'line-chart__series--others' : `line-chart__series--${colorIndex++ % 5}`
   }))
   const title = `${kindTitles[result.kind]} — график ${groupingTitles[result.groupBy]}${series ? `, линии ${groupingTitles[result.seriesBy!]}` : ''}`
   const caption = [
@@ -58,6 +67,9 @@ export const LineChart = ({ result }: LineChartProps) => {
       : []),
     ...(result.seriesBy === 'PRODUCT'
       ? ['Строка с несколькими ИТ-продуктами учтена в линии каждого из них, поэтому сумма линий может быть больше итога.']
+      : []),
+    ...(lines.some((line) => line.others)
+      ? ['«Остальные» — сумма линий сверх пяти крупнейших; чтобы увидеть их по отдельности, сузьте отбор по вузам или программам.']
       : []),
     ...(pointLabels ? [] : ['Точек слишком много для подписей: значения — в таблице основания под графиком.'])
   ]

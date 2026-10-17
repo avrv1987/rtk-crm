@@ -8,10 +8,13 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 import ru.rtk.crm.access.CurrentProfileService;
+import ru.rtk.crm.interaction.Interaction;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.work.LmsSignalModels.LmsSignalDismissalRequest;
+import ru.rtk.crm.work.LmsSignalModels.LmsSignalRiskRequest;
 import ru.rtk.crm.work.LmsSignalModels.LmsSignals;
 
 @RestController
@@ -41,6 +44,16 @@ public class LmsSignalsApiController {
             @RequestBody(required = false) LmsSignalDismissalRequest request
     ) {
         return lmsSignalService.dismiss(currentProfileService.requireActiveProfile(user), parseUuid(id), request);
+    }
+
+    @PostMapping("/api/interactions/{id}/lms-signals/risks")
+    public Interaction recordRisk(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody(required = false) LmsSignalRiskRequest request
+    ) {
+        return lmsSignalService.recordRisk(currentProfileService.requireActiveProfile(user), parseUuid(id), request, idempotencyKey);
     }
 
     private static UUID parseUuid(String value) {

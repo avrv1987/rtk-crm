@@ -8,10 +8,12 @@ import {
   type OrganizationStatusChange,
   type PageInteraction
 } from '../../shared/api/client'
+import { ActionMenu, type ActionMenuItem } from '../../shared/ui/ActionMenu'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
-import { CardDialog, CardMenu, type CardMenuItem } from '../interactions/cardUi'
-import { InteractionMarkBadges } from '../interactions/InteractionMarkBadges'
+import { agreementStatusLabels } from '../agreements/agreementModel'
+import { agreementsApi, formatDate as formatAgreementDate, type AgreementSummary } from '../agreements/agreementsApi'
+import { CardDialog } from '../interactions/cardUi'
 import { formatMoscowDateTime } from '../interactions/moscowTime'
 import { formatDate } from '../work/workShared'
 import { actionTexts } from './OrganizationCatalogPanel'
@@ -26,7 +28,7 @@ type OrganizationCardHeaderProps = {
   profileId: string
   headingRef: Ref<HTMLHeadingElement>
   onChanged: (organization: Organization, message: string) => void
-  onOpenAssignment: () => void
+  onOpenAssignment: (part: 'assignment' | 'deputy') => void
   onSessionError: (error: unknown) => boolean
 }
 
@@ -108,18 +110,18 @@ export const OrganizationCardHeader = ({
     </button>
   )
 
-  const menuItems: CardMenuItem[] = []
+  const menuItems: ActionMenuItem[] = []
+  if (isLeader) {
+    menuItems.push(
+      { label: 'Назначить или сменить ответственного…', onSelect: () => onOpenAssignment('assignment') },
+      { label: 'Заместитель на время отсутствия…', onSelect: () => onOpenAssignment('deputy') }
+    )
+  }
   if (canEdit) {
     menuItems.push({ label: 'Изменить название и реквизиты…', onSelect: () => setEditing(true) })
   }
-  if (isLeader) {
-    menuItems.push(
-      { label: 'Назначить или сменить ответственного…', onSelect: onOpenAssignment },
-      { label: 'Заместитель на время отсутствия…', onSelect: onOpenAssignment }
-    )
-  }
   if (canArchive) {
-    menuItems.push({ label: 'Архивировать организацию…', danger: true, onSelect: () => setPending('ARCHIVE') })
+    menuItems.push({ label: 'Архивировать вуз…', danger: true, separated: menuItems.length > 0, onSelect: () => setPending('ARCHIVE') })
   }
 
   return (
@@ -136,21 +138,17 @@ export const OrganizationCardHeader = ({
             {deputy !== null && <span className="status status--planned">Замещение: {deputy}</span>}
           </div>
         </div>
-        <CardMenu label="Ещё действия с вузом" items={menuItems} />
+        <ActionMenu label="Ещё действия с вузом" items={menuItems} />
       </div>
       <dl className="org-card__facts">
         <div>
-          <dt>Ответственный КАМ</dt>
+          <dt>КАМ вуза</dt>
           <dd className={organization.requiresAssignment ? 'organization-detail__attention' : undefined}>{ownerLabel(organization)}</dd>
         </div>
-        <div>
-          <dt>Команда</dt>
-          <dd>{organization.teamName ?? 'Не указана'}</dd>
-        </div>
-        {deputy !== null && (
+        {organization.teamName !== null && (
           <div>
-            <dt>Заместитель</dt>
-            <dd>{deputy}</dd>
+            <dt>Команда</dt>
+            <dd>{organization.teamName}</dd>
           </div>
         )}
         <div>
@@ -165,7 +163,7 @@ export const OrganizationCardHeader = ({
         ))}
       </dl>
       {requisites.length === 0 && canEdit && (
-        <p className="org-card__muted">Город, сайт и ИНН не заполнены. Их можно указать через «⋯» → «Изменить название и реквизиты».</p>
+        <p className="org-card__muted">Город, сайт и ИНН не заполнены: «⋯» → «Изменить название и реквизиты».</p>
       )}
       {organization.inherited && !organization.requiresAssignment && (
         <p className="org-card__banner" role="note">
@@ -192,7 +190,7 @@ export const OrganizationCardHeader = ({
       )}
       {organization.status === 'ARCHIVED' && (
         <div className="org-card__banner org-card__banner--archived" role="note">
-          <p>Организация в архиве: она не предлагается для новой работы, история сохранена.</p>
+          <p>Вуз в архиве: он не предлагается для новых взаимодействий, история сохранена.</p>
           {isLeader && <div className="org-card__banner-actions">{statusButton('RESTORE', true)}</div>}
         </div>
       )}
@@ -238,37 +236,71 @@ export const OrganizationCardHeader = ({
   )
 }
 
+export type OrganizationCounts = {
+  works: number
+  contacts: number
+  agreements: number
+}
+
+type SummaryData = {
+  page: PageInteraction
+  overdue: number
+  agreements: AgreementSummary[]
+}
+
 type SummaryState =
   | { kind: 'loading' }
-  | { kind: 'ready'; page: PageInteraction; overdue: number }
+  | { kind: 'ready'; data: SummaryData }
   | { kind: 'failed'; requestId?: string }
 
-const summaryRows = 5
+const agreementLine = (agreements: AgreementSummary[]) => {
+  const active = agreements
+    .filter((agreement) => agreement.status === 'ACTIVE')
+    .sort((left, right) => (right.validUntil ?? '9999').localeCompare(left.validUntil ?? '9999'))[0]
+  if (active !== undefined) {
+    return `договор № ${active.number}${active.validUntil ? ` действует до ${formatAgreementDate(active.validUntil)}` : ' действует'}`
+  }
+  const open = agreements.find((agreement) => agreement.status !== 'TERMINATED' && agreement.status !== 'COMPLETED')
+  return open === undefined ? 'действующего договора нет' : `договор № ${open.number}: ${agreementStatusLabels[open.status].toLowerCase()}`
+}
+
+const worksLabel = (count: number) => {
+  const lastTwo = count % 100
+  const last = count % 10
+  if (last === 1 && lastTwo !== 11) {
+    return `${count} активное взаимодействие`
+  }
+  return last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14) ? `${count} активных взаимодействия` : `${count} активных взаимодействий`
+}
 
 export const OrganizationSummary = ({
   organizationId,
-  workHref,
-  onShowWorks,
+  revision,
+  onCounts,
   onSessionError
 }: {
   organizationId: Organization['id']
-  workHref: (id: string) => string
-  onShowWorks: () => void
+  revision: number
+  onCounts: (counts: OrganizationCounts) => void
   onSessionError: (error: unknown) => boolean
 }) => {
   const [state, setState] = useState<SummaryState>({ kind: 'loading' })
   const requestVersion = useRef(0)
+  const countsRef = useRef(onCounts)
+  countsRef.current = onCounts
 
   const load = useCallback(async () => {
     const version = ++requestVersion.current
-    setState({ kind: 'loading' })
     try {
-      const [page, overdue] = await Promise.all([
+      const [page, overdue, contacts, agreements] = await Promise.all([
         apiClient.listInteractions({ organizationId, status: 'ACTIVE', size: 100, page: 0, sort: 'nextActionAt,asc' }),
-        apiClient.listInteractions({ organizationId, status: 'ACTIVE', due: 'OVERDUE', size: 1, page: 0 })
+        apiClient.listInteractions({ organizationId, status: 'ACTIVE', due: 'OVERDUE', size: 1, page: 0 }),
+        apiClient.listOrganizationContacts(organizationId),
+        agreementsApi.list(organizationId)
       ])
       if (version === requestVersion.current) {
-        setState({ kind: 'ready', page, overdue: overdue.total })
+        setState({ kind: 'ready', data: { page, overdue: overdue.total, agreements } })
+        countsRef.current({ works: page.total, contacts: contacts.length, agreements: agreements.length })
       }
     } catch (error) {
       if (version !== requestVersion.current || onSessionError(error)) {
@@ -283,86 +315,36 @@ export const OrganizationSummary = ({
     return () => {
       requestVersion.current += 1
     }
-  }, [load])
+  }, [load, revision])
 
   if (state.kind === 'loading') {
-    return <p className="organizations-message" role="status">Загружаем сводку по работам…</p>
+    return <p className="org-summary org-summary--loading" role="status">Загружаем сводку…</p>
   }
   if (state.kind === 'failed') {
     return (
       <div className="organizations-message organizations-message--error" role="alert">
-        <p>Не удалось загрузить сводку по работам.</p>
+        <p>Не удалось загрузить сводку по вузу.</p>
         <SupportDetails requestId={state.requestId} />
         <button type="button" onClick={() => void load()}>Повторить</button>
       </div>
     )
   }
 
+  const { page, overdue, agreements } = state.data
   const now = Date.now()
-  const items = state.page.items
-  const dueTimes = items.flatMap((item) => item.nextActionAt === null ? [] : [new Date(item.nextActionAt).getTime()])
-  const upcoming = dueTimes.filter((time) => time >= now)
+  const upcoming = page.items.flatMap((item) => item.nextActionAt === null ? [] : [new Date(item.nextActionAt).getTime()])
+    .filter((time) => time >= now)
   const nearest = upcoming.length === 0 ? undefined : Math.min(...upcoming)
-  const lastContacts = items.flatMap((item) => item.lastContactAt === null ? [] : [new Date(item.lastContactAt).getTime()])
+  const lastContacts = page.items.flatMap((item) => item.lastContactAt === null ? [] : [new Date(item.lastContactAt).getTime()])
   const lastContact = lastContacts.length === 0 ? undefined : Math.max(...lastContacts)
-  const rows = [...items]
-    .sort((left, right) => {
-      const leftTime = left.nextActionAt === null ? Number.POSITIVE_INFINITY : new Date(left.nextActionAt).getTime()
-      const rightTime = right.nextActionAt === null ? Number.POSITIVE_INFINITY : new Date(right.nextActionAt).getTime()
-      return leftTime - rightTime
-    })
-    .slice(0, summaryRows)
 
   return (
-    <section className="org-summary" aria-labelledby="org-summary-title">
-      <h4 id="org-summary-title" className="org-summary__title">Сводка по работам</h4>
-      <div className="org-summary__stats">
-        <div className="org-stat">
-          <span className="org-stat__value">{state.page.total}</span>
-          <span className="org-stat__label">активных работ</span>
-        </div>
-        <div className={state.overdue > 0 ? 'org-stat org-stat--bad' : 'org-stat org-stat--quiet'}>
-          <span className="org-stat__value">{state.overdue}</span>
-          <span className="org-stat__label">просрочено шагов</span>
-        </div>
-        <div className="org-stat">
-          <span className="org-stat__value org-stat__value--text">{nearest === undefined ? 'нет' : formatMoscowDateTime(new Date(nearest).toISOString())}</span>
-          <span className="org-stat__label">ближайший срок</span>
-        </div>
-        <div className="org-stat">
-          <span className="org-stat__value org-stat__value--text">{lastContact === undefined ? 'нет данных' : formatMoscowDateTime(new Date(lastContact).toISOString())}</span>
-          <span className="org-stat__label">последний контакт</span>
-        </div>
-      </div>
-      {rows.length === 0 ? (
-        <p className="org-card__muted">Активных работ нет.</p>
-      ) : (
-        <ul className="org-summary__works" aria-label="Активные работы по сроку">
-          {rows.map((item) => {
-            const due = item.nextActionAt === null ? null : new Date(item.nextActionAt).getTime()
-            const overdue = due !== null && due < now
-            return (
-              <li key={item.id}>
-                <a className="org-summary__work" href={workHref(item.id)}>
-                  <span className="org-summary__work-title">{item.title}</span>
-                  <span className="org-summary__work-stage">{item.currentStageName}</span>
-                  <span className="org-summary__work-step">{item.nextAction ?? 'Следующий шаг не задан'}</span>
-                  <span className={`org-summary__work-due${overdue ? ' interaction-summary__overdue' : due === null ? ' interaction-summary__missing' : ''}`}>
-                    {item.nextActionAt === null ? 'срок не задан' : `${overdue ? 'просрочен с ' : ''}${formatMoscowDateTime(item.nextActionAt)}`}
-                  </span>
-                  <span className="org-summary__work-owner">{item.ownerManagerName ?? 'Ответственный не назначен'}</span>
-                  <InteractionMarkBadges marks={item.marks} />
-                </a>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-      {state.page.total > rows.length && (
-        <button type="button" className="button--secondary org-summary__more" onClick={onShowWorks}>
-          Все работы во вкладке «Работы» ({state.page.total} активных)
-        </button>
-      )}
-    </section>
+    <p className="org-summary" aria-label="Сводка по вузу">
+      <span>{worksLabel(page.total)}</span>
+      <span className={overdue > 0 ? 'org-summary__bad' : undefined}>просрочено шагов: {overdue}</span>
+      <span>ближайший срок: {nearest === undefined ? 'нет' : formatMoscowDateTime(new Date(nearest).toISOString())}</span>
+      <span>последний контакт: {lastContact === undefined ? 'нет данных' : formatMoscowDateTime(new Date(lastContact).toISOString())}</span>
+      <span>{agreementLine(agreements)}</span>
+    </p>
   )
 }

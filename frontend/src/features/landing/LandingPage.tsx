@@ -66,7 +66,7 @@ const routeSteps: [string, string][] = [
 const features: Feature[] = [
   {
     title: 'Отчёты',
-    text: 'Больше десяти отчётов: портфель взаимодействий, события за период, состояние на дату, длительность этапов, востребованность программ, реализация соглашений, план подписаний и продлений, динамика обучения и другие. Колонки и их порядок настраиваются, перед выгрузкой доступен предпросмотр, настройки отчёта можно сохранить.',
+    text: 'Больше десяти отчётов: портфель взаимодействий, события за период, состояние на дату, длительность этапов, востребованность программ, реализация договоров, договоры за период, план подписаний и продлений, динамика обучения и другие. Колонки и их порядок настраиваются, перед выгрузкой доступен предпросмотр, настройки отчёта можно сохранить.',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" aria-hidden="true">
         <rect x="4" y="3" width="16" height="18" rx="2" />
@@ -122,7 +122,7 @@ const criteriaMap: [string, string, string][] = [
   ['Маршрут и его корректировка', '#lp-how', 'Как это работает'],
   ['Отчёты и фильтрация данных', '#lp-features', 'Возможности'],
   ['Объективность диаграмм', '#lp-features', 'Возможности'],
-  ['Интеграция в корпоративные системы', '#lp-integrations', 'Интеграции и API'],
+  ['Интеграция в корпоративные системы', '#lp-integrations', 'Интеграции'],
   ['Роли и разграничение доступа', '#lp-roles', 'Роли'],
   ['Исходный код и документация', '#lp-check-links', 'Материалы сдачи']
 ]
@@ -148,15 +148,9 @@ const technicalLinks: SubmissionLink[] = [
   ...withAddress('Демонстрационный Moodle', landingLinks.moodleUrl, 'на время показа')
 ]
 
-type LoginButtonProps = {
-  label: string
-  pending: boolean
-  onLogin: () => void
-}
-
-const LoginButton = ({ label, pending, onLogin }: LoginButtonProps) => (
+const LoginButton = ({ pending, onLogin }: { pending: boolean; onLogin: () => void }) => (
   <button type="button" className="landing-login" disabled={pending} aria-busy={pending} onClick={onLogin}>
-    {pending ? 'Переходим ко входу…' : label}
+    {pending ? 'Переходим ко входу…' : 'Войти'}
   </button>
 )
 
@@ -216,7 +210,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               {showJurySection && <a href="#lp-check">Для проверки</a>}
               <a href="#/help">Справка</a>
             </nav>
-            <LoginButton label="Войти" pending={pending} onLogin={login} />
+            <LoginButton pending={pending} onLogin={login} />
           </div>
         </div>
       </header>
@@ -231,8 +225,8 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                 Система ведёт работу ИТ Школы РТК с вузами, колледжами и школами по ИТ-программам и ИТ-продуктам: от поиска контакта до повышения квалификации преподавателей. На каждом этапе видно, кто отвечает, какой следующий шаг и к какому сроку.
               </p>
               <div className="landing-hero__actions">
-                <LoginButton label="Войти в CRM" pending={pending} onLogin={login} />
-                {showJurySection && <a className="button-link" href="#lp-check">Материалы для проверки</a>}
+                <LoginButton pending={pending} onLogin={login} />
+                {showJurySection && <a className="landing-hero__check" href="#lp-check">Материалы для проверки</a>}
               </div>
               <p className="landing-hero__note">Вход по корпоративной учётной записи. Пароль вводится только на странице защищённого входа.</p>
               <p className="landing-hero__audience">
@@ -353,6 +347,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
 
         <section id="lp-integrations" className="landing-section">
           <div className="landing-container">
+            <p className="eyebrow">Интеграции</p>
             <h2>Работает вместе с учебной платформой</h2>
             <div className="landing-integrations">
               {integrations(modules).map(([title, text]) => (
@@ -393,12 +388,11 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               <div className="landing-card landing-check__card">
                 <h3 id="lp-check-links">Материалы сдачи</h3>
                 <ul className="landing-links">
-                  <li className="landing-links__row landing-links__row--prototype">
+                  <li className="landing-links__row">
                     <div className="landing-links__main">
                       <span className="landing-links__label">Стенд</span>
                       <a className="landing-links__address" href="/">{window.location.host}</a>
                     </div>
-                    <LoginButton label="Войти в систему" pending={pending} onLogin={login} />
                   </li>
                   {submissionLinks.map((link) => <LinkRow key={link.label} link={link} />)}
                 </ul>
@@ -416,19 +410,6 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
           </section>
         )}
 
-        <section className="landing-final">
-          <div className="landing-container">
-            <div className="landing-card landing-final__card">
-              <div className="landing-final__text">
-                <h2>Работаете в ИТ Школе РТК?</h2>
-                <p>После входа откроется «Моя работа» с вашими взаимодействиями. Если профиль ещё не активирован, обратитесь к администратору платформы.</p>
-              </div>
-              <div className="landing-final__action">
-                <LoginButton label="Войти в CRM" pending={pending} onLogin={login} />
-              </div>
-            </div>
-          </div>
-        </section>
       </main>
 
       <footer className="landing-footer">

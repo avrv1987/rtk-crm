@@ -35,6 +35,9 @@ public class CurrentProfileService {
         return profile;
     }
 
+    // Профиль ищется по паре «издатель + subject» из подписанного ID-токена. Роль берётся из claims этого токена,
+    // а не из userinfo, поэтому подмена ответа userinfo роль не меняет. Профиль без активации — отдельная
+    // ошибка «ждёт активации», чтобы интерфейс не путал его с отсутствующим.
     public CrmProfile requireSessionProfile(OidcUser user) {
         String issuer = user.getIdToken().getIssuer().toString();
         String subject = user.getSubject();
@@ -46,6 +49,9 @@ public class CurrentProfileService {
         boolean roleGranted = profile.role() == UserRole.PARTNER
                 ? granted.contains(UserRole.PARTNER)
                 : UserRole.employeeRole(granted).isPresent();
+        // Если роль профиля когда-то пришла из Keycloak, а в токене её больше нет (роль сняли), доступ закрывается
+        // как для неизвестного профиля. Профиль, роль которого ещё не сверялась с Keycloak, остаётся работать по
+        // роли из CRM до первой сверки: иначе при подключении Keycloak все остались бы без доступа.
         if (!roleGranted && userProfileRepository.isRoleFromKeycloak(profile.id())) {
             throw new CrmProfileNotFoundException();
         }
@@ -59,6 +65,8 @@ public class CurrentProfileService {
                 : Set.of();
     }
 
+    // Первый вход создаёт профиль в состоянии «ждёт активации»; повторный вход только обновляет логин.
+    // Незнакомый сотрудник не получает данных, пока администратор не назначит команду и не активирует профиль.
     public boolean registerPendingProfile(OidcUser user) {
         String issuer = user.getIdToken().getIssuer().toString();
         String login = login(user);
@@ -84,6 +92,7 @@ public class CurrentProfileService {
         return normalized.length() > LOGIN_LIMIT ? normalized.substring(0, LOGIN_LIMIT) : normalized;
     }
 
+    // Имя и логин усекаются до пределов колонок: слишком длинное значение из IdP не должно ломать вход.
     private static String displayName(OidcUser user) {
         String value = firstNonBlank(user.getFullName(), user.getPreferredUsername(), user.getSubject());
         return value.length() > DISPLAY_NAME_LIMIT ? value.substring(0, DISPLAY_NAME_LIMIT) : value;

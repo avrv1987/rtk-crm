@@ -3,6 +3,7 @@ package ru.rtk.crm.access;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -11,7 +12,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import ru.rtk.crm.access.AdminCrmProfileRepository.ProfileState;
 import ru.rtk.crm.catalog.OrganizationAssignmentEvent;
 import ru.rtk.crm.catalog.OrganizationAssignmentReason;
@@ -35,7 +38,9 @@ public class AdminCrmProfileService {
     private final CommandIdempotencyRepository commandIdempotencyRepository;
     private final AccountSyncRepository accountSyncRepository;
     private final KeycloakAccountClient keycloakAccountClient;
+    private final AccountSyncService accountSyncService;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactionTemplate;
 
     public AdminCrmProfileService(
             AdminCrmProfileRepository adminCrmProfileRepository,
@@ -44,7 +49,9 @@ public class AdminCrmProfileService {
             CommandIdempotencyRepository commandIdempotencyRepository,
             AccountSyncRepository accountSyncRepository,
             KeycloakAccountClient keycloakAccountClient,
-            ObjectMapper objectMapper
+            AccountSyncService accountSyncService,
+            ObjectMapper objectMapper,
+            PlatformTransactionManager transactionManager
     ) {
         this.adminCrmProfileRepository = adminCrmProfileRepository;
         this.adminTeamRepository = adminTeamRepository;
@@ -52,13 +59,21 @@ public class AdminCrmProfileService {
         this.commandIdempotencyRepository = commandIdempotencyRepository;
         this.accountSyncRepository = accountSyncRepository;
         this.keycloakAccountClient = keycloakAccountClient;
+        this.accountSyncService = accountSyncService;
         this.objectMapper = objectMapper;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     @Transactional(readOnly = true)
     public AdminCrmProfilePage list(CrmProfile actor, AdminCrmProfileQuery query) {
         AdminAuthorization.requireAdmin(actor);
         return adminCrmProfileRepository.findPage(query);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AdminCrmProfile> exportRows(CrmProfile actor, AdminCrmProfileQuery query, int limit) {
+        AdminAuthorization.requireAdmin(actor);
+        return adminCrmProfileRepository.findRows(query, limit);
     }
 
     @Transactional(readOnly = true)
@@ -69,7 +84,13 @@ public class AdminCrmProfileService {
         return adminCrmProfileRepository.findEventsByProfileId(profileId);
     }
 
-    @Transactional
+    // Порядок команды, когда меняется роль или требование второго фактора:
+    // 1) короткая транзакция с блокировками проверяет команду и ставит признак «требует сверки»;
+    // 2) вне транзакции изменение записывается в Keycloak;
+    // 3) вторая транзакция снова проверяет команду, сохраняет профиль и снимает признак.
+    // Пока признак стоит, вход сотрудника не переносит роль из Keycloak в CRM. Если шаг 2 или 3 не удался,
+    // Keycloak возвращается к состоянию, сохранённому в CRM; если и это невозможно, признак остаётся, и администратор
+    // видит у профиля «требует сверки». Так запросы к Keycloak не держат блокировки строк администраторов.
     public AdminCrmProfile update(
             CrmProfile actor,
             UUID profileId,
@@ -95,6 +116,8 @@ public class AdminCrmProfileService {
                     "body", "Укажите хотя бы одно изменение: имя, роль, команду, активность или флаг «Оператор зачисления»"
             );
         }
+        // Администратор не меняет доступ себе: иначе одним действием можно потерять права и остаться без
+        // администратора; смену делает другой администратор.
         if (actor.id().equals(profileId) && command.changesAccess()) {
             throw new InteractionValidationException(
                     command.active() != null ? "active" : command.role() != null ? "role" : "teamId",
@@ -104,25 +127,154 @@ public class AdminCrmProfileService {
         String normalizedKey = AdminAuthorization.requiredIdempotencyKey(idempotencyKey);
         String auditRequestId = AdminAuthorization.requiredRequestId(requestId);
         String fingerprint = CommandFingerprint.of(objectMapper, command);
+        Optional<AdminCrmProfile> replayed = findReplay(actor.id(), normalizedKey, fingerprint);
+        if (replayed.isPresent()) {
+            return replayed.get();
+        }
+        // Первая транзакция короткая: она только проверяет команду и ставит признак «требует сверки». Keycloak
+        // вызывается вне транзакции (см. порядок команды выше), чтобы сетевой запрос не держал блокировки строк.
+        KeycloakChange change = transactionTemplate.execute(status -> prepareKeycloakChange(command));
+        if (change == null) {
+            return Objects.requireNonNull(transactionTemplate.execute(
+                    status -> apply(actor, command, normalizedKey, fingerprint, auditRequestId, false)
+            ));
+        }
+        try {
+            if (change.role()) {
+                keycloakAccountClient.setCrmRole(change.subject(), change.next().role());
+            }
+            if (change.privileged() && keycloakAccountClient.configured()) {
+                keycloakAccountClient.setPrivileged(change.subject(), change.next().privileged());
+            }
+            return Objects.requireNonNull(transactionTemplate.execute(
+                    status -> apply(actor, command, normalizedKey, fingerprint, auditRequestId, true)
+            ));
+        } catch (RuntimeException failure) {
+            // Любой сбой на шаге 2 или 3 возвращает Keycloak к состоянию из CRM; исходная ошибка при этом не теряется.
+            restoreKeycloak(actor.id(), profileId, change, auditRequestId);
+            throw failure;
+        }
+    }
+
+    private KeycloakChange prepareKeycloakChange(ProfileUpdateCommand command) {
+        Validated validated = validate(command);
+        ProfileState previous = ProfileState.of(validated.target());
+        boolean roleChanged = previous.role() != validated.next().role();
+        boolean privilegedChanged = previous.privileged() != validated.next().privileged();
+        if (!roleChanged && !privilegedChanged) {
+            return null;
+        }
+        // Если профиль уже требовал сверки, Keycloak выравнивается по новому состоянию целиком, иначе снятие признака
+        // в шаге 3 скрыло бы прежнее расхождение.
+        boolean unreconciled = validated.target().roleReconcileRequired();
+        adminCrmProfileRepository.setRoleReconcileRequired(command.profileId(), true);
+        return new KeycloakChange(
+                subject(command.profileId()), roleChanged || unreconciled, privilegedChanged || unreconciled, validated.next()
+        );
+    }
+
+    private void restoreKeycloak(UUID actorProfileId, UUID profileId, KeycloakChange change, String requestId) {
+        if (!keycloakAccountClient.configured()) {
+            adminCrmProfileRepository.setRoleReconcileRequired(profileId, false);
+            return;
+        }
+        try {
+            accountSyncService.reconcileRole(profileId, change.role(), change.privileged());
+        } catch (RuntimeException failure) {
+            accountSyncService.recordReconcileFailure(actorProfileId, profileId, failure, requestId);
+        }
+    }
+
+    private AdminCrmProfile apply(
+            CrmProfile actor,
+            ProfileUpdateCommand command,
+            String idempotencyKey,
+            String fingerprint,
+            String auditRequestId,
+            boolean keycloakChanged
+    ) {
+        UUID profileId = command.profileId();
         UUID commandId = UUID.randomUUID();
         OffsetDateTime now = OffsetDateTime.now();
         if (!commandIdempotencyRepository.reserve(
                 commandId,
                 actor.id(),
                 CommandOperation.UPDATE_CRM_PROFILE,
-                normalizedKey,
+                idempotencyKey,
                 fingerprint,
                 now
         )) {
-            return replay(actor.id(), normalizedKey, fingerprint);
+            return replay(actor.id(), idempotencyKey, fingerprint);
+        }
+        Validated validated = validate(command);
+        AdminCrmProfile target = validated.target();
+        ProfileState previous = ProfileState.of(target);
+        ProfileState next = validated.next();
+        boolean roleChanged = previous.role() != next.role();
+        // Проверка при повторном чтении под блокировкой: если между шагами роль изменилась, а Keycloak не менялся,
+        // команда устарела, и Keycloak с CRM разойдутся; такой запрос отклоняется как конфликт версии.
+        if (!keycloakChanged && (roleChanged || previous.privileged() != next.privileged())) {
+            throw InteractionConflictException.crmProfileVersion(target.version());
+        }
+        boolean accessChanged = roleChanged
+                || !Objects.equals(previous.teamId(), next.teamId())
+                || previous.active() != next.active()
+                || previous.enrolmentOperator() != next.enrolmentOperator();
+        if (!adminCrmProfileRepository.update(profileId, command.version(), next, accessChanged, now)) {
+            int currentVersion = adminCrmProfileRepository.findById(profileId)
+                    .map(AdminCrmProfile::version)
+                    .orElseThrow(AdminCrmProfileNotFoundException::new);
+            throw InteractionConflictException.crmProfileVersion(currentVersion);
+        }
+        if (roleChanged) {
+            adminCrmProfileRepository.markRoleSynced(profileId, now);
+        }
+        if (keycloakChanged) {
+            adminCrmProfileRepository.setRoleReconcileRequired(profileId, false);
         }
 
+        String actorDisplayName = adminCrmProfileRepository.findDisplayName(actor.id())
+                .orElseThrow(() -> new IllegalStateException("Administrator profile is unavailable for audit"));
+        // Закреплённые за сотрудником вузы снимаются, если он перестал быть действующим КАМ или руководителем
+        // своей команды: вуз не должен оставаться за тем, кто не может с ним работать. Причина сохраняется в истории.
+        boolean keepsOwnership = next.active() && (next.role() == UserRole.USER || next.role() == UserRole.LEADER)
+                && Objects.equals(previous.teamId(), next.teamId());
+        if (!keepsOwnership) {
+            OrganizationAssignmentReason reason = !next.active()
+                    ? OrganizationAssignmentReason.PROFILE_BLOCKED
+                    : next.role() != previous.role()
+                            ? OrganizationAssignmentReason.PROFILE_ROLE_CHANGED
+                            : OrganizationAssignmentReason.PROFILE_TEAM_CHANGED;
+            unassignOwnedOrganizations(target, actor.id(), actorDisplayName, commandId, auditRequestId, reason, now);
+        }
+        AdminCrmProfile updated = adminCrmProfileRepository.findById(profileId)
+                .orElseThrow(AdminCrmProfileNotFoundException::new);
+        adminCrmProfileRepository.insertEvent(
+                UUID.randomUUID(),
+                profileId,
+                commandId,
+                actor.id(),
+                actorDisplayName,
+                previous,
+                next,
+                auditRequestId,
+                updated.version(),
+                now
+        );
+        return store(commandId, updated);
+    }
+
+    private Validated validate(ProfileUpdateCommand command) {
+        UUID profileId = command.profileId();
+        // Блокировки берутся в одном порядке: сначала все действующие администраторы (по id), затем целевой профиль.
+        // Единый порядок не даёт двум администраторам, одновременно лишающим друг друга прав, взаимно заблокироваться;
+        // а под блокировкой надёжно проверяется правило «последний администратор».
         List<UUID> activeAdministrators = command.changesAccess()
                 ? adminCrmProfileRepository.lockActiveAdministrators()
                 : List.of();
         AdminCrmProfile target = adminCrmProfileRepository.findByIdForUpdate(profileId)
                 .orElseThrow(AdminCrmProfileNotFoundException::new);
-        if (target.version() != expectedVersion) {
+        if (target.version() != command.version()) {
             throw InteractionConflictException.crmProfileVersion(target.version());
         }
         ProfileState previous = ProfileState.of(target);
@@ -153,59 +305,15 @@ public class AdminCrmProfileService {
         }
         boolean removesAdministrator = previous.active() && previous.role() == UserRole.ADMIN
                 && !(next.active() && next.role() == UserRole.ADMIN);
+        // Нельзя оставить систему без действующего администратора: ни блокировкой, ни сменой роли последнего.
         if (removesAdministrator && activeAdministrators.stream().noneMatch(id -> !id.equals(profileId))) {
             throw InteractionConflictException.lastActiveAdministrator();
         }
-        boolean roleChanged = previous.role() != next.role();
-        if (roleChanged) {
-            keycloakAccountClient.setCrmRole(subject(profileId), next.role());
-        }
-        boolean accessChanged = roleChanged
-                || !Objects.equals(previous.teamId(), next.teamId())
-                || previous.active() != next.active()
-                || previous.enrolmentOperator() != next.enrolmentOperator();
-        if (!adminCrmProfileRepository.update(profileId, expectedVersion, next, accessChanged, now)) {
-            int currentVersion = adminCrmProfileRepository.findById(profileId)
-                    .map(AdminCrmProfile::version)
-                    .orElseThrow(AdminCrmProfileNotFoundException::new);
-            throw InteractionConflictException.crmProfileVersion(currentVersion);
-        }
-        if (roleChanged) {
-            adminCrmProfileRepository.markRoleSynced(profileId, now);
-        }
-
-        String actorDisplayName = adminCrmProfileRepository.findDisplayName(actor.id())
-                .orElseThrow(() -> new IllegalStateException("Administrator profile is unavailable for audit"));
-        boolean keepsOwnership = next.active() && (next.role() == UserRole.USER || next.role() == UserRole.LEADER)
-                && Objects.equals(previous.teamId(), next.teamId());
-        if (!keepsOwnership) {
-            OrganizationAssignmentReason reason = !next.active()
-                    ? OrganizationAssignmentReason.PROFILE_BLOCKED
-                    : next.role() != previous.role()
-                            ? OrganizationAssignmentReason.PROFILE_ROLE_CHANGED
-                            : OrganizationAssignmentReason.PROFILE_TEAM_CHANGED;
-            unassignOwnedOrganizations(target, actor.id(), actorDisplayName, commandId, auditRequestId, reason, now);
-        }
-        if (previous.privileged() != next.privileged() && keycloakAccountClient.configured()) {
-            keycloakAccountClient.setPrivileged(subject(profileId), next.privileged());
-        }
-        AdminCrmProfile updated = adminCrmProfileRepository.findById(profileId)
-                .orElseThrow(AdminCrmProfileNotFoundException::new);
-        adminCrmProfileRepository.insertEvent(
-                UUID.randomUUID(),
-                profileId,
-                commandId,
-                actor.id(),
-                actorDisplayName,
-                previous,
-                next,
-                auditRequestId,
-                updated.version(),
-                now
-        );
-        return store(commandId, updated);
+        return new Validated(target, next);
     }
 
+    // Вызывается при входе: роль в Keycloak главнее роли в CRM. Если профиль ждёт сверки (CRM записывает роль в
+    // Keycloak прямо сейчас), вход роль не переносит, чтобы не затереть только что сохранённую в CRM.
     @Transactional
     public void applyKeycloakRole(String issuer, String subject, Set<UserRole> keycloakRoles, String requestId) {
         UUID profileId = adminCrmProfileRepository.findIdByIdentity(issuer, subject).orElse(null);
@@ -214,6 +322,9 @@ public class AdminCrmProfileService {
         }
         AdminCrmProfile target = adminCrmProfileRepository.findByIdForUpdate(profileId)
                 .orElseThrow(AdminCrmProfileNotFoundException::new);
+        if (target.roleReconcileRequired()) {
+            return;
+        }
         OffsetDateTime now = OffsetDateTime.now();
         if (target.role() == UserRole.PARTNER) {
             if (keycloakRoles.contains(UserRole.PARTNER)) {
@@ -221,6 +332,8 @@ public class AdminCrmProfileService {
             }
             return;
         }
+        // Если в токене несколько ролей сотрудника, действует старшая (ADMIN, затем MANAGEMENT, LEADER, USER).
+        // Токен вообще без роли сотрудника профиль не меняет: доступ при этом закрывает requireSessionProfile.
         UserRole role = UserRole.employeeRole(keycloakRoles).orElse(null);
         if (role == null) {
             return;
@@ -231,6 +344,8 @@ public class AdminCrmProfileService {
         }
         ProfileState previous = ProfileState.of(target);
         boolean teamRole = role == UserRole.USER || role == UserRole.LEADER;
+        // Роль из Keycloak не даёт команду: КАМ и руководитель без команды деактивируются и возвращаются в очередь
+        // активации, флаг «Оператор зачисления» сохраняется только у ролей, которым он положен.
         ProfileState next = new ProfileState(
                 previous.displayName(),
                 role,
@@ -240,6 +355,8 @@ public class AdminCrmProfileService {
         );
         String auditRequestId = AdminAuthorization.requiredRequestId(requestId);
         UUID commandId = UUID.randomUUID();
+        // Запись в таблице команд нужна как цель внешнего ключа command_id у событий истории профиля и назначений
+        // вузов, как и при действии администратора; ключ уникален, поэтому смысла «повтора» здесь нет.
         commandIdempotencyRepository.reserve(
                 commandId,
                 profileId,
@@ -340,6 +457,11 @@ public class AdminCrmProfileService {
         return normalized;
     }
 
+    private Optional<AdminCrmProfile> findReplay(UUID actorProfileId, String idempotencyKey, String fingerprint) {
+        return commandIdempotencyRepository.find(actorProfileId, CommandOperation.UPDATE_CRM_PROFILE, idempotencyKey)
+                .map(command -> replay(actorProfileId, idempotencyKey, fingerprint));
+    }
+
     private AdminCrmProfile replay(UUID actorProfileId, String idempotencyKey, String fingerprint) {
         CommandIdempotencyRepository.CommandRecord command = commandIdempotencyRepository
                 .find(actorProfileId, CommandOperation.UPDATE_CRM_PROFILE, idempotencyKey)
@@ -373,6 +495,12 @@ public class AdminCrmProfileService {
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("CRM profile command result cannot be stored", exception);
         }
+    }
+
+    private record KeycloakChange(String subject, boolean role, boolean privileged, ProfileState next) {
+    }
+
+    private record Validated(AdminCrmProfile target, ProfileState next) {
     }
 
     private record ProfileUpdateCommand(

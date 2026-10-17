@@ -20,7 +20,7 @@ public record SigningPlan(
         List<Totals> byManager,
         List<Totals> byTeam
 ) {
-    public static final String TITLE = "План подписаний и продлений соглашений";
+    public static final String TITLE = "План подписаний и продлений договоров";
 
     public enum Source {
         PLAN,

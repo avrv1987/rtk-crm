@@ -16,9 +16,12 @@ public final class AgreementModels {
 
     public enum AgreementStatus {
         DRAFT("Проект"),
+        REVIEW("На согласовании"),
+        CORRECTION("На корректировке"),
+        SIGNING("На подписании"),
         ACTIVE("Действует"),
-        COMPLETED("Завершено"),
-        TERMINATED("Расторгнуто");
+        COMPLETED("Завершён"),
+        TERMINATED("Расторгнут");
 
         private final String title;
 
@@ -29,6 +32,44 @@ public final class AgreementModels {
         public String title() {
             return title;
         }
+
+        public boolean signed() {
+            return this == ACTIVE || this == COMPLETED || this == TERMINATED;
+        }
+
+        public List<TransitionOption> transitions() {
+            return switch (this) {
+                case DRAFT -> List.of(TransitionOption.forward(REVIEW));
+                case REVIEW -> List.of(TransitionOption.forward(CORRECTION), TransitionOption.forward(SIGNING),
+                        TransitionOption.back(DRAFT));
+                case CORRECTION -> List.of(TransitionOption.back(REVIEW), TransitionOption.forward(SIGNING));
+                case SIGNING -> List.of(TransitionOption.forward(ACTIVE), TransitionOption.back(CORRECTION));
+                case ACTIVE -> List.of(TransitionOption.forward(COMPLETED), TransitionOption.back(TERMINATED));
+                case COMPLETED -> List.of(TransitionOption.back(ACTIVE));
+                case TERMINATED -> List.of();
+            };
+        }
+    }
+
+    public enum SupplementStatus {
+        DRAFT("Проект"),
+        SIGNED("Подписано");
+
+        private final String title;
+
+        SupplementStatus(String title) {
+            this.title = title;
+        }
+
+        public String title() {
+            return title;
+        }
+    }
+
+    public enum StageRole {
+        EXCHANGE,
+        CORRECTION,
+        SIGNING
     }
 
     public enum PlanKind {
@@ -63,6 +104,16 @@ public final class AgreementModels {
         }
     }
 
+    public record TransitionOption(AgreementStatus toStatus, String title, boolean commentRequired) {
+        static TransitionOption forward(AgreementStatus status) {
+            return new TransitionOption(status, status.title(), false);
+        }
+
+        static TransitionOption back(AgreementStatus status) {
+            return new TransitionOption(status, status.title(), true);
+        }
+    }
+
     public record ActivityKind(UUID id, String name, int sortOrder, boolean archived, int version) {
     }
 
@@ -82,12 +133,15 @@ public final class AgreementModels {
             String number,
             LocalDate concludedOn,
             LocalDate validUntil,
+            LocalDate sentOn,
             PlanKind plannedKind,
             LocalDate plannedOn,
             AgreementStatus status,
+            OffsetDateTime statusChangedAt,
             int activityCount,
             int confirmationCount,
-            int version
+            int version,
+            List<TransitionOption> transitions
     ) {
     }
 
@@ -98,11 +152,23 @@ public final class AgreementModels {
             String number,
             LocalDate concludedOn,
             LocalDate validUntil,
+            LocalDate sentOn,
             PlanKind plannedKind,
             LocalDate plannedOn,
             String parties,
             AgreementStatus status,
-            LinkedAttachment file,
+            OffsetDateTime statusChangedAt,
+            Party universitySigner,
+            Party schoolSigner,
+            List<LinkedInteraction> interactions,
+            List<Party> programs,
+            List<Party> products,
+            List<Party> directions,
+            AgreementFile currentFile,
+            List<AgreementFile> files,
+            List<Supplement> supplements,
+            List<StatusEvent> history,
+            List<TransitionOption> transitions,
             int version,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
@@ -115,11 +181,123 @@ public final class AgreementModels {
             @NotBlank @Size(max = 100) String number,
             LocalDate concludedOn,
             LocalDate validUntil,
+            LocalDate sentOn,
             @Size(max = 2000) String parties,
-            @NotNull AgreementStatus status,
+            AgreementStatus status,
             UUID fileAttachmentId,
             PlanKind plannedKind,
-            LocalDate plannedOn
+            LocalDate plannedOn,
+            UUID universitySignerContactId,
+            UUID schoolSignerProfileId,
+            @Size(max = 100) List<UUID> interactionIds,
+            @Size(max = 200) List<UUID> programIds,
+            @Size(max = 200) List<UUID> productIds,
+            @Size(max = 200) List<UUID> directionIds
+    ) {
+    }
+
+    public record TransitionRequest(
+            @NotNull @Min(0) Integer version,
+            @NotNull AgreementStatus toStatus,
+            @Size(max = 2000) String comment,
+            LocalDate signedOn,
+            LocalDate validUntil,
+            LocalDate sentOn,
+            UUID interactionId
+    ) {
+    }
+
+    public record Party(UUID id, String name) {
+    }
+
+    public record AgreementFile(
+            UUID id,
+            UUID agreementId,
+            UUID supplementId,
+            int versionNumber,
+            String originalName,
+            String mediaType,
+            long sizeBytes,
+            String status,
+            boolean downloadable,
+            String comment,
+            String createdByName,
+            OffsetDateTime createdAt,
+            String interactionTitle
+    ) {
+    }
+
+    public record Supplement(
+            UUID id,
+            UUID agreementId,
+            String number,
+            LocalDate concludedOn,
+            String subject,
+            SupplementStatus status,
+            int version,
+            AgreementFile currentFile,
+            List<AgreementFile> files
+    ) {
+    }
+
+    public record SupplementRequest(
+            @Min(0) Integer version,
+            @NotBlank @Size(max = 100) String number,
+            LocalDate concludedOn,
+            @Size(max = 2000) String subject,
+            @NotNull SupplementStatus status
+    ) {
+    }
+
+    public record StatusEvent(
+            UUID id,
+            AgreementStatus fromStatus,
+            AgreementStatus toStatus,
+            String comment,
+            String actorName,
+            OffsetDateTime occurredAt,
+            String interactionTitle
+    ) {
+    }
+
+    public record SignerContact(UUID id, String name, String position, boolean signatory) {
+    }
+
+    public record WorkAgreements(
+            UUID interactionId,
+            UUID organizationId,
+            boolean signingRuleEnabled,
+            List<WorkStage> stages,
+            List<AgreementSummary> agreements
+    ) {
+    }
+
+    public record WorkStage(UUID stageId, String name, StageRole role) {
+    }
+
+    public record RegistryQuery(
+            List<AgreementStatus> statuses,
+            UUID organizationId,
+            UUID managerId,
+            LocalDate expiresBefore,
+            Integer reviewLongerThanDays
+    ) {
+    }
+
+    public record RegistryRow(
+            UUID id,
+            UUID organizationId,
+            String organizationName,
+            String number,
+            AgreementStatus status,
+            OffsetDateTime statusChangedAt,
+            long daysInStatus,
+            LocalDate sentOn,
+            LocalDate concludedOn,
+            LocalDate validUntil,
+            String subject,
+            UUID managerId,
+            String managerName
     ) {
     }
 
@@ -183,7 +361,12 @@ public final class AgreementModels {
     public record LinkOptions(
             List<LinkedInteraction> interactions,
             List<LinkedAttachment> attachments,
-            List<Responsible> responsibles
+            List<Responsible> responsibles,
+            List<SignerContact> contacts,
+            List<Responsible> schoolSigners,
+            List<Party> programs,
+            List<Party> products,
+            List<Party> directions
     ) {
     }
 
@@ -217,5 +400,41 @@ public final class AgreementModels {
     }
 
     public record ActivityDeleted(UUID id) {
+    }
+
+    public record PeriodReport(
+            OffsetDateTime generatedAt,
+            LocalDate from,
+            LocalDate to,
+            int longerThanDays,
+            List<String> notes,
+            PeriodTotals totals,
+            List<PeriodTransition> transitions,
+            List<RegistryRow> signed,
+            List<RegistryRow> terminated,
+            List<RegistryRow> longReview
+    ) {
+    }
+
+    public record PeriodTotals(
+            int transitions,
+            int signed,
+            int terminated,
+            Double averageApprovalDays,
+            int approvalSamples,
+            int longReview
+    ) {
+    }
+
+    public record PeriodTransition(
+            OffsetDateTime occurredAt,
+            UUID agreementId,
+            String organizationName,
+            String number,
+            AgreementStatus fromStatus,
+            AgreementStatus toStatus,
+            String actorName,
+            String comment
+    ) {
     }
 }

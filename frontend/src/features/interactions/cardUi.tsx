@@ -155,4 +155,22 @@ export const CardMenu = ({ label, items }: { label: string; items: CardMenuItem[
   )
 }
 
+type CardSectionProps = {
+  id?: string
+  title: string
+  count?: number
+  defaultOpen?: boolean
+  children: ReactNode
+}
+
+export const CardSection = ({ id, title, count, defaultOpen = false, children }: CardSectionProps) => (
+  <details id={id} className="card-section" open={defaultOpen}>
+    <summary className="card-section__summary">
+      {title}
+      {count !== undefined && count > 0 && <span className="card-tabs__count">{count}</span>}
+    </summary>
+    <div className="card-section__body">{children}</div>
+  </details>
+)
+
 export const RequiredMark = () => <span className="required-mark" aria-hidden="true"> *</span>

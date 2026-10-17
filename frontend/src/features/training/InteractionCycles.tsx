@@ -141,7 +141,7 @@ export const InteractionCycles = ({
   if (state.kind === 'failed') {
     return (
       <section className="interaction-learning" aria-labelledby="interaction-cycle-title">
-        <h6 id="interaction-cycle-title">Циклы работы</h6>
+        <h6 id="interaction-cycle-title">Циклы взаимодействия</h6>
         <div role="alert">
           <p>Не удалось загрузить связь с другими циклами.</p>
           <SupportDetails requestId={state.requestId} />
@@ -153,7 +153,7 @@ export const InteractionCycles = ({
 
   return (
     <section className="interaction-learning" aria-labelledby="interaction-cycle-title">
-      <h6 id="interaction-cycle-title">Циклы работы</h6>
+      <h6 id="interaction-cycle-title">Циклы взаимодействия</h6>
       {cycle.startsOn && <p>Этот цикл начат {formatDate(cycle.startsOn)}.</p>}
       {cycle.previous && (
         <p>
@@ -169,7 +169,7 @@ export const InteractionCycles = ({
         </p>
       )}
       {!cycle.previous && !cycle.next && (
-        <p>Повторный цикл (например, новый поток или повышение квалификации) начинается отдельной работой со ссылкой на эту.</p>
+        <p>Повторный цикл (например, новый поток или повышение квалификации) начинается отдельным взаимодействием со ссылкой на это.</p>
       )}
       {canEdit && !cycle.next && !open && (
         <div className="source-panel__row">
@@ -179,11 +179,11 @@ export const InteractionCycles = ({
       {canEdit && open && (
         <form className="source-form" onSubmit={(event) => void submit(event)}>
           <p className="source-form__wide">
-            Новая работа получит тот же вуз, программу, продукты и контакты и ссылку на этот цикл. Данные LMS нового цикла
+            Новое взаимодействие получит тот же вуз, программу, продукты и контакты и ссылку на этот цикл. Данные LMS нового цикла
             считаются по потокам, которые начинаются с даты начала цикла.
           </p>
           <label className="source-form__wide">
-            <span>Название новой работы<span className="required-mark" aria-hidden="true"> *</span></span>
+            <span>Название нового взаимодействия<span className="required-mark" aria-hidden="true"> *</span></span>
             <input required maxLength={300} value={draft.title} onChange={(event) => update({ title: event.target.value })} />
           </label>
           <label>

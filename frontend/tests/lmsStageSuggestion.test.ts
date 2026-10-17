@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { findDuplicateTraining, findLmsStageSuggestion } from '../src/features/training/lmsStageSuggestionRules.ts'
+import { findDuplicateTraining, findLmsStageSuggestion, findProgramUpdateSuggestion } from '../src/features/training/lmsStageSuggestionRules.ts'
 import type { Interaction, InteractionStage, LearningSnapshot, TeacherTraining } from '../src/shared/api/client.ts'
 
 const today = '2026-09-28'
@@ -79,6 +79,12 @@ test('предложение исчезает без данных о завер�
   assert.equal(findLmsStageSuggestion(work, [snapshot({ completed: null })], today), null)
 })
 
+test('предложение исчезает, если из записанных не завершил никто', () => {
+  const work = interaction({ currentStageId: 's2', stages })
+  assert.equal(findLmsStageSuggestion(work, [snapshot({ completed: 0, notCompleted: 12 })], today), null)
+  assert.notEqual(findLmsStageSuggestion(work, [snapshot({ completed: 1, notCompleted: 11 })], today), null)
+})
+
 test('предложение исчезает, если этап уже пройден по позиции текущего этапа', () => {
   const onlyTeacherStage = [stage('s1', 'Сопровождение внедрения', 7), stage('s2', 'Обучение преподавателей', 8), stage('s3', 'Актуализация программы', 9)]
   const work = interaction({ currentStageId: 's3', stages: onlyTeacherStage })
@@ -121,4 +127,21 @@ test('запись об обучении по тому же курсу счит�
 test('без потока обучения преподавателей ничего не предлагается, даже если этап есть', () => {
   const work = interaction({ currentStageId: 's2', stages })
   assert.equal(findLmsStageSuggestion(work, [snapshot({ runKind: 'STUDENTS' })], today), null)
+})
+
+test('после курса ППС и пройденного обучения преподавателей предлагается отметить «Актуализацию программы»', () => {
+  const work = interaction({ currentStageId: 's1', stages, stageCompletions: [
+    { stageId: 's2', completedOn: '2026-09-16', comment: null, eventId: 'e1', actorDisplayName: 'КАМ', markedAt: '2026-09-16T00:00:00Z' }
+  ] })
+  const suggestion = findProgramUpdateSuggestion(work, [snapshot({})])
+  assert.equal(suggestion?.stage.id, 's3')
+  assert.equal(suggestion?.isCurrentStage, false)
+  assert.equal(findProgramUpdateSuggestion(interaction({ currentStageId: 's3', stages }), [snapshot({})])?.isCurrentStage, true)
+})
+
+test('подсказка актуализации ждёт обучения преподавателей и завершивших, исчезает после отметки', () => {
+  assert.equal(findProgramUpdateSuggestion(interaction({ currentStageId: 's2', stages }), [snapshot({})]), null)
+  assert.equal(findProgramUpdateSuggestion(interaction({ currentStageId: 's3', stages }), [snapshot({ completed: 0 })]), null)
+  assert.equal(findProgramUpdateSuggestion(interaction({ currentStageId: 's3', stages }), [snapshot({ runKind: 'STUDENTS' })]), null)
+  assert.equal(findProgramUpdateSuggestion(interaction({ currentStageId: 's4', stages }), [snapshot({})]), null)
 })

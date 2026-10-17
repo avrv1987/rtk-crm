@@ -21,6 +21,9 @@ public class CommandIdempotencyRepository {
         this.dataSource = dataSource;
     }
 
+    // Резерв ключа — единственная точка защиты от повтора: уникальный индекс (актор, операция, ключ) и
+    // INSERT ... ON CONFLICT DO NOTHING. false значит «команда уже зарезервирована». Резерв делается в
+    // транзакции самой команды и откатывается вместе с ней.
     public boolean reserve(
             UUID commandId,
             UUID actorProfileId,
@@ -48,6 +51,8 @@ public class CommandIdempotencyRepository {
                 .update() == 1;
     }
 
+    // Вариант для H2 (тесты) с тем же результатом: проверка NOT EXISTS, а гонку двух вставок ловит
+    // нарушение уникальности.
     private boolean reserveForH2(
             UUID commandId,
             UUID actorProfileId,
@@ -104,6 +109,8 @@ public class CommandIdempotencyRepository {
                 .optional();
     }
 
+    // Результат дописывается к резерву после выполнения команды: пока его нет, повтор считается ошибкой
+    // состояния, а не новой командой.
     public void complete(UUID commandId, String resultJson) {
         int updated = jdbcClient.sql("""
                 UPDATE command_idempotency_records

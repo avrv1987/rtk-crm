@@ -23,7 +23,6 @@ import {
 
 type EnrolmentStreamViewProps = {
   streamId: string
-  onBack: () => void
   onOpenLearner: (learnerId: string) => void
   onAccessError: AccessErrorReporter
 }
@@ -57,7 +56,7 @@ const learnerNotes = (learner: StreamLearner): string[] => {
   return notes
 }
 
-export const EnrolmentStreamView = ({ streamId, onBack, onOpenLearner, onAccessError }: EnrolmentStreamViewProps) => {
+export const EnrolmentStreamView = ({ streamId, onOpenLearner, onAccessError }: EnrolmentStreamViewProps) => {
   const [state, setState] = useState<StreamState>({ kind: 'loading' })
   const [endsOnDraft, setEndsOnDraft] = useState('')
   const [endDateKey, setEndDateKey] = useState<string | null>(null)
@@ -146,7 +145,6 @@ export const EnrolmentStreamView = ({ streamId, onBack, onOpenLearner, onAccessE
           <SupportDetails requestId={requestIdOf(state.error)} />
           <button type="button" onClick={() => void load()}>Повторить</button>
         </div>
-        <button type="button" className="button--secondary" onClick={onBack}>Назад к потокам</button>
       </section>
     )
   }
@@ -156,7 +154,6 @@ export const EnrolmentStreamView = ({ streamId, onBack, onOpenLearner, onAccessE
   return (
     <section className="enrolment" aria-labelledby="enrolment-stream-title">
       <div>
-        <p className="eyebrow">Оператор зачисления</p>
         <h2 id="enrolment-stream-title">{stream.courseName}, поток {stream.streamNo}</h2>
         <p>{stream.programName ?? 'Программа не сопоставлена'}</p>
       </div>
@@ -300,8 +297,6 @@ export const EnrolmentStreamView = ({ streamId, onBack, onOpenLearner, onAccessE
           </ul>
         )}
       </section>
-
-      <button type="button" className="button--secondary" onClick={onBack}>Назад к потокам</button>
     </section>
   )
 }

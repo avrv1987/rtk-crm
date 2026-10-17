@@ -49,9 +49,12 @@ public class SourceException extends RuntimeException {
         return new SourceException(
                 HttpStatus.CONFLICT,
                 "SOURCE_NOT_CONFIGURED",
-                source == SourceCode.MOODLE
-                        ? "Moodle не настроен: задайте адрес, токен и курсы в разделе «Источники данных»"
-                        : "Адрес сайта не задан: укажите его в разделе «Источники данных»"
+                switch (source) {
+                    case MOODLE -> "Moodle не настроен: задайте адрес, токен и курсы в разделе «Источники данных»";
+                    case LABOR_MARKET -> "Адрес источника «Рынок труда» не задан: укажите его в разделе «Источники данных»";
+                    case CUSTOMER_CRM -> "Адрес CRM заказчика не задан: укажите его в разделе «Источники данных»";
+                    case WEBSITE -> "Адрес сайта не задан: укажите его в разделе «Источники данных»";
+                }
         );
     }
 
@@ -86,6 +89,10 @@ public class SourceException extends RuntimeException {
                 "LMS_SYNC_FAILED",
                 "Данные LMS не обновлены, прежние значения сохранены: " + (reason == null ? "ошибка синхронизации" : reason)
         );
+    }
+
+    static SourceException crmExchangeFailed(String reason) {
+        return new SourceException(HttpStatus.BAD_GATEWAY, "CRM_EXCHANGE_FAILED", "CRM заказчика не ответила: " + reason);
     }
 
     HttpStatus status() {

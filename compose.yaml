@@ -53,6 +53,10 @@ services:
       APP_SOURCES_MOODLE_BASE_URL: ${MOODLE_BASE_URL:-}
       APP_SOURCES_MOODLE_TOKEN: ${MOODLE_TOKEN:-}
       APP_SOURCES_MOODLE_COURSE_IDS: ${MOODLE_COURSE_IDS:-}
+      APP_LABOR_MARKET_BASE_URL: ${LABOR_MARKET_BASE_URL:-}
+      APP_LABOR_MARKET_TOKEN: ${LABOR_MARKET_TOKEN:-}
+      APP_SOURCES_CRM_BASE_URL: ${CRM_BASE_URL:-}
+      APP_SOURCES_CRM_TOKEN: ${CRM_TOKEN:-}
       APP_SOURCES_SETTINGS_KEY: ${SOURCES_SETTINGS_KEY:-}
       APP_SOURCES_SYNC_CRON: ${SOURCES_SYNC_CRON:--}
       APP_RETENTION_CRON: ${RETENTION_CRON:-0 30 3 * * *}
@@ -63,12 +67,14 @@ services:
       APP_RETENTION_LEARNER_PROFILES: ${RETENTION_LEARNER_PROFILES:-P3Y}
       APP_SOURCES_STALE_AFTER: ${SOURCES_STALE_AFTER:-26h}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      APP_SESSION_IDLE_TIMEOUT: ${SESSION_IDLE_TIMEOUT:-30m}
+      APP_SESSION_ABSOLUTE_TIMEOUT: ${SESSION_ABSOLUTE_TIMEOUT:-12h}
       APP_ENROLMENT_ACTIVE_KEY_VERSION: ${ENROLMENT_ACTIVE_KEY_VERSION:-}
       APP_ENROLMENT_KEYS_V1: ${ENROLMENT_KEYS_V1:-}
       APP_ENROLMENT_KEYS_V2: ${ENROLMENT_KEYS_V2:-}
       APP_ENROLMENT_FINGERPRINT_KEY: ${ENROLMENT_FINGERPRINT_KEY:-}
-      MODULE_ENROLMENT_ENABLED: ${MODULE_ENROLMENT_ENABLED:-false}
-      MODULE_PARTNER_ENABLED: ${MODULE_PARTNER_ENABLED:-false}
+      MODULE_ENROLMENT_ENABLED: ${MODULE_ENROLMENT_ENABLED:-true}
+      MODULE_PARTNER_ENABLED: ${MODULE_PARTNER_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy
@@ -107,10 +113,20 @@ services:
       APP_SOURCES_MOODLE_BASE_URL: ${MOODLE_BASE_URL:-}
       APP_SOURCES_MOODLE_TOKEN: ${MOODLE_TOKEN:-}
       APP_SOURCES_MOODLE_COURSE_IDS: ${MOODLE_COURSE_IDS:-}
+      APP_LABOR_MARKET_BASE_URL: ${LABOR_MARKET_BASE_URL:-}
+      APP_LABOR_MARKET_TOKEN: ${LABOR_MARKET_TOKEN:-}
+      APP_SOURCES_CRM_BASE_URL: ${CRM_BASE_URL:-}
+      APP_SOURCES_CRM_TOKEN: ${CRM_TOKEN:-}
       APP_SOURCES_SETTINGS_KEY: ${SOURCES_SETTINGS_KEY:-}
       APP_ATTACHMENTS_STORAGE_ROOT: /var/lib/rtk-crm/files
       APP_ATTACHMENTS_SCANNER_HOST: clamav
       APP_ATTACHMENTS_SCANNER_PORT: "3310"
+      APP_ENROLMENT_ACTIVE_KEY_VERSION: ${ENROLMENT_ACTIVE_KEY_VERSION:-}
+      APP_ENROLMENT_KEYS_V1: ${ENROLMENT_KEYS_V1:-}
+      APP_ENROLMENT_KEYS_V2: ${ENROLMENT_KEYS_V2:-}
+      APP_ENROLMENT_FINGERPRINT_KEY: ${ENROLMENT_FINGERPRINT_KEY:-}
+      MODULE_ENROLMENT_ENABLED: ${MODULE_ENROLMENT_ENABLED:-true}
+      MODULE_PARTNER_ENABLED: ${MODULE_PARTNER_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy
@@ -129,6 +145,35 @@ services:
     volumes:
       - ./infra/site-fixture/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ./infra/site-fixture/data:/usr/share/nginx/site-fixture:ro
+    networks:
+      - rtk-crm
+
+  labor-market-fixture:
+    restart: unless-stopped
+    profiles: [demo]
+    image: nginx:1.29.2-alpine
+    environment:
+      LABOR_MARKET_TOKEN: ${LABOR_MARKET_TOKEN:-}
+    volumes:
+      - ./infra/labor-market-fixture/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./infra/labor-market-fixture/data:/usr/share/nginx/labor-market-fixture:ro
+    networks:
+      - rtk-crm
+
+  crm-stub:
+    restart: unless-stopped
+    profiles: [demo]
+    image: node:24.21.0-alpine
+    command: ["node", "/srv/crm-stub/server.mjs"]
+    environment:
+      CRM_TOKEN: ${CRM_TOKEN:-}
+    volumes:
+      - ./infra/crm-stub:/srv/crm-stub:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks:
       - rtk-crm
 

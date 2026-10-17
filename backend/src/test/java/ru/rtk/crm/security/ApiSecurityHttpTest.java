@@ -97,6 +97,14 @@ class ApiSecurityHttpTest {
     }
 
     @Test
+    void authorizationRequestCarriesPkceChallenge() throws Exception {
+        String location = mockMvc.perform(get("/api/auth/authorization/keycloak"))
+                .andExpect(status().isFound())
+                .andReturn().getResponse().getHeader("Location");
+        assertThat(location).contains("code_challenge_method=S256").contains("code_challenge=");
+    }
+
+    @Test
     void loginWithLiveSessionOpensApplicationWithoutNewOauthExchange() throws Exception {
         mockMvc.perform(get("/api/auth/login").with(oidcLogin()))
                 .andExpect(status().isFound())

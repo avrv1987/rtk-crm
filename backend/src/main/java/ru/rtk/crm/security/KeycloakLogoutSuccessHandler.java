@@ -13,6 +13,7 @@ import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.web.authentication.logout.LogoutSuccessHandler;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriComponentsBuilder;
+import ru.rtk.crm.access.LoginJournal;
 import ru.rtk.crm.web.LogoutResponse;
 
 @Component
@@ -22,9 +23,11 @@ public class KeycloakLogoutSuccessHandler implements LogoutSuccessHandler {
     private final String endSessionUri;
     private final String clientId;
     private final String postLogoutRedirectUri;
+    private final LoginJournal loginJournal;
 
     public KeycloakLogoutSuccessHandler(
             ObjectMapper objectMapper,
+            LoginJournal loginJournal,
             @Value("${app.oidc.end-session-uri}") String endSessionUri,
             @Value("${spring.security.oauth2.client.registration.keycloak.client-id}") String clientId,
             @Value("${app.oidc.post-logout-redirect-uri}") String postLogoutRedirectUri
@@ -33,6 +36,7 @@ public class KeycloakLogoutSuccessHandler implements LogoutSuccessHandler {
         this.endSessionUri = endSessionUri;
         this.clientId = clientId;
         this.postLogoutRedirectUri = postLogoutRedirectUri;
+        this.loginJournal = loginJournal;
     }
 
     @Override
@@ -44,8 +48,12 @@ public class KeycloakLogoutSuccessHandler implements LogoutSuccessHandler {
         UriComponentsBuilder logoutUrl = UriComponentsBuilder.fromUriString(endSessionUri)
                 .queryParam("client_id", clientId)
                 .queryParam("post_logout_redirect_uri", postLogoutRedirectUri);
+        // Сессия CRM уже закрыта, но сессия в Keycloak остаётся, пока браузер не перейдёт на его end_session. Адрес
+        // с id_token_hint отдаётся интерфейсу JSON-ом, а не редиректом: выход — POST под защитой CSRF, а переход
+        // на end_session выполняет сам интерфейс после ответа.
         if (authentication != null && authentication.getPrincipal() instanceof OidcUser user) {
             logoutUrl.queryParam("id_token_hint", user.getIdToken().getTokenValue());
+            loginJournal.loggedOut(user, request.getRemoteAddr(), RequestId.from(request));
         }
         response.setStatus(HttpServletResponse.SC_OK);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);

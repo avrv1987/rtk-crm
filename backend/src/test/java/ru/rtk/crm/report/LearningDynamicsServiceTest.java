@@ -119,7 +119,7 @@ class LearningDynamicsServiceTest {
             assertThat(empty.rows()).isEmpty();
             assertThat(empty.totalParticipants()).containsOnly(0L);
         });
-        assertThat(leader.notes()).anyMatch(note -> note.contains("действовавшее на конец последнего дня месяца"));
+        assertThat(leader.notes()).anyMatch(note -> note.contains("действовавшему на конец последнего дня месяца"));
     }
 
     @Test
@@ -172,7 +172,7 @@ class LearningDynamicsServiceTest {
             Sheet sheet = workbook.getSheetAt(0);
             int header = dynamics.notes().size() + 2;
             assertThat(sheet.getRow(0).getCell(0).getStringCellValue()).isEqualTo(LearningDynamics.TITLE);
-            assertThat(sheet.getRow(header).getCell(4).getStringCellValue()).isEqualTo("Обучающиеся (Moodle)");
+            assertThat(sheet.getRow(header).getCell(4).getStringCellValue()).isEqualTo("Обучающиеся в потоках месяца (Moodle)");
             assertThat(sheet.getRow(header + 1).getCell(4).getNumericCellValue()).isEqualTo(10d);
             assertThat(sheet.getRow(header).getCell(6).getStringCellValue()).isEqualTo("Доля завершивших, %");
             assertThat(sheet.getRow(header + 2).getCell(6).getNumericCellValue()).isEqualTo(17d);

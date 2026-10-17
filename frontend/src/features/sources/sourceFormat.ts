@@ -1,4 +1,4 @@
-import { ApiError } from '../../shared/api/client'
+import { ApiError, type SourceSettings } from '../../shared/api/client'
 import { formatCalendarDate, formatMoscowDateTime, shiftCalendarDate, todayInMoscow } from '../../shared/format/datetime'
 
 export const formatDateTime = (value: string | null | undefined) => (
@@ -52,4 +52,17 @@ export const scheduleLabel = (cron: string) => {
     }
   }
   return `по расписанию «${cron}»`
+}
+
+export const tokenText = (token: SourceSettings['moodleToken']) => {
+  switch (token.origin) {
+    case 'SCREEN':
+      return `задан на экране, изменён ${formatDateTime(token.changedAt)}`
+    case 'ENVIRONMENT':
+      return 'задан в конфигурации развёртывания'
+    case 'UNREADABLE':
+      return `сохранён ${formatDateTime(token.changedAt)}, но не расшифровывается текущим ключом — задайте токен заново`
+    default:
+      return 'не задан'
+  }
 }

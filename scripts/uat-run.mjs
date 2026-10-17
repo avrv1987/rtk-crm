@@ -189,11 +189,12 @@ scenario('UAT-КАМ-03', '«Моя работа»: список дел на д�
     return value
   })
   await step(1, 'Рабочий стол: плитки равны спискам, напоминания не закрывают экран', async () => {
-    await screenTexts(kamA, '/#/work', ['Задачи по срокам', 'Просрочено', 'Шаги на этой неделе', 'Без следующего шага', 'Лицензии истекают'], 'Рабочий стол')
-    const tiles = Object.fromEntries(await kamA.evaluate("[...document.querySelectorAll('.desk-tile')].map((tile) => [tile.getAttribute('href'), Number(tile.querySelector('.desk-tile__value').textContent)])"))
-    for (const due of ['OVERDUE', 'THIS_WEEK', 'NO_NEXT_STEP']) {
+    await screenTexts(kamA, '/#/work', ['Задачи по срокам', 'Просрочено', 'На этой неделе', 'Без следующего шага', 'Лицензии истекают'], 'Рабочий стол')
+    const tiles = await kamA.evaluate("Object.fromEntries([...document.querySelectorAll('.work .stat-tile')].map((tile) => [tile.querySelector('.stat-tile__label').textContent, Number(tile.querySelector('.stat-tile__value').textContent)]))")
+    const labels = { OVERDUE: 'Просрочено', THIS_WEEK: 'На этой неделе', NO_NEXT_STEP: 'Без следующего шага' }
+    for (const [due, label] of Object.entries(labels)) {
       const total = requireStatus(await api(kamA, 'GET', '/api/interactions?size=1&due=' + due), 200, 'Список').total
-      assert(tiles['#/work?due=' + due] === total, due + ': плитка ' + tiles['#/work?due=' + due] + ' ≠ список ' + total)
+      assert(tiles[label] === total, due + ': плитка ' + tiles[label] + ' ≠ список ' + total)
     }
     assert(await kamA.evaluate("document.querySelector('.reminder-center__panel').hidden"), 'Напоминания открылись сами')
     return 'плитки ' + JSON.stringify(tiles) + ', панель напоминаний закрыта'
@@ -268,7 +269,9 @@ scenario('UAT-КАМ-05', 'Новая школа и колледж, сразу �
     const names = [...new Set(report.items.map((row) => row.ORGANIZATION))]
     const types = new Map([...await listAll(kamA, '/api/organizations', 'Вузы'), ...await listAll(kamA, '/api/organizations?status=ARCHIVED', 'Архив')].map((item) => [item.name, item.type]))
     assert(names.includes('UAT Школа № 1 ' + nonce) && names.every((name) => types.get(name) === 'SCHOOL'), 'Организации: ' + names.join(','))
-    await screenTexts(kamA, '/#/reports/portfolio', ['Тип организации'], 'Фильтр типа на экране')
+    await screenTexts(kamA, '/#/reports/portfolio', ['Фильтры'], 'Кнопка фильтров на экране')
+    await kamA.evaluate("document.querySelector('.filter-button').click()")
+    await kamA.waitFor(() => kamA.evaluate("document.querySelector('.filter-panel[open]')?.textContent.includes('Тип организации') === true"), 'Фильтр типа на экране')
     return names.length === 1 ? names[0] : 'только школы: ' + names.length + ', тестовая среди них'
   })
   await step(9, 'Возврат: архивирование, архивная не принимает работы', async () => {
@@ -521,7 +524,7 @@ scenario('UAT-КАМ-15', 'Отметки передачи материалов,
   await step('5–6', 'Статус передачи «Передано частично» виден в карточке', async () => {
     const value = card.productAgreements[0]
     assert(value.transferStatus === 'Передано частично', 'Статус ' + value.transferStatus)
-    await cardTabTexts(kamA, '/#/organizations/' + university.id + '/' + work.id, 'Отметки передачи', ['Передано частично'], 'Карточка')
+    await cardTabTexts(kamA, '/#/organizations/' + university.id + '/' + work.id, 'Договор и лицензии', ['Передача материалов', 'Передано частично'], 'Карточка')
     return value.transferStatus
   })
   await step(7, 'Отбор «Документация не передана»', async () => {
@@ -614,7 +617,7 @@ scenario('UAT-КАМ-30', 'Принять вуз от коллеги и поня
       const events = requireStatus(await api(kamC, 'GET', '/api/organizations/' + university.id + '/assignment-events'), 200, 'История назначений')
       const handover = events.at(-1)
       assert(handover?.previousOwnerManagerDisplayName === 'КАМ А' && handover.newOwnerManagerDisplayName === 'КАМ В' && handover.occurredAt && handover.handoverNote?.includes('ЛПР'), 'Нет записки или истории')
-      await cardTabTexts(kamC, '/#/organizations/' + university.id, 'История назначений', ['Ответственный изменён: КАМ А → КАМ В', 'ЛПР'], 'Карточка вуза у КАМ В')
+      await cardTabTexts(kamC, '/#/organizations/' + university.id, 'История', ['История назначений', 'Ответственный изменён: КАМ А → КАМ В', 'ЛПР'], 'Карточка вуза у КАМ В')
       return 'записей ' + events.length
     })
     await step(7, 'Контакт подтверждён с датой и автором', async () => {
@@ -696,7 +699,7 @@ scenario('UAT-КАМ-35', 'КАМ не выполняет действия ру�
   const kamA = await session('kam-a')
   const university = await kamView('kam-a', demo.universityA)
   await step('1–3', 'Нет разделов руководителя и администратора', async () => {
-    await screenTexts(kamA, '/#/organizations/' + university.id, ['Ответственный КАМ', 'История назначений'], 'Карточка вуза')
+    await screenTexts(kamA, '/#/organizations/' + university.id, ['КАМ вуза', 'История'], 'Карточка вуза')
     const card = await kamA.evaluate('document.body.textContent')
     await call('Page.navigate', { url: originUrl() + '/#/admin' }, kamA.sessionId)
     await pause(1500)
@@ -931,7 +934,7 @@ scenario('UAT-РУК-08', 'Показатели руководителя по К
   const leader = await session('leader')
   const indicators = await step(1, 'Блок показателей по КАМ и «Требует назначения»', async () => {
     const value = requireStatus(await api(leader, 'GET', '/api/work/team-indicators'), 200, 'Показатели')
-    await screenTexts(leader, '/#/work', ['Пульт команды', 'Где команде нужна помощь', 'Требует назначения', 'Вузы без ответственного', 'Заместители'], 'Блок показателей')
+    await screenTexts(leader, '/#/control', ['Вузов без КАМ', 'На этапе дольше', 'Требует назначения', 'Заместители', 'Сигналы LMS'], 'Показатели в «Контроле»')
     assert(value.managers.some((item) => item.managerId === null) && value.calculatedAt, 'Нет строки «Требует назначения»')
     return value
   })
@@ -1272,7 +1275,7 @@ scenario('UAT-ИБ-05', 'Журнал значимых событий', {}, asyn
     return 'событий ' + events.length + ', типы: ' + [...new Set(events.map((event) => event.type))].join(',')
   })
   await step(10, 'Единый экран журнала с фильтрами и выгрузкой', async () => {
-    await screenTexts(admin, '/#/admin/journal', ['Журнал администратора и безопасности'], 'Журнал')
+    await screenTexts(admin, '/#/admin/journal', ['Журнал', 'Показать'], 'Журнал')
     const csv = await api(admin, 'GET', '/api/admin/audit-events/export?format=CSV&from=' + today + '&to=' + today, { text: true })
     assert(csv.status === 200 && csv.text.length > 0, 'Выгрузка ' + csv.status)
     return 'экран и CSV'
@@ -1411,7 +1414,7 @@ scenario('UAT-ИБ-08', 'Сроки хранения ПДн и файлов от
 scenario('UAT-ОБЩ-07', 'Единая картина по всем командам', {}, async ({ step }) => {
   const admin = await session('admin')
   await step(1, 'Роль «Руководство (только чтение)» в профилях', async () => {
-    await screenTexts(admin, '/#/admin', ['Профили CRM'], 'Профили')
+    await screenTexts(admin, '/#/admin/employees', ['Сотрудники'], 'Сотрудники')
     const html = await admin.evaluate('document.documentElement.innerHTML')
     const inBundle = html.includes('Руководство') || (await admin.evaluate("fetch([...document.scripts].map((script) => script.src).find(Boolean)).then((response) => response.text()).then((text) => text.includes('Руководство (только чтение)'))"))
     assert(inBundle, 'Нет роли в интерфейсе')

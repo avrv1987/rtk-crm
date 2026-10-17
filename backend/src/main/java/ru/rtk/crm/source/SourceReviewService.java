@@ -38,6 +38,7 @@ public class SourceReviewService {
     private final OrganizationRepository organizationRepository;
     private final SourceSyncService syncService;
     private final SiteRecordApplier applier;
+    private final CrmRecordApplier crmApplier;
     private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper;
     private final CatalogChangeEventRepository catalogChangeEventRepository;
@@ -47,6 +48,7 @@ public class SourceReviewService {
             OrganizationRepository organizationRepository,
             SourceSyncService syncService,
             SiteRecordApplier applier,
+            CrmRecordApplier crmApplier,
             PlatformTransactionManager transactionManager,
             ObjectMapper objectMapper,
             CatalogChangeEventRepository catalogChangeEventRepository
@@ -56,6 +58,7 @@ public class SourceReviewService {
         this.organizationRepository = organizationRepository;
         this.syncService = syncService;
         this.applier = applier;
+        this.crmApplier = crmApplier;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.objectMapper = objectMapper;
     }
@@ -97,7 +100,7 @@ public class SourceReviewService {
             throw SourceException.recordResolved();
         }
         log.info("Source record {} was mapped by leader {}", recordId, profile.id());
-        return syncService.applyWebsiteMatching(recordId, sameOrganization(item), profile.id());
+        return syncService.applyMatching(SourceCode.WEBSITE, recordId, sameOrganization(item), profile.id());
     }
 
     public SourceOrganizationCreated createOrganization(
@@ -112,8 +115,9 @@ public class SourceReviewService {
         if (profile.role() != UserRole.LEADER && profile.role() != UserRole.ADMIN) {
             throw SourceException.reviewForbidden();
         }
-        if (stored.source() != SourceCode.WEBSITE) {
-            throw new InteractionValidationException("id", "Организация создаётся только из заявки сайта");
+        boolean crmOrganization = stored.source() == SourceCode.CUSTOMER_CRM && CrmRecordApplier.ORGANIZATION.equals(stored.recordType());
+        if (stored.source() != SourceCode.WEBSITE && !crmOrganization) {
+            throw new InteractionValidationException("id", "Организация создаётся только из заявки сайта или записи организации CRM заказчика");
         }
         SiteRecord item = SiteRecord.parseStored(objectMapper, stored.payload());
         if (organizationOf(stored, item) != null) {
@@ -124,7 +128,7 @@ public class SourceReviewService {
         }
         UUID teamId = profile.role() == UserRole.ADMIN ? requiredTeam(request) : profile.teamId();
         String name = organizationName(request, item);
-        String type = organizationType(request);
+        String type = organizationType(request, crmOrganization ? crmApplier.organizationType(stored) : null);
         UUID organizationId = UUID.randomUUID();
         try {
             transactionTemplate.executeWithoutResult(status -> {
@@ -139,16 +143,17 @@ public class SourceReviewService {
                 OffsetDateTime now = OffsetDateTime.now();
                 repository.insertOrganization(organizationId, name, type, teamId, now);
                 catalogChangeEventRepository.insert(CatalogEntityType.ORGANIZATION, organizationId, CatalogChangeAction.CREATE, name,
-                        "Тип: " + OrganizationDetails.typeLabel(OrganizationType.valueOf(type)) + "; из заявки сайта",
+                        "Тип: " + OrganizationDetails.typeLabel(OrganizationType.valueOf(type))
+                                + (crmOrganization ? "; из CRM заказчика" : "; из заявки сайта"),
                         profile.id(), requestId, now);
-                repository.insertMapping(SourceCode.WEBSITE, "ORGANIZATION", item.organizationKey(), organizationId, null, null,
+                repository.insertMapping(stored.source(), "ORGANIZATION", item.organizationKey(), organizationId, null, null,
                         null, profile.id(), now);
             });
         } catch (DuplicateKeyException exception) {
             throw SourceException.recordResolved();
         }
         log.info("Organization {} was created from source record {} by profile {}", organizationId, recordId, profile.id());
-        SourceRecordApplyResult result = syncService.applyWebsiteMatching(recordId, sameOrganization(item), profile.id());
+        SourceRecordApplyResult result = syncService.applyMatching(stored.source(), recordId, sameOrganization(item), profile.id());
         return new SourceOrganizationCreated(organizationId, name, result);
     }
 
@@ -219,8 +224,9 @@ public class SourceReviewService {
         return name;
     }
 
-    private static String organizationType(SourceOrganizationCreateRequest request) {
-        String value = request == null || request.type() == null ? OrganizationType.UNIVERSITY.name()
+    private static String organizationType(SourceOrganizationCreateRequest request, String recordType) {
+        String value = request == null || request.type() == null
+                ? recordType == null ? OrganizationType.UNIVERSITY.name() : recordType
                 : request.type().strip().toUpperCase(Locale.ROOT);
         try {
             OrganizationType type = OrganizationType.valueOf(value);

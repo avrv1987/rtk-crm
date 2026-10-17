@@ -16,6 +16,7 @@ import ru.rtk.crm.interaction.InteractionFlag;
 import ru.rtk.crm.interaction.InteractionRepository;
 import ru.rtk.crm.work.WorkModels.ReminderLicense;
 import ru.rtk.crm.work.WorkModels.ReminderStep;
+import ru.rtk.crm.work.WorkModels.ReminderQualification;
 import ru.rtk.crm.work.WorkModels.ReminderTraining;
 
 @Repository
@@ -41,7 +42,7 @@ public class WorkRepository {
                 AND source_mapping.kind = CASE WHEN snapshot.group_id IS NULL THEN 'COURSE' ELSE 'GROUP' END
                 AND source_mapping.run_starts_on IS NOT NULL AND source_mapping.run_kind = 'STUDENTS'
             JOIN organizations ON organizations.id = snapshot.organization_id
-            WHERE organizations.team_id = team.id AND %s""";
+            WHERE organizations.team_id = team.id AND """ + " " + OrganizationRepository.currentStatus("organizations") + " AND %s";
 
     private final JdbcClient jdbcClient;
 
@@ -271,6 +272,63 @@ public class WorkRepository {
                             resultSet.getString("stage_name"),
                             trainedAt,
                             trainedAt.atZoneSameInstant(WorkProperties.ZONE).toLocalDate().plusYears(cycleYears)
+                    );
+                })
+                .list();
+    }
+
+    /**
+     * Работы, где с последней записи «Обучение преподавателей» прошло не меньше порога, а этап повышения квалификации
+     * ещё впереди и не отмечен. Это только напоминание: этап отмечает пользователь в карточке.
+     */
+    public List<ReminderQualification> findQualificationDue(
+            VisibilityScope scope,
+            String stageName,
+            LocalDate trainedBy,
+            int afterMonths,
+            int limit
+    ) {
+        if (stageName == null || stageName.isBlank() || afterMonths <= 0) {
+            return List.of();
+        }
+        return jdbcClient.sql("""
+                SELECT i.id, i.organization_id, i.title, o.name AS organization_name, q.name AS stage_name,
+                       last_training.trained_on
+                FROM interactions i
+                JOIN organizations o ON o.id = i.organization_id
+                JOIN interaction_stages current_stage ON current_stage.id = i.current_stage_id
+                JOIN interaction_stages q ON q.interaction_id = i.id AND q.name = :stageName
+                    AND NOT EXISTS (
+                        SELECT 1 FROM interaction_stages earlier
+                        WHERE earlier.interaction_id = i.id AND earlier.name = :stageName AND earlier.stage_order < q.stage_order
+                    )
+                JOIN (
+                    SELECT interaction_id, MAX(trained_on) AS trained_on FROM teacher_trainings GROUP BY interaction_id
+                ) last_training ON last_training.interaction_id = i.id
+                WHERE i.organization_id IN (SELECT id FROM organizations WHERE %s)
+                  AND i.work_status = 'ACTIVE'
+                  AND last_training.trained_on <= :trainedBy
+                  AND current_stage.stage_order < q.stage_order
+                  AND NOT EXISTS (
+                      SELECT 1 FROM interaction_stage_completions c WHERE c.interaction_id = i.id AND c.stage_id = q.id
+                  )
+                ORDER BY last_training.trained_on, o.name, i.id
+                LIMIT :limit
+                """.formatted(scope.condition()))
+                .params(scope.parameters())
+                .param("stageName", stageName)
+                .param("trainedBy", trainedBy)
+                .param("limit", limit)
+                .query((resultSet, rowNumber) -> {
+                    LocalDate trainedOn = resultSet.getObject("trained_on", LocalDate.class);
+                    return new ReminderQualification(
+                            resultSet.getObject("id", UUID.class),
+                            resultSet.getObject("organization_id", UUID.class),
+                            resultSet.getString("title"),
+                            resultSet.getString("organization_name"),
+                            resultSet.getString("stage_name"),
+                            trainedOn,
+                            trainedOn.plusMonths(afterMonths)
                     );
                 })
                 .list();

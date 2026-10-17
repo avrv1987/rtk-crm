@@ -1,6 +1,7 @@
 import { apiClient, type Organization } from '../../shared/api/client'
 import type { components } from '../../shared/api/openapi'
 import { formatMoscowDateTime } from '../../shared/format/datetime'
+import { registrySearch, type RegistryFilters } from './agreementModel'
 
 export type AgreementStatus = components['schemas']['AgreementStatus']
 export type ActivityStatus = components['schemas']['AgreementActivityStatus']
@@ -12,6 +13,15 @@ export type AgreementActivity = components['schemas']['AgreementActivity']
 export type AgreementActivityInput = components['schemas']['AgreementActivityInput']
 export type AgreementOptions = components['schemas']['AgreementOptions']
 export type AgreementConfirmation = components['schemas']['AgreementConfirmation']
+export type AgreementFile = components['schemas']['AgreementFile']
+export type AgreementSupplement = components['schemas']['AgreementSupplement']
+export type AgreementSupplementInput = components['schemas']['AgreementSupplementInput']
+export type AgreementTransitionOption = components['schemas']['AgreementTransitionOption']
+export type AgreementTransitionInput = components['schemas']['AgreementTransitionInput']
+export type WorkAgreements = components['schemas']['WorkAgreements']
+export type AgreementRegistryRow = components['schemas']['AgreementRegistryRow']
+export type AgreementPeriodReport = components['schemas']['AgreementPeriodReport']
+export type AgreementPeriodQuery = { from: string; to: string; reviewLongerThanDays: number }
 
 export type ConfirmationQuery = {
   organizationId?: string
@@ -21,12 +31,7 @@ export type ConfirmationQuery = {
   to?: string
 }
 
-export const agreementStatusLabels: Record<AgreementStatus, string> = {
-  DRAFT: 'Проект',
-  ACTIVE: 'Действует',
-  COMPLETED: 'Завершено',
-  TERMINATED: 'Расторгнуто'
-}
+export { agreementStatusLabels } from './agreementModel'
 
 export const activityStatusLabels: Record<ActivityStatus, string> = {
   PLANNED: 'Запланировано',
@@ -69,6 +74,12 @@ const confirmationSearch = (query: ConfirmationQuery) => {
 
 const path = (id: string) => encodeURIComponent(id)
 
+const periodSearch = (query: AgreementPeriodQuery, extra: Record<string, string> = {}) => (
+  `?${new URLSearchParams({ ...extra, from: query.from, to: query.to, reviewLongerThanDays: query.reviewLongerThanDays.toString() })}`
+)
+
+export type AgreementFileUpload = { file: File; comment: string; supplementId?: string }
+
 export const agreementsApi = {
   listKinds: (includeArchived = false) => apiClient.request<ActivityKind[]>(
     `/api/agreement-activity-kinds${includeArchived ? '?includeArchived=true' : ''}`
@@ -103,7 +114,35 @@ export const agreementsApi = {
   confirmations: (query: ConfirmationQuery) => apiClient.request<AgreementConfirmation[]>(
     `/api/agreement-confirmations${confirmationSearch(query)}`
   ),
-  archive: (query: ConfirmationQuery) => apiClient.download(`/api/agreement-confirmations/archive${confirmationSearch(query)}`)
+  archive: (query: ConfirmationQuery) => apiClient.download(`/api/agreement-confirmations/archive${confirmationSearch(query)}`),
+  transition: (id: string, payload: AgreementTransitionInput, key: string) => (
+    apiClient.command<Agreement>(`/api/agreements/${path(id)}/transitions`, payload, key)
+  ),
+  uploadFile: (id: string, upload: AgreementFileUpload, key: string) => {
+    const formData = new FormData()
+    formData.set('file', upload.file)
+    if (upload.comment.trim() !== '') {
+      formData.set('comment', upload.comment.trim())
+    }
+    if (upload.supplementId !== undefined) {
+      formData.set('supplementId', upload.supplementId)
+    }
+    return apiClient.upload<AgreementFile>(`/api/agreements/${path(id)}/files`, formData, key)
+  },
+  downloadFile: (id: string) => apiClient.download(`/api/agreement-files/${path(id)}/download`),
+  createSupplement: (agreementId: string, payload: AgreementSupplementInput, key: string) => (
+    apiClient.command<AgreementSupplement>(`/api/agreements/${path(agreementId)}/supplements`, payload, key)
+  ),
+  updateSupplement: (id: string, payload: AgreementSupplementInput, key: string) => (
+    apiClient.command<AgreementSupplement>(`/api/agreement-supplements/${path(id)}`, payload, key, 'PATCH')
+  ),
+  workAgreements: (interactionId: string) => apiClient.request<WorkAgreements>(`/api/interactions/${path(interactionId)}/agreements`),
+  registry: (filters: RegistryFilters) => apiClient.request<AgreementRegistryRow[]>(`/api/agreement-registry${registrySearch(filters)}`),
+  registryFile: (filters: RegistryFilters) => apiClient.download(`/api/agreement-registry/file${registrySearch(filters)}`),
+  periodReport: (query: AgreementPeriodQuery) => apiClient.request<AgreementPeriodReport>(`/api/reports/agreements-period${periodSearch(query)}`),
+  periodReportFile: (query: AgreementPeriodQuery, format: 'XLSX' | 'PDF') => (
+    apiClient.download(`/api/reports/agreements-period/file${periodSearch(query, { format })}`)
+  )
 }
 
 export const saveBlob = (blob: Blob, fileName: string) => {

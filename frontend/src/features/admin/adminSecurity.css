@@ -1,0 +1,234 @@
+/* «Журнал», «Персональные данные», «Сроки хранения» после упрощения интерфейса. */
+
+/* Журнал: фильтры одной строкой, на телефоне — за кнопкой «Фильтры» */
+
+.audit-filters {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.audit-filters__toggle {
+  display: none;
+  width: fit-content;
+  min-height: var(--control-height-compact);
+}
+
+.audit-filters__fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-2) var(--space-3);
+}
+
+.audit-filters__fields label {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 4px;
+  color: var(--color-text-label);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.audit-filters__fields label:nth-child(1),
+.audit-filters__fields label:nth-child(2) {
+  flex-basis: 150px;
+}
+
+.audit-filters__fields label:nth-child(3) {
+  flex-basis: 190px;
+}
+
+.audit-filters__fields label:nth-child(4),
+.audit-filters__fields label:nth-child(5) {
+  flex: 1 1 170px;
+}
+
+.audit-filters__fields input,
+.audit-filters__fields select {
+  min-height: var(--control-height-compact);
+  padding: 4px var(--space-3);
+}
+
+.audit-filters__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.audit-filters__actions button {
+  min-height: var(--control-height-compact);
+}
+
+.audit-table .audit-table__time {
+  white-space: nowrap;
+}
+
+.audit-table .support-details {
+  margin-top: 2px;
+}
+
+/* Персональные данные */
+
+.pd-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.pd-search {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: var(--space-2) var(--space-3);
+}
+
+.pd-search > .admin-more,
+.pd-search > .interaction-command-error {
+  grid-column: 1 / -1;
+}
+
+.pd-search label {
+  display: grid;
+  gap: 4px;
+  color: var(--color-text-label);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.pd-search input {
+  min-height: var(--control-height-compact);
+  padding: 4px var(--space-3);
+}
+
+.pd-search__more {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--space-2) var(--space-3);
+}
+
+.pd-result {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.pd-group {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+.pd-group > summary {
+  cursor: pointer;
+}
+
+.pd-group > summary h3 {
+  display: inline;
+  margin: 0;
+  font-size: var(--font-size-emphasis);
+}
+
+.pd-group[open] > summary {
+  margin-bottom: var(--space-2);
+}
+
+.pd-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pd-check input {
+  width: 18px;
+  min-height: 18px;
+  margin: 0;
+}
+
+.pd-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.pd-quote {
+  border-left: 3px solid var(--color-border);
+  padding-left: var(--space-3);
+  white-space: pre-wrap;
+}
+
+.pd-danger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--color-danger-border-soft);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-danger-surface);
+}
+
+.pd-danger p {
+  margin: 0;
+}
+
+/* Сроки хранения */
+
+.retention-table th:first-child {
+  width: 38%;
+}
+
+@media (max-width: 640px) {
+  .audit-filters__toggle {
+    display: inline-flex;
+  }
+
+  .audit-filters__fields[data-open="false"] {
+    display: none;
+  }
+
+  .audit-filters__fields[data-open="true"] {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .audit-filters__fields label:nth-child(3),
+  .audit-filters__fields label:nth-child(4),
+  .audit-filters__fields label:nth-child(5),
+  .audit-filters__actions {
+    grid-column: 1 / -1;
+  }
+
+  .audit-filters__actions button {
+    flex: 1 1 0;
+  }
+
+  .audit-table .audit-table__time {
+    white-space: normal;
+  }
+
+  .pd-search {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pd-search__more {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pd-search > button {
+    width: 100%;
+  }
+
+  .pd-row-actions {
+    justify-content: space-between;
+  }
+
+  .pd-danger button {
+    width: 100%;
+  }
+}

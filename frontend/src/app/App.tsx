@@ -1,21 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, apiClient, type Me } from '../shared/api/client'
-import { AdminCatalogsPanel } from '../features/admin/AdminCatalogsPanel'
-import { AdminSectionNav, resolveAdminSection } from '../features/admin/AdminSectionNav'
-import { ActivityKindsPanel } from '../features/agreements/ActivityKindsPanel'
+import { AdminScreen, adminNoticeText } from '../features/admin/AdminScreen'
+import { AgreementRegistry } from '../features/agreements/AgreementRegistry'
 import { ControlScreen } from '../features/control/ControlScreen'
-import { CatalogImportPanel } from '../features/admin/CatalogImportPanel'
-import { AdminProfilesScreen } from '../features/admin/AdminProfilesScreen'
-import { SourcesPanel } from '../features/admin/SourcesPanel'
-import { AuditJournalPanel } from '../features/admin/AuditJournalPanel'
 import { EnrolmentScreen } from '../features/enrolment/EnrolmentScreen'
-import { PersonalDataPanel } from '../features/admin/PersonalDataPanel'
-import { RetentionPanel } from '../features/admin/RetentionPanel'
-import { ActivationRequest, PasswordLink, keycloakLogoutUrl } from '../features/session/ActivationRequest'
+import { ActivationRequest, keycloakLogoutUrl } from '../features/session/ActivationRequest'
 import { announceSession, watchSessionElsewhere } from '../features/session/sessionSync'
-import { PendingSourceRecords } from '../features/sources/PendingSourceRecords'
-import { SourceAlerts } from '../features/sources/SourceAlerts'
-import { WorkflowTemplatesPanel } from '../features/admin/WorkflowTemplatesPanel'
 import {
   clearDraftsForProfile,
   clearRememberedProfileDrafts,
@@ -27,15 +17,28 @@ import {
 import { UnsavedDraftNotice } from '../features/interactions/UnsavedDraftNotice'
 import { HelpScreen } from '../features/help/HelpScreen'
 import { IssuesScreen } from '../features/issues/IssuesScreen'
-import { isSameRouteClick } from './routing'
+import {
+  activeWorkTab,
+  isListView,
+  isSameRouteClick,
+  isSameSectionClick,
+  navFor,
+  parseRoute,
+  sectionTitle,
+  sectionsFor,
+  workRedirect,
+  workTabsFor,
+  type NavItem
+} from './routing'
 import { LandingPage } from '../features/landing/LandingPage'
 import { OrganizationsScreen } from '../features/organizations/OrganizationsScreen'
 import { PartnerCabinet } from '../features/partner/PartnerCabinet'
 import { ReportsScreen } from '../features/reports/ReportsScreen'
-import { ProfileSummary, SessionScreen } from '../features/session/SessionScreen'
+import { ProfileMenu, SessionScreen } from '../features/session/SessionScreen'
 import { ReminderCenter } from '../features/work/ReminderCenter'
 import { WorkScreen } from '../features/work/WorkScreen'
-import { getModules, sectionAvailable, setModules, type Modules } from '../shared/modules'
+import { getModules, setModules } from '../shared/modules'
+import { HintButton } from '../shared/ui/HintButton'
 import { SupportDetails } from '../shared/ui/SupportDetails'
 
 type SessionState =
@@ -45,63 +48,43 @@ type SessionState =
   | { kind: 'forbidden'; requestId: string; pending: boolean; partnerOff?: boolean }
   | { kind: 'failed' }
 
-type Section = 'control' | 'work' | 'issues' | 'organizations' | 'reports' | 'admin' | 'enrolment' | 'partner' | 'help'
-
-const sectionTitles: Record<Section, string> = {
-  control: 'Контроль',
-  work: 'Моя работа',
-  issues: 'Проблемы и риски',
-  organizations: 'Вузы',
-  reports: 'Отчёты и статистика',
-  admin: 'Администрирование',
-  enrolment: 'Зачисление',
-  partner: 'Кабинет вуза',
-  help: 'Справка'
+const NavIcon = ({ href }: { href: string }) => {
+  const paths: Record<string, string> = {
+    '#/control': 'M4 5h16M4 12h16M4 19h10',
+    '#/work': 'M4 5h16M4 12h16M4 19h10',
+    '#/organizations': 'M3 21h18M5 21V9l7-5 7 5v12M10 21v-6h4v6',
+    '#/agreements': 'M7 3h7l4 4v14H7zM14 3v4h4M10 12h5M10 16h5',
+    '#/reports': 'M5 20V10M12 20V4M19 20v-7'
+  }
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={paths[href]} />
+    </svg>
+  )
 }
 
-const sectionTitle = (section: Section, profile: Me): string => (
-  section === 'work' && profile.role === 'MANAGEMENT' ? 'Сводка по всем командам' : sectionTitles[section]
-)
-
-const sectionsFor = (profile: Me, modules: Modules): Section[] => {
-  if (profile.role === 'ADMIN') {
-    return ['admin', 'help']
-  }
-  if (profile.role === 'PARTNER') {
-    return ['partner', 'help'].filter((item) => sectionAvailable(item, modules)) as Section[]
-  }
-  const sections: Section[] = ['work', 'issues', 'organizations', 'reports']
-  if (profile.role === 'LEADER' || profile.role === 'MANAGEMENT') {
-    sections.unshift('control')
-  }
-  if (sectionAvailable('enrolment', modules) && profile.enrolmentOperator) {
-    sections.push('enrolment')
-  }
-  if (profile.role === 'LEADER') {
-    sections.push('admin')
-  }
-  sections.push('help')
-  return sections
-}
-
-const parseRoute = (hash: string) => {
-  const [path, query = ''] = hash.replace(/^#\/?/, '').split('?')
-  const [section = '', organizationId, interactionId] = path.split('/')
-  return { section, organizationId, interactionId, query }
-}
+const isActive = (item: NavItem, section: string) => item.sections.some((value) => value === section)
 
 export const App = () => {
   const [state, setState] = useState<SessionState>({ kind: 'loading' })
   const [hash, setHash] = useState(() => window.location.hash)
-  const [sourcesRevision, setSourcesRevision] = useState(0)
   const [routePulse, setRoutePulse] = useState(0)
   const activeProfileId = useRef<string | null>(null)
-  const route = parseRoute(hash)
+  const sectionNavPending = useRef(false)
+  const redirect = state.kind === 'profile' ? workRedirect(hash, state.profile.role) : null
+  const route = parseRoute(redirect ?? hash)
   const watchedProfileId = state.kind === 'profile' ? state.profile.id : null
 
   useEffect(() => {
     void loadSession()
   }, [])
+
+  useEffect(() => {
+    if (redirect !== null) {
+      window.history.replaceState(null, '', redirect)
+      setHash(redirect)
+    }
+  }, [redirect])
 
   useEffect(() => (
     watchedProfileId === null ? undefined : watchSessionElsewhere(watchedProfileId, () => window.location.assign('/'))
@@ -114,7 +97,13 @@ export const App = () => {
   }, [state.kind, hash])
 
   useEffect(() => {
-    const syncHash = () => setHash(window.location.hash)
+    const syncHash = () => {
+      setHash(window.location.hash)
+      if (sectionNavPending.current) {
+        sectionNavPending.current = false
+        setRoutePulse((value) => value + 1)
+      }
+    }
     window.addEventListener('hashchange', syncHash)
     return () => window.removeEventListener('hashchange', syncHash)
   }, [])
@@ -122,8 +111,12 @@ export const App = () => {
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
       const anchor = event.target instanceof Element ? event.target.closest('a[href^="#"]') : null
-      if (anchor instanceof HTMLAnchorElement && isSameRouteClick(anchor.getAttribute('href'), window.location.hash)) {
+      const href = anchor instanceof HTMLAnchorElement ? anchor.getAttribute('href') : null
+      if (isSameRouteClick(href, window.location.hash)) {
         setRoutePulse((value) => value + 1)
+      } else if (anchor?.closest('.app-nav, .app-tabbar') && isSameSectionClick(href, window.location.hash)) {
+        // Экран пересоздаётся вместе со сменой адреса (в hashchange), чтобы начать с нового адреса, а не с прежних отборов.
+        sectionNavPending.current = true
       }
     }
     document.addEventListener('click', handleClick)
@@ -249,115 +242,77 @@ export const App = () => {
       </SessionScreen>
     )
   }
-  const sections = sectionsFor(state.profile, getModules())
+  const { profile } = state
+  const modules = getModules()
+  const sections = sectionsFor(profile.role, profile.enrolmentOperator, modules)
   const section = sections.find((item) => item === route.section) ?? sections[0]
-  const adminNavRole = state.profile.role === 'LEADER' ? 'LEADER' : 'ADMIN'
-  const adminSection = resolveAdminSection(route.organizationId, adminNavRole)
+  const nav = navFor(profile.role, profile.enrolmentOperator, modules)
+  const workTab = activeWorkTab(section)
+  const workTabs = workTab === null ? [] : workTabsFor(profile.role)
+  const title = sectionTitle(section, profile.role)
 
   return (
-    <div className="app-shell">
+    <div className={nav.some((item) => item.phone) ? 'app-shell app-shell--tabbar' : 'app-shell'}>
       <header className="app-header">
-        <p className="app-header__brand">CRM ИТ Школы РТК</p>
-        <nav className="app-nav" aria-label="Разделы CRM">
-          <ul>
-            {sections.map((item) => (
-              <li key={item}>
-                <a href={`#/${item}`} aria-current={item === section ? 'page' : undefined}>{sectionTitle(item, state.profile)}</a>
-              </li>
-            ))}
-          </ul>
-        </nav>
+        <p className="app-header__brand">
+          <span className="app-header__brand-full">CRM ИТ Школы РТК</span>
+          <span className="app-header__brand-short" aria-hidden="true">CRM РТК</span>
+        </p>
+        {nav.length > 0 && (
+          <nav className="app-nav" aria-label="Разделы CRM">
+            <ul>
+              {nav.map((item) => (
+                <li key={item.href}>
+                  <a href={item.href} aria-current={isActive(item, section) ? 'page' : undefined}>{item.label}</a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        )}
         <div className="app-header__profile">
-          {(state.profile.role === 'USER' || state.profile.role === 'LEADER') && (
+          {(profile.role === 'USER' || profile.role === 'LEADER') && (
             <ReminderCenter
-              profileId={state.profile.id}
+              profileId={profile.id}
               refreshKey={`${section}:${routePulse}`}
               onSessionExpired={handleSessionExpired}
               onProfileUnavailable={handleProfileUnavailable}
             />
           )}
-          <ProfileSummary profile={state.profile} />
-          <PasswordLink />
-          <button type="button" className="button--secondary" onClick={() => void logout()}>Выйти</button>
+          <ProfileMenu profile={profile} phoneItems={nav.filter((item) => !item.phone)} onLogout={() => void logout()} />
         </div>
       </header>
+      {workTabs.length > 0 && (
+        <nav className="app-subnav" aria-label="Работа">
+          <ul>
+            {workTabs.map((tab) => (
+              <li key={tab.key}>
+                <a href={tab.href} aria-current={tab.key === workTab ? 'page' : undefined}>{tab.label}</a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
       <main className="app-main">
-        <h1>{sectionTitle(section, state.profile)}</h1>
+        <div className="page-title">
+          <h1>{title}</h1>
+          {section === 'admin' && profile.role === 'ADMIN' && (
+            <HintButton label="Что видит администратор">{adminNoticeText}</HintButton>
+          )}
+        </div>
         <div className="app-content">
           {section === 'admin' && (
-            <>
-              <AdminSectionNav active={adminSection} role={adminNavRole} />
-              {state.profile.role === 'ADMIN' && adminSection === 'profiles' && (
-                <div className="notice admin-role-notice" role="note">
-                  <p><strong>Администратор управляет доступом и настройками и не видит работу с вузами.</strong></p>
-                  <p>Чтобы посмотреть работу с вузами, войдите руководителем команды или менеджером.</p>
-                  <button type="button" className="button--secondary" onClick={() => void logout()}>Выйти</button>
-                </div>
-              )}
-              {state.profile.role === 'ADMIN' && (
-                <SourceAlerts
-                  onSessionExpired={handleSessionExpired}
-                  onProfileUnavailable={handleProfileUnavailable}
-                  refreshSignal={sourcesRevision}
-                />
-              )}
-              {adminSection === 'pending-source-records' && (
-                <PendingSourceRecords
-                  role={state.profile.role}
-                  onSessionExpired={handleSessionExpired}
-                  onProfileUnavailable={handleProfileUnavailable}
-                />
-              )}
-              {adminSection === 'profiles' && (
-                <AdminProfilesScreen
-                  currentProfile={state.profile}
-                  onSessionExpired={handleSessionExpired}
-                  onProfileUnavailable={handleProfileUnavailable}
-                />
-              )}
-              {adminSection === 'catalogs' && (
-                <AdminCatalogsPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
-              )}
-              {adminSection === 'workflow-templates' && (
-                <WorkflowTemplatesPanel
-                  role={state.profile.role}
-                  onSessionExpired={handleSessionExpired}
-                  onProfileUnavailable={handleProfileUnavailable}
-                />
-              )}
-              {adminSection === 'catalog-import' && (
-                <CatalogImportPanel
-                  onSessionExpired={handleSessionExpired}
-                  onProfileUnavailable={handleProfileUnavailable}
-                />
-              )}
-              {adminSection === 'sources' && (
-                <SourcesPanel
-                  onSessionExpired={handleSessionExpired}
-                  onProfileUnavailable={handleProfileUnavailable}
-                  onSynced={() => setSourcesRevision((value) => value + 1)}
-                />
-              )}
-              {adminSection === 'journal' && (
-                <AuditJournalPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
-              )}
-              {adminSection === 'personal-data' && (
-                <PersonalDataPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
-              )}
-              {adminSection === 'retention' && (
-                <RetentionPanel onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
-              )}
-              {adminSection === 'activity-kinds' && (
-                <ActivityKindsPanel
-                  onSessionExpired={handleSessionExpired}
-                  onProfileUnavailable={handleProfileUnavailable}
-                />
-              )}
-            </>
+            <AdminScreen
+              profile={profile}
+              slug={route.organizationId}
+              query={route.query}
+              onSessionExpired={handleSessionExpired}
+              onProfileUnavailable={handleProfileUnavailable}
+            />
           )}
           {section === 'control' && (
             <ControlScreen
-              role={state.profile.role}
+              key={isListView(route.query) ? 'list' : 'board'}
+              role={profile.role}
               initialQuery={route.query}
               refreshSignal={routePulse}
               onSessionExpired={handleSessionExpired}
@@ -366,7 +321,7 @@ export const App = () => {
           )}
           {section === 'work' && (
             <WorkScreen
-              role={state.profile.role}
+              role={profile.role}
               initialQuery={route.query}
               refreshSignal={routePulse}
               onSessionExpired={handleSessionExpired}
@@ -376,37 +331,39 @@ export const App = () => {
           {section === 'issues' && (
             <IssuesScreen
               key={routePulse}
-              profile={state.profile}
+              profile={profile}
               initialQuery={route.query}
               onSessionExpired={handleSessionExpired}
               onProfileUnavailable={handleProfileUnavailable}
             />
           )}
           {section === 'organizations' && (
-            <>
-              <OrganizationsScreen
-                profileId={state.profile.id}
-                role={state.profile.role}
-                selectedOrganizationId={route.organizationId}
-                selectedInteractionId={route.interactionId}
-                query={route.query}
-                onSessionExpired={handleSessionExpired}
-                onProfileUnavailable={handleProfileUnavailable}
-              />
-              {state.profile.role === 'USER' && (
-                <PendingSourceRecords
-                  role={state.profile.role}
-                  onSessionExpired={handleSessionExpired}
-                  onProfileUnavailable={handleProfileUnavailable}
-                />
-              )}
-            </>
+            <OrganizationsScreen
+              key={routePulse}
+              profileId={profile.id}
+              role={profile.role}
+              selectedOrganizationId={route.organizationId}
+              selectedInteractionId={route.interactionId}
+              query={route.query}
+              onSessionExpired={handleSessionExpired}
+              onProfileUnavailable={handleProfileUnavailable}
+            />
+          )}
+          {section === 'agreements' && (
+            <AgreementRegistry
+              key={routePulse}
+              role={profile.role}
+              onSessionExpired={handleSessionExpired}
+              onProfileUnavailable={handleProfileUnavailable}
+            />
           )}
           {section === 'reports' && (
             <ReportsScreen
-              profileId={state.profile.id}
-              role={state.profile.role}
+              key={routePulse}
+              profileId={profile.id}
+              role={profile.role}
               view={route.organizationId}
+              query={route.query}
               onSessionExpired={handleSessionExpired}
               onProfileUnavailable={handleProfileUnavailable}
             />
@@ -421,6 +378,20 @@ export const App = () => {
         </div>
         <UnsavedDraftNotice />
       </main>
+      {nav.some((item) => item.phone) && (
+        <nav className="app-tabbar" aria-label="Разделы CRM на телефоне">
+          <ul>
+            {nav.filter((item) => item.phone).map((item) => (
+              <li key={item.href}>
+                <a href={item.href} aria-current={isActive(item, section) ? 'page' : undefined}>
+                  <NavIcon href={item.href} />
+                  <span>{item.label}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
     </div>
   )
 }

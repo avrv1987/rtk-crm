@@ -22,6 +22,7 @@ type InteractionDetailsFormProps = {
   profileId: string
   onChanged: (interaction: Interaction) => void
   onRefresh: () => void
+  onAddContact?: () => void
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
@@ -79,6 +80,7 @@ export const InteractionDetailsForm = ({
   profileId,
   onChanged,
   onRefresh,
+  onAddContact,
   onSessionExpired,
   onProfileUnavailable
 }: InteractionDetailsFormProps) => {
@@ -100,7 +102,7 @@ export const InteractionDetailsForm = ({
   }
   const changed = Object.keys(payload).length > 1
   const titleMissing = values.title.trim().length === 0
-  useUnsavedDraft(`card:${interaction.id}:details`, `данные работы в карточке «${interaction.title}»`, draft !== null && changed)
+  useUnsavedDraft(`card:${interaction.id}:details`, `данные взаимодействия в карточке «${interaction.title}»`, draft !== null && changed)
   const selectable = contacts?.filter((contact) => !contact.inactive || current.contactIds.includes(contact.id)) ?? []
 
   const shownValue = (field: keyof DetailsValues, source: DetailsValues) => {
@@ -168,8 +170,7 @@ export const InteractionDetailsForm = ({
 
   return (
     <form className="interaction-plan-form work-details" onSubmit={(event) => void submit(event)}>
-      <h6>Данные работы</h6>
-      <p>Название, связанные контакты и дату последнего контакта можно исправить; в истории останется, что было и что стало.</p>
+      <p className="interaction-field-hint">В истории останется, что было и что стало.</p>
       {draft !== null && (
         <DraftConflictNotice
           conflicts={conflicts.map((field) => ({
@@ -192,8 +193,8 @@ export const InteractionDetailsForm = ({
       </label>
       <fieldset className="interaction-contact-picker">
         <legend>Связанные контакты</legend>
-        {contacts === null && <p>Контакты организации ещё загружаются.</p>}
-        {contacts !== null && selectable.length === 0 && <p>У организации нет действующих контактов. Добавьте контакт выше.</p>}
+        {contacts === null && <p>Контакты вуза ещё загружаются.</p>}
+        {contacts !== null && selectable.length === 0 && <p>У вуза нет действующих контактов.</p>}
         {selectable.length > 0 && (
           <ul>
             {selectable.map((contact) => (
@@ -213,13 +214,16 @@ export const InteractionDetailsForm = ({
             ))}
           </ul>
         )}
+        {onAddContact !== undefined && (
+          <button type="button" className="button--secondary interaction-contact-picker__add" onClick={onAddContact}>Новый контакт</button>
+        )}
       </fieldset>
       <div className="interaction-plan-form__actions">
         <button type="submit" disabled={state.kind === 'saving' || !changed || conflicts.length > 0 || titleMissing}>
-          {state.kind === 'saving' ? 'Сохраняем…' : 'Сохранить данные работы'}
+          {state.kind === 'saving' ? 'Сохраняем…' : 'Сохранить'}
         </button>
         {draft !== null && (
-          <button type="button" className="button--secondary" disabled={state.kind === 'saving'} onClick={reset}>Отменить изменения</button>
+          <button type="button" className="button--secondary" disabled={state.kind === 'saving'} onClick={reset}>Сбросить изменения</button>
         )}
       </div>
       {state.kind === 'failed' && (

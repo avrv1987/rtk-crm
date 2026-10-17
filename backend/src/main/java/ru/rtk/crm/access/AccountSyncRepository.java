@@ -17,7 +17,7 @@ public class AccountSyncRepository {
 
     public Optional<Account> findAccount(UUID profileId) {
         return jdbcClient.sql("""
-                SELECT subject, active, pending_activation, idp_enabled
+                SELECT subject, active, pending_activation, idp_enabled, role_reconcile_required
                 FROM crm_user_profiles
                 WHERE id = :profileId
                 """)
@@ -26,7 +26,8 @@ public class AccountSyncRepository {
                         resultSet.getString("subject"),
                         resultSet.getBoolean("active"),
                         resultSet.getBoolean("pending_activation"),
-                        resultSet.getBoolean("idp_enabled")
+                        resultSet.getBoolean("idp_enabled"),
+                        resultSet.getBoolean("role_reconcile_required")
                 ))
                 .optional();
     }
@@ -60,7 +61,9 @@ public class AccountSyncRepository {
     public record RoleAccount(UUID id, String subject, UserRole role) {
     }
 
-    public record Account(String subject, boolean active, boolean pendingActivation, boolean idpEnabled) {
+    public record Account(
+            String subject, boolean active, boolean pendingActivation, boolean idpEnabled, boolean roleReconcileRequired
+    ) {
         boolean synced() {
             return pendingActivation || active == idpEnabled;
         }

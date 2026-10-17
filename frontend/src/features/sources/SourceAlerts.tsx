@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { apiClient, isAccessDenied, type DataSource } from '../../shared/api/client'
 import { startPolling } from '../../shared/api/polling'
-import { accessHandled, formatDateTime } from './sourceFormat'
-import './sources.css'
+import { accessHandled } from './sourceFormat'
+import { sourceAlertOf } from './sourceTabs'
+import './sourcePage.css'
 
 type SourceAlertsProps = {
   onSessionExpired: () => void
@@ -11,10 +12,6 @@ type SourceAlertsProps = {
 }
 
 const refreshIntervalMs = 60_000
-
-const failed = (source: DataSource) => source.configured && source.lastRun?.status === 'FAILED'
-
-const stale = (source: DataSource) => source.configured && source.stale === true && !failed(source)
 
 export const SourceAlerts = ({ onSessionExpired, onProfileUnavailable, refreshSignal }: SourceAlertsProps) => {
   const [sources, setSources] = useState<DataSource[]>([])
@@ -33,31 +30,14 @@ export const SourceAlerts = ({ onSessionExpired, onProfileUnavailable, refreshSi
     }
   }, refreshIntervalMs), [onProfileUnavailable, onSessionExpired, refreshSignal])
 
-  const failures = sources.filter(failed)
-  const staleSources = sources.filter(stale)
-  if (failures.length === 0 && staleSources.length === 0 && !unavailable) {
+  const alert = sourceAlertOf(sources, unavailable)
+  if (alert === null) {
     return null
   }
-  const showSources = () => document.getElementById('data-sources-title')?.scrollIntoView({ behavior: 'smooth' })
 
   return (
-    <div className={failures.length > 0 || unavailable ? 'source-alerts' : 'source-alerts source-alerts--stale'} role="alert">
-      {unavailable && <p><strong>Состояние источников данных не загрузилось.</strong> Проверьте раздел «Источники данных».</p>}
-      {failures.map((source) => (
-        <p key={source.source}>
-          <strong>Синхронизация «{source.title}» завершилась ошибкой</strong>{' '}
-          {formatDateTime(source.lastRun?.finishedAt ?? source.lastRun?.createdAt)}: {source.lastRun?.errorMessage ?? source.lastRun?.errorCode}.
-          {' '}Данные в CRM не изменены; последняя успешная синхронизация — {formatDateTime(source.lastSuccessAt)}.
-        </p>
-      ))}
-      {staleSources.map((source) => (
-        <p key={source.source}>
-          <strong>Данные «{source.title}» устарели:</strong> последняя успешная синхронизация — {formatDateTime(source.lastSuccessAt)}.
-        </p>
-      ))}
-      <div className="source-panel__row">
-        <button type="button" className="button--secondary" onClick={showSources}>Перейти к источникам данных</button>
-      </div>
+    <div className={alert.kind === 'stale' ? 'src-alert-line src-alert-line--stale' : 'src-alert-line'} role="alert">
+      <p><a href={alert.href}>{alert.text}</a>{alert.more > 0 && ` (и ещё ${alert.more})`}</p>
     </div>
   )
 }

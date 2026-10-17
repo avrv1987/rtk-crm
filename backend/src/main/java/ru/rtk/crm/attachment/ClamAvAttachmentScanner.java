@@ -23,9 +23,12 @@ public class ClamAvAttachmentScanner implements AttachmentScanner {
 
     @Override
     public AttachmentScanOutcome scan(InputStream input, long sizeBytes) {
+        // Слишком большой файл не отправляется в ClamAV: он остаётся непроверенным, а не «чистым».
         if (sizeBytes > properties.maxFileSize().toBytes()) {
             return AttachmentScanOutcome.UNVERIFIABLE;
         }
+        // Недоступность антивируса не равна «чисто»: при любой ошибке связи (ниже) файл остаётся непроверенным
+        // (fail closed), а не пропускается.
         try (Socket socket = new Socket()) {
             socket.connect(
                     new InetSocketAddress(properties.scannerHost(), properties.scannerPort()),
@@ -33,6 +36,8 @@ public class ClamAvAttachmentScanner implements AttachmentScanner {
             );
             socket.setSoTimeout(timeoutMillis(properties.scannerReadTimeout()));
             try (DataOutputStream output = new DataOutputStream(socket.getOutputStream())) {
+                // Протокол clamd INSTREAM: команда с нулём на конце (префикс z), затем куски «длина (4 байта) + данные»
+                // и нулевая длина как конец потока. Файл передаётся потоком и целиком в память не читается.
                 output.write("zINSTREAM\0".getBytes(StandardCharsets.US_ASCII));
                 byte[] buffer = new byte[BUFFER_SIZE];
                 int read;
@@ -70,6 +75,8 @@ public class ClamAvAttachmentScanner implements AttachmentScanner {
         if (!response.endsWith(" FOUND")) {
             return AttachmentScanOutcome.UNVERIFIABLE;
         }
+        // Heuristics.Encrypted и Heuristics.Limits — не заражение, а невозможность проверить (зашифрованный архив,
+        // превышены лимиты распаковки): такой файл непроверен, а не отклонён как вирус.
         String normalized = response.toLowerCase(java.util.Locale.ROOT);
         if (normalized.contains("heuristics.encrypted") || normalized.contains("heuristics.limits")) {
             return AttachmentScanOutcome.UNVERIFIABLE;

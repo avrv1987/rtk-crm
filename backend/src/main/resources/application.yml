@@ -20,6 +20,7 @@ server:
   forward-headers-strategy: framework
   servlet:
     session:
+      timeout: ${APP_SESSION_IDLE_TIMEOUT:30m}
       cookie:
         http-only: true
         same-site: lax
@@ -43,11 +44,13 @@ logging:
   pattern:
     correlation: "[%X{requestId:-}] "
 app:
+  session:
+    absolute-timeout: ${APP_SESSION_ABSOLUTE_TIMEOUT:12h}
   modules:
     enrolment:
-      enabled: ${MODULE_ENROLMENT_ENABLED:false}
+      enabled: ${MODULE_ENROLMENT_ENABLED:true}
     partner:
-      enabled: ${MODULE_PARTNER_ENABLED:false}
+      enabled: ${MODULE_PARTNER_ENABLED:true}
   attachments:
     storage-root: ${APP_ATTACHMENTS_STORAGE_ROOT:/var/lib/rtk-crm/files}
     scanner-host: ${APP_ATTACHMENTS_SCANNER_HOST:localhost}
@@ -59,6 +62,10 @@ app:
     manager-creation-requires-approval: ${APP_ORGANIZATIONS_MANAGER_CREATION_REQUIRES_APPROVAL:true}
   agreements:
     archive-max-size: 1GB
+    signing-stage-rule: ${APP_AGREEMENTS_SIGNING_STAGE_RULE:true}
+    exchange-stage-names: Обмен документами
+    correction-stage-names: Корректировка документов
+    signing-stage-names: Подписание
   reports:
     storage-root: ${APP_REPORTS_STORAGE_ROOT:/var/lib/rtk-crm/reports}
     slots: 10
@@ -84,9 +91,25 @@ app:
       course-ids: ${APP_SOURCES_MOODLE_COURSE_IDS:}
       student-roles: student
       teacher-roles: editingteacher,teacher
+      teacher-course-label: ППС
       connect-timeout: 5s
       read-timeout: 20s
       max-response-size: 5MB
+    crm:
+      base-url: ${APP_SOURCES_CRM_BASE_URL:}
+      token: ${APP_SOURCES_CRM_TOKEN:}
+      connect-timeout: 5s
+      read-timeout: 20s
+      max-pages: 100
+      max-page-size: 5MB
+  labor-market:
+    base-url: ${APP_LABOR_MARKET_BASE_URL:}
+    token: ${APP_LABOR_MARKET_TOKEN:}
+    connect-timeout: 5s
+    read-timeout: 20s
+    max-response-size: 5MB
+    max-items: 5000
+    history-months: 24
   retention:
     cron: ${APP_RETENTION_CRON:0 30 3 * * *}
     report-files: ${APP_RETENTION_REPORT_FILES:7d}
@@ -108,12 +131,19 @@ app:
     training-cycle-years: 3
     training-notice-days: 90
     reminder-list-limit: 50
+    qualification-stage-name: Повышение квалификации
+    qualification-after-months: 12
     deputy-expiry-delay: PT5M
   lms-signals:
     classes-stage-name: Занятия
     no-students-after-days: 14
     low-completion-percent: 50
     completion-window-days: 7
+    activity-grace-days: 7
+    low-activity-percent: 40
+    not-started-percent: 50
+    dropout-percent: 25
+    inactive-after-days: 14
   enrolment:
     active-key-version: ${APP_ENROLMENT_ACTIVE_KEY_VERSION:}
     keys:

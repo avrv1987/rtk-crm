@@ -42,7 +42,7 @@ class OrganizationRepositoryTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,

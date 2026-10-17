@@ -12,6 +12,19 @@ public record ReportPreview(
         List<Map<String, Object>> items,
         int page,
         int size,
-        long total
+        long total,
+        List<Map<String, Object>> groupTotals
 ) {
+    public ReportPreview(
+            ReportKind kind,
+            OffsetDateTime generatedAt,
+            List<String> notes,
+            List<ReportColumnView> columns,
+            List<Map<String, Object>> items,
+            int page,
+            int size,
+            long total
+    ) {
+        this(kind, generatedAt, notes, columns, items, page, size, total, List.of());
+    }
 }

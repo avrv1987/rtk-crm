@@ -58,6 +58,7 @@ public class StatisticsChartWriter {
     private static final Color UNSPECIFIED_LINE = new Color(0x50627a);
     private static final Color TEXT = new Color(0x17202f);
     private static final Color MUTED = new Color(0x50627a);
+    private static final Color OTHERS = new Color(0x1f2937);
     private static final Color GRID = new Color(0xd7dfeb);
     private static final Color[] SERIES_COLORS = {
             new Color(0x0f65d8), new Color(0xc2410c), new Color(0x15803d), new Color(0x7e22ce), new Color(0x0e7490)
@@ -199,6 +200,9 @@ public class StatisticsChartWriter {
         List<String> lines = new ArrayList<>();
         lines.add("Показатель: " + statistics.kind().countTitle().toLowerCase(Locale.ROOT)
                 + " в группе; всего в выборке: " + statistics.total() + "; шкала начинается с нуля");
+        if (statistics.groupBy() == StatisticsGroupBy.STAGE) {
+            lines.add("Этапы идут в порядке маршрута; этапы без взаимодействий показаны нулём");
+        }
         if (statistics.groupBy() == StatisticsGroupBy.PRODUCT) {
             lines.add("Строка с несколькими ИТ-продуктами учтена в каждом из них, поэтому сумма столбцов может быть больше итога");
         }
@@ -262,7 +266,8 @@ public class StatisticsChartWriter {
             int color = 0;
             for (StatisticsResult.Series series : statistics.series()) {
                 lines.add(new Line(series.label(), series.counts(),
-                        series.unspecified() ? MUTED : SERIES_COLORS[color++ % SERIES_COLORS.length], series.unspecified()));
+                        series.unspecified() ? MUTED : series.others() ? OTHERS : SERIES_COLORS[color++ % SERIES_COLORS.length],
+                        series.unspecified()));
             }
         }
         long max = lines.stream().flatMap(line -> line.values().stream()).mapToLong(Long::longValue).max().orElse(0);
@@ -275,6 +280,9 @@ public class StatisticsChartWriter {
         if (statistics.seriesBy() != null) {
             caption.add("Линии " + statistics.seriesBy().title() + "; «" + ReportColumn.UNSPECIFIED
                     + "» (серая пунктирная линия) — строки без значения, это не ноль");
+            if (statistics.series().stream().anyMatch(StatisticsResult.Series::others)) {
+                caption.add("«Остальные» — сумма линий сверх пяти крупнейших");
+            }
             if (statistics.seriesBy() == StatisticsGroupBy.PRODUCT) {
                 caption.add("Строка с несколькими ИТ-продуктами учтена в линии каждого из них, поэтому сумма линий может быть"
                         + " больше итога");

@@ -168,7 +168,8 @@ class ReportWritersTest {
             int headerIndex = document.notes().size() + 2;
             assertThat(texts(sheet.getRow(headerIndex))).containsExactly(
                     "ИТ-направление", "ИТ-программа", "Заявки (сайт)", "Оплаченные заявки (сайт)", "Потоки с оплатами (сайт)",
-                    "Обучающиеся (Moodle)", "Завершили (Moodle)", "Доля завершивших, %", "Параллельные потоки (Moodle)");
+                    "Обучающиеся (Moodle)", "Завершили (Moodle)", "Доля завершивших, %", "Параллельные потоки (Moodle)",
+                    "Спрос рынка: вакансии", "Тренд спроса, %");
             Row data = sheet.getRow(headerIndex + 1);
             assertThat(data.getCell(2).getCellType()).isEqualTo(CellType.NUMERIC);
             assertThat(data.getCell(2).getNumericCellValue()).isEqualTo(5.0);
@@ -178,6 +179,8 @@ class ReportWritersTest {
             assertThat(data.getCell(6).getStringCellValue()).isEqualTo("нет данных");
             assertThat(data.getCell(7).getStringCellValue()).isEqualTo("нет данных");
             assertThat(data.getCell(8).getStringCellValue()).isEqualTo("нет данных");
+            assertThat(data.getCell(9).getStringCellValue()).isEqualTo("нет данных");
+            assertThat(data.getCell(10).getStringCellValue()).isEqualTo("нет данных");
         }
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -189,7 +192,57 @@ class ReportWritersTest {
         assertThat(json.path("totals").path("paidOrders").asLong()).isEqualTo(2);
         assertThat(json.path("rows").get(0).path("PAID_STREAMS").asLong()).isEqualTo(1);
         assertThat(json.path("quality").path("noData")).extracting(JsonNode::asText)
-                .containsExactly("PARTICIPANTS", "LEARNERS_COMPLETED", "COMPLETION_SHARE", "PARALLEL_RUNS");
+                .containsExactly("PARTICIPANTS", "LEARNERS_COMPLETED", "COMPLETION_SHARE", "PARALLEL_RUNS", "MARKET_VACANCIES",
+                        "MARKET_TREND");
+    }
+
+    @Test
+    void marketColumnsAreWrittenInEveryFormatWithNotApplicableAsTextAndMissingTrendAsNoData() throws IOException {
+        ReportRequest request = new ReportRequest(ReportKind.DEMAND, null, null, null, null,
+                List.of(ReportColumn.PROGRAM, ReportColumn.MARKET_VACANCIES, ReportColumn.MARKET_TREND), ReportFormat.XLSX, null, null)
+                .normalized(true);
+        ReportDocument document = new ReportDocument(request, OffsetDateTime.parse("2026-09-24T12:00:00+03:00"),
+                List.of("Сформирован: 24.09.2026 12:00"), List.of(
+                marketRow("Рост", new MarketDemand(true, 525L, 62L)),
+                marketRow("Один срез", new MarketDemand(true, 90L, null)),
+                marketRow("Спад", new MarketDemand(true, 365L, -30L)),
+                marketRow("Без признака", MarketDemand.NOT_TRACKED),
+                marketRow("Нет среза", new MarketDemand(true, null, null))));
+
+        for (ReportFormat format : List.of(ReportFormat.XLSX, ReportFormat.XLS)) {
+            try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(excel(document, format)))) {
+                Sheet sheet = workbook.getSheetAt(0);
+                int first = document.notes().size() + 3;
+                assertThat(texts(sheet.getRow(first - 1))).containsExactly("ИТ-программа", "Спрос рынка: вакансии", "Тренд спроса, %");
+                assertThat(sheet.getRow(first).getCell(1).getNumericCellValue()).isEqualTo(525.0);
+                assertThat(sheet.getRow(first).getCell(2).getNumericCellValue()).isEqualTo(62.0);
+                assertThat(sheet.getRow(first + 1).getCell(2).getStringCellValue()).isEqualTo("нет данных");
+                assertThat(sheet.getRow(first + 2).getCell(2).getNumericCellValue()).isEqualTo(-30.0);
+                assertThat(sheet.getRow(first + 3).getCell(1).getStringCellValue()).isEqualTo("не применяется");
+                assertThat(sheet.getRow(first + 3).getCell(2).getStringCellValue()).isEqualTo("не применяется");
+                assertThat(sheet.getRow(first + 4).getCell(1).getStringCellValue()).isEqualTo("нет данных");
+            }
+        }
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        new JsonReportWriter(objectMapper).write(document, output);
+        JsonNode json = objectMapper.readTree(output.toByteArray());
+        assertThat(json.path("rows").get(0).path("MARKET_VACANCIES").asLong()).isEqualTo(525);
+        assertThat(json.path("rows").get(1).path("MARKET_TREND").isNull()).isTrue();
+        assertThat(json.path("rows").get(2).path("MARKET_TREND").asLong()).isEqualTo(-30);
+        assertThat(json.path("rows").get(3).path("MARKET_VACANCIES").asText()).isEqualTo("не применяется");
+        assertThat(json.path("rows").get(4).path("MARKET_VACANCIES").isNull()).isTrue();
+        assertThat(json.path("columns")).extracting(column -> column.path("title").asText())
+                .containsExactly("ИТ-программа", "Спрос рынка: вакансии", "Тренд спроса, %");
+        assertThat(json.path("quality").path("noData")).extracting(JsonNode::asText)
+                .contains("MARKET_VACANCIES", "MARKET_TREND");
+
+        ByteArrayOutputStream pdfOutput = new ByteArrayOutputStream();
+        pdfWriter.write(document, pdfOutput);
+        try (PDDocument pdf = Loader.loadPDF(pdfOutput.toByteArray())) {
+            String text = new PDFTextStripper().getText(pdf);
+            assertThat(text).contains("Спрос рынка: вакансии").contains("не применяется").contains("525").contains("-30");
+        }
     }
 
     @Test
@@ -220,6 +273,12 @@ class ReportWritersTest {
                 List.of("Сформирован: 24.09.2026 12:00", "Период: не ограничен", "Фильтры: не заданы"),
                 rows
         );
+    }
+
+    private static ReportRow marketRow(String program, MarketDemand market) {
+        return new ReportRow(null, null, null, null, UUID.randomUUID(), "Направление", UUID.randomUUID(), program, List.of(), null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, List.of(), null, null,
+                null, null, null, null, null, market);
     }
 
     private static ReportRow row(String organization, String comment) {

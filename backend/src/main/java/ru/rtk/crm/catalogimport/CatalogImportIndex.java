@@ -38,6 +38,8 @@ final class CatalogImportIndex<T extends ImportKeyed> {
         return byNaturalKey.getOrDefault(naturalKey, List.of());
     }
 
+    // Названия сравниваются без учёта регистра, лишних пробелов (включая неразрывные) и различия «е/ё»:
+    // так «Ёлка» из файла находит «елка» в каталоге.
     static String normalized(String value) {
         return clean(value).toLowerCase(Locale.ROOT).replace('ё', 'е');
     }
@@ -50,6 +52,8 @@ final class CatalogImportIndex<T extends ImportKeyed> {
         return (parent == null ? "" : parent.toString()) + "|" + normalized(name);
     }
 
+    // Название ПО сравнивается по правилам каталога (CatalogNames.normalized): ещё и без кавычек, поэтому
+    // «Касперский» и Касперский — одно ПО. Ключ включает вендора: одинаковые названия у разных вендоров не смешиваются.
     static String productKey(Object parent, String name) {
         return (parent == null ? "" : parent.toString()) + "|" + CatalogNames.normalized(name);
     }

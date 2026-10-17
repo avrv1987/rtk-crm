@@ -60,6 +60,7 @@ public class MoodleSnapshotApplier {
     @Transactional
     public SourceRecordStatus reapply(UUID recordId, UUID actorProfileId) {
         StoredRecord stored = repository.findRecordForUpdate(recordId).orElseThrow(SourceException::recordNotFound);
+        // Повтор нужен только записям, ждущим сопоставления или упавшим; в остальных состояниях он ничего не меняет.
         if (stored.status() != SourceRecordStatus.NEEDS_MAPPING && stored.status() != SourceRecordStatus.FAILED) {
             return stored.status();
         }
@@ -104,6 +105,8 @@ public class MoodleSnapshotApplier {
             throw SourceException.mappingVersion(repository.findMapping(mapping.id()).map(StoredMapping::version).orElse(0));
         }
         Optional<StoredSnapshot> snapshot = repository.findSnapshot(mapping.id());
+        // После правки потока снимок вне новых дат удаляется; при смене вуза или программы он переносится, а если
+        // свежая запись всё ещё внутри потока, удаляется и строится заново при переприменении.
         if (snapshot.isPresent()) {
             boolean insideRun = localDate(snapshot.get().observedAt()).isBefore(run.endsOn());
             boolean sameTarget = snapshot.get().organizationId().equals(organizationId)
@@ -124,6 +127,7 @@ public class MoodleSnapshotApplier {
         lockUnit(mapping);
         repository.deleteMapping(mapping.id());
         String courseKey = mapping.externalKey().split(":", 2)[0];
+        // Сопоставление курса влияет и на записи его групп, поэтому переприменяются все записи курса.
         for (StoredRecord stored : repository.findMoodleRecordsOfCourse(courseKey)) {
             republish(stored, actorProfileId);
         }
@@ -132,6 +136,8 @@ public class MoodleSnapshotApplier {
     @Transactional
     public void recordFailure(LearningUnit unit, OffsetDateTime observedAt, UUID runId, String error) {
         Optional<StoredRecord> existing = repository.findRecordForUpdate(SOURCE, unit.recordType(), unit.externalId());
+        // Сбой фиксируется на записи, а не пробрасывается: запуск продолжает остальные курсы, а прежняя карточка
+        // остаётся привязанной.
         ApplyResult failed = new ApplyResult(SourceRecordStatus.FAILED, error, null, null, 1,
                 existing.map(StoredRecord::interactionId).orElse(null));
         if (existing.isPresent()) {
@@ -139,6 +145,11 @@ public class MoodleSnapshotApplier {
         } else {
             repository.insertRecord(UUID.randomUUID(), SOURCE, version(unit, observedAt), failed, runId, OffsetDateTime.now());
         }
+    }
+
+    @Transactional
+    public void markCourseFailed(String courseKey, String error, UUID runId) {
+        repository.failMoodleCourseRecords(courseKey, error, runId, OffsetDateTime.now());
     }
 
     @Transactional
@@ -162,6 +173,7 @@ public class MoodleSnapshotApplier {
         };
     }
 
+    // Запись блокируется до правки сопоставления: запуск синхронизации применяет ту же запись под той же блокировкой.
     private Optional<StoredRecord> lockUnit(StoredMapping mapping) {
         String courseKey = mapping.externalKey().split(":", 2)[0];
         Optional<StoredRecord> course = repository.findRecordForUpdate(SOURCE, LearningUnit.COURSE_RECORD, courseKey);
@@ -171,7 +183,10 @@ public class MoodleSnapshotApplier {
     }
 
     private void requireExclusive(boolean group, String courseKey) {
+        // Блокировка записи курса сериализует проверку с запуском синхронизации.
         repository.findRecordForUpdate(SOURCE, LearningUnit.COURSE_RECORD, courseKey);
+        // Курс целиком и его группы по отдельности взаимоисключают друг друга: иначе один учащийся попал бы в счёт
+        // дважды.
         if (group && repository.hasMapping(SOURCE, "COURSE", courseKey)) {
             throw new InteractionValidationException(
                     "organizationId", "Курс уже сопоставлен целиком; его группы учитываются в нём и отдельно не сопоставляются"
@@ -184,11 +199,13 @@ public class MoodleSnapshotApplier {
         }
     }
 
+    // Потоки одного курса или группы идут по очереди: при пересечении неясно, к какому потоку относится наблюдение.
     private void requireFreeInterval(StoredMapping unitMapping, RunDates run, UUID excludedId) {
         for (StoredMapping other : repository.findMappings(SOURCE, unitMapping.kind(), unitMapping.externalKey())) {
             if (other.id().equals(excludedId)) {
                 continue;
             }
+            // Поток без дат нельзя проверить на пересечение, поэтому он блокирует добавление других.
             if (other.run() == null) {
                 throw new InteractionValidationException("runStartsOn",
                         "У другого потока этого курса или группы не указаны даты; сначала укажите их");
@@ -214,13 +231,9 @@ public class MoodleSnapshotApplier {
         List<MappedTarget> targets = repository.findLearningTargets(SOURCE, unit.mappingKind(), unit.externalId());
         List<MappedTarget> dated = targets.stream().filter(target -> target.runStartsOn() != null).toList();
         LocalDate observedOn = localDate(observedAt);
-        Optional<MappedTarget> upcoming = dated.stream().filter(target -> observedOn.isBefore(target.runStartsOn())).findFirst();
-        Optional<MappedTarget> ended = dated.stream().filter(target -> !observedOn.isBefore(target.runEndsOn()))
-                .reduce((first, second) -> second);
-        Optional<MappedTarget> current = dated.stream()
-                .filter(target -> !observedOn.isBefore(target.runStartsOn()) && observedOn.isBefore(target.runEndsOn()))
-                .findFirst()
-                .or(() -> ended.isPresent() ? Optional.empty() : upcoming);
+        Optional<MappedTarget> upcoming = upcoming(dated, observedOn);
+        Optional<MappedTarget> ended = ended(dated, observedOn);
+        Optional<MappedTarget> current = current(dated, observedOn, upcoming, ended);
         ApplyResult result;
         SyncOutcome outcome;
         Optional<StoredSnapshot> previous = Optional.empty();
@@ -235,12 +248,16 @@ public class MoodleSnapshotApplier {
                     previousInteractionId);
             outcome = SyncOutcome.NEEDS_MAPPING;
         } else if (current.isEmpty() && upcoming.isPresent()) {
+            // Наблюдение между потоками не относится ни к одному: в прошлый поток оно исказило бы итог, в будущий —
+            // историю до начала.
             result = new ApplyResult(SourceRecordStatus.SKIPPED, "Наблюдение " + MOSCOW_DATE.format(observedOn)
                     + " между потоками: прошлый поток закончился " + MOSCOW_DATE.format(ended.get().runEndsOn())
                     + ", следующий начнётся " + MOSCOW_DATE.format(upcoming.get().runStartsOn())
                     + "; текущий состав курса ни к одному из них не относится", null, null, 1, previousInteractionId);
             outcome = SyncOutcome.SKIPPED;
         } else if (current.isEmpty()) {
+            // Все потоки закончились: сохранённый снимок остаётся итогом потока, новое наблюдение не пишется, потому
+            // что текущий состав курса относится уже к следующему набору.
             MappedTarget last = dated.getLast();
             result = repository.hasSnapshotForRecord(recordId)
                     ? new ApplyResult(SourceRecordStatus.APPLIED, null, last.organizationId(), last.programId(), 1,
@@ -252,8 +269,12 @@ public class MoodleSnapshotApplier {
         } else {
             MappedTarget target = current.get();
             previous = repository.findSnapshot(target.mappingId());
+            // Событие пишется только при изменении счётчиков (sameCounts): иначе каждый запуск дублировал бы
+            // комментарий.
             changed = previous.map(snapshot -> !sameSnapshot(snapshot, unit, target)).orElse(true);
             UUID interactionId = previous.map(StoredSnapshot::interactionId)
+                    // Карточка прошлого снимка годится, только если принадлежит этому вузу: при смене вуза данные идут
+                    // в карточку нового.
                     .filter(id -> repository.interactionBelongsTo(id, target.organizationId()))
                     .orElse(null);
             if (changed) {
@@ -271,9 +292,39 @@ public class MoodleSnapshotApplier {
         }
         if (current.isPresent()) {
             OffsetDateTime changedAt = changed ? observedAt : previous.get().changedAt();
+            // Снимок обновляется при каждом наблюдении, а changed_at — только при изменении: по нему определяется
+            // версия скрытых сигналов.
             repository.saveSnapshot(recordId, unit, current.get(), observedAt, changedAt, runId, snapshotInteractionId);
         }
         return outcome;
+    }
+
+    private static Optional<MappedTarget> upcoming(List<MappedTarget> dated, LocalDate observedOn) {
+        return dated.stream().filter(target -> observedOn.isBefore(target.runStartsOn())).findFirst();
+    }
+
+    private static Optional<MappedTarget> ended(List<MappedTarget> dated, LocalDate observedOn) {
+        return dated.stream().filter(target -> !observedOn.isBefore(target.runEndsOn())).reduce((first, second) -> second);
+    }
+
+    // Поток, к которому относится наблюдение: идущий, а если идущего нет и прошлых не было — ближайший будущий.
+    private static Optional<MappedTarget> current(List<MappedTarget> dated, LocalDate observedOn,
+                                                  Optional<MappedTarget> upcoming, Optional<MappedTarget> ended) {
+        return dated.stream()
+                .filter(target -> !observedOn.isBefore(target.runStartsOn()) && observedOn.isBefore(target.runEndsOn()))
+                .findFirst()
+                .or(() -> ended.isPresent() ? Optional.empty() : upcoming);
+    }
+
+    /**
+     * Ключ потока CRM (вуз, программа, начало) для сопоставленной группы на дату наблюдения; пусто, если группа не
+     * сопоставлена или у потока нет дат. По нему группы одного потока делят счёт обучающихся без повторов.
+     */
+    Optional<String> groupFlowKey(String groupExternalKey, LocalDate observedOn) {
+        List<MappedTarget> dated = repository.findLearningTargets(SOURCE, "GROUP", groupExternalKey).stream()
+                .filter(target -> target.runStartsOn() != null).toList();
+        return current(dated, observedOn, upcoming(dated, observedOn), ended(dated, observedOn))
+                .map(target -> target.organizationId() + ":" + target.programId() + ":" + target.runStartsOn());
     }
 
     private ApplyResult unmapped(LearningUnit unit, UUID previousInteractionId) {
@@ -306,6 +357,8 @@ public class MoodleSnapshotApplier {
             UUID actorProfileId,
             OffsetDateTime now
     ) {
+        // Ключ включает время наблюдения: повторное применение той же записи находит созданный комментарий и не
+        // дублирует его.
         String key = "source:" + SOURCE + ":" + target.mappingId() + ":" + target.organizationId() + ":" + target.programId()
                 + ":" + observedAt.toInstant();
         Optional<UUID> alreadyApplied = repository.findAppliedInteraction(List.of(key), target.organizationId());
@@ -313,6 +366,8 @@ public class MoodleSnapshotApplier {
             return alreadyApplied.get();
         }
         UUID commandId = UUID.randomUUID();
+        // Комментарий создаётся под этой командой. Запись источника заблокирована выше, поэтому занятый ключ значит
+        // нарушенный порядок блокировок.
         if (!commandIdempotencyRepository.reserve(
                 commandId,
                 actorProfileId,
@@ -323,6 +378,8 @@ public class MoodleSnapshotApplier {
         )) {
             throw new IllegalStateException("Moodle snapshot was already published for this observation");
         }
+        // Комментарий кладётся в уже существующую карточку: сначала снимка этого потока, затем цикла (вуз, программа,
+        // начало), новая создаётся в последнюю очередь, чтобы данные LMS не плодили карточки.
         UUID interactionId = knownInteractionId != null
                 ? knownInteractionId
                 : repository.findCycleInteraction(target.organizationId(), target.programId(), target.runStartsOn()).orElse(null);
@@ -362,6 +419,9 @@ public class MoodleSnapshotApplier {
             text.append(", завершили ").append(unit.completed())
                     .append(", не завершили ").append(unit.notCompleted())
                     .append(", статус неизвестен ").append(unit.unknown());
+        }
+        if (unit.shared() > 0) {
+            text.append(", ещё ").append(unit.shared()).append(" уже учтены в другой группе этого потока");
         }
         if (!unit.group()) {
             text.append(", групп ").append(unit.groupsCount());

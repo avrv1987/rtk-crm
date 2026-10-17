@@ -68,6 +68,7 @@ import ru.rtk.crm.catalog.OrganizationRepository;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
+        "app.agreements.signing-stage-rule=false",
         "spring.datasource.url=jdbc:h2:mem:interaction;MODE=PostgreSQL;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -84,6 +85,7 @@ import ru.rtk.crm.catalog.OrganizationRepository;
         ProductAgreementService.class,
         CommandIdempotencyRepository.class,
         InteractionService.class,
+        ru.rtk.crm.agreement.AgreementStages.class,
         InteractionIssueRepository.class,
         InteractionIssueService.class,
         WorkflowTemplateService.class,
@@ -2183,7 +2185,7 @@ class InteractionServiceTest {
                 .containsExactlyInAnyOrder(paused.id(), completed.id(), active.id());
         assertThat(interactionService.events(profileA, completed.id()).getLast()).satisfies(event -> {
             assertThat(event.type()).isEqualTo(InteractionEventType.STATUS_CHANGED);
-            assertThat(event.comment()).isEqualTo("Работа завершена. Итог: Продукт передан, вуз работает самостоятельно");
+            assertThat(event.comment()).isEqualTo("Взаимодействие завершено. Итог: Продукт передан, вуз работает самостоятельно");
             assertThat(event.actorDisplayName()).isEqualTo("Вера Ковалёва");
         });
 
@@ -3115,7 +3117,7 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,

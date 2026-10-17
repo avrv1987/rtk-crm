@@ -79,6 +79,7 @@ import ru.rtk.crm.security.CrmProfileRegistrationSuccessHandler;
         AuditJournalRepository.class,
         AccountSyncRepository.class,
         AccountSyncService.class,
+        LoginJournal.class,
         AdminCrmProfileServiceTest.JsonConfiguration.class
 })
 class AdminCrmProfileServiceTest {
@@ -137,6 +138,9 @@ class AdminCrmProfileServiceTest {
 
     @Autowired
     private AccountSyncService accountSyncService;
+
+    @Autowired
+    private LoginJournal loginJournal;
 
     @MockitoBean
     private KeycloakAccountClient keycloakAccountClient;
@@ -526,17 +530,42 @@ class AdminCrmProfileServiceTest {
     }
 
     @Test
+    void profilesAreFilteredByRoleTeamAndStatusAndExportedOnlyByAdministrator() {
+        jdbcTemplate.update("UPDATE crm_user_profiles SET active = FALSE WHERE id = ?", USER_B);
+        jdbcTemplate.update("UPDATE crm_user_profiles SET role_reconcile_required = TRUE WHERE id = ?", LEADER_A);
+
+        assertThat(adminCrmProfileService.list(administrator, query(AdminCrmProfileQuery.Status.ACTIVE, UserRole.USER, null)).items())
+                .extracting(AdminCrmProfile::id).containsExactly(USER_A);
+        assertThat(adminCrmProfileService.list(administrator, query(null, null, TEAM_A)).items())
+                .extracting(AdminCrmProfile::id).containsExactlyInAnyOrder(USER_A, LEADER_A);
+        assertThat(adminCrmProfileService.list(administrator, query(AdminCrmProfileQuery.Status.BLOCKED, null, null)).items())
+                .extracting(AdminCrmProfile::id).containsExactly(USER_B);
+        assertThat(adminCrmProfileService.list(administrator, query(AdminCrmProfileQuery.Status.SYNC_REQUIRED, null, null)).items())
+                .extracting(AdminCrmProfile::id, AdminCrmProfile::roleReconcileRequired, AdminCrmProfile::accountSyncRequired)
+                .containsExactlyInAnyOrder(tuple(LEADER_A, true, false), tuple(USER_B, false, true));
+        assertThat(adminCrmProfileService.exportRows(administrator, query(null, UserRole.ADMIN, null), 10))
+                .extracting(AdminCrmProfile::id).containsExactly(ADMIN);
+        assertThatThrownBy(() -> adminCrmProfileService.exportRows(leaderA, query(null, null, null), 10))
+                .isInstanceOf(AdminCrmProfileAccessDeniedException.class);
+    }
+
+    @Test
     void firstLoginCreatesPendingProfileWithoutAccessUntilAdministratorActivatesIt() throws Exception {
         OidcUser newcomer = oidcUser("newcomer-subject", "Новый Сотрудник", "newcomer");
         MockHttpServletResponse loginResponse = new MockHttpServletResponse();
 
-        new CrmProfileRegistrationSuccessHandler(currentProfileService, adminCrmProfileService).onAuthenticationSuccess(
+        CrmProfileRegistrationSuccessHandler loginHandler =
+                new CrmProfileRegistrationSuccessHandler(currentProfileService, adminCrmProfileService, loginJournal);
+        loginHandler.onAuthenticationSuccess(
                 new MockHttpServletRequest(),
                 loginResponse,
                 new OAuth2AuthenticationToken(newcomer, List.of(), "keycloak")
         );
 
         assertThat(loginResponse.getRedirectedUrl()).isEqualTo("/");
+        assertThat(jdbcTemplate.queryForMap("SELECT object_name, details FROM audit_events WHERE action = 'LOGIN_DENIED'"))
+                .containsEntry("OBJECT_NAME", "newcomer")
+                .containsEntry("DETAILS", "профиль ожидает активации администратором; адрес: 127.0.0.1");
         assertThat(currentProfileService.registerPendingProfile(newcomer)).isFalse();
         assertThat(currentProfileService.registerPendingProfile(oidcUser(USER_A.toString(), "Чужое имя", "other"))).isFalse();
         assertThat(profile(USER_A).displayName()).isEqualTo("Анна Менеджер");
@@ -584,6 +613,13 @@ class AdminCrmProfileServiceTest {
         assertThat(activated.pendingActivation()).isFalse();
         assertThat(currentProfileService.requireActiveProfile(newcomer).teamId()).isEqualTo(TEAM_A);
         assertThat(adminCrmProfileService.list(administrator, pendingQuery()).total()).isZero();
+        assertThat(profile(pending.id()).lastLoginAt()).isNull();
+        loginHandler.onAuthenticationSuccess(
+                new MockHttpServletRequest(), new MockHttpServletResponse(), new OAuth2AuthenticationToken(newcomer, List.of(), "keycloak")
+        );
+        assertThat(jdbcTemplate.queryForObject("SELECT details FROM audit_events WHERE action = 'LOGIN_SUCCEEDED'", String.class))
+                .isEqualTo("роль: КАМ; адрес: 127.0.0.1");
+        assertThat(profile(pending.id()).lastLoginAt()).isNotNull();
 
         adminCrmProfileService.update(
                 administrator,
@@ -594,6 +630,14 @@ class AdminCrmProfileServiceTest {
         );
         assertThatThrownBy(() -> currentProfileService.requireActiveProfile(newcomer))
                 .isInstanceOf(CrmProfileNotFoundException.class);
+        loginJournal.loggedIn(newcomer, null, REQUEST_ID);
+        loginJournal.loggedOut(newcomer, null, REQUEST_ID);
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT details FROM audit_events WHERE category = 'LOGIN' ORDER BY occurred_at, action", String.class))
+                .contains("профиль CRM заблокирован");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_events WHERE action = 'LOGOUT' AND actor_profile_id = ?", Integer.class, pending.id()))
+                .isEqualTo(1);
     }
 
     @Test
@@ -1073,6 +1117,10 @@ class AdminCrmProfileServiceTest {
         return OrganizationQuery.from(0, 25, "name,asc", null, false);
     }
 
+    private AdminCrmProfileQuery query(AdminCrmProfileQuery.Status status, UserRole role, UUID teamId) {
+        return AdminCrmProfileQuery.from(0, 25, "displayName,asc", status, null, role, teamId);
+    }
+
     private AdminCrmProfileQuery pendingQuery() {
         return AdminCrmProfileQuery.from(0, 25, "displayName,asc", true, null);
     }
@@ -1096,7 +1144,7 @@ class AdminCrmProfileServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,

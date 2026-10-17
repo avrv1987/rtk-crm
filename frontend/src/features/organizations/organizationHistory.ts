@@ -4,11 +4,11 @@ export type HistoryGroup = 'ALL' | 'CREATED' | 'STAGES' | 'COMMENTS' | 'PLANS' |
 
 export const historyGroups: Array<{ id: HistoryGroup; label: string; kinds: OrganizationHistoryKind[] }> = [
   { id: 'ALL', label: 'Все события', kinds: [] },
-  { id: 'CREATED', label: 'Новые работы', kinds: ['CREATED'] },
+  { id: 'CREATED', label: 'Новые взаимодействия', kinds: ['CREATED'] },
   { id: 'STAGES', label: 'Этапы', kinds: ['TRANSITIONED', 'STAGES_EDITED', 'STAGE_COMPLETED', 'STAGE_COMPLETION_CLEARED'] },
   { id: 'COMMENTS', label: 'Комментарии', kinds: ['COMMENTED'] },
   { id: 'PLANS', label: 'Планы и шаги', kinds: ['PLAN_UPDATED'] },
-  { id: 'MARKS', label: 'Статус и данные работы', kinds: ['STATUS_CHANGED', 'DETAILS_UPDATED'] },
+  { id: 'MARKS', label: 'Статус и данные взаимодействия', kinds: ['STATUS_CHANGED', 'DETAILS_UPDATED'] },
   { id: 'DOCUMENTS', label: 'Договоры и документы', kinds: ['AGREEMENT_UPDATED', 'ATTACHMENT_DELETED'] },
   { id: 'ASSIGNMENT', label: 'Назначения и передачи', kinds: ['ASSIGNMENT'] },
   { id: 'CONTACTS', label: 'Контакты', kinds: ['CONTACT'] }
@@ -19,13 +19,13 @@ export const kindsOfGroup = (group: HistoryGroup): OrganizationHistoryKind[] => 
 )
 
 const kindTitles: Record<OrganizationHistoryKind, string> = {
-  CREATED: 'Работа создана',
+  CREATED: 'Взаимодействие создано',
   TRANSITIONED: 'Этап изменён',
   COMMENTED: 'Добавлен комментарий',
   STAGES_EDITED: 'Изменены этапы карточки',
   PLAN_UPDATED: 'Изменён план',
-  DETAILS_UPDATED: 'Изменены данные работы',
-  STATUS_CHANGED: 'Изменён статус работы',
+  DETAILS_UPDATED: 'Изменены данные взаимодействия',
+  STATUS_CHANGED: 'Изменён статус взаимодействия',
   AGREEMENT_UPDATED: 'Изменены договор и передача',
   ATTACHMENT_DELETED: 'Удалён документ',
   STAGE_COMPLETED: 'Этап отмечен выполненным',

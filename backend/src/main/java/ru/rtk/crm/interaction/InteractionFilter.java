@@ -69,7 +69,7 @@ record InteractionFilter(
         return Arrays.stream(InteractionWorkStatus.values())
                 .filter(status -> status.name().equals(value))
                 .findFirst()
-                .orElseThrow(() -> new InteractionValidationException("status", "Такой статус работы не поддерживается"));
+                .orElseThrow(() -> new InteractionValidationException("status", "Такой статус взаимодействия не поддерживается"));
     }
 
     private static UUID responsibleId(String value) {

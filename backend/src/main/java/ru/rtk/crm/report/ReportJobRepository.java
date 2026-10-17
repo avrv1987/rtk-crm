@@ -239,6 +239,8 @@ public class ReportJobRepository {
             OffsetDateTime startedAt,
             OffsetDateTime finishedAt
     ) {
+        // Результат доступен только владельцу и только пока его роль, команда и ревизия доступа те же, что при заказе.
+        // Ревизия растёт при любой смене доступа, поэтому файл, построенный по прежней области данных, не скачать.
         public boolean grantedTo(CrmProfile profile) {
             return profile.id().equals(ownerProfileId)
                     && profile.role() == ownerRole

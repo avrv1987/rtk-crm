@@ -1,7 +1,8 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { EnrolmentStreamView } from './EnrolmentStreamView'
 import { EnrolmentStreamsList } from './EnrolmentStreamsList'
 import { LearnerCardView } from './LearnerCardView'
+import { enrolmentBack, enrolmentHref, enrolmentRoute, type EnrolmentRoute } from './enrolmentRoute'
 import { handledEnrolmentAccessError } from './enrolmentShared'
 import './enrolment.css'
 
@@ -10,16 +11,20 @@ type EnrolmentScreenProps = {
   onProfileUnavailable: (requestId: string) => void
 }
 
-type BackTarget = { kind: 'streams' } | { kind: 'stream'; streamId: string }
-
-type EnrolmentView =
-  | { kind: 'streams' }
-  | { kind: 'stream'; streamId: string }
-  | { kind: 'learner'; learnerId: string; back: BackTarget; notice?: string }
-
 export const EnrolmentScreen = ({ onSessionExpired, onProfileUnavailable }: EnrolmentScreenProps) => {
-  const [view, setView] = useState<EnrolmentView>({ kind: 'streams' })
+  const [route, setRoute] = useState<EnrolmentRoute>(() => enrolmentRoute(window.location.hash))
+  const [notice, setNotice] = useState<{ learnerId: string; text: string } | null>(null)
   const [blocked, setBlocked] = useState<'FORBIDDEN' | 'UNAVAILABLE' | null>(null)
+
+  useEffect(() => {
+    const sync = () => setRoute(enrolmentRoute(window.location.hash))
+    window.addEventListener('hashchange', sync)
+    return () => window.removeEventListener('hashchange', sync)
+  }, [])
+
+  const go = (next: EnrolmentRoute) => {
+    window.location.hash = enrolmentHref(next)
+  }
 
   const onAccessError = useCallback((error: unknown) => handledEnrolmentAccessError(error, {
     onSessionExpired,
@@ -30,8 +35,7 @@ export const EnrolmentScreen = ({ onSessionExpired, onProfileUnavailable }: Enro
 
   if (blocked !== null) {
     return (
-      <section className="enrolment" aria-labelledby="enrolment-blocked-title">
-        <h2 id="enrolment-blocked-title">Зачисление</h2>
+      <section className="enrolment" aria-label="Зачисление">
         <p role="alert">
           {blocked === 'FORBIDDEN' ? 'Недостаточно прав: раздел доступен только оператору зачисления.' : 'Раздел недоступен.'}
         </p>
@@ -39,36 +43,38 @@ export const EnrolmentScreen = ({ onSessionExpired, onProfileUnavailable }: Enro
     )
   }
 
-  if (view.kind === 'stream') {
-    return (
-      <EnrolmentStreamView
-        key={view.streamId}
-        streamId={view.streamId}
-        onBack={() => setView({ kind: 'streams' })}
-        onOpenLearner={(learnerId) => setView({ kind: 'learner', learnerId, back: { kind: 'stream', streamId: view.streamId } })}
-        onAccessError={onAccessError}
-      />
-    )
-  }
-
-  if (view.kind === 'learner') {
-    return (
-      <LearnerCardView
-        key={view.learnerId}
-        learnerId={view.learnerId}
-        initialNotice={view.notice}
-        onBack={() => setView(view.back)}
-        onNavigateLearner={(learnerId, notice) => setView({ kind: 'learner', learnerId, back: view.back, notice })}
-        onAccessError={onAccessError}
-      />
-    )
-  }
+  const back = enrolmentBack(route)
 
   return (
-    <EnrolmentStreamsList
-      onOpenStream={(streamId) => setView({ kind: 'stream', streamId })}
-      onOpenLearner={(learnerId) => setView({ kind: 'learner', learnerId, back: { kind: 'streams' } })}
-      onAccessError={onAccessError}
-    />
+    <>
+      {back !== null && <a className="enrolment__back" href={back.href}>{back.label}</a>}
+      {route.kind === 'stream' && (
+        <EnrolmentStreamView
+          key={route.streamId}
+          streamId={route.streamId}
+          onOpenLearner={(learnerId) => go({ kind: 'learner', learnerId, streamId: route.streamId })}
+          onAccessError={onAccessError}
+        />
+      )}
+      {route.kind === 'learner' && (
+        <LearnerCardView
+          key={route.learnerId}
+          learnerId={route.learnerId}
+          initialNotice={notice?.learnerId === route.learnerId ? notice.text : undefined}
+          onNavigateLearner={(learnerId, text) => {
+            setNotice(text === undefined ? null : { learnerId, text })
+            go({ kind: 'learner', learnerId, streamId: route.streamId })
+          }}
+          onAccessError={onAccessError}
+        />
+      )}
+      {route.kind === 'streams' && (
+        <EnrolmentStreamsList
+          onOpenStream={(streamId) => go({ kind: 'stream', streamId })}
+          onOpenLearner={(learnerId) => go({ kind: 'learner', learnerId, streamId: null })}
+          onAccessError={onAccessError}
+        />
+      )}
+    </>
   )
 }

@@ -41,7 +41,7 @@ public class SessionApiController {
                 ? null
                 : userProfileRepository.findTeamName(profile.teamId()).orElse(null);
         return new MeResponse(profile.id(), profile.role(), profile.teamId(), teamName, profile.accessRevision(),
-                enrolmentAccess.isOperator(profile.id()));
+                enrolmentAccess.isOperator(profile.id()), userProfileRepository.findDisplayName(profile.id()).orElse(null));
     }
 
     @GetMapping("/api/config")

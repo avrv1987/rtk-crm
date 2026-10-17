@@ -353,7 +353,7 @@ const ContactItem = ({
             Не актуален (человек больше не отвечает за направление)
           </label>
           <span className="interaction-field-hint">
-            Неактуальный контакт не предлагается для новых работ; в прежних работах и истории его имя сохраняется.
+            Неактуальный контакт не предлагается для новых взаимодействий; в прежних взаимодействиях и истории его имя сохраняется.
           </span>
           <div className="interaction-plan-form__actions">
             <button type="submit" disabled={state.kind === 'saving' || !changed || conflicts.length > 0 || values.name.trim().length === 0}>

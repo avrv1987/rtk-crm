@@ -60,7 +60,8 @@ public final class WorkModels {
             List<ReminderStep> upcoming,
             List<ReminderLicense> expiringLicenses,
             List<ReminderTraining> trainingCycles,
-            int licenseExpiresBy
+            int licenseExpiresBy,
+            List<ReminderQualification> qualificationDue
     ) {
     }
 
@@ -95,6 +96,17 @@ public final class WorkModels {
             String stageName,
             OffsetDateTime trainedAt,
             LocalDate nextCycleOn
+    ) {
+    }
+
+    public record ReminderQualification(
+            UUID interactionId,
+            UUID organizationId,
+            String title,
+            String organizationName,
+            String stageName,
+            LocalDate trainedOn,
+            LocalDate dueOn
     ) {
     }
 

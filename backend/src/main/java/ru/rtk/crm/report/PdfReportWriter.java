@@ -24,6 +24,17 @@ public class PdfReportWriter {
                 layout.gap(PdfLayout.NOTE_SIZE);
                 layout.paragraph("Нет строк, удовлетворяющих фильтрам", PdfLayout.NOTE_SIZE);
             }
+            if (!document.groupTotals().isEmpty()) {
+                layout.gap(PdfLayout.NOTE_SIZE);
+                layout.paragraph(ExcelReportWriter.TOTALS_SHEET, PdfLayout.NOTE_SIZE);
+                layout.table(
+                        columns.stream().map(document::columnTitle).toList(),
+                        columns.stream().mapToInt(ReportColumn::width).toArray()
+                );
+                for (ReportRow row : document.groupTotals()) {
+                    layout.row(columns.stream().map(column -> column.text(row)).toList());
+                }
+            }
         });
     }
 }

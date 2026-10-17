@@ -31,6 +31,8 @@ import static ru.rtk.crm.report.ReportColumn.LAST_EVENT_AT;
 import static ru.rtk.crm.report.ReportColumn.LICENSE_EXPIRY_YEAR;
 import static ru.rtk.crm.report.ReportColumn.LICENSE_SIGNED;
 import static ru.rtk.crm.report.ReportColumn.MANAGER;
+import static ru.rtk.crm.report.ReportColumn.MARKET_TREND;
+import static ru.rtk.crm.report.ReportColumn.MARKET_VACANCIES;
 import static ru.rtk.crm.report.ReportColumn.MATERIALS_TRANSFERRED_ON;
 import static ru.rtk.crm.report.ReportColumn.MAX_DAYS;
 import static ru.rtk.crm.report.ReportColumn.NEXT_ACTION;
@@ -61,6 +63,8 @@ import static ru.rtk.crm.report.ReportColumn.STAGE_AT_END;
 import static ru.rtk.crm.report.ReportColumn.STAGE_AT_START;
 import static ru.rtk.crm.report.ReportColumn.STAGE_POSITION;
 import static ru.rtk.crm.report.ReportColumn.TRANSITIONS;
+import static ru.rtk.crm.report.ReportColumn.LMS_CHECK;
+import static ru.rtk.crm.report.ReportColumn.LMS_LEARNING;
 
 import java.util.List;
 import java.util.stream.Stream;
@@ -90,7 +94,7 @@ public enum ReportKind {
             "заявки",
             "Число заявок",
             List.of(DIRECTION, PROGRAM, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE,
-                    PARALLEL_RUNS),
+                    PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND),
             List.of()
     ),
     SNAPSHOT(
@@ -112,15 +116,15 @@ public enum ReportKind {
     MANAGER_WORK(
             "Работа менеджеров за период",
             "менеджеры",
-            "работы",
-            "Число работ",
+            "взаимодействия",
+            "Число взаимодействий",
             List.of(MANAGER, ORGANIZATION, PRODUCTS, PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS,
-                    NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS),
+                    NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS, LMS_LEARNING, LMS_CHECK),
             List.of(TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM, RISK)
     ),
     AGREEMENTS(
-            "Реализация соглашений с вузами",
-            "соглашения",
+            "Реализация договоров с вузами",
+            "договоры",
             "мероприятия",
             "Число мероприятий",
             List.of(ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME,

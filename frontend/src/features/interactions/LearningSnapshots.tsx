@@ -87,6 +87,16 @@ const SnapshotItem = ({ snapshot }: { snapshot: LearningSnapshot }) => (
           ? <div><dt>Групп с обучающимися</dt><dd>{snapshot.groupsCount}</dd></div>
           : null}
         <div><dt>Преподавателей</dt><dd>{snapshot.teachers}</dd></div>
+        {snapshot.activity !== null && snapshot.activity !== undefined && (
+          <div>
+            <dt>Вход в курс</dt>
+            <dd>
+              {`за 7 дней ${snapshot.activity.active7d} из ${snapshot.participants}, за 30 дней ${snapshot.activity.active30d},`
+                + ` ни разу ${snapshot.activity.neverAccessed}, перестали заходить ${snapshot.activity.inactive};`
+                + ` преподаватели за 14 дней ${snapshot.activity.teachersActive14d} из ${snapshot.teachers}`}
+            </dd>
+          </div>
+        )}
         <div><dt>Наблюдение</dt><dd>{formatDateTime(snapshot.observedAt)}</dd></div>
       </dl>
     )}

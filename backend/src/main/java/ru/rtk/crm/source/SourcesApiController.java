@@ -131,7 +131,7 @@ public class SourcesApiController {
         try {
             return SourceCode.valueOf(value);
         } catch (IllegalArgumentException exception) {
-            throw new InteractionValidationException("source", "Источник должен быть WEBSITE или MOODLE");
+            throw new InteractionValidationException("source", "Источник должен быть WEBSITE, MOODLE, LABOR_MARKET или CUSTOMER_CRM");
         }
     }
 

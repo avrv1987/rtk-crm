@@ -15,6 +15,9 @@ final class WorkflowRollout {
     private WorkflowRollout() {
     }
 
+    // Сопоставление этапов работы с этапами новой версии шаблона. Порядок приоритета: ручной выбор руководителя,
+    // затем тот же идентификатор этапа шаблона (имя могло смениться — «переименован»), затем то же название,
+    // и лишь если этап никуда не попал — «удалён»: его работа переходит на ближайший сохранившийся этап.
     static List<Mapped> map(List<RouteStage> stages, WorkflowRoute target, Map<UUID, UUID> overrides) {
         List<WorkflowTemplateStage> targetStages = ordered(target);
         Map<UUID, WorkflowTemplateStage> targetById = new HashMap<>();
@@ -27,8 +30,12 @@ final class WorkflowRollout {
         List<UUID> keys = new ArrayList<>();
         Set<UUID> claimed = new HashSet<>();
         for (RouteStage stage : stages) {
+            // Идентификатор этапа шаблона учитывается один раз: если в карточке этап продублировали, сопоставляется
+            // только первая копия, остальные идут по названию или считаются удалёнными.
             UUID key = stage.templateStageId() != null && seen.add(stage.templateStageId()) ? stage.templateStageId() : null;
             keys.add(key);
+            // «Заняты» этапы с прямым совпадением по идентификатору: по названию на них претендовать нельзя, иначе
+            // два этапа слились бы из-за случайного совпадения имён.
             if (key != null && !overrides.containsKey(key) && targetById.containsKey(key)) {
                 claimed.add(key);
             }
@@ -65,6 +72,8 @@ final class WorkflowRollout {
         return result;
     }
 
+    // План перевода одной работы. Идентификаторы этапов карточки сохраняются там, где этап сопоставлен, чтобы не
+    // рвались ссылки в истории, файлах и отметках «выполнено»; новые этапы получают новые идентификаторы.
     static Plan plan(
             List<RouteStage> work,
             List<InteractionStageTransition> workTransitions,
@@ -74,6 +83,9 @@ final class WorkflowRollout {
             Map<UUID, UUID> overrides
     ) {
         List<Mapped> mapped = map(work, target, overrides);
+        // Несколько этапов работы могут претендовать на один этап новой версии. «Носителем» его идентификатора
+        // становится самый надёжный: сначала совпадение по идентификатору, затем по названию или вручную, затем
+        // «удалённые»; остальные объединяются в носителя (merged) вместо появления дубликата этапа.
         Map<UUID, Mapped> carriers = new HashMap<>();
         for (Set<WorkflowStageMatch> priority : List.of(
                 Set.of(WorkflowStageMatch.SAME, WorkflowStageMatch.RENAMED),
@@ -111,6 +123,8 @@ final class WorkflowRollout {
                 .filter(item -> item.stage().id().equals(currentStageId))
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("Current stage is not part of the route"));
+        // Текущий этап не сохранён, если его место занял другой носитель; тогда работа встаёт на этап-носитель, и
+        // в предпросмотре это отмечается для подтверждения.
         boolean currentKept = carriers.get(current.target().id()) == current;
         List<String> changes = new ArrayList<>();
         if (!currentKept || !current.target().name().equals(current.stage().name())) {
@@ -130,6 +144,8 @@ final class WorkflowRollout {
             }
         }
         changes.addAll(added);
+        // Если этапы в карточке правили вручную, перевод на версию их заменит; без явного подтверждения
+        // руководителя применение такой работы отклоняется (replaceLocalChanges).
         boolean edited = edited(work, workTransitions, source);
         if (edited) {
             changes.add("изменения этапов, сделанные в карточке, заменены этапами шаблона");
@@ -147,6 +163,8 @@ final class WorkflowRollout {
         );
     }
 
+    // Работа «правлена в карточке», если её этапы или переходы отличаются от версии шаблона, по которой она
+    // идёт. Переходы сравниваются через идентификаторы этапов шаблона, потому что у работы свои идентификаторы.
     static boolean edited(List<RouteStage> work, List<InteractionStageTransition> workTransitions, WorkflowRoute source) {
         List<String> workStages = work.stream()
                 .map(stage -> stage.templateStageId() + "|" + stage.name() + "|" + stage.optional())
@@ -176,6 +194,8 @@ final class WorkflowRollout {
                 .toList();
     }
 
+    // Для удалённого этапа берётся ближайший сохранившийся ниже по маршруту, затем выше, и лишь потом первый
+    // этап шаблона: работа не должна «откатываться» назад без необходимости.
     private static WorkflowTemplateStage fallback(List<Mapped> primary, int index, WorkflowTemplateStage first) {
         for (int next = index + 1; next < primary.size(); next++) {
             if (primary.get(next) != null) {

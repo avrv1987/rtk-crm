@@ -153,7 +153,7 @@ export const OrganizationHistoryFeed = ({
               </div>
               {item.interactionId && (
                 <p>
-                  Работа: <a href={workHref(item.interactionId)}>{item.interactionTitle ?? 'Открыть работу'}</a>
+                  Взаимодействие: <a href={workHref(item.interactionId)}>{item.interactionTitle ?? 'Открыть взаимодействие'}</a>
                 </p>
               )}
               {item.comment && (

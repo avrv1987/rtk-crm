@@ -12,6 +12,8 @@ public final class CommandFingerprint {
     private CommandFingerprint() {
     }
 
+    // SHA-256 JSON-записи запроса: в таблице идемпотентности хранится слепок фиксированного размера, а не
+    // тело запроса.
     public static String of(ObjectMapper objectMapper, Object value) {
         try {
             byte[] bytes = objectMapper.writeValueAsString(value).getBytes(StandardCharsets.UTF_8);

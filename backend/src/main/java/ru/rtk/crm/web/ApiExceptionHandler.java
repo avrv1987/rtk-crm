@@ -152,7 +152,7 @@ public class ApiExceptionHandler {
     @ExceptionHandler(InteractionIssueNotFoundException.class)
     public ResponseEntity<ApiError> interactionIssueNotFound(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(ApiError.of("NOT_FOUND", "Запись не найдена в этой работе", RequestId.from(request)));
+                .body(ApiError.of("NOT_FOUND", "Запись не найдена в этом взаимодействии", RequestId.from(request)));
     }
 
     @ExceptionHandler(ProductAgreementNotFoundException.class)

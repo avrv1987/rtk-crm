@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { matchingPreset, periodPresets, previousMonthEnd } from '../src/features/reports/reportPeriods.ts'
+import { defaultPeriod, matchingPreset, periodOnKindChange, periodPresets, previousMonthEnd } from '../src/features/reports/reportPeriods.ts'
 
 const ranges = (today: string) => Object.fromEntries(periodPresets(today).map((preset) => [preset.id, [preset.from, preset.to]]))
 
@@ -27,4 +27,23 @@ test('выбранные даты узнаются как быстрый пер�
   assert.equal(matchingPreset('2026-09-01', '2026-09-29', '2026-09-30'), null)
   assert.equal(matchingPreset('', '', '2026-09-30'), null)
   assert.equal(previousMonthEnd('2026-03-15'), '2026-02-28')
+})
+
+test('портфель открывается без периода, остальные отчёты — с текущим месяцем', () => {
+  assert.deepEqual(defaultPeriod('PORTFOLIO', '2026-10-17'), { from: '', to: '' })
+  assert.deepEqual(defaultPeriod('EVENTS', '2026-10-17'), { from: '2026-10-01', to: '2026-10-31' })
+  assert.deepEqual(defaultPeriod('MANAGER_WORK', '2026-10-17'), { from: '2026-10-01', to: '2026-10-31' })
+})
+
+test('при смене вида подменяется только нетронутое умолчание, выбранный период сохраняется', () => {
+  const month = { from: '2026-10-01', to: '2026-10-31' }
+  const empty = { from: '', to: '' }
+  const custom = { from: '2026-08-15', to: '2026-09-15' }
+  const today = '2026-10-17'
+  assert.deepEqual(periodOnKindChange(month, 'EVENTS', 'PORTFOLIO', today), empty)
+  assert.deepEqual(periodOnKindChange(empty, 'PORTFOLIO', 'EVENTS', today), month)
+  assert.deepEqual(periodOnKindChange(custom, 'EVENTS', 'PORTFOLIO', today), custom)
+  assert.deepEqual(periodOnKindChange(custom, 'PORTFOLIO', 'DEMAND', today), custom)
+  assert.deepEqual(periodOnKindChange(empty, 'EVENTS', 'DEMAND', today), empty)
+  assert.deepEqual(periodOnKindChange(month, 'PORTFOLIO', 'PORTFOLIO', today), month)
 })

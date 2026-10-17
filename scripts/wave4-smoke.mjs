@@ -43,6 +43,9 @@ async function openPage(url) {
   const target = await call('Target.createTarget', { url: 'about:blank', browserContextId: context.browserContextId })
   const attached = await call('Target.attachToTarget', { targetId: target.targetId, flatten: true })
   const sessionId = attached.sessionId
+  // Окно «Покинуть страницу?» при несохранённом черновике блокирует переход и все вызовы страницы:
+  // проверки его подтверждают (обработчик — в connect).
+  await call('Page.enable', {}, sessionId)
   const evaluate = async (expression) => {
     const result = await call('Runtime.evaluate', {
       expression,
@@ -764,7 +767,7 @@ sections.indicators = async () => {
   const overdueList = await listAll(leader, '/api/interactions?responsible=' + row.managerId + '&due=OVERDUE', 'Overdue list failed')
   const noStepList = await listAll(leader, '/api/interactions?responsible=' + row.managerId + '&due=NO_NEXT_STEP', 'No step list failed')
   const stuckList = await listAll(leader, '/api/interactions?responsible=' + row.managerId + '&minDaysOnStage=7', 'Stuck list failed')
-  await call('Page.navigate', { url: origin + '/#/work' }, leader.sessionId)
+  await call('Page.navigate', { url: origin + '/#/control' }, leader.sessionId)
   await leader.waitFor(() => leader.evaluate("document.body.innerText.includes('КАМ А') && document.body.innerText.includes('Просрочено')"), 'Indicator block is not shown')
   const screen = await leader.evaluate('document.body.innerText')
   assert(kamIndicators.status === 403, 'KAM got team indicators: ' + kamIndicators.status)
@@ -1087,7 +1090,7 @@ sections.management = async () => {
     const reportOrganizations = new Set(report.items.map((item) => item.label))
     const teamsTotal = summary.teams.filter((team) => team.teamId).reduce((sum, team) => sum + team.interactions, 0)
     const activeWork = await listAll(kamC, '/api/interactions', 'Management active work failed')
-    const summaryScreen = await screenTexts(kamC, '/#/work', ['Сводка по всем командам', 'Только просмотр', 'Все команды'], 'Management summary screen')
+    const summaryScreen = await screenTexts(kamC, '/#/control', ['Все команды', 'учатся сейчас', 'преподавателей', 'Подписания'], 'Management summary screen')
     assert(summaryScreen.overflow360 <= 0, 'Management summary scrolls horizontally at 360 px')
     assert(me.role === 'MANAGEMENT' && me.teamId === null, 'Profile is not MANAGEMENT')
     assert(universityA && universityB, 'Management does not see all teams')
@@ -1410,16 +1413,16 @@ sections.reminders = async () => {
   const on = requireStatus(await api(kamA, 'PUT', '/api/reminders/settings', { body: { enabled: true } }), 200, 'Reminder settings failed')
   const overdue = await listAll(kamA, '/api/interactions?due=OVERDUE', 'Overdue list failed')
   const totalOf = async (query) => requireStatus(await api(kamA, 'GET', '/api/interactions?size=1&' + query), 200, 'Desk count failed').total
-  const licenseQuery = 'license=' + digest.licenseExpiresBy + '&status=ALL'
   const expected = {
-    '#/work?due=OVERDUE': overdue.length,
-    '#/work?due=THIS_WEEK': await totalOf('due=THIS_WEEK'),
-    '#/work?due=NO_NEXT_STEP': await totalOf('due=NO_NEXT_STEP'),
-    ['#/work?' + licenseQuery]: await totalOf('licenseExpiresBy=' + digest.licenseExpiresBy + '&status=ALL')
+    'Просрочено': overdue.length,
+    'На этой неделе': await totalOf('due=THIS_WEEK'),
+    'Без следующего шага': await totalOf('due=NO_NEXT_STEP'),
+    ['Лицензии истекают до ' + digest.licenseExpiresBy + ' года']: await totalOf('licenseExpiresBy=' + digest.licenseExpiresBy + '&status=ALL')
   }
   await call('Page.navigate', { url: origin + '/#/work' }, kamA.sessionId)
-  await kamA.waitFor(() => kamA.evaluate("document.querySelectorAll('.desk-tile').length === 4 && Boolean(document.querySelector('.reminder-center__counter'))"), 'KAM desk tiles are not shown')
-  const tiles = Object.fromEntries(await kamA.evaluate("[...document.querySelectorAll('.desk-tile')].map((tile) => [tile.getAttribute('href'), Number(tile.querySelector('.desk-tile__value').textContent)])"))
+  await kamA.waitFor(() => kamA.evaluate("document.querySelectorAll('.work .stat-tile').length === 5 && Boolean(document.querySelector('.reminder-center__open'))"), 'KAM desk tiles are not shown')
+  const shown = await kamA.evaluate("Object.fromEntries([...document.querySelectorAll('.work .stat-tile')].map((tile) => [tile.querySelector('.stat-tile__label').textContent, Number(tile.querySelector('.stat-tile__value').textContent)]))")
+  const tiles = Object.fromEntries(Object.keys(expected).map((label) => [label, shown[label]]))
   const panelHidden = await kamA.evaluate("document.querySelector('.reminder-center__panel').hidden")
   assert(digest.overdueTotal === overdue.length, 'Reminder overdue total differs from My work: ' + digest.overdueTotal + '/' + overdue.length)
   assert(Number.isInteger(digest.licenseExpiresBy), 'Reminder digest lacks licenseExpiresBy')
@@ -1459,18 +1462,20 @@ sections.screens = async () => {
   const organization = await testOrganization()
   const work = ctx.documentsInteraction ?? await createInteraction(kamA, organization.id, 'W4 экран ' + nonce)
   const result = {
-    kamCard: await screenTexts(kamA, '/#/organizations/' + organization.id + '/' + work.id, ['Перейти к следующему этапу', 'Следующий шаг', 'Комментарий', 'Файл', 'Маршрут этапов', 'Приостановить или завершить работу', 'Проблемы и риски', 'Чего ждём', 'Отметить этап выполненным', 'История', 'Документы', 'Договор и лицензия', 'Отметки передачи', 'Маршрут', 'Обучение', 'Циклы'], 'KAM card lacks wave 4 blocks'),
-    kamOrganization: await screenTexts(kamA, '/#/organizations/' + organization.id, ['Сводка по работам', 'Работы', 'Контакты', 'Документы и соглашения', 'История назначений', 'Новое взаимодействие'], 'KAM organization card lacks tabs'),
-    leaderWork: await screenTexts(leader, '/#/work', ['Пульт команды', 'Где команде нужна помощь', 'Требует назначения', 'Вузы без ответственного', 'Заместители'], 'Leader work lacks indicators'),
-    kamDesk: await screenTexts(kamA, '/#/work', ['Задачи по срокам', 'Шаги на этой неделе', 'Без следующего шага', 'Лицензии истекают', 'Фильтры', 'Все работы'], 'KAM desk lacks blocks'),
-    leaderOrganization: await screenTexts(leader, '/#/organizations/' + organization.id, ['Назначить или сменить ответственного', 'Заместитель на время отсутствия', 'Назначение и история', 'Сводка по работам'], 'Leader organization card lacks assignment blocks'),
-    reports: await screenTexts(leader, '/#/reports', ['Сохранённые отчёты', 'Выберите отчёт', 'Портфель взаимодействий', 'Статистика и диаграммы', 'Разбор КАМ', 'Подтверждения по соглашениям', 'Мои выгрузки'], 'Reports lack the catalog'),
-    reportBuilder: await screenTexts(leader, '/#/reports/portfolio', ['Эта неделя', 'Свой диапазон', 'Вузы:', 'Ответственный:', 'Ещё настройки', 'Выгрузить XLSX', 'Выгрузить PDF', 'Сохранить отчёт', 'Таблица', 'Диаграмма'], 'Report builder lacks blocks'),
-    adminProfiles: await screenTexts(admin, '/#/admin/profiles', ['Профили CRM', 'Организации и команды'], 'Admin profiles screen lacks wave 4 blocks'),
+    kamCard: await screenTexts(kamA, '/#/organizations/' + organization.id + '/' + work.id, ['Следующий шаг', 'Комментарий…', 'Документ…', 'Весь маршрут', 'Приостановить или завершить…', 'Проблемы и риски…', 'Чего ждём от вуза или РТК…', 'Отметить этап выполненным…', 'Программа и продукты…', 'Начать новый цикл…', 'История', 'Документы', 'Договор и лицензии', 'Обучение', 'Контакты'], 'KAM card lacks wave 4 blocks'),
+    kamOrganization: await screenTexts(kamA, '/#/organizations/' + organization.id, ['просрочено шагов', 'Взаимодействия', 'Контакты', 'Договоры и документы', 'История', 'Новое взаимодействие'], 'KAM organization card lacks tabs'),
+    leaderWork: await screenTexts(leader, '/#/control', ['Вузов без КАМ', 'На этапе дольше', 'Требует назначения', 'Заместители', 'Сигналы LMS'], 'Leader control lacks indicators'),
+    kamDesk: await screenTexts(kamA, '/#/work', ['Задачи по срокам', 'На этой неделе', 'Без следующего шага', 'Лицензии истекают', 'Фильтры', 'Все мои взаимодействия'], 'KAM desk lacks blocks'),
+    leaderOrganization: await screenTexts(leader, '/#/organizations/' + organization.id, ['Назначить или сменить ответственного…', 'Заместитель на время отсутствия…', 'просрочено шагов', 'История'], 'Leader organization card lacks assignment blocks'),
+    reports: await screenTexts(leader, '/#/reports', ['Все отчёты', 'Сохранённые', 'Выгрузки', 'Портфель взаимодействий', 'Статистика и диаграммы', 'Разбор КАМ', 'Подтверждения по договорам'], 'Reports lack the catalog'),
+    reportBuilder: await screenTexts(leader, '/#/reports/portfolio', ['Эта неделя', 'Свой диапазон', 'Фильтры', 'Показать', 'Выгрузить', 'XLSX', 'PDF', 'Сохранить отчёт', 'Колонки и порядок', 'Таблица', 'Диаграмма'], 'Report builder lacks blocks'),
+    adminProfiles: await screenTexts(admin, '/#/admin/employees', ['Сотрудники', 'Новый сотрудник'], 'Admin employees screen lacks wave 4 blocks'),
+    adminOrganizations: await screenTexts(admin, '/#/admin/organizations', ['Организации', 'Добавить организацию'], 'Admin organizations screen lacks wave 4 blocks'),
+    adminTeams: await screenTexts(admin, '/#/admin/teams', ['Команды', 'Создать команду'], 'Admin teams screen lacks wave 4 blocks'),
     adminCatalogs: await screenTexts(admin, '/#/admin/catalogs', ['Справочники'], 'Admin catalogs screen lacks wave 4 blocks'),
-    adminSources: await screenTexts(admin, '/#/admin/sources', ['Сохранённые сопоставления'], 'Admin sources screen lacks wave 4 blocks'),
-    adminJournal: await screenTexts(admin, '/#/admin/journal', ['Журнал администратора и безопасности'], 'Admin journal screen lacks wave 4 blocks'),
-    adminPersonalData: await screenTexts(admin, '/#/admin/personal-data', ['Субъект персональных данных'], 'Admin personal data screen lacks wave 4 blocks'),
+    adminSources: await screenTexts(admin, '/#/admin/sources', ['Источники данных', 'Записи для разбора', 'Сопоставления'], 'Admin sources screen lacks wave 4 blocks'),
+    adminJournal: await screenTexts(admin, '/#/admin/journal', ['Журнал', 'Показать'], 'Admin journal screen lacks wave 4 blocks'),
+    adminPersonalData: await screenTexts(admin, '/#/admin/personal-data', ['Персональные данные', 'Найти'], 'Admin personal data screen lacks wave 4 blocks'),
     adminRetention: await screenTexts(admin, '/#/admin/retention', ['Сроки хранения'], 'Admin retention screen lacks wave 4 blocks')
   }
   const overflowing = Object.entries(result).filter(([, value]) => value.overflow360 > 0).map(([name]) => name)
@@ -1591,6 +1596,10 @@ export async function connect() {
   })
   socket.addEventListener('message', (event) => {
     const message = JSON.parse(event.data)
+    if (message.method === 'Page.javascriptDialogOpening' && message.params.type === 'beforeunload') {
+      call('Page.handleJavaScriptDialog', { accept: true }, message.sessionId).catch(() => null)
+      return
+    }
     if (!message.id || !pending.has(message.id)) {
       return
     }

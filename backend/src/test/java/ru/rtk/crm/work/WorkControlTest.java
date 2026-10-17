@@ -91,7 +91,7 @@ class WorkControlTest {
     void setUp() {
         createSchema();
         for (String table : List.of(
-                "reminder_settings", "learning_snapshots", "source_mappings", "source_records", "product_agreements", "products", "interaction_events", "interaction_issues",
+                "interaction_stage_completions", "teacher_trainings", "interaction_stages", "reminder_settings", "learning_snapshots", "source_mappings", "source_records", "product_agreements", "products", "interaction_events", "interaction_issues",
                 "interactions", "organization_deputies", "organization_assignment_events", "command_idempotency_records",
                 "organizations", "crm_user_profiles", "teams"
         )) {
@@ -507,6 +507,30 @@ class WorkControlTest {
     }
 
     @Test
+    void qualificationIsRemindedAMonthThresholdAfterTheLastTeacherTrainingUntilTheStageIsReachedOrMarked() {
+        LocalDate today = LocalDate.now(WorkProperties.ZONE);
+        UUID due = insertRoute(UNIVERSITY_A, "Пора на ПК", 9, today.minusMonths(13), today.minusMonths(12));
+        insertRoute(UNIVERSITY_A, "Обучение было недавно", 9, today.minusMonths(11));
+        insertRoute(UNIVERSITY_A, "Уже на ПК", 12, today.minusMonths(14));
+        UUID marked = insertRoute(UNIVERSITY_A, "ПК отмечено", 9, today.minusMonths(14));
+        jdbcTemplate.update("INSERT INTO interaction_stage_completions (interaction_id, stage_id) VALUES (?, ?)",
+                marked, routeStage(marked, 12));
+        UUID foreign = insertRoute(UNIVERSITY_B, "Чужой вуз", 9, today.minusMonths(14));
+
+        List<WorkModels.ReminderQualification> reminders = workService.reminders(kamA).qualificationDue();
+
+        assertThat(reminders).singleElement().satisfies(reminder -> {
+            assertThat(reminder.interactionId()).isEqualTo(due);
+            assertThat(reminder.stageName()).isEqualTo("Повышение квалификации");
+            assertThat(reminder.trainedOn()).isEqualTo(today.minusMonths(12));
+            assertThat(reminder.dueOn()).isEqualTo(today);
+        });
+        assertThat(workService.reminders(kamB).qualificationDue()).extracting(WorkModels.ReminderQualification::interactionId)
+                .containsExactly(foreign);
+        assertThatThrownBy(() -> workService.reminders(management)).isInstanceOf(WorkAccessDeniedException.class);
+    }
+
+    @Test
     void remindersFollowTheUniversityLicenceAndTrainingAfterTheWorkIsCompleted() {
         OffsetDateTime now = OffsetDateTime.now();
         int year = now.atZoneSameInstant(WorkProperties.ZONE).getYear();
@@ -606,6 +630,28 @@ class WorkControlTest {
                 VALUES (?, ?, 'CREATED', ?, 'Поиск контакта', 0, ?)
                 """, UUID.randomUUID(), id, stageId, stageEnteredAt);
         return id;
+    }
+
+    private UUID insertRoute(UUID organizationId, String title, int currentStageOrder, LocalDate... trainedOn) {
+        UUID id = insertInteraction(organizationId, title, null, null, OffsetDateTime.now(), "ACTIVE");
+        for (int order = 0; order <= 13; order++) {
+            UUID stageId = UUID.randomUUID();
+            jdbcTemplate.update("INSERT INTO interaction_stages (id, interaction_id, stage_order, name) VALUES (?, ?, ?, ?)",
+                    stageId, id, order, order == 12 ? "Повышение квалификации" : "Этап " + order);
+            if (order == currentStageOrder) {
+                jdbcTemplate.update("UPDATE interactions SET current_stage_id = ? WHERE id = ?", stageId, id);
+            }
+        }
+        for (LocalDate date : trainedOn) {
+            jdbcTemplate.update("INSERT INTO teacher_trainings (id, interaction_id, trained_on) VALUES (?, ?, ?)",
+                    UUID.randomUUID(), id, date);
+        }
+        return id;
+    }
+
+    private UUID routeStage(UUID interactionId, int order) {
+        return jdbcTemplate.queryForObject("SELECT id FROM interaction_stages WHERE interaction_id = ? AND stage_order = ?",
+                UUID.class, interactionId, order);
     }
 
     private void markRisk(UUID interactionId, String riskLevel, String problem) {
@@ -718,7 +764,7 @@ class WorkControlTest {
         List.of(
                 "CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL)",
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL, access_revision INTEGER NOT NULL DEFAULT 0,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -825,6 +871,21 @@ class WorkControlTest {
                 CREATE TABLE IF NOT EXISTS reminder_settings (
                     profile_id UUID PRIMARY KEY, enabled BOOLEAN NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS interaction_stages (
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL, name VARCHAR(200) NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS teacher_trainings (
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, trained_on DATE NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS interaction_stage_completions (
+                    interaction_id UUID NOT NULL, stage_id UUID NOT NULL, PRIMARY KEY (interaction_id, stage_id)
+                )
                 """
         ).forEach(jdbcTemplate::execute);
     }
@@ -839,7 +900,8 @@ class WorkControlTest {
 
         @Bean
         WorkProperties workProperties() {
-            return new WorkProperties(30, 7, 1, List.of("Обучение преподавателей", "Повышение квалификации"), 3, 90, 50);
+            return new WorkProperties(30, 7, 1, List.of("Обучение преподавателей", "Повышение квалификации"), 3, 90, 50,
+                    "Повышение квалификации", 12);
         }
     }
 }

@@ -27,7 +27,7 @@ public class AgreementConfirmationArchive {
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
     private static final int SEGMENT_LIMIT = 90;
     private static final List<String> HEADER = List.of(
-            "№", "Вуз", "Соглашение", "Вид мероприятия", "Мероприятие", "Сроки мероприятия", "Работа",
+            "№", "Вуз", "Договор", "Вид мероприятия", "Мероприятие", "Сроки мероприятия", "Взаимодействие",
             "Исходное имя файла", "Загружен", "Размер, байт", "Файл в архиве", "Примечание"
     );
 

@@ -32,6 +32,7 @@ import ru.rtk.crm.teacherroster.TeacherRosterModels.TeacherRosterRequest;
 @RestController
 public class TeacherRosterApiController {
     private static final String XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    private static final String CSV = "text/csv;charset=UTF-8";
 
     private final CurrentProfileService currentProfileService;
     private final TeacherRosterService service;
@@ -92,7 +93,7 @@ public class TeacherRosterApiController {
         TeacherRosterFile file = service.export(currentProfileService.requireActiveProfile(user),
                 parseUuid(rosterId, "rosterId"), fileRequest, RequestId.from(request));
         return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(XLSX))
+                .contentType(MediaType.parseMediaType(file.format() == TeacherRosterModels.FileFormat.MOODLE_CSV ? CSV : XLSX))
                 .contentLength(file.content().length)
                 .cacheControl(CacheControl.noStore())
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()

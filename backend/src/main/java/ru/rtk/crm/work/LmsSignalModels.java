@@ -12,7 +12,16 @@ public final class LmsSignalModels {
     public enum LmsSignalType {
         STUDENTS_APPEARED,
         NO_STUDENTS,
-        LOW_COMPLETION
+        LOW_COMPLETION,
+        LOW_ACTIVITY,
+        NOT_STARTED,
+        DROPOUT,
+        TEACHER_INACTIVE,
+        NO_ACTIVITY;
+
+        public boolean activity() {
+            return ordinal() >= LOW_ACTIVITY.ordinal();
+        }
     }
 
     public record LmsSignals(OffsetDateTime calculatedAt, List<LmsSignal> items) {
@@ -40,7 +49,8 @@ public final class LmsSignalModels {
             OffsetDateTime observedAt,
             LmsSignalAction action,
             String actionHint,
-            boolean dismissed
+            boolean dismissed,
+            boolean recordedAsRisk
     ) {
     }
 
@@ -48,5 +58,31 @@ public final class LmsSignalModels {
     }
 
     public record LmsSignalDismissalRequest(LmsSignalType type, UUID mappingId) {
+    }
+
+    public record LmsSignalRiskRequest(Integer version, LmsSignalType type, UUID mappingId) {
+    }
+
+    /**
+     * Обучение по работе для контроля менеджеров: идущие потоки занятий студентов, действующие (не скрытые) сигналы
+     * и сверка этапа с LMS. Числа — последние снимки, а не значения на конец периода отчёта.
+     */
+    public record WorkLearning(
+            int runs,
+            int participants,
+            Integer active7d,
+            int signals,
+            List<String> signalTitles,
+            String mismatch
+    ) {
+        public String summary() {
+            StringBuilder text = new StringBuilder(runs == 0 ? "идущих потоков нет"
+                    : "потоков идёт " + runs + ", обучающихся " + participants
+                    + (active7d == null ? "" : ", заходили за 7 дней " + active7d));
+            if (signals > 0) {
+                text.append("; сигналы: ").append(String.join(", ", signalTitles));
+            }
+            return text.toString();
+        }
     }
 }

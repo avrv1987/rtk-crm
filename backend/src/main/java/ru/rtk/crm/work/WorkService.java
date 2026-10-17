@@ -143,7 +143,14 @@ public class WorkService {
                         properties.trainingCycleYears(),
                         limit
                 ),
-                properties.licenseExpiresBy(now)
+                properties.licenseExpiresBy(now),
+                workRepository.findQualificationDue(
+                        scope,
+                        properties.qualificationStageName(),
+                        today.minusMonths(properties.qualificationAfterMonths()),
+                        properties.qualificationAfterMonths(),
+                        limit
+                )
         );
     }
 

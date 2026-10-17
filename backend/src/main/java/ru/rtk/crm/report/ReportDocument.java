@@ -10,10 +10,21 @@ public record ReportDocument(
         OffsetDateTime generatedAt,
         List<String> notes,
         List<ReportRow> rows,
-        Map<ReportColumn, String> columnTitles
+        Map<ReportColumn, String> columnTitles,
+        List<ReportRow> groupTotals
 ) {
     public ReportDocument(ReportRequest request, OffsetDateTime generatedAt, List<String> notes, List<ReportRow> rows) {
-        this(request, generatedAt, notes, rows, Map.of());
+        this(request, generatedAt, notes, rows, Map.of(), List.of());
+    }
+
+    public ReportDocument(
+            ReportRequest request,
+            OffsetDateTime generatedAt,
+            List<String> notes,
+            List<ReportRow> rows,
+            Map<ReportColumn, String> columnTitles
+    ) {
+        this(request, generatedAt, notes, rows, columnTitles, List.of());
     }
 
     public String columnTitle(ReportColumn column) {

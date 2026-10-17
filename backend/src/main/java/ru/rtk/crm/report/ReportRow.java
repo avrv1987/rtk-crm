@@ -46,9 +46,52 @@ public record ReportRow(
         Long paidOrders,
         Long paidStreams,
         Long completedBase,
-        ManagerWork managerWork
+        ManagerWork managerWork,
+        MarketDemand market
 ) {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+
+    public ReportRow(
+            UUID interactionId,
+            String interactionTitle,
+            UUID organizationId,
+            String organizationName,
+            UUID directionId,
+            String directionName,
+            UUID programId,
+            String programName,
+            List<Product> products,
+            String stageName,
+            UUID managerId,
+            String managerName,
+            OffsetDateTime createdAt,
+            OffsetDateTime lastEventAt,
+            Long daysOnStage,
+            String nextAction,
+            OffsetDateTime nextActionAt,
+            OffsetDateTime eventAt,
+            String eventType,
+            String fromStageName,
+            String comment,
+            String authorName,
+            Long applications,
+            Long participants,
+            Long parallelRuns,
+            InteractionMarks marks,
+            List<Agreement> agreements,
+            StageDuration duration,
+            Long completed,
+            AgreementLine agreement,
+            Long paidOrders,
+            Long paidStreams,
+            Long completedBase,
+            ManagerWork managerWork
+    ) {
+        this(interactionId, interactionTitle, organizationId, organizationName, directionId, directionName, programId, programName,
+                products, stageName, managerId, managerName, createdAt, lastEventAt, daysOnStage, nextAction, nextActionAt, eventAt,
+                eventType, fromStageName, comment, authorName, applications, participants, parallelRuns, marks, agreements,
+                duration, completed, agreement, paidOrders, paidStreams, completedBase, managerWork, null);
+    }
 
     public boolean managerWorkTotal() {
         return managerWork != null && interactionId == null;
@@ -92,7 +135,7 @@ public record ReportRow(
         this(interactionId, interactionTitle, organizationId, organizationName, directionId, directionName, programId, programName,
                 products, stageName, managerId, managerName, createdAt, lastEventAt, daysOnStage, nextAction, nextActionAt, eventAt,
                 eventType, fromStageName, comment, authorName, applications, participants, parallelRuns, marks, agreements,
-                duration, completed, agreement, paidOrders, paidStreams, completedBase, null);
+                duration, completed, agreement, paidOrders, paidStreams, completedBase, null, null);
     }
 
 
@@ -102,6 +145,23 @@ public record ReportRow(
 
     public Long completionPercent() {
         return percentOf(completed, completedBase);
+    }
+
+    public Object marketVacancies() {
+        return market == null ? null : market.applicable() ? market.vacancies() : MarketDemand.NOT_APPLICABLE;
+    }
+
+    public Object marketTrend() {
+        return market == null ? null : market.applicable() ? market.trendPercent() : MarketDemand.NOT_APPLICABLE;
+    }
+
+    ReportRow withMarket(MarketDemand marketDemand) {
+        return new ReportRow(
+                interactionId, interactionTitle, organizationId, organizationName, directionId, directionName, programId,
+                programName, products, stageName, managerId, managerName, createdAt, lastEventAt, daysOnStage, nextAction,
+                nextActionAt, eventAt, eventType, fromStageName, comment, authorName, applications, participants, parallelRuns,
+                marks, agreements, duration, completed, agreement, paidOrders, paidStreams, completedBase, managerWork, marketDemand
+        );
     }
 
     public String productNames() {
@@ -205,6 +265,14 @@ public record ReportRow(
         return managerWork == null ? null : managerWork.overdueDays();
     }
 
+    public String lmsLearning() {
+        return managerWork == null ? null : managerWork.learning();
+    }
+
+    public String lmsCheck() {
+        return managerWork == null ? null : managerWork.lmsCheck();
+    }
+
     public Long completedCount() {
         return duration == null ? null : duration.completed();
     }
@@ -260,7 +328,8 @@ public record ReportRow(
                 paidOrders,
                 paidStreams,
                 completedBase,
-                managerWork
+                managerWork,
+                market
         );
     }
 
@@ -275,7 +344,9 @@ public record ReportRow(
             Long transitions,
             String comments,
             String dueState,
-            Long overdueDays
+            Long overdueDays,
+            String learning,
+            String lmsCheck
     ) {
     }
 

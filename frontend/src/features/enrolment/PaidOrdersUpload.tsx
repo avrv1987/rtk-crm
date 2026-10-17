@@ -1,5 +1,6 @@
 import { type ChangeEvent, type FormEvent, useState } from 'react'
 import { ApiError, apiClient, createIdempotencyKey, type PaidOrderUpload as PaidOrderUploadResult } from '../../shared/api/client'
+import { HintButton } from '../../shared/ui/HintButton'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { type AccessErrorReporter, responseErrorMessage } from './enrolmentShared'
 
@@ -18,6 +19,7 @@ export const PaidOrdersUpload = ({ onUploaded, onAccessError }: PaidOrdersUpload
   const [file, setFile] = useState<File | null>(null)
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null)
   const [state, setState] = useState<UploadState>({ kind: 'idle' })
+  const [open, setOpen] = useState(false)
 
   const selectFile = (event: ChangeEvent<HTMLInputElement>) => {
     setFile(event.target.files?.[0] ?? null)
@@ -47,22 +49,29 @@ export const PaidOrdersUpload = ({ onUploaded, onAccessError }: PaidOrdersUpload
 
   return (
     <section className="enrolment__upload" aria-labelledby="enrolment-upload-title">
-      <h3 id="enrolment-upload-title">Загрузка оплат</h3>
-      <p className="enrolment__intro">
-        Загрузите JSON-файл «Данные оплат» в формате сайта ИТ Школы. Номер заявки, курс и номер потока идут в учёт
-        спроса — колонки оплат отчёта «Востребованность программ». Фамилия, имя, отчество, телефон и email сохраняются
-        только в зашифрованной анкете слушателя модуля «Слушатели». Повторная загрузка ничего не дублирует и
-        достраивает недостающих слушателей.
-      </p>
-      <form className="enrolment__form" onSubmit={(event) => void upload(event)}>
-        <label>
-          Файл оплат (JSON)
-          <input type="file" accept=".json,application/json" onChange={selectFile} disabled={state.kind === 'uploading'} />
-        </label>
-        <button type="submit" disabled={file === null || state.kind === 'uploading'}>
-          {state.kind === 'uploading' ? 'Загружаем…' : 'Загрузить оплаты'}
-        </button>
-      </form>
+      <div className="enrolment__upload-head">
+        <h3 id="enrolment-upload-title">Загрузка оплат</h3>
+        <HintButton label="Как загружаются оплаты">
+          Загрузите JSON-файл «Данные оплат» в формате сайта ИТ Школы. Номер заявки, курс и номер потока идут в учёт
+          спроса — колонки оплат отчёта «Востребованность программ». Фамилия, имя, отчество, телефон и email сохраняются
+          только в зашифрованной анкете слушателя модуля «Слушатели». Повторная загрузка ничего не дублирует и
+          достраивает недостающих слушателей.
+        </HintButton>
+        {!open && state.kind === 'idle' && (
+          <button type="button" className="button--secondary" onClick={() => setOpen(true)}>Загрузить файл оплат</button>
+        )}
+      </div>
+      {(open || state.kind !== 'idle') && (
+        <form className="enrolment__form" onSubmit={(event) => void upload(event)}>
+          <label>
+            Файл оплат (JSON)
+            <input type="file" accept=".json,application/json" onChange={selectFile} disabled={state.kind === 'uploading'} />
+          </label>
+          <button type="submit" disabled={file === null || state.kind === 'uploading'}>
+            {state.kind === 'uploading' ? 'Загружаем…' : 'Загрузить оплаты'}
+          </button>
+        </form>
+      )}
 
       {state.kind === 'failed' && (
         <div className="interaction-command-error" role="alert">

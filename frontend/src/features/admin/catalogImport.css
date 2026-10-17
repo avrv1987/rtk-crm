@@ -1,0 +1,212 @@
+/* Импорт из Excel: шаги, блоки, протокол. Общие классы страниц — в adminUi.css. */
+
+.import-templates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.import-templates a {
+  color: var(--color-text-label);
+  font-weight: 700;
+}
+
+.import-block {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  background: var(--color-surface);
+}
+
+.import-block h3 {
+  margin: 0;
+  font-size: var(--font-size-emphasis);
+}
+
+.import-block p {
+  margin: 0;
+}
+
+.import-block__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.import-block__meta,
+.import-block__job {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+}
+
+.import-file {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  align-items: end;
+}
+
+.import-file label,
+.import-mapping label,
+.import-targets label,
+.import-candidate {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-label);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+}
+
+.import-sheet {
+  max-width: 320px;
+}
+
+.import-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.import-field {
+  display: grid;
+  gap: 6px;
+  max-width: 560px;
+}
+
+.import-field__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.import-field__head label {
+  display: block;
+}
+
+.import-field .admin-form__hint {
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+}
+
+.import-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border: 1px solid var(--color-warning-accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--color-warning-surface-soft);
+}
+
+.import-table td {
+  vertical-align: top;
+}
+
+.import-table td input[type="checkbox"] {
+  width: 20px;
+  min-height: 20px;
+  margin: 0;
+}
+
+.import-table__messages {
+  min-width: 180px;
+}
+
+.import-candidate {
+  margin-top: var(--space-1);
+  font-weight: 600;
+}
+
+.import-values {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: var(--font-size-md);
+  text-align: left;
+}
+
+.import-values dt {
+  color: var(--color-text-muted);
+}
+
+.import-values dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.import-targets > div {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.import-targets fieldset {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+}
+
+.import-targets legend {
+  padding: 0 var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+}
+
+.import-part {
+  display: grid;
+  gap: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+}
+
+.import-part ul {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.import-apply {
+  justify-items: start;
+}
+
+.import-confirmation {
+  border-color: var(--color-warning-accent);
+}
+
+@media (max-width: 640px) {
+  .import-file,
+  .import-grid,
+  .import-targets fieldset {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .import-table__messages {
+    min-width: 0;
+  }
+
+  .import-table td.import-table__messages {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: left;
+  }
+
+  .import-block {
+    padding: var(--space-3);
+  }
+
+  .import-sheet {
+    max-width: none;
+  }
+}

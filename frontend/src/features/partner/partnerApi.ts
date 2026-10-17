@@ -37,9 +37,4 @@ export const organizationTypeLabels: Record<PartnerCabinet['organization']['type
   OPEN_ENROLLMENT: 'Открытый набор'
 }
 
-export const agreementStatusLabels: Record<PartnerAgreement['status'], string> = {
-  DRAFT: 'Проект',
-  ACTIVE: 'Действует',
-  COMPLETED: 'Завершено',
-  TERMINATED: 'Расторгнуто'
-}
+export { agreementStatusLabels } from '../agreements/agreementModel'

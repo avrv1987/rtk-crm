@@ -124,11 +124,14 @@ public class AdminCatalogService {
         if (request == null || request.version() == null || request.version() < 0) {
             throw new InteractionValidationException("version", "Некорректная версия записи; обновите страницу");
         }
-        if (request.name() == null && request.archived() == null) {
+        if (request.name() == null && request.archived() == null && request.laborMarket() == null) {
             throw new InteractionValidationException("body", "Укажите новое название или состояние записи");
         }
+        if (request.laborMarket() != null && kind != CatalogKind.DIRECTIONS) {
+            throw new InteractionValidationException("laborMarket", "Признак «Учитывать спрос рынка труда» есть только у ИТ-направлений");
+        }
         String requestedName = request.name() == null ? null : requiredName(request.name());
-        UpdateCommand command = new UpdateCommand(kind, id, request.version(), requestedName, request.archived());
+        UpdateCommand command = new UpdateCommand(kind, id, request.version(), requestedName, request.archived(), request.laborMarket());
         return commandRunner.run(actor.id(), CommandOperation.UPDATE_CATALOG_ENTRY, idempotencyKey, command,
                 AdminCatalogEntry.class, commandId -> {
                     AdminCatalogEntry current = adminCatalogRepository.findByIdForUpdate(kind, id)
@@ -138,9 +141,11 @@ public class AdminCatalogService {
                     }
                     String name = command.name() == null ? current.name() : command.name();
                     boolean archived = command.archived() == null ? current.archived() : command.archived();
+                    boolean laborMarket = command.laborMarket() == null ? Boolean.TRUE.equals(current.laborMarket()) : command.laborMarket();
                     boolean renamed = !name.equals(current.name());
                     boolean archiveChanged = archived != current.archived();
-                    if (!renamed && !archiveChanged) {
+                    boolean laborMarketChanged = laborMarket != Boolean.TRUE.equals(current.laborMarket());
+                    if (!renamed && !archiveChanged && !laborMarketChanged) {
                         throw new InteractionValidationException("body", "Запись уже имеет указанные значения");
                     }
                     if (renamed && !CatalogNames.nameKey(kind, name).equals(CatalogNames.nameKey(kind, current.name()))) {
@@ -161,7 +166,7 @@ public class AdminCatalogService {
                     }
                     OffsetDateTime now = OffsetDateTime.now();
                     try {
-                        if (!adminCatalogRepository.update(kind, id, command.version(), name, archived, now)) {
+                        if (!adminCatalogRepository.update(kind, id, command.version(), name, archived, laborMarket, now)) {
                             throw InteractionConflictException.catalogEntryVersion(current.version());
                         }
                     } catch (DuplicateKeyException exception) {
@@ -177,6 +182,13 @@ public class AdminCatalogService {
                         catalogChangeEventRepository.insert(
                                 kind.entityType(), id, archived ? CatalogChangeAction.ARCHIVE : CatalogChangeAction.RESTORE,
                                 name, null, actor.id(), auditRequestId, now
+                        );
+                    }
+                    if (laborMarketChanged) {
+                        catalogChangeEventRepository.insert(
+                                kind.entityType(), id, CatalogChangeAction.UPDATE, name,
+                                "Учитывать спрос рынка труда: «" + (laborMarket ? "нет" : "да") + "» → «" + (laborMarket ? "да" : "нет") + "»",
+                                actor.id(), auditRequestId, now
                         );
                     }
                     return adminCatalogRepository.findById(kind, id).orElseThrow(CatalogEntryNotFoundException::new);
@@ -229,6 +241,6 @@ public class AdminCatalogService {
     private record CreateCommand(CatalogKind kind, String name, UUID parentId) {
     }
 
-    private record UpdateCommand(CatalogKind kind, UUID id, int version, String name, Boolean archived) {
+    private record UpdateCommand(CatalogKind kind, UUID id, int version, String name, Boolean archived, Boolean laborMarket) {
     }
 }

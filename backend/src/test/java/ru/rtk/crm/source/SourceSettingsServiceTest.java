@@ -53,6 +53,7 @@ class SourceSettingsServiceTest {
     private static final String ENV_MOODLE_TOKEN = "env-moodle-token-value";
     private static final String NEW_MOODLE_TOKEN = "screen-moodle-token-value";
     private static final String NEW_SITE_TOKEN = "screen-site-token-value";
+    private static final String NEW_CRM_TOKEN = "screen-crm-token-value";
     private static final ObjectMapper JSON = JsonMapper.builder()
             .findAndAddModules()
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
@@ -73,11 +74,14 @@ class SourceSettingsServiceTest {
     @MockitoBean
     private SiteApiClient siteApiClient;
 
+    @MockitoBean
+    private CrmClient crmClient;
+
     @BeforeEach
     void setUp() {
         List.of(
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL
                 )
                 """,
@@ -87,8 +91,9 @@ class SourceSettingsServiceTest {
                     moodle_token_changed_at TIMESTAMP WITH TIME ZONE, moodle_course_ids VARCHAR(2000) NOT NULL,
                     moodle_student_roles VARCHAR(500) NOT NULL, moodle_teacher_roles VARCHAR(500) NOT NULL,
                     website_base_url VARCHAR(500), website_token_encrypted VARCHAR(2000),
-                    website_token_changed_at TIMESTAMP WITH TIME ZONE, sync_cron VARCHAR(100), updated_by UUID NOT NULL,
-                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    website_token_changed_at TIMESTAMP WITH TIME ZONE, sync_cron VARCHAR(100), crm_base_url VARCHAR(500),
+                    crm_token_encrypted VARCHAR(2000), crm_token_changed_at TIMESTAMP WITH TIME ZONE,
+                    updated_by UUID NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
                 """
@@ -118,16 +123,16 @@ class SourceSettingsServiceTest {
         assertThat(initial.syncCron()).isEqualTo("0 0 * * * *");
         assertThat(service.moodle().token()).isEqualTo(ENV_MOODLE_TOKEN);
 
-        SourceSettingsView saved = service.update(admin, request("https://lms.example.test", null, List.of(7L, 7L, 8L),
+        SourceSettingsView saved = service.update(admin, request("https://lms.example.test", NEW_MOODLE_TOKEN, List.of(7L, 7L, 8L),
                 "https://site.example.test", null, ""), "request-1");
 
         assertThat(saved.saved()).isTrue();
         assertThat(saved.updatedByName()).isEqualTo("Администратор");
         assertThat(saved.moodleCourseIds()).containsExactly(7L, 8L);
         assertThat(saved.syncCron()).isNull();
-        assertThat(saved.moodleToken().origin()).isEqualTo(TokenOrigin.ENVIRONMENT);
+        assertThat(saved.moodleToken().origin()).isEqualTo(TokenOrigin.SCREEN);
         assertThat(service.moodle().baseUrl()).isEqualTo("https://lms.example.test");
-        assertThat(service.moodle().token()).isEqualTo(ENV_MOODLE_TOKEN);
+        assertThat(service.moodle().token()).isEqualTo(NEW_MOODLE_TOKEN);
         assertThat(service.moodle().courseIds()).containsExactly(7L, 8L);
         assertThat(service.website().baseUrl()).isEqualTo("https://site.example.test");
         assertThat(service.syncCron()).isNull();
@@ -170,6 +175,39 @@ class SourceSettingsServiceTest {
         assertThat(service.moodle().token()).isEqualTo(NEW_MOODLE_TOKEN);
         assertThat(jdbcTemplate.queryForList("SELECT details FROM audit_events WHERE request_id = 'request-2'", String.class))
                 .containsExactly("значения сохранены без изменений");
+    }
+
+    @Test
+    void crmAddressAndTokenAreSavedEncryptedAndChecked() throws Exception {
+        assertThat(service.view(admin).crmBaseUrl()).isNull();
+        assertThat(service.view(admin).crmToken().origin()).isEqualTo(TokenOrigin.NONE);
+
+        SourceSettingsView view = service.update(admin, crmRequest("https://crm.example.test", NEW_CRM_TOKEN), "request-1");
+
+        String stored = jdbcTemplate.queryForObject("SELECT crm_token_encrypted FROM source_settings", String.class);
+        assertThat(stored).doesNotContain(NEW_CRM_TOKEN);
+        assertThat(new SourceTokenCipher(properties(KEY)).decrypt(stored, SourceSettingsService.CRM_TOKEN_CONTEXT))
+                .contains(NEW_CRM_TOKEN);
+        assertThat(new SourceTokenCipher(properties(KEY)).decrypt(stored, SourceSettingsService.WEBSITE_TOKEN_CONTEXT)).isEmpty();
+        assertThat(view.crmBaseUrl()).isEqualTo("https://crm.example.test");
+        assertThat(view.crmToken().origin()).isEqualTo(TokenOrigin.SCREEN);
+        assertThat(JSON.writeValueAsString(view)).doesNotContain(NEW_CRM_TOKEN);
+        assertThat(service.crm().token()).isEqualTo(NEW_CRM_TOKEN);
+        assertThat(jdbcTemplate.queryForObject("SELECT details FROM audit_events", String.class))
+                .contains("токен CRM заказчика заменён", "адрес CRM заказчика: не задан → https://crm.example.test")
+                .doesNotContain(NEW_CRM_TOKEN);
+
+        SourceConnectionCheck ok = service.check(admin, SourceCode.CUSTOMER_CRM, crmRequest("https://crm.example.test", null));
+        ArgumentCaptor<SourceProperties.Crm> checked = ArgumentCaptor.forClass(SourceProperties.Crm.class);
+        verify(crmClient).check(checked.capture());
+        assertThat(checked.getValue().token()).isEqualTo(NEW_CRM_TOKEN);
+        assertThat(ok.ok()).isTrue();
+
+        assertThat(service.check(admin, SourceCode.CUSTOMER_CRM, crmRequest(null, null)).ok()).isFalse();
+        assertInvalid(crmRequest("http://crm.example.test", null), "crmBaseUrl");
+        assertInvalid(crmRequest("https://crm.example.test", "two words"), "crmToken");
+        assertThatThrownBy(() -> service.update(leader, crmRequest("https://crm.example.test", null), "request"))
+                .isInstanceOfSatisfying(SourceException.class, exception -> assertThat(exception.code()).isEqualTo("FORBIDDEN"));
     }
 
     @Test
@@ -223,12 +261,12 @@ class SourceSettingsServiceTest {
         when(moodleClient.check(any())).thenReturn(List.of("2 «Java-разработчик»"));
 
         SourceConnectionCheck ok = service.check(admin, SourceCode.MOODLE,
-                request("https://lms.example.test", null, List.of(2L), null, null, null));
+                request("https://lms.example.test", NEW_MOODLE_TOKEN, List.of(2L), null, null, null));
 
         ArgumentCaptor<SourceProperties.Moodle> checked = ArgumentCaptor.forClass(SourceProperties.Moodle.class);
         verify(moodleClient).check(checked.capture());
         assertThat(checked.getValue().baseUrl()).isEqualTo("https://lms.example.test");
-        assertThat(checked.getValue().token()).isEqualTo(ENV_MOODLE_TOKEN);
+        assertThat(checked.getValue().token()).isEqualTo(NEW_MOODLE_TOKEN);
         assertThat(checked.getValue().courseIds()).containsExactly(2L);
         assertThat(ok.ok()).isTrue();
         assertThat(ok.details()).containsExactly("2 «Java-разработчик»");
@@ -244,7 +282,7 @@ class SourceSettingsServiceTest {
         assertThat(failed.message()).contains("invalidtoken").doesNotContain(NEW_MOODLE_TOKEN);
 
         SourceConnectionCheck incomplete = service.check(admin, SourceCode.MOODLE,
-                request("https://lms.example.test", null, List.of(), null, null, null));
+                request("https://lms.example.test", NEW_MOODLE_TOKEN, List.of(), null, null, null));
         assertThat(incomplete.ok()).isFalse();
         assertThat(incomplete.message()).contains("хотя бы один курс");
 
@@ -257,9 +295,76 @@ class SourceSettingsServiceTest {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_settings", Integer.class)).isZero();
     }
 
+    @Test
+    void savedTokenNeverGoesToAnotherAddressOfMoodleWebsiteOrCustomerCrm() {
+        for (boolean saved : List.of(false, true)) {
+            jdbcTemplate.update("DELETE FROM source_settings");
+            if (saved) {
+                service.update(admin, new SourceSettingsRequest("https://lms.example.test", NEW_MOODLE_TOKEN, List.of(2L),
+                        List.of("student"), List.of("teacher"), "https://site.example.test", NEW_SITE_TOKEN, null,
+                        "https://crm.example.test", NEW_CRM_TOKEN), "saved-token");
+            }
+            String moodleUrl = saved ? "https://lms.example.test" : ENV_MOODLE;
+            String site = saved ? "https://site.example.test" : null;
+            String crm = saved ? "https://crm.example.test" : null;
+
+            assertMovedWithoutToken(new SourceSettingsRequest("https://elsewhere.example.test", null, List.of(2L), List.of("student"),
+                    List.of("teacher"), site, null, null, crm, null), "moodleToken", SourceCode.MOODLE);
+            if (saved) {
+                assertMovedWithoutToken(new SourceSettingsRequest(moodleUrl, null, List.of(2L), List.of("student"), List.of("teacher"),
+                        "https://elsewhere.example.test", null, null, crm, null), "websiteToken", SourceCode.WEBSITE);
+                assertMovedWithoutToken(new SourceSettingsRequest(moodleUrl, null, List.of(2L), List.of("student"), List.of("teacher"),
+                        site, null, null, "https://elsewhere.example.test", null), "crmToken", SourceCode.CUSTOMER_CRM);
+            }
+        }
+        verify(moodleClient, never()).check(any());
+        verify(siteApiClient, never()).check(any());
+        verify(crmClient, never()).check(any());
+        assertThat(service.moodle().baseUrl()).isEqualTo("https://lms.example.test");
+        assertThat(service.moodle().token()).isEqualTo(NEW_MOODLE_TOKEN);
+
+        service.update(admin, new SourceSettingsRequest("https://LMS.example.test/", null, List.of(2L), List.of("student"),
+                List.of("teacher"), "https://site.example.test", null, null, "https://crm.example.test", null), "same-address");
+        assertThat(service.moodle().token()).isEqualTo(NEW_MOODLE_TOKEN);
+        service.update(admin, new SourceSettingsRequest("https://elsewhere.example.test", "typed-new-token", List.of(2L),
+                List.of("student"), List.of("teacher"), null, null, null, null, null), "moved-with-token");
+        assertThat(service.moodle().baseUrl()).isEqualTo("https://elsewhere.example.test");
+        assertThat(service.moodle().token()).isEqualTo("typed-new-token");
+        assertThat(service.website().baseUrl()).isNull();
+    }
+
+    @Test
+    void checkOfNewAddressSendsOnlyTokenTypedInTheSameForm() {
+        when(moodleClient.check(any())).thenReturn(List.of("2 «Java-разработчик»"));
+
+        assertThat(service.check(admin, SourceCode.MOODLE,
+                request("https://lms.example.test", "typed-token-value", List.of(2L), null, null, null)).ok()).isTrue();
+
+        ArgumentCaptor<SourceProperties.Moodle> checked = ArgumentCaptor.forClass(SourceProperties.Moodle.class);
+        verify(moodleClient).check(checked.capture());
+        assertThat(checked.getValue().token()).isEqualTo("typed-token-value").isNotEqualTo(ENV_MOODLE_TOKEN);
+
+        assertThat(service.check(admin, SourceCode.WEBSITE,
+                request(ENV_MOODLE, null, List.of(2L), "https://site.example.test", null, null)).ok()).isTrue();
+        verify(siteApiClient).check(any());
+    }
+
+    private void assertMovedWithoutToken(SourceSettingsRequest moved, String field, SourceCode source) {
+        assertThatThrownBy(() -> service.update(admin, moved, "request"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo(field));
+        SourceConnectionCheck check = service.check(admin, source, moved);
+        assertThat(check.ok()).isFalse();
+        assertThat(check.message()).contains("введите токен для нового адреса");
+    }
+
     private void assertInvalid(SourceSettingsRequest request, String field) {
         assertThatThrownBy(() -> service.update(admin, request, "request"))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo(field));
+    }
+
+    private static SourceSettingsRequest crmRequest(String crmUrl, String crmToken) {
+        return new SourceSettingsRequest(ENV_MOODLE, null, List.of(2L), List.of("student"), List.of("editingteacher", "teacher"),
+                null, null, null, crmUrl, crmToken);
     }
 
     private static SourceSettingsRequest request(String moodleUrl, String moodleToken, List<Long> courses, String siteUrl,
@@ -272,7 +377,8 @@ class SourceSettingsServiceTest {
         return new SourceProperties(1, 1, "0 0 * * * *", Duration.ofHours(26), key,
                 new SourceProperties.Website(null, null, Duration.ofSeconds(1), Duration.ofSeconds(1), 10, DataSize.ofMegabytes(1)),
                 new SourceProperties.Moodle(ENV_MOODLE, ENV_MOODLE_TOKEN, List.of(2L, 3L), List.of("student"),
-                        List.of("editingteacher", "teacher"), Duration.ofSeconds(1), Duration.ofSeconds(1), DataSize.ofMegabytes(1)));
+                        List.of("editingteacher", "teacher"), Duration.ofSeconds(1), Duration.ofSeconds(1), DataSize.ofMegabytes(1)),
+                null);
     }
 
     @TestConfiguration(proxyBeanMethods = false)

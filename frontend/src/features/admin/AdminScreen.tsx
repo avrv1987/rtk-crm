@@ -1,0 +1,149 @@
+import { useCallback, useEffect, useState } from 'react'
+import { apiClient, type Me } from '../../shared/api/client'
+import { PendingSourceRecords } from '../sources/PendingSourceRecords'
+import { SourceAlerts } from '../sources/SourceAlerts'
+import { AdminCatalogsPanel } from './AdminCatalogsPanel'
+import { AdminOverview, problemRecordsOf, type AdminSummary } from './AdminOverview'
+import { AdminEmployeesScreen } from './AdminEmployeesScreen'
+import { AdminOrganizationsPanel } from './AdminOrganizationsPanel'
+import { AdminTeamsPanel } from './AdminTeamsPanel'
+import { AdminSectionNav } from './AdminSectionNav'
+import { AuditJournalPanel } from './AuditJournalPanel'
+import { CatalogImportPanel } from './CatalogImportPanel'
+import { PersonalDataPanel } from './PersonalDataPanel'
+import { RetentionPanel } from './RetentionPanel'
+import { SourcesPanel } from './SourcesPanel'
+import { WorkflowTemplatesPanel } from './WorkflowTemplatesPanel'
+import { handledSessionError, type SessionHandlers } from './adminShared'
+import { resolveAdminAddress, type AdminNavRole, type AdminSectionSlug } from './adminSections'
+import { catalogTabFrom, type CatalogsTabSlug } from './catalogTabs'
+import { statusFromQuery } from './employeeFilters'
+
+type AdminScreenProps = SessionHandlers & {
+  profile: Me
+  slug: string | undefined
+  query?: string
+}
+
+const noticeKey = (profileId: string) => `rtk-crm:admin-notice-seen:${profileId}`
+
+const seenWithoutStorage = new Set<string>()
+
+const noticeSeen = (profileId: string) => {
+  if (seenWithoutStorage.has(profileId)) {
+    return true
+  }
+  try {
+    return window.sessionStorage.getItem(noticeKey(profileId)) !== null
+  } catch {
+    return false
+  }
+}
+
+const rememberNoticeSeen = (profileId: string) => {
+  try {
+    window.sessionStorage.setItem(noticeKey(profileId), '1')
+  } catch {
+    seenWithoutStorage.add(profileId)
+  }
+}
+
+export const adminNoticeText = 'Администратор управляет доступом и настройками и не видит работу с вузами. Чтобы посмотреть работу с вузами, войдите руководителем команды или менеджером.'
+
+const useAdminSummary = (role: AdminNavRole, refreshKey: string, handlers: SessionHandlers) => {
+  const [summary, setSummary] = useState<AdminSummary | null>(null)
+  const [pendingRecords, setPendingRecords] = useState<number | undefined>(undefined)
+  const { onSessionExpired, onProfileUnavailable } = handlers
+
+  const load = useCallback(async () => {
+    const handled = (result: PromiseSettledResult<unknown>) => (
+      result.status === 'rejected' && handledSessionError(result.reason, { onSessionExpired, onProfileUnavailable })
+    )
+    if (role === 'LEADER') {
+      const [records] = await Promise.allSettled([apiClient.listPendingSourceRecords()])
+      if (!handled(records)) {
+        setPendingRecords(records.status === 'fulfilled' ? records.value.length : undefined)
+      }
+      return
+    }
+    const results = await Promise.allSettled([
+      apiClient.listCrmProfiles({ size: 1 }),
+      apiClient.listDataSources(),
+      apiClient.listCrmExchangeEvents()
+    ])
+    if (results.some(handled)) {
+      return
+    }
+    const [profiles, sources, events] = results
+    setSummary({
+      pendingProfiles: profiles.status === 'fulfilled' ? profiles.value.pendingTotal : undefined,
+      sources: sources.status === 'fulfilled' ? sources.value : undefined,
+      crmEvents: events.status === 'fulfilled' ? events.value.counts : undefined,
+      failed: results.some((result) => result.status === 'rejected')
+    })
+  }, [onProfileUnavailable, onSessionExpired, role])
+
+  useEffect(() => {
+    void load()
+  }, [load, refreshKey])
+
+  const counts: Partial<Record<AdminSectionSlug, number>> = role === 'LEADER'
+    ? { 'pending-source-records': pendingRecords }
+    : { employees: summary?.pendingProfiles, sources: problemRecordsOf(summary?.sources) }
+  return { summary, counts, reload: load }
+}
+
+export const AdminScreen = ({ profile, slug, query = '', onSessionExpired, onProfileUnavailable }: AdminScreenProps) => {
+  const role: AdminNavRole = profile.role === 'LEADER' ? 'LEADER' : 'ADMIN'
+  const address = resolveAdminAddress(slug, query, role)
+  const section = address.section
+  const [sourcesRevision, setSourcesRevision] = useState(0)
+  const [showNotice, setShowNotice] = useState(() => role === 'ADMIN' && !noticeSeen(profile.id))
+  const handlers = { onSessionExpired, onProfileUnavailable }
+  const { summary, counts, reload } = useAdminSummary(role, `${section}:${sourcesRevision}`, handlers)
+
+  const changeCatalogTab = (tab: CatalogsTabSlug) => {
+    window.location.hash = `#/admin/catalogs?tab=${tab}`
+  }
+
+  const dismissNotice = () => {
+    rememberNoticeSeen(profile.id)
+    setShowNotice(false)
+  }
+
+  return (
+    <div className={role === 'ADMIN' ? 'admin-layout' : undefined}>
+      <AdminSectionNav active={section} role={role} counts={counts} />
+      <div className="admin-layout__content">
+        {showNotice && (
+          <div className="notice admin-role-notice" role="note">
+            <p><strong>{adminNoticeText}</strong></p>
+            <button type="button" className="button--secondary" onClick={dismissNotice}>Понятно</button>
+          </div>
+        )}
+        {role === 'ADMIN' && (
+          <SourceAlerts onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} refreshSignal={sourcesRevision} />
+        )}
+        {section === 'overview' && <AdminOverview summary={summary} onRetry={() => void reload()} />}
+        {section === 'pending-source-records' && <PendingSourceRecords role={profile.role} {...handlers} />}
+        {section === 'employees' && (
+          <AdminEmployeesScreen
+            key={address.query}
+            currentProfile={profile}
+            initialStatus={statusFromQuery(address.query)}
+            {...handlers}
+          />
+        )}
+        {section === 'teams' && <AdminTeamsPanel {...handlers} />}
+        {section === 'organizations' && <AdminOrganizationsPanel {...handlers} />}
+        {section === 'catalogs' && <AdminCatalogsPanel tab={catalogTabFrom(address.query)} onTabChange={changeCatalogTab} {...handlers} />}
+        {section === 'workflow-templates' && <WorkflowTemplatesPanel role={profile.role} {...handlers} />}
+        {section === 'catalog-import' && <CatalogImportPanel {...handlers} />}
+        {section === 'sources' && <SourcesPanel {...handlers} onSynced={() => setSourcesRevision((value) => value + 1)} />}
+        {section === 'journal' && <AuditJournalPanel {...handlers} />}
+        {section === 'personal-data' && <PersonalDataPanel {...handlers} />}
+        {section === 'retention' && <RetentionPanel {...handlers} />}
+      </div>
+    </div>
+  )
+}

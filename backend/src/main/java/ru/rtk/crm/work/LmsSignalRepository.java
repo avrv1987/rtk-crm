@@ -1,12 +1,15 @@
 package ru.rtk.crm.work;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.util.HashSet;
+import java.time.temporal.TemporalAdjusters;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.UUID;
 
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
@@ -14,6 +17,9 @@ import ru.rtk.crm.work.LmsSignalModels.LmsSignalType;
 
 @Repository
 public class LmsSignalRepository {
+    // Потоки LMS для работы: снимок того же вуза и программы, только потоки обучающихся с датами, внутри окна цикла
+    // карточки (как в SourceRepository) и только у активных работ. Этап занятий — самый ранний этап с этим названием в
+    // маршруте работы; route показывает, есть ли прямой переход к нему из текущего этапа.
     private static final String SOURCES = """
             SELECT i.id AS interaction_id, i.title, i.organization_id, o.name AS organization_name, o.owner_manager_id,
                    owner_profile.display_name AS owner_manager_name, current_stage.name AS current_stage_name,
@@ -21,7 +27,9 @@ public class LmsSignalRepository {
                    classes.name AS classes_stage_name, classes.stage_order AS classes_stage_order,
                    route.to_stage_id AS route_to_stage_id, route.comment_required AS route_comment_required,
                    s.mapping_id, m.version AS mapping_version, s.course_name, s.group_name, m.run_starts_on, m.run_ends_on,
-                   s.participants_count, s.completed_count, s.observed_at, s.changed_at
+                   s.participants_count, s.completed_count, s.observed_at, s.changed_at, s.teachers_count,
+                   s.active_7d_count, s.active_30d_count, s.never_accessed_count, s.inactive_count,
+                   s.teachers_active_7d_count, s.teachers_active_14d_count
             FROM interactions i
             JOIN organizations o ON o.id = i.organization_id
             LEFT JOIN crm_user_profiles owner_profile ON owner_profile.id = o.owner_manager_id
@@ -84,7 +92,16 @@ public class LmsSignalRepository {
                         resultSet.getInt("participants_count"),
                         resultSet.getObject("completed_count", Integer.class),
                         resultSet.getObject("observed_at", OffsetDateTime.class),
-                        resultSet.getObject("changed_at", OffsetDateTime.class)
+                        resultSet.getObject("changed_at", OffsetDateTime.class),
+                        resultSet.getInt("teachers_count"),
+                        resultSet.getObject("active_7d_count") == null ? null : new Activity(
+                                resultSet.getInt("active_7d_count"),
+                                resultSet.getInt("active_30d_count"),
+                                resultSet.getInt("never_accessed_count"),
+                                resultSet.getInt("inactive_count"),
+                                resultSet.getInt("teachers_active_7d_count"),
+                                resultSet.getInt("teachers_active_14d_count")
+                        )
                 ))
                 .list();
     }
@@ -100,9 +117,12 @@ public class LmsSignalRepository {
                 .single() > 0;
     }
 
-    Set<String> findDismissals(VisibilityScope scope, UUID interactionId) {
+    /**
+     * Ключ скрытия → записан ли сигнал как риск.
+     */
+    Map<String, Boolean> findDismissals(VisibilityScope scope, UUID interactionId) {
         String sql = """
-                SELECT d.interaction_id, d.mapping_id, d.signal_type, d.data_version
+                SELECT d.interaction_id, d.mapping_id, d.signal_type, d.data_version, d.recorded_as_risk
                 FROM lms_signal_dismissals d
                 JOIN interactions i ON i.id = d.interaction_id
                 WHERE i.organization_id IN (SELECT id FROM organizations WHERE %s)
@@ -111,17 +131,20 @@ public class LmsSignalRepository {
         if (interactionId != null) {
             statement = statement.param("interactionId", interactionId);
         }
-        return new HashSet<>(statement.query((resultSet, rowNumber) -> dismissalKey(
-                        resultSet.getObject("interaction_id", UUID.class),
-                        resultSet.getObject("mapping_id", UUID.class),
-                        LmsSignalType.valueOf(resultSet.getString("signal_type")),
-                        resultSet.getString("data_version")
-                ))
-                .list());
+        Map<String, Boolean> dismissals = new HashMap<>();
+        statement.query((RowCallbackHandler) resultSet -> dismissals.put(dismissalKey(
+                resultSet.getObject("interaction_id", UUID.class),
+                resultSet.getObject("mapping_id", UUID.class),
+                LmsSignalType.valueOf(resultSet.getString("signal_type")),
+                resultSet.getString("data_version")
+        ), resultSet.getBoolean("recorded_as_risk")));
+        return dismissals;
     }
 
+    // Одно скрытие на работу, поток и вид сигнала: прежнее заменяется, поэтому после смены версии данных сигнал
+    // скрывается заново, а повторное нажатие не плодит строки.
     void saveDismissal(UUID interactionId, UUID mappingId, LmsSignalType type, String dataVersion, UUID profileId,
-                       OffsetDateTime now) {
+                       OffsetDateTime now, boolean recordedAsRisk) {
         jdbcClient.sql("""
                 DELETE FROM lms_signal_dismissals
                 WHERE interaction_id = :interactionId AND mapping_id = :mappingId AND signal_type = :type
@@ -131,8 +154,9 @@ public class LmsSignalRepository {
                 .param("type", type.name())
                 .update();
         jdbcClient.sql("""
-                INSERT INTO lms_signal_dismissals (interaction_id, mapping_id, signal_type, data_version, dismissed_by, dismissed_at)
-                VALUES (:interactionId, :mappingId, :type, :dataVersion, :profileId, :now)
+                INSERT INTO lms_signal_dismissals (
+                    interaction_id, mapping_id, signal_type, data_version, dismissed_by, dismissed_at, recorded_as_risk
+                ) VALUES (:interactionId, :mappingId, :type, :dataVersion, :profileId, :now, :recordedAsRisk)
                 """)
                 .param("interactionId", interactionId)
                 .param("mappingId", mappingId)
@@ -140,6 +164,7 @@ public class LmsSignalRepository {
                 .param("dataVersion", dataVersion)
                 .param("profileId", profileId)
                 .param("now", now)
+                .param("recordedAsRisk", recordedAsRisk)
                 .update();
     }
 
@@ -170,10 +195,25 @@ public class LmsSignalRepository {
             int participants,
             Integer completed,
             OffsetDateTime observedAt,
-            OffsetDateTime changedAt
+            OffsetDateTime changedAt,
+            int teachers,
+            Activity activity
     ) {
-        String dataVersion() {
+        /**
+         * Версия данных, при которой скрытие сигнала действует. Для сигналов по числам — changed_at снимка, он не
+         * меняется от активности. Активность меняется каждый день, поэтому её сигнал скрывается до конца недели
+         * наблюдения (по Москве), а не до следующего запуска.
+         */
+        String dataVersion(LmsSignalType type) {
+            if (type.activity()) {
+                LocalDate week = observedAt.atZoneSameInstant(WorkProperties.ZONE).toLocalDate()
+                        .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+                return "week:" + week + "/" + mappingVersion;
+            }
             return changedAt.toInstant() + "/" + mappingVersion;
         }
+    }
+
+    record Activity(int active7d, int active30d, int neverAccessed, int inactive, int teachersActive7d, int teachersActive14d) {
     }
 }

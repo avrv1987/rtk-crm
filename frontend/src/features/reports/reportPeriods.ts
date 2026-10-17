@@ -42,6 +42,33 @@ export const matchingPreset = (from: string, to: string, today: string): PeriodP
   periodPresets(today).find((preset) => preset.from === from && preset.to === to)?.id ?? null
 )
 
+type Period = { from: string; to: string }
+
+const noPeriod: Period = { from: '', to: '' }
+
+// «Портфель взаимодействий» обещает все работы сейчас, поэтому открывается без периода; остальные отчёты — с текущим месяцем.
+export const defaultPeriod = (kind: string, today: string): Period => {
+  const month = periodPresets(today)[1]
+  return kind === 'PORTFOLIO' ? noPeriod : { from: month.from, to: month.to }
+}
+
+// Выбор периода общий для всех отчётов: при смене вида подменяем только нетронутое умолчание предыдущего вида.
+export const periodOnKindChange = (period: Period, previousKind: string, nextKind: string, today: string): Period => {
+  if (previousKind === nextKind) {
+    return { from: period.from, to: period.to }
+  }
+  const month = defaultPeriod('EVENTS', today)
+  const isMonth = period.from === month.from && period.to === month.to
+  const isEmpty = period.from === '' && period.to === ''
+  if (nextKind === 'PORTFOLIO' && isMonth) {
+    return noPeriod
+  }
+  if (previousKind === 'PORTFOLIO' && isEmpty) {
+    return month
+  }
+  return { from: period.from, to: period.to }
+}
+
 export const previousMonthEnd = (today: string) => {
   const date = utcDate(today)
   return iso(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 0)))

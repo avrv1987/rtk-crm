@@ -151,7 +151,7 @@ const openInteraction = async (page, title) => {
   })()`)
 }
 
-const stageEditorMenuItem = "[...document.querySelectorAll('.card-menu__item')].find((item) => item.textContent.trim() === 'Изменить этапы этой работы…')"
+const stageEditorMenuItem = "[...document.querySelectorAll('.work-card__more [role=menuitem]')].find((item) => item.textContent.trim() === 'Изменить этапы этого взаимодействия…')"
 
 const openStageEditor = async (page, label) => {
   await page.waitFor(() => page.evaluate(`Boolean(${stageEditorMenuItem})`), label)
@@ -294,7 +294,7 @@ try {
   await openOrganization(leader, organization.name)
   await openInteraction(leader, interactionTitle)
   await leader.waitFor(
-    () => leader.evaluate("Boolean(document.querySelector('ol[aria-labelledby=\"interaction-path-title\"] li'))"),
+    () => leader.evaluate("Boolean(document.querySelector('ol.interaction-path li'))"),
     'Leader interaction stages are unavailable'
   )
   await openStageEditor(leader, 'Leader cannot see the local stage editor of the team card')
@@ -340,6 +340,8 @@ try {
     const form = document.querySelector('dialog[open] form.interaction-stage-editor')
     form.querySelector('button[type="submit"]').click()
   })()`)
+  await kam.waitFor(() => kam.evaluate("Boolean(document.querySelector('dialog.confirm-dialog[open] .button--danger'))"), 'Stage delete confirmation is unavailable')
+  await kam.evaluate("document.querySelector('dialog.confirm-dialog[open] .button--danger').click()")
   await kam.waitFor(
     () => kam.evaluate(`(() => {
       const form = document.querySelector('dialog[open] form.interaction-stage-editor')

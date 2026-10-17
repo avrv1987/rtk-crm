@@ -14,7 +14,9 @@ public record WorkProperties(
         List<String> trainingStageNames,
         int trainingCycleYears,
         int trainingNoticeDays,
-        int reminderListLimit
+        int reminderListLimit,
+        String qualificationStageName,
+        int qualificationAfterMonths
 ) {
     public static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
 

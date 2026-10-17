@@ -19,12 +19,14 @@ public record AdminCrmProfile(
         boolean accountSyncRequired,
         String accountSyncError,
         String partnerOrganizationName,
-        OffsetDateTime roleSyncedAt
+        OffsetDateTime roleSyncedAt,
+        boolean roleReconcileRequired,
+        OffsetDateTime lastLoginAt
 ) {
     AdminCrmProfile withAccountSyncError(String error) {
         return new AdminCrmProfile(
                 id, displayName, role, teamId, teamName, active, enrolmentOperator, pendingActivation, accessRevision, version, login,
-                activationRequestedAt, accountSyncRequired, error, partnerOrganizationName, roleSyncedAt
+                activationRequestedAt, accountSyncRequired, error, partnerOrganizationName, roleSyncedAt, roleReconcileRequired, lastLoginAt
         );
     }
 }

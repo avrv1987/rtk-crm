@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -27,6 +28,7 @@ import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.enrolment.LmsRosterWorkbookWriter;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.teacherroster.TeacherRosterModels.FileFormat;
 import ru.rtk.crm.teacherroster.TeacherRosterModels.FileMode;
 import ru.rtk.crm.teacherroster.TeacherRosterModels.MemberStatus;
 import ru.rtk.crm.teacherroster.TeacherRosterModels.TeacherRoster;
@@ -270,6 +272,50 @@ class TeacherRosterServiceTest {
     }
 
     @Test
+    void moodleCsvHasUploadUserHeadersCourseGroupAndRoleOfReadyTeachers() {
+        TeacherRoster roster = service.create(kamA, WORK_A, new TeacherRosterRequest("PPS-2026", "Группа \"А\", поток 1"));
+        service.addMember(kamA, roster.id(), SEMINAROV);
+        service.addMember(kamA, roster.id(), LECTOROVA);
+        service.addMember(kamA, roster.id(), NO_EMAIL);
+
+        TeacherRosterFile file = service.export(kamA, roster.id(),
+                new TeacherRosterFileRequest(FileMode.PENDING, FileFormat.MOODLE_CSV), "request-1");
+
+        assertThat(file.format()).isEqualTo(FileFormat.MOODLE_CSV);
+        assertThat(file.fileName()).endsWith("_moodle.csv");
+        assertThat(file.rows()).isEqualTo(2);
+        assertThat(file.skipped()).isEqualTo(1);
+        String text = new String(file.content(), StandardCharsets.UTF_8);
+        assertThat(text).startsWith("\uFEFFusername,firstname,lastname,email,course1,group1,role1\r\n");
+        assertThat(text.substring(1).split("\r\n")).containsExactly(
+                "username,firstname,lastname,email,course1,group1,role1",
+                "\"lectorova@example.test\",\"Мария\",\"Лекторова\",\"lectorova@example.test\",\"PPS-2026\","
+                        + "\"Группа \"\"А\"\", поток 1\",\"student\"",
+                "\"seminarov@example.test\",\"Павел\",\"Семинаров\",\"Seminarov@Example.test\",\"PPS-2026\","
+                        + "\"Группа \"\"А\"\", поток 1\",\"student\"");
+        TeacherRoster exported = service.list(kamA, WORK_A).getFirst();
+        assertThat(member(exported, LECTOROVA).status()).isEqualTo(MemberStatus.EXPORTED);
+        assertThat(journal("TEACHER_ROSTER_EXPORTED")).singleElement().satisfies(details -> {
+            assertThat(details).contains("строк: 2", "формат: CSV для загрузки пользователей Moodle");
+            assertThat(details).doesNotContain("lectorova", "Лекторова");
+        });
+    }
+
+    @Test
+    void formulaInCsvCellIsEscapedAndXlsxStaysDefault() {
+        UUID formula = jdbcContact("=HYPERLINK Формулов", "formula@example.test");
+        TeacherRoster roster = service.create(kamA, WORK_A, new TeacherRosterRequest("PPS", null));
+        service.addMember(kamA, roster.id(), formula);
+
+        TeacherRosterFile csv = service.export(kamA, roster.id(), new TeacherRosterFileRequest(FileMode.ALL, FileFormat.MOODLE_CSV), "r1");
+
+        assertThat(new String(csv.content(), StandardCharsets.UTF_8)).contains("\"'=HYPERLINK\"").doesNotContain(",\"=HYPERLINK");
+        TeacherRosterFile defaultFile = service.export(kamA, roster.id(), new TeacherRosterFileRequest(FileMode.ALL, null), "r2");
+        assertThat(defaultFile.format()).isEqualTo(FileFormat.XLSX);
+        assertThat(defaultFile.fileName()).endsWith(".xlsx");
+    }
+
+    @Test
     void nameSplitsIntoTemplateColumns() {
         assertThat(TeacherRosterService.split("  Иванова   Анна  Мария Петровна "))
                 .isEqualTo(new TeacherRosterService.NameParts("Иванова", "Анна", "Мария Петровна"));
@@ -331,7 +377,7 @@ class TeacherRosterServiceTest {
                 """);
         jdbc.execute("CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL)");
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     display_name VARCHAR(200) NOT NULL,
                     role VARCHAR(16) NOT NULL,

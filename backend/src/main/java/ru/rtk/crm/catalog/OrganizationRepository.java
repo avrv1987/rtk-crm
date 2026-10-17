@@ -198,5 +198,10 @@ public class OrganizationRepository {
     }
 
     public record VisibilityScope(String condition, Map<String, Object> parameters) {
+        // Единое правило архивных вузов для отчётов и «Контроля»: в расчёт входят только действующие и ожидающие
+        // вузы в области видимости пользователя; архивные из итогов исключены.
+        public String currentOrganizations() {
+            return "SELECT id FROM organizations WHERE " + condition + " AND " + currentStatus("organizations");
+        }
     }
 }

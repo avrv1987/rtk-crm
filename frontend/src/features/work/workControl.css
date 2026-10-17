@@ -724,3 +724,133 @@ a.desk-tile:hover .desk-tile__label {
     color: var(--color-text-label);
   }
 }
+
+.work-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.work-toolbar__all {
+  margin-left: auto;
+}
+
+.desk-feed__heading {
+  margin: 0;
+}
+
+.desk-feed__more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.desk-feed__action {
+  min-height: var(--control-height-compact);
+  padding: 0 var(--space-3);
+}
+
+.work-list-view {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.work-list-view .work-filters {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.work-list-view .work-filters__search {
+  grid-column: auto;
+}
+
+.work-filters__due {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.work-filters__due legend {
+  margin-bottom: var(--space-1);
+  padding: 0;
+  color: var(--color-text-label);
+  font-weight: 700;
+}
+
+.work-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-md);
+}
+
+.work-table th,
+.work-table td {
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.work-table thead th {
+  color: var(--color-text-label);
+  background: var(--color-surface-accent);
+  font-size: var(--font-size-sm);
+}
+
+.work-table td > .work-item__title,
+.work-table td > .work-item__organization,
+.work-table td > .work-item__meta {
+  display: block;
+}
+
+.work-table .work-item__title {
+  font-size: var(--font-size-md);
+}
+
+.work-item__meta {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+@media (max-width: 720px) {
+  .work-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .work-table,
+  .work-table tbody,
+  .work-table tr,
+  .work-table td {
+    display: block;
+  }
+
+  .work-table tr {
+    border-top: 1px solid var(--color-border);
+    padding: var(--space-2) 0;
+  }
+
+  .work-table td {
+    border-top: 0;
+    padding: var(--space-1) 0;
+  }
+
+  .work-table td:not(:first-child)::before {
+    content: attr(data-label) ": ";
+    color: var(--color-text-label);
+    font-size: var(--font-size-sm);
+    font-weight: 700;
+  }
+
+  .work-toolbar__all {
+    margin-left: 0;
+  }
+}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
-import { apiClient, type Organization } from '../../shared/api/client'
+import { apiClient, type Me, type Organization } from '../../shared/api/client'
 import {
   agreementsApi,
   formatInstant,
@@ -11,10 +11,14 @@ import {
 } from './agreementsApi'
 import { CommandError, useAccessErrorHandler } from './agreementUi'
 import { todayInMoscow } from '../../shared/format/datetime'
+import { reportMeta } from '../reports/ReportCatalog'
 import { PeriodPicker } from '../reports/ReportControls'
+import { ReportHeader } from '../reports/ReportHeader'
+import { pageHints } from '../reports/reportHints'
 import './agreements.css'
 
 type AgreementConfirmationsPanelProps = {
+  role: Me['role']
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
@@ -53,7 +57,7 @@ const groupByKind = (items: AgreementConfirmation[]) => {
   return [...groups.entries()]
 }
 
-export const AgreementConfirmationsPanel = ({ onSessionExpired, onProfileUnavailable }: AgreementConfirmationsPanelProps) => {
+export const AgreementConfirmationsPanel = ({ role, onSessionExpired, onProfileUnavailable }: AgreementConfirmationsPanelProps) => {
   const handleAccessError = useAccessErrorHandler(onSessionExpired, onProfileUnavailable)
   const [options, setOptions] = useState<Options | null>(null)
   const [optionsError, setOptionsError] = useState<unknown>(null)
@@ -137,13 +141,21 @@ export const AgreementConfirmationsPanel = ({ onSessionExpired, onProfileUnavail
 
   const outdated = result.kind === 'ready' && JSON.stringify(result.query) !== JSON.stringify(query)
 
+  const meta = reportMeta(role, 'confirmations')
+
   return (
-    <div className="agreement-confirmations">
+    <section className="reports report-page agreement-confirmations" aria-labelledby="report-page-title">
+      <ReportHeader
+        id="report-page-title"
+        group={meta.group}
+        title={meta.title}
+        hint={`${pageHints.confirmations} Данные: ${meta.data}.`}
+      />
       {optionsError !== null && (
         <CommandError error={optionsError} fallback="Не удалось загрузить вузы и виды мероприятий." onRetry={() => void loadOptions()} />
       )}
-      <form className="report-builder__panel agreement-confirmations__form" onSubmit={(event) => void show(event)}>
-        <div className="report-builder__main">
+      <form className="reports__form report-toolbar agreement-confirmations__form" onSubmit={(event) => void show(event)}>
+        <div className="report-toolbar__row">
           <div className="report-field">
             <label htmlFor={organizationFieldId}>Вуз</label>
             <select id={organizationFieldId} value={organizationId} onChange={(event) => setOrganizationId(event.target.value)} disabled={options === null}>
@@ -161,30 +173,30 @@ export const AgreementConfirmationsPanel = ({ onSessionExpired, onProfileUnavail
           <PeriodPicker
             from={from}
             to={to}
-            hint="Период мероприятия: фактические сроки, иначе плановые, иначе срок соглашения. Даты включительно; пустая дата снимает ограничение."
+            hint="Период мероприятия: фактические сроки, иначе плановые, иначе срок договора. Даты включительно; пустая дата снимает ограничение."
             onChange={(nextFrom, nextTo) => {
               setFrom(nextFrom)
               setTo(nextTo)
             }}
           />
         </div>
-        <div className="report-actions reports__actions">
+        <div className="report-toolbar__actions reports__actions">
           <button type="submit" disabled={periodInvalid || result.kind === 'loading'}>
-            {result.kind === 'loading' ? 'Отбираем…' : 'Показать подтверждения'}
+            {result.kind === 'loading' ? 'Отбираем…' : 'Показать'}
           </button>
         </div>
       </form>
       {periodInvalid && <p className="reports__problem" role="alert">Дата начала периода позже даты окончания.</p>}
-      {result.kind === 'idle' && <p className="report-empty">Выберите вуз, вид мероприятия и период и нажмите «Показать подтверждения».</p>}
+      {result.kind === 'idle' && <p className="report-empty">Выберите вуз, вид мероприятия и период и нажмите «Показать».</p>}
       {result.kind === 'loading' && <p className="report-empty report-loading" role="status">Отбираем подтверждения…</p>}
       {result.kind === 'failed' && <CommandError error={result.error} fallback="Не удалось отобрать подтверждения." />}
       {actionError !== null && <CommandError error={actionError} fallback="Файл не скачан." />}
       {result.kind === 'ready' && (
         <>
-          {outdated && <p className="reports__outdated" role="status">Отбор изменён. Нажмите «Показать подтверждения», чтобы обновить список.</p>}
+          {outdated && <p className="reports__outdated" role="status">Отбор изменён. Нажмите «Показать», чтобы обновить список.</p>}
           <div className="agreement-confirmations__summary">
             <p role="status">Документов: {result.items.length}</p>
-            <button type="button" disabled={archiving || result.items.length === 0} onClick={() => void download(result.query)}>
+            <button type="button" className="button--secondary" disabled={archiving || result.items.length === 0} onClick={() => void download(result.query)}>
               {archiving ? 'Готовим архив…' : 'Скачать архивом'}
             </button>
           </div>
@@ -196,9 +208,9 @@ export const AgreementConfirmationsPanel = ({ onSessionExpired, onProfileUnavail
                 {group.items.map((item) => (
                   <li key={`${item.activityId}:${item.attachmentId}`} className="agreement-confirmations__item">
                     <button type="button" className="agreements-link" onClick={() => void downloadDocument(item)}>{item.originalName}</button>
-                    <span>{item.organizationName}, соглашение № {item.agreementNumber}</span>
+                    <span>{item.organizationName}, договор № {item.agreementNumber}</span>
                     <span>{item.activityTitle}; {formatPeriod(item.activityStart, item.activityEnd)}</span>
-                    <span className="agreement-activity__document-meta">Загружен {formatInstant(item.createdAt)} в работу «{item.interactionTitle}»</span>
+                    <span className="agreement-activity__document-meta">Загружен {formatInstant(item.createdAt)} во взаимодействие «{item.interactionTitle}»</span>
                   </li>
                 ))}
               </ul>
@@ -206,6 +218,6 @@ export const AgreementConfirmationsPanel = ({ onSessionExpired, onProfileUnavail
           ))}
         </>
       )}
-    </div>
+    </section>
   )
 }

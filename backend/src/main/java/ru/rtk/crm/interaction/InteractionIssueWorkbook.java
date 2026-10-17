@@ -20,7 +20,7 @@ import ru.rtk.crm.report.ExcelReportWriter;
 @Component
 public class InteractionIssueWorkbook {
     private static final List<String> HEADERS = List.of(
-            "Вид", "Уровень", "Описание", "Работа", "Вуз", "КАМ", "Ответственный", "Срок", "Возраст, дней",
+            "Вид", "Уровень", "Описание", "Взаимодействие", "Вуз", "КАМ вуза", "Кто решает", "Срок", "Возраст, дней",
             "Статус", "Отметил", "Отмечено (МСК)", "Решение"
     );
     private static final int[] WIDTHS = {12, 12, 50, 34, 34, 24, 24, 12, 14, 12, 24, 18, 40};

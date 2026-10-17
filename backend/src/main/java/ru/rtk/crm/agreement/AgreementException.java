@@ -16,7 +16,23 @@ public class AgreementException extends RuntimeException {
     }
 
     public static AgreementException agreementNotFound() {
-        return new AgreementException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Соглашение не найдено или недоступно", null);
+        return new AgreementException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Договор не найден или недоступен", null);
+    }
+
+    public static AgreementException supplementNotFound() {
+        return new AgreementException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Допсоглашение не найдено или недоступно", null);
+    }
+
+    public static AgreementException fileNotFound() {
+        return new AgreementException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Файл договора не найден или недоступен", null);
+    }
+
+    public static AgreementException forbidden() {
+        return new AgreementException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Договоры с вузами доступны менеджерам, руководителям и «Руководству»", null);
+    }
+
+    public static AgreementException supplementVersion(int currentVersion) {
+        return new AgreementException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "Допсоглашение уже изменили", currentVersion);
     }
 
     public static AgreementException activityNotFound() {
@@ -28,7 +44,7 @@ public class AgreementException extends RuntimeException {
     }
 
     public static AgreementException agreementVersion(int currentVersion) {
-        return new AgreementException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "Соглашение уже изменили", currentVersion);
+        return new AgreementException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "Договор уже изменили", currentVersion);
     }
 
     public static AgreementException activityVersion(int currentVersion) {

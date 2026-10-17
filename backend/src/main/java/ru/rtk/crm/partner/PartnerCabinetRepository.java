@@ -169,7 +169,7 @@ public class PartnerCabinetRepository {
         return jdbcClient.sql("""
                 SELECT id, number, concluded_on, valid_until, status
                 FROM agreements
-                WHERE organization_id = :organizationId
+                WHERE organization_id = :organizationId AND status = 'ACTIVE'
                 ORDER BY concluded_on DESC NULLS LAST, number, id
                 """)
                 .param("organizationId", organizationId)

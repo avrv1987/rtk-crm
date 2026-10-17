@@ -34,7 +34,7 @@ const navigate = async (page, hash, ready) => {
   await page.waitFor(() => page.evaluate(ready), 'Screen is not ready: ' + hash)
 }
 
-const workReady = (text) => `document.querySelectorAll('.work-item').length > 0 && [...document.querySelectorAll('.work-item__title')].every((item) => item.textContent.includes(${JSON.stringify(text)}))`
+const workReady = (text) => `document.querySelectorAll('.work-row').length > 0 && [...document.querySelectorAll('.work-item__title')].every((item) => item.textContent.includes(${JSON.stringify(text)}))`
 
 async function shoot(page, name, ready, clip) {
   await page.waitFor(() => page.evaluate(ready), name + ' is not ready')
@@ -97,15 +97,46 @@ const fillFields = async (page, scope, values) => {
   assert(filled, 'Fields are unavailable: ' + scope)
 }
 
+// Фильтры отчёта лежат в панели «Фильтры»: открываем её, раскрываем нужную группу и отмечаем значение.
+const page_waitClosed = (page) => page.waitFor(() => page.evaluate("!document.querySelector('.filter-panel[open]')"), 'Filter panel did not close')
+
+const filterPanelOpen = "Boolean(document.querySelector('.filter-panel[open]'))"
+
 const checkOption = async (page, legend, label) => {
-  const chip = `[...document.querySelectorAll('details.report-chip')].find((item) => item.querySelector('.report-chip__label')?.textContent === ${JSON.stringify(legend + ':')})`
-  const option = `[...(${chip}?.querySelectorAll('label') ?? [])].find((item) => item.textContent.trim() === ${JSON.stringify(label)})?.querySelector('input')`
-  await page.waitFor(() => page.evaluate(`Boolean(${chip})`), 'Filter is absent: ' + legend)
-  await page.evaluate(`${chip}.open = true`)
+  if (!(await page.evaluate(filterPanelOpen))) {
+    await page.evaluate("document.querySelector('.filter-button').click()")
+    await page.waitFor(() => page.evaluate(filterPanelOpen), 'Filter panel did not open')
+  }
+  const group = `[...document.querySelectorAll('.report-filter-group')].find((item) => item.querySelector('.report-filter-group__label')?.textContent === ${JSON.stringify(legend)})`
+  const option = `[...(${group}?.querySelectorAll('label') ?? [])].find((item) => item.textContent.trim() === ${JSON.stringify(label)})?.querySelector('input')`
+  await page.waitFor(() => page.evaluate(`Boolean(${group})`), 'Filter is absent: ' + legend)
+  if (!(await page.evaluate(`Boolean(${option})`))) {
+    await page.evaluate(`${group}.querySelector('.report-filter-group__toggle').click()`)
+  }
   await page.waitFor(() => page.evaluate(`Boolean(${option})`), 'Filter option is absent: ' + label)
   await page.evaluate(`${option}.checked || ${option}.click()`)
-  await page.evaluate(`${chip}.open = false`)
   await pause(100)
+}
+
+const listedOptions = async (page, legend) => {
+  const group = `[...document.querySelectorAll('.report-filter-group')].find((item) => item.querySelector('.report-filter-group__label')?.textContent === ${JSON.stringify(legend)})`
+  await page.waitFor(() => page.evaluate(`Boolean(${group})`), 'Filter is absent: ' + legend)
+  if (!(await page.evaluate(`Boolean(${group}.querySelector('.report-filter-group__options'))`))) {
+    await page.evaluate(`${group}.querySelector('.report-filter-group__toggle').click()`)
+  }
+  await page.waitFor(() => page.evaluate(`${group}.querySelectorAll('.report-filter-group__options label').length > 0`), 'Filter has no options: ' + legend)
+  return page.evaluate(`[...${group}.querySelectorAll('.report-filter-group__options label')].map((item) => item.textContent.trim())`)
+}
+
+// Выгрузка файла — пункт меню «Выгрузить ▾» в шапке отчёта.
+const orderFromMenu = async (page, label) => {
+  await page.evaluate("document.querySelector('.report-header__actions .report-export .action-menu__toggle').click()")
+  const clicked = await page.evaluate(`(() => {
+    const item = [...document.querySelectorAll('.report-header__actions [role=menuitem]')].find((entry) => entry.textContent.trim().startsWith(${JSON.stringify(label)}))
+    item?.click()
+    return Boolean(item)
+  })()`)
+  assert(clicked, 'Export item is unavailable: ' + label)
 }
 
 try {
@@ -122,26 +153,27 @@ try {
 
   phase = 'kam'
   const kam = await session('kam-a')
-  await navigate(kam, '#/work', "Boolean(document.querySelector('.work-item'))")
+  await navigate(kam, '#/work', "Boolean(document.querySelector('.work-row'))")
   await fillFields(kam, '.work-filters input[type=search]', ['Демо'])
   await shoot(kam, 'work-kam', workReady('Демо'))
   const universityA = await demoOrganization(kam, 'Университет А')
-  await navigate(kam, '#/organizations/' + universityA.id, "Boolean(document.querySelector('.interactions-list'))")
-  await shoot(kam, 'organizations', "Boolean(document.querySelector('.interactions-list'))")
+  const organizationsReady = "document.querySelectorAll('.organizations-list li').length > 1"
+  await navigate(kam, '#/organizations', organizationsReady)
+  await shoot(kam, 'organizations', organizationsReady)
   const interactions = await listAll(kam, '/api/interactions?organizationId=' + universityA.id, 'Interactions are unavailable')
   const demo = interactions.find((item) => item.title === 'Демо: внедрение цифрового университета')
   assert(demo, 'Demo interaction is unavailable')
-  const cardReady = "Boolean(document.querySelector('.interaction-path')) && [...document.querySelectorAll('.interaction-events li')].some((item) => item.textContent.includes('Данные LMS'))"
+  const cardReady = "Boolean(document.querySelector('.work-facts')) && document.querySelectorAll('.interaction-events li').length > 0"
   await navigate(kam, '#/organizations/' + universityA.id + '/' + demo.id, cardReady)
   await shoot(kam, 'interaction-card', cardReady, '.interaction-detail')
   await shoot(kam, 'history', cardReady, '.interaction-events')
-  await kam.evaluate("document.getElementById('work-card-tab-route').click()")
-  await shoot(kam, 'interaction-path', "Boolean(document.querySelector('.interaction-stages .interaction-path'))", ['#interaction-route-title', '.interaction-stages'])
-  await kam.evaluate("document.getElementById('work-card-tab-history').click()")
-  await clickButton(kam, 'Следующий шаг', "document.querySelector('.work-card__actions')")
+  await kam.evaluate("document.querySelector('.work-route__toggle').click()")
+  await shoot(kam, 'interaction-path', "!document.querySelector('.work-route__panel').hidden", '.work-route')
+  await kam.evaluate("document.querySelector('.work-route__toggle').click()")
+  await clickButton(kam, 'Изменить', "document.querySelector('.work-step__actions')")
   await shoot(kam, 'next-step', "Boolean(document.querySelector('dialog[open] .interaction-plan-form'))", 'dialog[open]')
   await clickButton(kam, 'Закрыть', "document.querySelector('dialog[open]')")
-  await clickButton(kam, 'Перейти к следующему этапу', "document.querySelector('.work-card__actions')")
+  await kam.evaluate("(document.querySelector('.work-card__primary[data-action=transition]') ?? [...document.querySelectorAll('.work-card__more [role=menuitem]')].find((item) => item.textContent.trim() === 'Перейти на этап…')).click()")
   await fillFields(kam, 'dialog[open] form.interaction-transition-form select', [1])
   await fillFields(kam, 'dialog[open] form.interaction-transition-form textarea', [
     'Проректор подтвердил интерес к программе, договорились о встрече.',
@@ -149,6 +181,10 @@ try {
   ])
   await shoot(kam, 'transition', "Boolean(document.querySelector('dialog[open] form.interaction-transition-form')?.innerText.includes('Выбран этап'))", 'dialog[open]')
   await clickButton(kam, 'Закрыть', "document.querySelector('dialog[open]')")
+  // Заполненное окно перехода оставляет черновик, и его плашка закрыла бы следующие снимки: черновики удаляются,
+  // а полная загрузка страницы (адрес без #) сбрасывает плашку.
+  await kam.evaluate("Object.keys(sessionStorage).filter((key) => key.startsWith('rtk-crm:interaction-draft:')).forEach((key) => sessionStorage.removeItem(key))")
+  await goTo(kam, originUrl() + '/', "Boolean(document.querySelector('.work-row')) && !document.querySelector('.unsaved-drafts')")
 
   phase = 'attachments'
   let attachmentCard = null
@@ -166,23 +202,32 @@ try {
   await shoot(kam, 'attachments', attachmentsReady, '.interaction-attachments')
 
   phase = 'reports'
-  const reportsReady = "Boolean(document.querySelector('.reports__form .report-chip')) && document.body.innerText.includes('Мои выгрузки')"
+  const reportsReady = "Boolean(document.querySelector('.reports__form .filter-button'))"
   await navigate(kam, '#/reports/portfolio', reportsReady)
   for (const stage of baseStages) {
     await checkOption(kam, 'Этап', stage)
   }
-  await shoot(kam, 'reports-filters', reportsReady)
+  // Все программы, кроме «Не указано»: тестовые взаимодействия проверочных скриптов создаются без программы.
+  for (const program of await listedOptions(kam, 'ИТ-программы')) {
+    await checkOption(kam, 'ИТ-программы', program)
+  }
+  await shoot(kam, 'reports-filters', reportsReady + ' && ' + filterPanelOpen, '.filter-panel')
+  await clickButton(kam, 'Готово', "document.querySelector('.filter-panel')")
+  await page_waitClosed(kam)
   await clickButton(kam, 'Показать')
   const previewReady = reportsReady + " && Boolean(document.querySelector('.reports__table-scroll'))"
-  await shoot(kam, 'reports-preview', previewReady, '.reports__preview')
+  await shoot(kam, 'reports-preview', previewReady, ['.reports__form', '.reports__preview'])
+  assert(!(await kam.evaluate("/smoke/i.test(document.querySelector('.reports__preview').innerText)")), 'reports-preview shows test interactions')
   await kam.evaluate("document.querySelector('#report-result-tab-chart').click()")
   await shoot(kam, 'statistics', reportsReady + " && Boolean(document.querySelector('.reports__statistics svg'))", '.reports__statistics')
-  await clickButton(kam, 'Выгрузить XLSX')
-  await shoot(kam, 'report-files', reportsReady + " && Boolean(document.querySelector('.report-jobs li'))", '.report-jobs')
+  await orderFromMenu(kam, 'XLSX')
+  await navigate(kam, '#/reports?tab=jobs', "Boolean(document.querySelector('.report-jobs li'))")
+  await kam.evaluate("document.querySelector('.toast__close')?.click()")
+  await shoot(kam, 'report-files', "Boolean(document.querySelector('.report-jobs li')) && !document.querySelector('.toast, .unsaved-drafts')", '.report-jobs')
 
   phase = 'kam-mobile'
   await setViewport(kam, phone)
-  await goTo(kam, originUrl() + '/#/work', "Boolean(document.querySelector('.work-item'))")
+  await goTo(kam, originUrl() + '/#/work', "Boolean(document.querySelector('.work-row'))")
   await fillFields(kam, '.work-filters input[type=search]', ['Демо'])
   await shoot(kam, 'mobile-work', workReady('Демо'))
   await navigate(kam, '#/organizations/' + universityA.id + '/' + demo.id, cardReady)
@@ -197,37 +242,38 @@ try {
 
   phase = 'leader'
   const leader = await session('leader')
-  await navigate(leader, '#/work', "Boolean(document.querySelector('.work-item'))")
-  await fillFields(leader, '.work-filters input[type=search]', ['Заявка'])
-  await shoot(leader, 'work-leader', workReady('Заявка'))
+  const leaderControlReady = "Boolean(document.querySelector('.control .stat-tiles')) && Boolean(document.querySelector('.control-manager'))"
+  await navigate(leader, '#/control', leaderControlReady)
+  await shoot(leader, 'work-leader', leaderControlReady)
   const leaderOrganizations = await listAll(leader, '/api/organizations?sort=name,asc', 'Organizations are unavailable')
   const universityC = leaderOrganizations.find((item) => item.name.startsWith('Университет C'))
   assert(universityC, 'Leader does not see University C')
-  const assignmentReady = "(document.querySelector('#organization-card-tab-history[aria-selected=false]')?.click(), true) && Boolean(document.querySelector('.organization-assignment')) && document.body.innerText.includes('История назначений')"
-  await navigate(leader, '#/organizations/' + universityC.id, assignmentReady)
-  await shoot(leader, 'assignment', assignmentReady, ['#organization-detail-title', '.organization-assignment'])
-  const templatesReady = "Boolean(document.querySelector('.workflow-templates__item'))"
+  const assignmentReady = "([...document.querySelectorAll('.org-card__top [role=menuitem]')].find((item) => item.textContent.startsWith('Назначить') && !document.querySelector('dialog[open]'))?.click(), true) && Boolean(document.querySelector('dialog[open] .organization-assignment'))"
+  await navigate(leader, '#/organizations/' + universityC.id, "Boolean(document.querySelector('.org-card__top'))")
+  await shoot(leader, 'assignment', assignmentReady, 'dialog[open]')
+  const templatesReady = "Boolean(document.querySelector('[aria-labelledby=workflow-templates-title] .admin-table tbody tr'))"
   await navigate(leader, '#/admin/workflow-templates', templatesReady)
   await clickButton(leader, 'Создать на основе базового')
-  await shoot(leader, 'templates-editor', "Boolean(document.querySelector('#workflow-template-stages-title'))", '.workflow-templates form')
+  await shoot(leader, 'templates-editor', "Boolean(document.querySelector('#workflow-template-stages-title'))", '.card-dialog[open]')
 
   phase = 'management'
   const management = await session(process.env.DEMO_MANAGEMENT_USER || 'management')
-  await navigate(management, '#/work', "Boolean(document.getElementById('teams-summary-title'))")
-  await shoot(management, 'teams-summary', "Boolean(document.getElementById('teams-summary-title')) && Boolean(document.querySelector('.work-control__table'))", 'section[aria-labelledby=teams-summary-title]')
+  const teamsReady = "Boolean(document.querySelector('.control-team--group')) && Boolean(document.querySelector('.control-team__all'))"
+  await navigate(management, '#/control', teamsReady)
+  await shoot(management, 'teams-summary', teamsReady, '.control-board')
 
   phase = 'admin'
   const admin = await session('admin')
   const adminNavReady = "Boolean(document.querySelector('.admin-section-nav'))"
-  const adminProfilesReady = adminNavReady + " && Boolean(document.querySelector('#admin-profiles-title'))"
-  await navigate(admin, '#/admin', adminProfilesReady)
+  const adminProfilesReady = adminNavReady + " && Boolean(document.querySelector('#admin-employees-title'))"
+  await navigate(admin, '#/admin/employees', adminProfilesReady)
   await shoot(admin, 'admin', adminProfilesReady)
-  await shoot(admin, 'admin-profiles', adminProfilesReady, 'section[aria-labelledby=admin-profiles-title]')
-  const adminImportReady = adminNavReady + " && Boolean(document.querySelector('.catalog-import'))"
+  await shoot(admin, 'admin-profiles', adminProfilesReady, 'section[aria-labelledby=admin-employees-title]')
+  const adminImportReady = adminNavReady + " && Boolean(document.querySelector('.import-page'))"
   await navigate(admin, '#/admin/catalog-import', adminImportReady)
-  await setFile(admin, '.catalog-import input[type=file]', importTemplate)
-  await clickButton(admin, 'Проверить файл', "document.querySelector('.catalog-import')")
-  await shoot(admin, 'catalog-import', adminImportReady + " && document.querySelector('.catalog-import').innerText.includes('Сопоставление столбцов')", '.catalog-import')
+  await setFile(admin, '.import-page input[type=file]', importTemplate)
+  await clickButton(admin, 'Проверить файл', "document.querySelector('.import-page')")
+  await shoot(admin, 'catalog-import', adminImportReady + " && document.querySelector('.import-page').innerText.includes('Сопоставление столбцов')", '.import-page')
   const adminSourcesReady = adminNavReady + " && Boolean(document.querySelector('.data-sources'))"
   await navigate(admin, '#/admin/sources', adminSourcesReady)
   await shoot(admin, 'sources', adminSourcesReady + " && document.querySelector('.data-sources').innerText.includes('LMS Moodle')", '.data-sources')

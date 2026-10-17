@@ -1,5 +1,7 @@
 package ru.rtk.crm.security;
 
+import java.time.Duration;
+
 import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -12,6 +14,9 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.oauth2.client.oidc.authentication.OidcIdTokenDecoderFactory;
 import org.springframework.security.oauth2.client.oidc.authentication.OidcIdTokenValidator;
 import org.springframework.security.oauth2.client.registration.ClientRegistration;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.web.DefaultOAuth2AuthorizationRequestResolver;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestCustomizers;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoderFactory;
 import org.springframework.security.oauth2.jwt.JwtValidators;
@@ -56,18 +61,31 @@ public class ApiSecurityConfiguration {
                 JsonAccessDeniedHandler accessDeniedHandler,
                 RequestIdFilter requestIdFilter,
                 KeycloakLogoutSuccessHandler logoutSuccessHandler,
-                CrmProfileRegistrationSuccessHandler loginSuccessHandler
+                CrmProfileRegistrationSuccessHandler loginSuccessHandler,
+                ClientRegistrationRepository clientRegistrationRepository,
+                @Value("${app.session.absolute-timeout}") Duration sessionAbsoluteTimeout
         ) throws Exception {
             configureApiSecurity(http, authenticationEntryPoint, accessDeniedHandler, requestIdFilter);
-            http.oauth2Login(oauth2 -> oauth2
+            DefaultOAuth2AuthorizationRequestResolver authorizationRequestResolver =
+                    new DefaultOAuth2AuthorizationRequestResolver(clientRegistrationRepository, "/api/auth/authorization");
+            // PKCE привязывает код авторизации к конкретному входу в браузере: перехваченный в редиректе код без
+            // проверочной строки бесполезен.
+            authorizationRequestResolver.setAuthorizationRequestCustomizer(OAuth2AuthorizationRequestCustomizers.withPkce());
+            // Фильтр срока сессии стоит до загрузки контекста безопасности: просроченная сессия закрывается раньше,
+            // чем по ней будет принято решение о доступе.
+            http.addFilterBefore(new SessionLifetimeFilter(sessionAbsoluteTimeout), SecurityContextHolderFilter.class)
+                    .oauth2Login(oauth2 -> oauth2
                             .loginPage("/api/auth/login")
-                            .authorizationEndpoint(endpoint -> endpoint.baseUri("/api/auth/authorization"))
+                            .authorizationEndpoint(endpoint -> endpoint
+                                    .baseUri("/api/auth/authorization")
+                                    .authorizationRequestResolver(authorizationRequestResolver))
                             .redirectionEndpoint(endpoint -> endpoint.baseUri("/api/auth/callback/*"))
                             .successHandler(loginSuccessHandler))
                     .logout(logout -> logout
                             .logoutUrl("/api/auth/logout")
                             .invalidateHttpSession(true)
                             .clearAuthentication(true)
+                            // При выходе удаляются и сессия, и CSRF-cookie: следующий вход начинается с чистого состояния.
                             .deleteCookies("SESSION", "XSRF-TOKEN")
                             .logoutSuccessHandler(logoutSuccessHandler));
             return http.build();
@@ -96,6 +114,8 @@ public class ApiSecurityConfiguration {
             AccessDeniedHandler accessDeniedHandler,
             RequestIdFilter requestIdFilter
     ) throws Exception {
+        // CSRF по схеме «двойная отправка»: токен лежит в cookie XSRF-TOKEN, доступной скрипту интерфейса, и
+        // возвращается заголовком X-CSRF-TOKEN. Чужой сайт не может прочитать cookie и подставить заголовок.
         CookieCsrfTokenRepository csrfTokenRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrfTokenRepository.setHeaderName("X-CSRF-TOKEN");
         http.csrf(csrf -> csrf
@@ -109,6 +129,7 @@ public class ApiSecurityConfiguration {
                         .requestMatchers("/api/config").permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/authorization/*", "/api/auth/callback/*").permitAll()
                         .requestMatchers("/api/**").authenticated()
+                        // Всё, что не перечислено выше, закрыто: новый путь без явного правила не станет публичным по ошибке.
                         .anyRequest().denyAll())
                 .exceptionHandling(exceptions -> exceptions
                         .defaultAuthenticationEntryPointFor(authenticationEntryPoint, API_MATCHER)

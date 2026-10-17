@@ -55,7 +55,8 @@ public class CardSourcesService {
                         snapshot.runStartsOn(),
                         snapshot.runEndsOn(),
                         snapshot.observedAt(),
-                        snapshot.changedAt()
+                        snapshot.changedAt(),
+                        snapshot.unit().activity()
                 ))
                 .toList();
     }
@@ -87,10 +88,11 @@ public class CardSourcesService {
         try {
             SyncRunView run = syncService.refreshLearning(profile, scope, interactionId);
             int changed = run.createdCount() + run.updatedCount();
+            String partial = run.failedCount() > 0 && run.errorMessage() != null ? " " + run.errorMessage() : "";
             return changed == 0
-                    ? new RefreshOutcome("UNCHANGED", 0, "Данные Moodle проверены, изменений нет.")
+                    ? new RefreshOutcome("UNCHANGED", 0, "Данные Moodle проверены, изменений нет." + partial)
                     : new RefreshOutcome("UPDATED", changed, "Данные Moodle обновлены: изменилось курсов и групп — " + changed
-                            + ". Событие добавлено в историю.");
+                            + ". Событие добавлено в историю." + partial);
         } catch (SourceException exception) {
             String status = exception.code().equals("LMS_SYNC_FAILED") ? "FAILED" : "SKIPPED";
             return new RefreshOutcome(status, 0, exception.getMessage());
@@ -142,7 +144,7 @@ public class CardSourcesService {
     private LearningState learningState(UUID interactionId, List<LearningSnapshotView> snapshots, SourceState lms) {
         Optional<MappedTarget> target = repository.findInteractionProgramTarget(interactionId);
         if (target.isEmpty()) {
-            return new LearningState("NO_PROGRAM", "Программа не указана, поэтому данные LMS не сопоставляются с этой работой."
+            return new LearningState("NO_PROGRAM", "Программа не указана, поэтому данные LMS не сопоставляются с этим взаимодействием."
                     + " Укажите программу в блоке «Следующий шаг».");
         }
         if (!snapshots.isEmpty()) {
@@ -158,7 +160,7 @@ public class CardSourcesService {
                     + " Сопоставление выполняет администратор CRM в разделе «Источники данных».");
         }
         if (coverage.inCycle() == 0) {
-            return new LearningState("OTHER_CYCLE", "Потоки Moodle этой программы относятся к другому циклу работы; поток"
+            return new LearningState("OTHER_CYCLE", "Потоки Moodle этой программы относятся к другому циклу взаимодействия; поток"
                     + " для этого цикла ещё не сопоставлен. Обратитесь к администратору CRM.");
         }
         if (coverage.undated() == coverage.mapped()) {
@@ -207,7 +209,8 @@ public class CardSourcesService {
             LocalDate runStartsOn,
             LocalDate runEndsOn,
             OffsetDateTime observedAt,
-            OffsetDateTime changedAt
+            OffsetDateTime changedAt,
+            LearningUnit.Activity activity
     ) {
     }
 

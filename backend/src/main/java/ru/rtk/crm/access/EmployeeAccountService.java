@@ -141,6 +141,7 @@ public class EmployeeAccountService {
             return new AccountCredentials(replayed.get(), replayed.get().login(), null);
         }
         AdminCrmProfile target = lockTarget(profileId);
+        requireNotAdministrator(target);
         String password = TemporaryPassword.generate();
         keycloakAccountClient.resetTemporaryPassword(subject(profileId), password);
         auditJournalRepository.record(
@@ -185,6 +186,7 @@ public class EmployeeAccountService {
             return replayed.get();
         }
         AdminCrmProfile target = lockTarget(profileId);
+        requireNotAdministrator(target);
         String subject = subject(profileId);
         int removed = keycloakAccountClient.removeSecondFactor(subject);
         boolean required = ProfileState.of(target).privileged();
@@ -284,6 +286,18 @@ public class EmployeeAccountService {
         if (actor.id().equals(requiredProfileId(profileId))) {
             throw new InteractionValidationException(
                     "id", "Для своей учётной записи это действие недоступно: пароль меняют и выходят из сеансов в самом Keycloak"
+            );
+        }
+    }
+
+    // Сброс пароля и второго фактора другого администратора дал бы войти от его имени, и журнал перестал бы
+    // различать администраторов. Администратор меняет их сам в личном кабинете Keycloak, при утере — через консоль.
+    private static void requireNotAdministrator(AdminCrmProfile target) {
+        if (target.role() == UserRole.ADMIN) {
+            throw new InteractionValidationException(
+                    "id",
+                    "Пароль и второй фактор администратора из CRM не сбрасываются: администратор меняет их сам в личном кабинете"
+                            + " Keycloak, а если доступ утерян — администратор Keycloak в консоли Keycloak"
             );
         }
     }

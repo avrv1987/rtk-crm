@@ -1,4 +1,4 @@
-import { apiClient } from '../../shared/api/client'
+import { apiClient, type Organization } from '../../shared/api/client'
 import { organizationTypeLabels } from '../organizations/OrganizationForm'
 import type { FilterOption } from '../reports/ReportControls'
 
@@ -9,6 +9,7 @@ export type ControlOptions = {
   products: FilterOption[]
   managers: FilterOption[]
   stages: FilterOption[]
+  organizationList: Organization[]
 }
 
 const loadAllPages = async <T,>(loadPage: (page: number) => Promise<{ items: T[]; total: number }>) => {
@@ -49,6 +50,7 @@ export const loadControlOptions = async (): Promise<ControlOptions> => {
       id: manager.id,
       label: manager.active ? manager.displayName : `${manager.displayName} (неактивен)`
     })),
-    stages: stages.map((stage) => ({ id: stage, label: stage }))
+    stages: stages.map((stage) => ({ id: stage, label: stage })),
+    organizationList: organizations
   }
 }

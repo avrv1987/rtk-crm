@@ -131,6 +131,13 @@ public class UserProfileRepository {
                 .update() == 1;
     }
 
+    public Optional<String> findDisplayName(UUID profileId) {
+        return jdbcClient.sql("SELECT display_name FROM crm_user_profiles WHERE id = :profileId")
+                .param("profileId", profileId)
+                .query(String.class)
+                .optional();
+    }
+
     public Optional<String> findTeamName(UUID teamId) {
         return jdbcClient.sql("SELECT name FROM teams WHERE id = :teamId")
                 .param("teamId", teamId)

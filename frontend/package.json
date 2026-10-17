@@ -13,7 +13,7 @@
     "generate:api": "openapi-typescript ../backend/src/main/resources/static/openapi.yaml -o src/shared/api/openapi.d.ts",
     "typecheck": "npm run generate:api && tsc --noEmit",
     "build": "npm run typecheck && vite build",
-    "test": "node --test tests/draftBase.test.ts tests/help.test.ts tests/deadlines.test.ts tests/datetime.test.ts tests/routing.test.ts tests/lmsStageSuggestion.test.ts tests/reportPeriods.test.ts tests/signingPlan.test.ts tests/organizationHistory.test.ts tests/learningRun.test.ts tests/issues.test.ts tests/sessionRecovery.test.ts tests/modules.test.ts tests/control.test.ts tests/workflowVersions.test.ts",
+    "test": "node --test tests/draftBase.test.ts tests/help.test.ts tests/deadlines.test.ts tests/datetime.test.ts tests/routing.test.ts tests/navigation.test.ts tests/lmsStageSuggestion.test.ts tests/reportPeriods.test.ts tests/signingPlan.test.ts tests/organizationHistory.test.ts tests/learningRun.test.ts tests/issues.test.ts tests/sessionRecovery.test.ts tests/modules.test.ts tests/control.test.ts tests/workflowVersions.test.ts tests/agreements.test.ts tests/laborMarket.test.ts tests/crmExchange.test.ts tests/workCard.test.ts tests/catalogs.test.ts tests/auditJournal.test.ts tests/workflowTemplateRows.test.ts tests/adminAddress.test.ts tests/employees.test.ts tests/reportFilters.test.ts tests/reportsRoute.test.ts tests/sources.test.ts tests/workScreens.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

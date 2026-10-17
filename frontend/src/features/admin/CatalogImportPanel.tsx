@@ -1,4 +1,4 @@
-import { type ChangeEvent, type FormEvent, useEffect, useRef, useState } from 'react'
+import { Fragment, type ChangeEvent, type FormEvent, useEffect, useId, useRef, useState } from 'react'
 import {
   ApiError,
   apiClient,
@@ -12,6 +12,12 @@ import {
   type CatalogImportRowTarget,
   type CatalogImportSheet
 } from '../../shared/api/client'
+import { HintButton } from '../../shared/ui/HintButton'
+import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { importSteps, importStepOf, parseTransferStatuses } from './catalogImportSteps'
+import './adminUi.css'
+import './catalogs.css'
+import './catalogImport.css'
 
 type CatalogImportPanelProps = {
   onSessionExpired: () => void
@@ -104,7 +110,7 @@ const extraLabels: Record<string, string> = {
   sheet: 'Лист',
   profile: 'Профиль',
   mapping: 'Сопоставление',
-  rowTargets: 'Явные UUID',
+  rowTargets: 'Явные идентификаторы',
   transferStatuses: 'Словарь статусов',
   confirmedRowIds: 'Выбор строк',
   agreementArchived: 'Договор в архиве',
@@ -180,6 +186,14 @@ const rowStatusLabel = (status: CatalogImportRow['status']) => {
   return 'Ошибка'
 }
 
+const rowStatusTone: Record<CatalogImportRow['status'], string> = {
+  CREATE: ' admin-chip--ok',
+  UPDATE: '',
+  UNCHANGED: '',
+  CONFLICT: ' admin-chip--danger',
+  INVALID: ' admin-chip--danger'
+}
+
 const jobActionLabel = (action: CatalogImportJob['action']) => (
   action === 'PREVIEW' ? 'Предпросмотр' : 'Применение'
 )
@@ -190,7 +204,7 @@ const requestIdOf = (error: unknown) => (
 
 const errorMessage = (state: ErrorState) => {
   if (state.error instanceof ApiError && state.error.status === 409) {
-    return 'Данные изменились после preview. Файл, сопоставление, UUID и выбор строк сохранены; создайте новый предпросмотр перед повторной попыткой.'
+    return 'Данные изменились после предпросмотра. Файл, сопоставление, идентификаторы и выбор строк сохранены; создайте новый предпросмотр перед повторной попыткой.'
   }
   if (state.error instanceof ApiError && state.error.status === 403) {
     return 'Импорт каталогов доступен только администратору с активным профилем CRM.'
@@ -226,28 +240,6 @@ const cleanTargets = (targets: Record<string, CatalogImportRowTarget>) => {
     }
   }
   return cleaned
-}
-
-const parseTransferStatuses = (value: string) => {
-  const statuses: Record<string, string> = {}
-  const lines = value.split(/\r?\n/)
-  for (const [index, line] of lines.entries()) {
-    const trimmed = line.trim()
-    if (!trimmed) {
-      continue
-    }
-    const separator = trimmed.indexOf('=')
-    if (separator < 1 || separator === trimmed.length - 1) {
-      return { statuses, error: `Строка ${index + 1}: используйте формат «значение в файле=значение в CRM».` }
-    }
-    const source = trimmed.slice(0, separator).trim()
-    const target = trimmed.slice(separator + 1).trim()
-    if (!source || !target || statuses[source] !== undefined) {
-      return { statuses, error: `Строка ${index + 1}: значение статуса должно быть непустым и уникальным.` }
-    }
-    statuses[source] = target
-  }
-  return { statuses }
 }
 
 type ColumnSelectProps = {
@@ -291,7 +283,10 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
   const [teams, setTeams] = useState<AdminTeam[]>([])
   const [unassignedTeamId, setUnassignedTeamId] = useState('')
   const [archiveAgreementIds, setArchiveAgreementIds] = useState<string[]>([])
+  const [openRows, setOpenRows] = useState<string[]>([])
+  const [mappingOpen, setMappingOpen] = useState(true)
   const applyKey = useRef<string | null>(null)
+  const unassignedId = useId()
 
   useEffect(() => {
     apiClient.listTeams()
@@ -324,7 +319,13 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
     setArchiveAgreementIds([])
     setPendingApply(false)
     setTargetsDirty(false)
+    setOpenRows([])
+    setMappingOpen(true)
     setError(null)
+  }
+
+  const toggleOpenRow = (id: string) => {
+    setOpenRows((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
   }
 
   const reportError = (action: ErrorState['action'], value: unknown) => {
@@ -447,6 +448,8 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
       setArchiveAgreementIds([])
       setTargetsDirty(false)
       setPendingApply(false)
+      setOpenRows([])
+      setMappingOpen(false)
     } catch (exception) {
       reportError('preview', exception)
     } finally {
@@ -520,28 +523,44 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
     }
   }
 
-  return (
-    <section className="catalog-import" aria-labelledby="catalog-import-title" aria-busy={busy !== null}>
-      <div className="catalog-import__header">
-        <div>
-          <p className="eyebrow">Администрирование</p>
-          <h2 id="catalog-import-title">Импорт каталогов</h2>
-        </div>
-      </div>
-      <p className="catalog-import__intro">
-        Загрузите XLS или XLSX с десятью полями ТЗ: столбцы с привычными названиями сопоставятся сами. ФИО менеджера ищется среди активных КАМ без учёта регистра, пробелов и «ё»; если совпадений несколько, выберите нужного КАМ прямо в строке протокола. Несколько ответственных от вуза в одной ячейке разделяйте «;» или переводом строки — каждый станет отдельным контактом. Изменения сохраняются только после проверки протокола и подтверждения.
-      </p>
-      <a className="catalog-import__template" href="/catalog-import-template.xlsx" download>
-        Скачать шаблон файла (10 полей ТЗ, 3 примера)
-      </a>
-      <p className="catalog-import__hint">
-        ФИО менеджера в примерах шаблона вымышленное — замените его на реального КАМ своей команды, иначе строка не сопоставится.
-      </p>
-      <a className="catalog-import__template" href="/vendor-contacts-template.xlsx" download>
-        Скачать шаблон «Вендоры, продукты и контакты» (формат файла организатора, вымышленные контакты)
-      </a>
+  const stepNow = importStepOf({
+    hasSheets: sheets.length > 0 && selectedSheet !== null,
+    planStatus: importPlan?.status ?? null,
+    confirming: pendingApply
+  })
+  const hasSheets = sheets.length > 0 && selectedSheet !== null
+  const applyDisabled = (selectedRowIds.length === 0 && archiveAgreementIds.length === 0) || targetsDirty || busy !== null
 
-      <form className="catalog-import__file-form" onSubmit={(event) => void inspect(event)}>
+  return (
+    <section className="admin-page import-page" aria-labelledby="catalog-import-title" aria-busy={busy !== null}>
+      <div className="page-title">
+        <h2 id="catalog-import-title">Импорт из Excel</h2>
+        <HintButton label="О разделе">
+          Загрузите XLS или XLSX с десятью полями ТЗ: столбцы с привычными названиями сопоставятся сами. ФИО менеджера ищется среди активных КАМ без учёта регистра, пробелов и «ё»; если совпадений несколько, выберите нужного КАМ прямо в строке протокола. Несколько ответственных от вуза в одной ячейке разделяйте «;» или переводом строки — каждый станет отдельным контактом. Изменения сохраняются только после проверки протокола и подтверждения.
+        </HintButton>
+      </div>
+
+      <ol className="admin-steps" aria-label="Шаги импорта">
+        {importSteps.map(({ step, label }) => (
+          <li key={step} aria-current={step === stepNow ? 'step' : undefined} data-done={step < stepNow ? 'true' : undefined}>
+            {step} {label}
+          </li>
+        ))}
+      </ol>
+
+      <div className="import-templates">
+        <a href="/catalog-import-template.xlsx" download>
+          Скачать шаблон файла (10 полей ТЗ, 3 примера)
+        </a>
+        <HintButton label="О шаблоне">
+          ФИО менеджера в примерах шаблона вымышленное — замените его на реального КАМ своей команды, иначе строка не сопоставится.
+        </HintButton>
+        <a href="/vendor-contacts-template.xlsx" download>
+          Скачать шаблон «Вендоры, продукты и контакты» (формат файла организатора, вымышленные контакты)
+        </a>
+      </div>
+
+      <form className="import-block import-file" onSubmit={(event) => void inspect(event)}>
         <label>
           Файл XLS или XLSX
           <input
@@ -558,43 +577,35 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
             <option value="VENDOR_CONTACTS">Вендоры, продукты и контакты</option>
           </select>
         </label>
-        <button type="submit" disabled={file === null || busy !== null}>
+        <button type="submit" className={hasSheets ? 'button--secondary' : undefined} disabled={file === null || busy !== null}>
           {busy === 'inspect' ? 'Проверяем файл…' : 'Проверить файл'}
         </button>
       </form>
 
-      {sheets.length > 0 && selectedSheet !== null && (
-        <form className="catalog-import__mapping" onSubmit={(event) => void preview(event)}>
-          <div className="catalog-import__mapping-header">
-            <div>
-              <h3>Сопоставление столбцов</h3>
-              <p>Столбцы сопоставлены по названиям; проверьте выбор. Несопоставленное поле не меняет данные CRM.</p>
-            </div>
-            <label>
-              Лист
-              <select value={sheetName} disabled={busy !== null} onChange={(event) => selectSheet(event.target.value)}>
-                {sheets.map((sheet) => <option key={sheet.name} value={sheet.name}>{sheet.name}</option>)}
-              </select>
-            </label>
+      {hasSheets && selectedSheet !== null && (
+        <form className="import-block import-mapping" onSubmit={(event) => void preview(event)}>
+          <div className="import-block__head">
+            <h3>Сопоставление столбцов</h3>
+            <HintButton label="О сопоставлении">
+              Столбцы сопоставлены по названиям; проверьте выбор. Несопоставленное поле не меняет данные CRM.
+            </HintButton>
+            <span className="page-title__spacer" />
+            {importPlan !== null && (
+              <button type="button" className="button--secondary" aria-expanded={mappingOpen} onClick={() => setMappingOpen(!mappingOpen)}>
+                {mappingOpen ? 'Свернуть' : 'Изменить сопоставление'}
+              </button>
+            )}
           </div>
-          <div className="catalog-import__field-grid">
-            {basicFields.map((mappingField) => (
-              <ColumnSelect
-                key={mappingField.key}
-                mappingField={mappingField}
-                headers={selectedSheet.headers}
-                value={columns[mappingField.key] ?? ''}
-                disabled={busy !== null}
-                onChange={updateColumn}
-              />
-            ))}
-          </div>
-          {profile === 'AGREEMENT' && (
-            <details className="catalog-import__targets">
-              <summary>Дополнительно: ключи, контакты и словарь статусов</summary>
-              <p>Ключи нужны, только если в файле есть собственные идентификаторы. Без них ключ строится из названия, а записи CRM без ключа находятся по уникальному названию.</p>
-              <div className="catalog-import__field-grid">
-                {advancedFields.map((mappingField) => (
+          {mappingOpen && (
+            <>
+              <label className="import-sheet">
+                Лист
+                <select value={sheetName} disabled={busy !== null} onChange={(event) => selectSheet(event.target.value)}>
+                  {sheets.map((sheet) => <option key={sheet.name} value={sheet.name}>{sheet.name}</option>)}
+                </select>
+              </label>
+              <div className="import-grid">
+                {basicFields.map((mappingField) => (
                   <ColumnSelect
                     key={mappingField.key}
                     mappingField={mappingField}
@@ -605,108 +616,133 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
                   />
                 ))}
               </div>
-              <label className="catalog-import__status-mapping">
-                Словарь статусов по передаче
-                <textarea
-                  value={transferStatusText}
-                  disabled={busy !== null}
-                  rows={3}
-                  placeholder={'передан=Передано\nв ожидании=В ожидании'}
-                  onChange={(event) => {
-                    setTransferStatusText(event.target.value)
-                    clearPlan()
-                  }}
-                />
-                <span>Необязательно. Одна строка: «значение в файле=значение в CRM». Без словаря значение принимается как есть; со словарём неизвестное значение, которого нет и среди статусов CRM, станет ошибкой строки.</span>
-              </label>
-            </details>
+              {profile === 'AGREEMENT' && (
+                <details className="admin-more">
+                  <summary>Дополнительно: ключи, контакты и словарь статусов</summary>
+                  <p className="admin-form__hint">Ключи нужны, только если в файле есть собственные идентификаторы. Без них ключ строится из названия, а записи CRM без ключа находятся по уникальному названию.</p>
+                  <div className="import-grid">
+                    {advancedFields.map((mappingField) => (
+                      <ColumnSelect
+                        key={mappingField.key}
+                        mappingField={mappingField}
+                        headers={selectedSheet.headers}
+                        value={columns[mappingField.key] ?? ''}
+                        disabled={busy !== null}
+                        onChange={updateColumn}
+                      />
+                    ))}
+                  </div>
+                  <label className="import-field">
+                    Словарь статусов по передаче
+                    <textarea
+                      value={transferStatusText}
+                      disabled={busy !== null}
+                      rows={3}
+                      placeholder={'передан=Передано\nв ожидании=В ожидании'}
+                      onChange={(event) => {
+                        setTransferStatusText(event.target.value)
+                        clearPlan()
+                      }}
+                    />
+                    <span className="admin-form__hint">Необязательно. Одна строка: «значение в файле=значение в CRM». Без словаря значение принимается как есть; со словарём неизвестное значение, которого нет и среди статусов CRM, станет ошибкой строки.</span>
+                  </label>
+                </details>
+              )}
+              {profile === 'AGREEMENT' && (
+                <div className="import-field">
+                  <div className="import-field__head">
+                    <label htmlFor={unassignedId}>Команда для новых организаций без КАМ (необязательно)</label>
+                    <HintButton label="О команде для новых организаций">
+                      Новый вуз без ФИО менеджера появится в выбранной команде со статусом «Требует назначения»; КАМ назначит руководитель.
+                    </HintButton>
+                  </div>
+                  <select
+                    id={unassignedId}
+                    value={unassignedTeamId}
+                    disabled={busy !== null}
+                    onChange={(event) => {
+                      setUnassignedTeamId(event.target.value)
+                      clearPlan()
+                    }}
+                  >
+                    <option value="">Не создавать такие вузы</option>
+                    {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+                  </select>
+                </div>
+              )}
+              {!mappingComplete && (
+                <p className="admin-form__hint" role="status">Заполните все поля со звёздочкой, чтобы построить предпросмотр.</p>
+              )}
+              <div className="admin-form__actions">
+                <button
+                  type="submit"
+                  className={importPlan === null ? undefined : 'button--secondary'}
+                  disabled={!mappingComplete || busy !== null}
+                >
+                  {busy === 'preview' ? 'Строим предпросмотр…' : 'Создать предпросмотр'}
+                </button>
+              </div>
+            </>
           )}
-          {profile === 'AGREEMENT' && (
-            <label className="catalog-import__unassigned">
-              Команда для новых организаций без КАМ (необязательно)
-              <select
-                value={unassignedTeamId}
-                disabled={busy !== null}
-                onChange={(event) => {
-                  setUnassignedTeamId(event.target.value)
-                  clearPlan()
-                }}
-              >
-                <option value="">Не создавать такие вузы</option>
-                {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
-              </select>
-              <span>Новый вуз без ФИО менеджера появится в выбранной команде со статусом «Требует назначения»; КАМ назначит руководитель.</span>
-            </label>
-          )}
-          {!mappingComplete && (
-            <p className="catalog-import__hint" role="status">Заполните все поля со звёздочкой, чтобы построить предпросмотр.</p>
-          )}
-          <button type="submit" disabled={!mappingComplete || busy !== null}>
-            {busy === 'preview' ? 'Строим предпросмотр…' : 'Создать предпросмотр'}
-          </button>
         </form>
       )}
 
       {error !== null && (
-        <div className="interaction-command-error catalog-import__error" role="alert">
+        <div className="interaction-command-error" role="alert">
           <p>{errorMessage(error)}</p>
-          {error.error instanceof ApiError && (
-            <>
-              <p>Код: {error.error.code}</p>
-              {Object.entries(error.error.fieldErrors ?? {}).length > 0 && (
-                <ul>
-                  {describeErrors(error.error.fieldErrors ?? {}).map((message) => <li key={message}>{message}</li>)}
-                </ul>
-              )}
-              <p className="request-id">Request ID: {error.error.requestId}</p>
-            </>
+          {error.error instanceof ApiError && Object.entries(error.error.fieldErrors ?? {}).length > 0 && (
+            <ul>
+              {describeErrors(error.error.fieldErrors ?? {}).map((message) => <li key={message}>{message}</li>)}
+            </ul>
           )}
+          {error.error instanceof ApiError && <SupportDetails requestId={error.error.requestId} code={error.error.code} />}
         </div>
       )}
 
       {importPlan !== null && (
-        <section className="catalog-import__preview" aria-labelledby="catalog-import-preview-title">
-          <div className="catalog-import__preview-header">
-            <div>
-              <h3 id="catalog-import-preview-title">Протокол предпросмотра</h3>
-              <p>Версия {importPlan.version}; статус: {importPlan.status === 'APPLIED' ? 'применён' : 'ожидает подтверждения'}.</p>
-            </div>
-            <button type="button" disabled={busy !== null} onClick={() => void reloadPlan()}>
+        <section className="import-block import-preview" aria-labelledby="catalog-import-preview-title">
+          <div className="import-block__head">
+            <h3 id="catalog-import-preview-title">Протокол предпросмотра</h3>
+            <span className="import-block__meta">Версия {importPlan.version}; статус: {importPlan.status === 'APPLIED' ? 'применён' : 'ожидает подтверждения'}.</span>
+            <span className="page-title__spacer" />
+            <button type="button" className="button--secondary" disabled={busy !== null} onClick={() => void reloadPlan()}>
               {busy === 'reload' ? 'Обновляем…' : 'Обновить состояние'}
             </button>
           </div>
           {job !== null && (
             <>
-              <p className="catalog-import__job" role="status">
+              <p className="import-block__job" role="status">
                 {jobActionLabel(job.action)}: {job.status === 'SUCCEEDED' ? 'завершено' : 'не выполнено'}{job.result ? `; ${job.result}` : ''}.
               </p>
-              <p className="request-id">Идентификатор задания для поддержки: {job.id}</p>
+              <details className="support-details">
+                <summary>Подробнее для поддержки</summary>
+                <p className="request-id">Идентификатор задания для поддержки: {job.id}</p>
+              </details>
             </>
           )}
           {targetsDirty && (
-            <div className="catalog-import__hint" role="status">
-              <p>Выбор КАМ или явные UUID изменены. Перестройте предпросмотр до применения строк.</p>
+            <div className="import-warning" role="status">
+              <p>Выбор КАМ или явные идентификаторы изменены. Перестройте предпросмотр до применения строк.</p>
               <button type="button" disabled={busy !== null || importPlan.status === 'APPLIED'} onClick={() => void preview()}>
                 {busy === 'preview' ? 'Строим предпросмотр…' : 'Перестроить предпросмотр'}
               </button>
             </div>
           )}
-          <div className="catalog-import__table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">Применить</th>
-                  <th scope="col">Строка</th>
-                  <th scope="col">Результат</th>
-                  <th scope="col">Сообщения</th>
-                  <th scope="col">Было</th>
-                  <th scope="col">Станет</th>
-                </tr>
-              </thead>
-              <tbody>
-                {importPlan.rows.map((row) => (
-                  <tr key={row.id}>
-                    <td>
+          <table className="admin-table import-table" aria-label="Протокол предпросмотра">
+            <thead>
+              <tr>
+                <th scope="col">Применить</th>
+                <th scope="col">Строка</th>
+                <th scope="col">Результат</th>
+                <th scope="col">Сообщения</th>
+                <th scope="col">Было и станет</th>
+              </tr>
+            </thead>
+            <tbody>
+              {importPlan.rows.map((row) => (
+                <Fragment key={row.id}>
+                  <tr>
+                    <td data-label="Применить">
                       {eligibleRow(row) ? (
                         <input
                           type="checkbox"
@@ -717,12 +753,14 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
                         />
                       ) : '—'}
                     </td>
-                    <td>{row.sheetName}, {row.rowNumber}</td>
-                    <td><span className={`catalog-import__status catalog-import__status--${row.status.toLowerCase()}`}>{rowStatusLabel(row.status)}</span></td>
-                    <td>
+                    <td data-label="Строка">{row.sheetName}, {row.rowNumber}</td>
+                    <td data-label="Результат">
+                      <span className={`admin-chip${rowStatusTone[row.status]}`}>{rowStatusLabel(row.status)}</span>
+                    </td>
+                    <td data-label="Сообщения" className="import-table__messages">
                       {Object.entries(row.fieldErrors).length === 0 ? '—' : describeErrors(row.fieldErrors).join('; ')}
                       {row.managerCandidates.length > 0 && importPlan.status === 'PREVIEWED' && (
-                        <label className="catalog-import__candidate">
+                        <label className="import-candidate">
                           Выберите КАМ для строки {row.rowNumber}
                           <select
                             value={rowTargets[row.rowNumber]?.managerProfileId ?? ''}
@@ -739,18 +777,38 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
                         </label>
                       )}
                     </td>
-                    <td>{describeValues(row.oldValues)}</td>
-                    <td>{describeValues(row.newValues)}</td>
+                    <td data-label="Подробности">
+                      <button
+                        type="button"
+                        className="admin-table__toggle"
+                        aria-expanded={openRows.includes(row.id)}
+                        onClick={() => toggleOpenRow(row.id)}
+                      >
+                        Было и станет
+                      </button>
+                    </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                  {openRows.includes(row.id) && (
+                    <tr className="admin-table__detail">
+                      <td colSpan={5}>
+                        <dl className="import-values">
+                          <dt>Было</dt>
+                          <dd>{describeValues(row.oldValues)}</dd>
+                          <dt>Станет</dt>
+                          <dd>{describeValues(row.newValues)}</dd>
+                        </dl>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
 
           {profile === 'AGREEMENT' && importPlan.status === 'PREVIEWED' && (
-            <details className="catalog-import__targets">
+            <details className="admin-more import-targets">
               <summary>Дополнительно: явные UUID для строк</summary>
-              <p>Нужны только для неоднозначных случаев: несколько КАМ с одинаковым ФИО, несколько взаимодействий вуза с одним ПО или привязка строки к конкретной записи CRM. Явный UUID важнее ключа и названия.</p>
+              <p className="admin-form__hint">Нужны только для неоднозначных случаев: несколько КАМ с одинаковым ФИО, несколько взаимодействий вуза с одним ПО или привязка строки к конкретной записи CRM. Явный UUID важнее ключа и названия.</p>
               <div>
                 {importPlan.rows.map((row) => (
                   <fieldset key={row.id}>
@@ -773,9 +831,9 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
           )}
 
           {importPlan.status === 'PREVIEWED' && importPlan.missingRecords.length > 0 && (
-            <section className="catalog-import__apply catalog-import__missing" aria-labelledby="catalog-import-missing-title">
+            <div className="import-part" role="group" aria-labelledby="catalog-import-missing-title">
               <h3 id="catalog-import-missing-title">Записи вузов, которых нет в загруженном реестре</h3>
-              <p>По умолчанию записи остаются. Отметьте те, что нужно архивировать: договор скроется из действующих, история сохранится, повторная загрузка с этой записью вернёт её.</p>
+              <p className="admin-form__hint">По умолчанию записи остаются. Отметьте те, что нужно архивировать: договор скроется из действующих, история сохранится, повторная загрузка с этой записью вернёт её.</p>
               <ul>
                 {importPlan.missingRecords.map((record) => (
                   <li key={record.agreementId}>
@@ -792,11 +850,11 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
                   </li>
                 ))}
               </ul>
-            </section>
+            </div>
           )}
 
           {importPlan.status === 'PREVIEWED' && (
-            <section className="catalog-import__apply" aria-labelledby="catalog-import-apply-title">
+            <div className="import-part import-apply" role="group" aria-labelledby="catalog-import-apply-title">
               <h3 id="catalog-import-apply-title">Применение</h3>
               <p>
                 Выбрано строк: {selectedRowIds.length}. Применяются только строки без ошибок и конфликтов.
@@ -804,7 +862,8 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
               </p>
               <button
                 type="button"
-                disabled={(selectedRowIds.length === 0 && archiveAgreementIds.length === 0) || targetsDirty || busy !== null}
+                className={targetsDirty || pendingApply ? 'button--secondary' : undefined}
+                disabled={applyDisabled}
                 onClick={() => {
                   setPendingApply(true)
                   setError(null)
@@ -812,26 +871,26 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
               >
                 Подтвердить применение
               </button>
-            </section>
+            </div>
           )}
         </section>
       )}
 
       {pendingApply && importPlan !== null && (
-        <section className="catalog-import__confirmation" role="alertdialog" aria-labelledby="catalog-import-confirmation-title">
+        <section className="import-block import-confirmation" role="alertdialog" aria-labelledby="catalog-import-confirmation-title">
           <h3 id="catalog-import-confirmation-title">Применить выбранные строки?</h3>
           <p>
             Будет сохранено строк: {selectedRowIds.length}.
             {archiveAgreementIds.length > 0 ? ` Будет архивировано записей, которых нет в реестре: ${archiveAgreementIds.length}.` : ''}
             {' '}Сервер повторно проверит версию и ключ операции.
           </p>
-          <div>
+          <div className="admin-form__actions">
+            <button type="button" className="button--secondary" disabled={busy === 'apply'} onClick={() => setPendingApply(false)}>Отмена</button>
             {!applyConflict && (
               <button type="button" disabled={busy !== null} onClick={() => void apply()}>
                 {busy === 'apply' ? 'Применяем…' : 'Применить'}
               </button>
             )}
-            <button type="button" disabled={busy === 'apply'} onClick={() => setPendingApply(false)}>Отмена</button>
           </div>
         </section>
       )}

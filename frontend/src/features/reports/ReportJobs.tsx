@@ -1,8 +1,12 @@
+import { useState } from 'react'
 import type { ReportJob } from '../../shared/api/client'
 import { formatMoscowDateTime } from '../../shared/format/datetime'
+import { EmptyState } from '../../shared/ui/EmptyState'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { terms } from '../../shared/ui/terms'
 import { InfoTip } from './ReportControls'
 import { ErrorNotice } from './ReportErrorNotice'
+import { jobsHint } from './reportHints'
 import { groupingTitles, kindLabels } from './reportSelection'
 
 export type JobsState =
@@ -75,16 +79,19 @@ type ReportJobsProps = {
   onDownload: (job: ReportJob) => void
 }
 
-export const ReportJobs = ({ jobsState, pollError, downloadState, onReload, onDownload }: ReportJobsProps) => (
+const visibleJobs = 10
+
+export const ReportJobs = ({ jobsState, pollError, downloadState, onReload, onDownload }: ReportJobsProps) => {
+  const [showAll, setShowAll] = useState(false)
+  const jobs = jobsState.kind === 'ready' ? jobsState.jobs : []
+  const shown = showAll ? jobs : jobs.slice(0, visibleJobs)
+  return (
   <section className="report-jobs" aria-labelledby="report-jobs-title">
     <div className="report-jobs__header">
-      <h3 id="report-jobs-title">Мои выгрузки</h3>
-      <InfoTip label="Мои выгрузки">
-        Файлы строятся на сервере в фоне по тем же фильтрам и колонкам. Пока файл готовится, можно работать в других
-        разделах; готовый файл остаётся здесь, пока его не удалят по сроку хранения. Время — московское.
-      </InfoTip>
-      <button type="button" className="reports__secondary" onClick={onReload} disabled={jobsState.kind === 'loading'}>
-        Обновить список
+      <h2 id="report-jobs-title" className="reports__section-title">Мои выгрузки</h2>
+      <InfoTip label="Мои выгрузки">{jobsHint}</InfoTip>
+      <button type="button" className="button--secondary" onClick={onReload} disabled={jobsState.kind === 'loading'}>
+        {terms.refresh}
       </button>
     </div>
     {pollError !== null && (
@@ -95,11 +102,11 @@ export const ReportJobs = ({ jobsState, pollError, downloadState, onReload, onDo
       <ErrorNotice error={jobsState.error} message="Не удалось загрузить выгрузки." onRetry={onReload} />
     )}
     {jobsState.kind === 'ready' && jobsState.jobs.length === 0 && (
-      <p className="report-empty">Выгрузок пока нет. Откройте отчёт и нажмите «Выгрузить XLSX» или «Выгрузить PDF».</p>
+      <EmptyState text="Выгрузок пока нет. Откройте отчёт и нажмите «Выгрузить»." action={<a href="#/reports">Выбрать отчёт</a>} />
     )}
     {jobsState.kind === 'ready' && jobsState.jobs.length > 0 && (
       <ul className="report-jobs__list" aria-live="polite">
-        {jobsState.jobs.map((job) => {
+        {shown.map((job) => {
           const downloading = downloadState.kind === 'downloading' && downloadState.id === job.id
           return (
             <li key={job.id} className="report-job">
@@ -112,8 +119,8 @@ export const ReportJobs = ({ jobsState, pollError, downloadState, onReload, onDo
                 <JobProgress job={job} />
               </div>
               {job.resultReady && (
-                <button type="button" onClick={() => onDownload(job)} disabled={downloading}>
-                  {downloading ? 'Готовим скачивание…' : 'Скачать'}
+                <button type="button" className="button--secondary" onClick={() => onDownload(job)} disabled={downloading}>
+                  {downloading ? 'Готовим скачивание…' : terms.download}
                 </button>
               )}
               {downloadState.kind === 'failed' && downloadState.id === job.id && (
@@ -124,5 +131,11 @@ export const ReportJobs = ({ jobsState, pollError, downloadState, onReload, onDo
         })}
       </ul>
     )}
+    {jobs.length > visibleJobs && !showAll && (
+      <button type="button" className="button--secondary report-jobs__more" onClick={() => setShowAll(true)}>
+        Показать ещё ({jobs.length - visibleJobs})
+      </button>
+    )}
   </section>
-)
+  )
+}

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { apiClient, type SourceCode, type SyncRun } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { accessHandled, formatDateTime, requestIdOf } from './sourceFormat'
-import './sources.css'
+import './sourcePage.css'
 
 type SourceRunHistoryProps = {
   source: SourceCode
@@ -63,33 +63,31 @@ export const SourceRunHistory = ({ source, onSessionExpired, onProfileUnavailabl
       )}
       {state.kind === 'ready' && state.runs.length === 0 && <p>Запусков ещё не было.</p>}
       {state.kind === 'ready' && state.runs.length > 0 && (
-        <div className="data-sources__table-scroll" role="region" aria-label="История запусков синхронизации" tabIndex={0}>
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">Запуск</th>
-                <th scope="col">Кто и как</th>
-                <th scope="col">Результат</th>
+        <table className="src-table" aria-label="История запусков синхронизации">
+          <thead>
+            <tr>
+              <th scope="col">Запуск</th>
+              <th scope="col">Кто и как</th>
+              <th scope="col">Результат</th>
+            </tr>
+          </thead>
+          <tbody>
+            {state.runs.map((run) => (
+              <tr key={run.id}>
+                <td data-label="Запуск">{formatDateTime(run.startedAt ?? run.createdAt)}{run.finishedAt ? ` – ${formatDateTime(run.finishedAt)}` : ''}</td>
+                <td data-label="Кто и как">
+                  {run.startedByName ?? 'нет данных'}, {run.trigger ? triggerLabels[run.trigger] : 'вручную'}
+                  {run.organizationName ? ` (${run.organizationName})` : ''}
+                </td>
+                <td data-label="Результат">
+                  {run.status === 'SUCCEEDED' && run.failedCount > 0 ? 'завершена частично' : statusLabels[run.status]}: получено {run.fetchedCount}, создано {run.createdCount}, обновлено {run.updatedCount},
+                  {' '}к разбору {run.needsMappingCount}, ошибок {run.failedCount}
+                  {run.errorMessage && <span className={run.status === 'FAILED' ? 'src-error' : undefined}>. {run.errorMessage}</span>}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {state.runs.map((run) => (
-                <tr key={run.id}>
-                  <td>{formatDateTime(run.startedAt ?? run.createdAt)}{run.finishedAt ? ` – ${formatDateTime(run.finishedAt)}` : ''}</td>
-                  <td>
-                    {run.startedByName ?? 'нет данных'}, {run.trigger ? triggerLabels[run.trigger] : 'вручную'}
-                    {run.organizationName ? ` (${run.organizationName})` : ''}
-                  </td>
-                  <td>
-                    {statusLabels[run.status]}: получено {run.fetchedCount}, создано {run.createdCount}, обновлено {run.updatedCount},
-                    {' '}к разбору {run.needsMappingCount}, ошибок {run.failedCount}
-                    {run.errorMessage && <span className={run.status === 'FAILED' ? 'source-error' : undefined}>. {run.errorMessage}</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
       )}
     </details>
   )

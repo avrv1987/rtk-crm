@@ -6,10 +6,14 @@ import {
   type ReportPreviewRequest,
   type SavedReport
 } from '../../shared/api/client'
+import { ActionMenu } from '../../shared/ui/ActionMenu'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
+import { EmptyState } from '../../shared/ui/EmptyState'
+import { terms } from '../../shared/ui/terms'
 import { CardDialog } from '../interactions/cardUi'
 import { InfoTip } from './ReportControls'
 import { ErrorNotice } from './ReportErrorNotice'
+import { savedReportsHint } from './reportHints'
 import { kindLabels } from './reportSelection'
 
 type ListState =
@@ -29,8 +33,6 @@ const periodTitles: Record<Period, string> = {
 }
 
 const periods = Object.keys(periodTitles) as Period[]
-
-const savedReportsHint = 'Сохраняются вид отчёта, период, фильтры и колонки в выбранном порядке. Отчёт хранится на сервере под вашей учётной записью, открывается после выхода и на другом устройстве, другие пользователи его не видят. Относительный период («Прошлый месяц» и другие) пересчитывается при каждом открытии; состояние на сегодня открывается на день открытия.'
 
 const dateText = (value: string | null | undefined) => (
   value === null || value === undefined ? '…' : value.split('-').reverse().join('.')
@@ -180,11 +182,11 @@ const SavedReportRow = ({ report, saved, onOpen, onDelete }: {
           <button type="submit" disabled={name.trim().length === 0 || saved.busy !== null}>
             {saved.busy === 'rename' ? 'Сохраняем…' : 'Сохранить'}
           </button>
-          <button type="button" className="reports__secondary" onClick={() => {
+          <button type="button" className="button--secondary" onClick={() => {
             setName(report.name)
             setEditing(false)
           }}>
-            Отмена
+            {terms.cancel}
           </button>
         </form>
       ) : (
@@ -194,13 +196,14 @@ const SavedReportRow = ({ report, saved, onOpen, onDelete }: {
             <span>{kindLabels[report.definition.kind]} · {periodText(report)}</span>
           </div>
           <div className="saved-report__actions">
-            <button type="button" onClick={() => onOpen(report)} disabled={saved.busy !== null}>Открыть</button>
-            <button type="button" className="reports__secondary" onClick={() => setEditing(true)} disabled={saved.busy !== null}>
-              Переименовать
-            </button>
-            <button type="button" className="reports__secondary saved-report__delete" onClick={() => onDelete(report)} disabled={saved.busy !== null}>
-              Удалить
-            </button>
+            <button type="button" className="button--secondary" onClick={() => onOpen(report)} disabled={saved.busy !== null}>Открыть</button>
+            <ActionMenu
+              label={`${terms.moreActions}: ${report.name}`}
+              items={[
+                { label: 'Переименовать', onSelect: () => setEditing(true) },
+                { label: 'Удалить', danger: true, separated: true, onSelect: () => onDelete(report) }
+              ]}
+            />
           </div>
         </>
       )}
@@ -221,7 +224,10 @@ export const SavedReportsList = ({ saved, onOpen }: { saved: SavedReportsModel; 
         <ErrorNotice error={saved.listState.error} message="Не удалось загрузить сохранённые отчёты." onRetry={() => void saved.load()} />
       )}
       {saved.listState.kind === 'ready' && saved.reports.length === 0 && (
-        <p className="report-empty">Сохранённых отчётов пока нет. Откройте отчёт ниже, настройте его и нажмите «Сохранить отчёт».</p>
+        <EmptyState
+          text="Сохранённых отчётов пока нет. Откройте отчёт, настройте его и выберите «⋯» → «Сохранить отчёт»."
+          action={<a href="#/reports">Выбрать отчёт</a>}
+        />
       )}
       {saved.reports.length > 0 && (
         <ul className="saved-reports__list">
@@ -294,7 +300,6 @@ export const SaveReportDialog = ({ open, onClose, saved, definition, disabled, c
   return (
     <CardDialog open={open} title="Сохранить отчёт" onClose={onClose}>
       <p className="reports__hint">{savedReportsHint}</p>
-      <p className="reports__hint">Без сохранения текущий выбор живёт только в этой вкладке и удаляется при выходе из CRM.</p>
       {disabled && <p className="reports__problem" role="alert">Сохранить можно, когда выбор корректен: проверьте период и колонки.</p>}
       <form className="save-report" onSubmit={(event) => void create(event)}>
         {!snapshot && (
@@ -326,7 +331,7 @@ export const SaveReportDialog = ({ open, onClose, saved, definition, disabled, c
           <button type="submit" disabled={name.trim().length === 0 || disabled || saved.busy !== null}>
             {saved.busy === 'create' ? 'Сохраняем…' : current === undefined ? 'Сохранить' : 'Сохранить как новый'}
           </button>
-          <button type="button" className="reports__secondary" onClick={onClose}>Отмена</button>
+          <button type="button" className="button--secondary" onClick={onClose}>{terms.cancel}</button>
         </div>
       </form>
       <SavedError saved={saved} />

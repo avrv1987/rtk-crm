@@ -1,5 +1,8 @@
 import type { ReactNode } from 'react'
 import type { Me } from '../../shared/api/client'
+import { ActionMenu, type ActionMenuItem } from '../../shared/ui/ActionMenu'
+import { personInitials, roleName, type NavItem } from '../../app/routing'
+import { passwordUrl } from './ActivationRequest'
 
 type SessionScreenProps = {
   title: string
@@ -16,31 +19,52 @@ export const SessionScreen = ({ title, children }: SessionScreenProps) => (
   </main>
 )
 
-const roleNames: Record<Me['role'], string> = {
-  USER: 'КАМ',
-  LEADER: 'Руководитель команды',
-  ADMIN: 'Администратор',
-  MANAGEMENT: 'Руководство',
-  PARTNER: 'Представитель вуза'
+const profileFacts = (profile: Me): [string, string][] => {
+  const facts: [string, string][] = profile.displayName
+    ? [['Сотрудник', profile.displayName], ['Роль', roleName(profile.role)]]
+    : [['Роль', roleName(profile.role)]]
+  if (profile.role === 'MANAGEMENT') {
+    facts.push(['Область', 'Все команды, только просмотр'])
+  } else if (profile.role !== 'PARTNER' && (profile.teamName !== null || profile.role !== 'ADMIN')) {
+    facts.push(['Команда', profile.teamName ?? 'Не назначена, вузы недоступны'])
+  }
+  return facts
 }
 
-export const ProfileSummary = ({ profile }: { profile: Me }) => (
-  <dl className="profile-summary">
-    <div className="profile-summary__chip" title="Роль в CRM">
-      <dt>Роль</dt>
-      <dd>{roleNames[profile.role]}</dd>
-    </div>
-    {profile.role === 'MANAGEMENT' && (
-      <div className="profile-summary__chip" title="Область видимости данных">
-        <dt>Область</dt>
-        <dd>Все команды, только просмотр</dd>
-      </div>
-    )}
-    {profile.role !== 'MANAGEMENT' && profile.role !== 'PARTNER' && (profile.teamName !== null || profile.role !== 'ADMIN') && (
-      <div className="profile-summary__chip" title="Команда">
-        <dt>Команда</dt>
-        <dd>{profile.teamName ?? 'Не назначена, вузы недоступны'}</dd>
-      </div>
-    )}
-  </dl>
-)
+type ProfileMenuProps = {
+  profile: Me
+  phoneItems: NavItem[]
+  onLogout: () => void
+}
+
+export const ProfileMenu = ({ profile, phoneItems, onLogout }: ProfileMenuProps) => {
+  const items: ActionMenuItem[] = [
+    ...phoneItems.map((item) => ({ label: item.label, href: item.href, phoneOnly: true })),
+    { label: 'Сменить пароль', href: passwordUrl, external: true },
+    { label: 'Справка', href: '#/help' },
+    { label: 'Выйти', onSelect: onLogout, separated: true }
+  ]
+  return (
+    <ActionMenu
+      className="profile-menu"
+      label={`Профиль: ${profile.displayName ?? roleName(profile.role)}`}
+      toggle={(
+        <>
+          <span className="profile-menu__avatar" aria-hidden="true">{personInitials(profile.displayName, profile.role)}</span>
+          <span className="profile-menu__role">{profile.displayName ?? roleName(profile.role)}</span>
+        </>
+      )}
+      header={(
+        <dl className="profile-menu__facts">
+          {profileFacts(profile).map(([term, value]) => (
+            <div key={term}>
+              <dt>{term}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      items={items}
+    />
+  )
+}

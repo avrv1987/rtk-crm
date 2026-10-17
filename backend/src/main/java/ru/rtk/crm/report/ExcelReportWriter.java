@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Locale;
 
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.SpreadsheetVersion;
@@ -24,6 +25,8 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class ExcelReportWriter {
+    public static final String TOTALS_SHEET = "Итоги по менеджерам";
+
     private static final int STREAMING_WINDOW = 200;
     private static final int MAX_CELL_LENGTH = SpreadsheetVersion.EXCEL97.getMaxTextLength();
 
@@ -85,6 +88,31 @@ public class ExcelReportWriter {
 
         sheet.createFreezePane(0, headerRow + 1);
         sheet.setAutoFilter(new CellRangeAddress(headerRow, Math.max(headerRow, rowIndex - 1), 0, lastColumn));
+
+        if (!document.groupTotals().isEmpty()) {
+            fillTotals(workbook, document, styles);
+        }
+    }
+
+    // Итоги лежат на отдельном листе: в диапазон автофильтра и сумм листа данных они не попадают.
+    private void fillTotals(Workbook workbook, ReportDocument document, Styles styles) {
+        Sheet sheet = workbook.createSheet(TOTALS_SHEET);
+        List<ReportColumn> columns = document.columns();
+        text(sheet.createRow(0).createCell(0), document.title() + ": " + TOTALS_SHEET.toLowerCase(Locale.ROOT), styles.title);
+        Row header = sheet.createRow(2);
+        for (int column = 0; column < columns.size(); column++) {
+            ReportColumn reportColumn = columns.get(column);
+            text(header.createCell(column), document.columnTitle(reportColumn), styles.header);
+            sheet.setColumnWidth(column, Math.min(reportColumn.width(), 80) * 256);
+        }
+        int rowIndex = 3;
+        for (ReportRow reportRow : document.groupTotals()) {
+            Row row = sheet.createRow(rowIndex++);
+            for (int column = 0; column < columns.size(); column++) {
+                value(row.createCell(column), columns.get(column), reportRow, styles);
+            }
+        }
+        sheet.createFreezePane(0, 3);
     }
 
     private void value(Cell cell, ReportColumn column, ReportRow row, Styles styles) {

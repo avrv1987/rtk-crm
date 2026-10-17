@@ -1,60 +1,68 @@
-export type AdminSectionSlug =
-  | 'profiles'
-  | 'catalogs'
-  | 'workflow-templates'
-  | 'catalog-import'
-  | 'sources'
-  | 'journal'
-  | 'personal-data'
-  | 'retention'
-  | 'activity-kinds'
-  | 'pending-source-records'
+import { useEffect, useState } from 'react'
+import { adminGroupsFor, adminSectionsFor, type AdminNavRole, type AdminSectionSlug } from './adminSections'
 
-export type AdminNavRole = 'ADMIN' | 'LEADER'
-
-type AdminSectionEntry = { slug: AdminSectionSlug; label: string; roles: AdminNavRole[] }
-
-const adminOnly: AdminNavRole[] = ['ADMIN']
-const adminAndLeader: AdminNavRole[] = ['ADMIN', 'LEADER']
-const leaderOnly: AdminNavRole[] = ['LEADER']
-
-export const adminSections: AdminSectionEntry[] = [
-  { slug: 'profiles', label: 'Профили, команды и вузы', roles: adminOnly },
-  { slug: 'catalogs', label: 'Справочники', roles: adminOnly },
-  { slug: 'workflow-templates', label: 'Шаблоны этапов', roles: adminAndLeader },
-  { slug: 'pending-source-records', label: 'Заявки источников', roles: leaderOnly },
-  { slug: 'catalog-import', label: 'Импорт каталогов', roles: adminOnly },
-  { slug: 'sources', label: 'Источники данных', roles: adminOnly },
-  { slug: 'journal', label: 'Журнал администратора и безопасности', roles: adminOnly },
-  { slug: 'personal-data', label: 'Субъект персональных данных', roles: adminOnly },
-  { slug: 'retention', label: 'Сроки хранения', roles: adminOnly },
-  { slug: 'activity-kinds', label: 'Виды мероприятий', roles: adminOnly }
-]
-
-export const adminSectionsFor = (role: AdminNavRole): AdminSectionEntry[] => (
-  adminSections.filter((section) => section.roles.includes(role))
-)
-
-export const defaultAdminSection: AdminSectionSlug = adminSections[0].slug
-
-export const defaultAdminSectionFor = (role: AdminNavRole): AdminSectionSlug => adminSectionsFor(role)[0].slug
-
-export const resolveAdminSection = (slug: string | undefined, role: AdminNavRole): AdminSectionSlug => {
-  const allowed = adminSectionsFor(role)
-  const found = allowed.find((section) => section.slug === slug)
-  return found?.slug ?? defaultAdminSectionFor(role)
+type AdminSectionNavProps = {
+  active: AdminSectionSlug
+  role: AdminNavRole
+  counts?: Partial<Record<AdminSectionSlug, number>>
 }
 
-export const AdminSectionNav = ({ active, role }: { active: AdminSectionSlug; role: AdminNavRole }) => (
-  <nav className="admin-section-nav" aria-label="Разделы администрирования">
-    <ul>
-      {adminSectionsFor(role).map((section) => (
-        <li key={section.slug}>
-          <a href={`#/admin/${section.slug}`} aria-current={section.slug === active ? 'page' : undefined}>
-            {section.label}
-          </a>
-        </li>
-      ))}
-    </ul>
-  </nav>
+const Counter = ({ value }: { value: number | undefined }) => (
+  value === undefined || value === 0 ? null : <span className="admin-section-nav__count">{value}</span>
 )
+
+export const AdminSectionNav = ({ active, role, counts = {} }: AdminSectionNavProps) => {
+  const [open, setOpen] = useState(false)
+  const activeLabel = adminSectionsFor(role).find((section) => section.slug === active)?.label ?? ''
+
+  useEffect(() => {
+    setOpen(false)
+  }, [active])
+
+  if (role === 'LEADER') {
+    return (
+      <nav className="admin-section-nav" aria-label="Разделы настроек команды">
+        <ul>
+          {adminSectionsFor(role).map((section) => (
+            <li key={section.slug}>
+              <a href={`#/admin/${section.slug}`} aria-current={section.slug === active ? 'page' : undefined}>
+                {section.label}
+                <Counter value={counts[section.slug]} />
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    )
+  }
+
+  return (
+    <nav className="admin-section-nav admin-section-nav--side" aria-label="Разделы администрирования">
+      <button
+        type="button"
+        className="button--secondary admin-section-nav__toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span aria-hidden="true">☰</span> Разделы: {activeLabel}
+      </button>
+      <div className={`admin-section-nav__groups${open ? ' admin-section-nav__groups--open' : ''}`}>
+        {adminGroupsFor(role).map(({ group, sections }) => (
+          <div key={group} className="admin-section-nav__group">
+            <p className="admin-section-nav__group-title">{group}</p>
+            <ul>
+              {sections.map((section) => (
+                <li key={section.slug}>
+                  <a href={`#/admin/${section.slug}`} aria-current={section.slug === active ? 'page' : undefined}>
+                    {section.label}
+                    <Counter value={counts[section.slug]} />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </nav>
+  )
+}

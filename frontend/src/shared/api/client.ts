@@ -150,6 +150,9 @@ export type ReminderDigest = components['schemas']['ReminderDigest']
 export type ReminderSettings = components['schemas']['ReminderSettings']
 export type LmsSignals = components['schemas']['LmsSignals']
 export type LmsSignal = components['schemas']['LmsSignal']
+export type WorkLearning = components['schemas']['WorkLearning']
+export type LearningActivity = components['schemas']['LearningActivity']
+export type ReminderQualification = components['schemas']['ReminderQualification']
 export type WorkflowStageInput = components['schemas']['WorkflowStageInput']
 export type WorkflowTransitionInput = components['schemas']['WorkflowTransitionInput']
 export type WorkflowTemplate = components['schemas']['WorkflowTemplate']
@@ -183,6 +186,7 @@ export type CrmProfile = components['schemas']['CrmProfile']
 export type PageCrmProfile = components['schemas']['PageCrmProfile']
 export type KeycloakRoleMigration = components['schemas']['KeycloakRoleMigration']
 export type CrmProfileListParams = NonNullable<operations['listCrmProfiles']['parameters']['query']>
+export type CrmProfileExportParams = NonNullable<operations['exportCrmProfiles']['parameters']['query']>
 export type CrmProfileUpdate = components['schemas']['CrmProfileUpdate']
 export type NewEmployee = components['schemas']['NewEmployee']
 export type AccountCredentials = components['schemas']['AccountCredentials']
@@ -226,6 +230,20 @@ export type PendingSourceRecord = components['schemas']['PendingSourceRecord']
 export type SourceSettings = components['schemas']['SourceSettings']
 export type SourceSettingsUpdate = components['schemas']['SourceSettingsUpdate']
 export type SourceConnectionCheck = components['schemas']['SourceConnectionCheck']
+export type LaborMarketSettings = components['schemas']['LaborMarketSettings']
+export type LaborMarketSettingsUpdate = components['schemas']['LaborMarketSettingsUpdate']
+export type LaborMarketMappings = components['schemas']['LaborMarketMappings']
+export type LaborMarketDirection = components['schemas']['LaborMarketDirection']
+export type LaborMarketMappingUpdate = components['schemas']['LaborMarketMappingUpdate']
+export type CrmEventList = components['schemas']['CrmEventList']
+export type CrmEventView = components['schemas']['CrmEventView']
+export type CrmEventStatus = components['schemas']['CrmEventStatus']
+export type CrmEventKind = components['schemas']['CrmEventKind']
+export type CrmEventCounts = components['schemas']['CrmEventCounts']
+export type CrmPreview = components['schemas']['CrmPreview']
+export type CrmPreviewItem = components['schemas']['CrmPreviewItem']
+export type CrmPreviewOutcome = components['schemas']['CrmPreviewOutcome']
+export type CrmEventsRequeued = components['schemas']['CrmEventsRequeued']
 export type SourceOrganizationCreate = components['schemas']['SourceOrganizationCreate']
 export type SourceOrganizationCreated = components['schemas']['SourceOrganizationCreated']
 export type InteractionSourceStatus = components['schemas']['InteractionSourceStatus']
@@ -913,24 +931,11 @@ export class ApiClient {
   }
 
   async listCrmProfiles(query: CrmProfileListParams = {}): Promise<PageCrmProfile> {
-    const searchParams = new URLSearchParams()
-    if (query.page !== undefined) {
-      searchParams.set('page', query.page.toString())
-    }
-    if (query.size !== undefined) {
-      searchParams.set('size', query.size.toString())
-    }
-    if (query.sort !== undefined) {
-      searchParams.set('sort', query.sort)
-    }
-    if (query.pending !== undefined) {
-      searchParams.set('pending', query.pending.toString())
-    }
-    if (query.q !== undefined && query.q !== '') {
-      searchParams.set('q', query.q)
-    }
-    const suffix = searchParams.size === 0 ? '' : `?${searchParams.toString()}`
-    return this.request<PageCrmProfile>(`/api/admin/crm-profiles${suffix}`)
+    return this.request<PageCrmProfile>(`/api/admin/crm-profiles${querySuffix(query)}`)
+  }
+
+  async exportCrmProfiles(query: CrmProfileExportParams = {}): Promise<Blob> {
+    return this.download(`/api/admin/crm-profiles/export${querySuffix(query)}`)
   }
 
   async listCrmProfileEvents(id: CrmProfile['id']): Promise<CrmProfileEvent[]> {
@@ -1528,6 +1533,14 @@ export class ApiClient {
     return this.post<LmsSignals>(`/api/interactions/${encodeURIComponent(id)}/lms-signals/dismissals`, payload)
   }
 
+  async recordInteractionLmsSignalRisk(
+    id: Interaction['id'],
+    payload: components['schemas']['LmsSignalRisk'],
+    idempotencyKey: string
+  ): Promise<Interaction> {
+    return this.command<Interaction>(`/api/interactions/${encodeURIComponent(id)}/lms-signals/risks`, payload, idempotencyKey)
+  }
+
   async createOrganizationFromAdminSourceRecord(
     id: SourceRecord['id'],
     payload: SourceOrganizationCreate
@@ -1565,6 +1578,42 @@ export class ApiClient {
 
   async checkSourceConnection(source: SourceCode, payload: SourceSettingsUpdate): Promise<SourceConnectionCheck> {
     return this.post<SourceConnectionCheck>(`/api/admin/sources/${encodeURIComponent(source)}/check`, payload)
+  }
+
+  async getLaborMarketSettings(): Promise<LaborMarketSettings> {
+    return this.request<LaborMarketSettings>('/api/admin/labor-market/settings')
+  }
+
+  async updateLaborMarketSettings(payload: LaborMarketSettingsUpdate): Promise<LaborMarketSettings> {
+    return this.send<LaborMarketSettings>('/api/admin/labor-market/settings', 'PUT', payload)
+  }
+
+  async resetLaborMarketSettings(): Promise<void> {
+    return this.send<void>('/api/admin/labor-market/settings', 'DELETE')
+  }
+
+  async checkLaborMarketConnection(payload: LaborMarketSettingsUpdate): Promise<SourceConnectionCheck> {
+    return this.post<SourceConnectionCheck>('/api/admin/labor-market/check', payload)
+  }
+
+  async listLaborMarketMappings(): Promise<LaborMarketMappings> {
+    return this.request<LaborMarketMappings>('/api/admin/labor-market/mappings')
+  }
+
+  async updateLaborMarketMapping(directionId: LaborMarketDirection['directionId'], payload: LaborMarketMappingUpdate): Promise<LaborMarketDirection> {
+    return this.send<LaborMarketDirection>(`/api/admin/labor-market/mappings/${encodeURIComponent(directionId)}`, 'PUT', payload)
+  }
+
+  async listCrmExchangeEvents(status?: CrmEventStatus): Promise<CrmEventList> {
+    return this.request<CrmEventList>(`/api/admin/crm-exchange/events${status ? `?status=${encodeURIComponent(status)}` : ''}`)
+  }
+
+  async retryCrmExchangeEvents(): Promise<CrmEventsRequeued> {
+    return this.post<CrmEventsRequeued>('/api/admin/crm-exchange/events/retry')
+  }
+
+  async previewCrmExchange(): Promise<CrmPreview> {
+    return this.post<CrmPreview>('/api/admin/crm-exchange/preview')
   }
 
   async addSourceMappingRun(id: SourceMapping['id'], payload: SourceMappingUpdate): Promise<SourceMapping> {
@@ -1644,7 +1693,7 @@ export class ApiClient {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/json',
+        Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/csv, application/json',
         [this.csrf!.headerName]: this.csrf!.token
       },
       body: JSON.stringify(payload)
@@ -1778,6 +1827,23 @@ export class ApiClient {
     })
   }
 
+  async upload<T>(path: string, formData: FormData, idempotencyKey: string): Promise<T> {
+    if (idempotencyKey.length === 0) {
+      throw new Error('An idempotency key is required for a command.')
+    }
+    if (this.csrf === null) {
+      await this.refreshCsrf()
+    }
+    return this.request<T>(path, {
+      method: 'POST',
+      headers: {
+        [this.csrf!.headerName]: this.csrf!.token,
+        'Idempotency-Key': idempotencyKey
+      },
+      body: formData
+    })
+  }
+
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await this.fetchApi(path, {
       ...init,
@@ -1797,8 +1863,13 @@ export class ApiClient {
     return body as T
   }
 
+  // Единственный автоматический повтор в клиенте: если сервер ответил CSRF_INVALID (токен устарел, например после
+  // повторного входа), токен обновляется и тот же запрос уходит ещё раз. Повтор безопасен: заголовок
+  // Idempotency-Key остаётся прежним, и сервер не выполнит команду дважды. Любой другой 403 повтором не
+  // обрабатывается, а повтор при потере сети отдан пользователю.
   private async fetchApi(path: string, init: RequestInit): Promise<Response> {
     const response = await fetch(path, { ...init, credentials: 'include' })
+    // Повтор возможен, только если запрос вообще нёс CSRF-заголовок: запросы чтения (GET) токен не используют.
     const headerName = this.csrf?.headerName
     if (response.status !== 403 || headerName === undefined || !new Headers(init.headers).has(headerName)) {
       return response
@@ -1807,6 +1878,8 @@ export class ApiClient {
     if (!isApiErrorPayload(body) || body.code !== 'CSRF_INVALID') {
       return response
     }
+    // Старый заголовок удаляется до установки нового: имя заголовка берётся из свежего ответа сервера и может
+    // отличаться от прежнего.
     const csrf = await this.refreshCsrf()
     const headers = new Headers(init.headers)
     headers.delete(headerName)

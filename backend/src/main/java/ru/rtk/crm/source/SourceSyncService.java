@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -49,10 +50,13 @@ public class SourceSyncService {
 
     private final SourceRepository repository;
     private final SiteRecordApplier applier;
+    private final CrmRecordApplier crmApplier;
+    private final CrmExchangeService crmExchange;
     private final PaidOrderEnrolment paidOrderEnrolment;
     private final SiteApiClient siteApiClient;
     private final MoodleSnapshotApplier moodleApplier;
     private final MoodleClient moodleClient;
+    private final LaborMarketSync laborMarketSync;
     private final SourceSyncExecutor executor;
     private final SourceProperties properties;
     private final SourceSettingsService settings;
@@ -62,10 +66,13 @@ public class SourceSyncService {
     public SourceSyncService(
             SourceRepository repository,
             SiteRecordApplier applier,
+            CrmRecordApplier crmApplier,
+            CrmExchangeService crmExchange,
             PaidOrderEnrolment paidOrderEnrolment,
             SiteApiClient siteApiClient,
             MoodleSnapshotApplier moodleApplier,
             MoodleClient moodleClient,
+            LaborMarketSync laborMarketSync,
             SourceSyncExecutor executor,
             SourceProperties properties,
             SourceSettingsService settings,
@@ -73,10 +80,13 @@ public class SourceSyncService {
     ) {
         this.repository = repository;
         this.applier = applier;
+        this.crmApplier = crmApplier;
+        this.crmExchange = crmExchange;
         this.paidOrderEnrolment = paidOrderEnrolment;
         this.siteApiClient = siteApiClient;
         this.moodleApplier = moodleApplier;
         this.moodleClient = moodleClient;
+        this.laborMarketSync = laborMarketSync;
         this.executor = executor;
         this.properties = properties;
         this.settings = settings;
@@ -103,6 +113,8 @@ public class SourceSyncService {
             if (!configured(source)) {
                 continue;
             }
+            // Запуск по расписанию идёт от администратора, который уже запускал источник вручную: записи и карточки
+            // создаются от имени действующего пользователя. Пока такого нет, расписание источник пропускает.
             Optional<UUID> actor = repository.findScheduleActor(source);
             if (actor.isEmpty()) {
                 log.info("Scheduled sync of {} skipped: no active administrator has started it manually yet", source);
@@ -116,6 +128,7 @@ public class SourceSyncService {
         }
     }
 
+    // Начальная загрузка только пока источник ни разу не загружался полностью; позже данные обновляют обычные запуски.
     Optional<SyncRunView> synchronizeIfNeverSucceeded(UUID actorProfileId, SourceCode source) {
         if (repository.findLastFullSuccessAt(source).isPresent()) {
             return Optional.empty();
@@ -141,6 +154,7 @@ public class SourceSyncService {
         List<Long> courseIds = repository.findLearningMappingKeys(target.organizationId(), target.programId()).stream()
                 .map(key -> Long.valueOf(key.split(":", 2)[0]))
                 .distinct()
+                // Сопоставление могло остаться от курса, убранного из списка CRM: такой курс не запрашивается.
                 .filter(settings.moodle().courseIds()::contains)
                 .toList();
         if (courseIds.isEmpty()) {
@@ -150,8 +164,12 @@ public class SourceSyncService {
             throw SourceException.notConfigured(SourceCode.MOODLE);
         }
         UUID runId = insertRun(SourceCode.MOODLE, profile.id(), SyncTrigger.CARD, target.organizationId());
+        // Запуск из карточки читает курсы программы, но применяет только записи этого вуза и программы
+        // (LearningScope.covers).
         run(runId, new LearningScope(target.organizationId(), target.programId(), courseIds), null);
         SyncRunView run = repository.findRun(runId).map(StoredRun::run).orElseThrow(SourceException::recordNotFound);
+        // Частичный запуск тоже SUCCEEDED: карточка получает данные прочитанных курсов, ошибка нужна только при полном
+        // провале.
         if (run.status() != SyncRunStatus.SUCCEEDED) {
             throw SourceException.learningSyncFailed(run.errorMessage());
         }
@@ -173,7 +191,12 @@ public class SourceSyncService {
     }
 
     boolean configured(SourceCode source) {
-        return source == SourceCode.MOODLE ? settings.moodle().configured() : settings.website().configured();
+        return switch (source) {
+            case MOODLE -> settings.moodle().configured();
+            case LABOR_MARKET -> laborMarketSync.configured();
+            case CUSTOMER_CRM -> settings.crm().configured();
+            case WEBSITE -> settings.website().configured();
+        };
     }
 
     boolean stale(SourceCode source, OffsetDateTime lastSuccessAt) {
@@ -189,6 +212,7 @@ public class SourceSyncService {
         try {
             executor.execute(() -> run(runId));
         } catch (TaskRejectedException exception) {
+            // Отклонённый очередью запуск удаляется: висящий PENDING блокировал бы источник (hasActiveRun).
             repository.deleteRun(runId);
             throw SourceException.capacityExceeded();
         }
@@ -196,6 +220,7 @@ public class SourceSyncService {
     }
 
     private UUID insertRun(SourceCode source, UUID actorProfileId, SyncTrigger trigger, UUID organizationId) {
+        // Одновременно активен один запуск источника: два запуска применяли бы одни и те же записи.
         if (repository.hasActiveRun(source)) {
             throw SourceException.alreadyRunning();
         }
@@ -203,6 +228,8 @@ public class SourceSyncService {
         try {
             repository.insertRun(runId, source, actorProfileId, trigger, organizationId, OffsetDateTime.now());
         } catch (DuplicateKeyException exception) {
+            // hasActiveRun не защищает от гонки двух запросов: единственность активного запуска окончательно держит
+            // ограничение в базе.
             throw SourceException.alreadyRunning();
         }
         return runId;
@@ -210,6 +237,7 @@ public class SourceSyncService {
 
     public PaidOrderUpload uploadPaidOrders(UUID actorProfileId, PaidOrderBatch batch) {
         UUID runId = insertRun(SourceCode.WEBSITE, actorProfileId, SyncTrigger.UPLOAD, null);
+        // Загрузка применяется в этом же потоке, поэтому запуск занимается сразу, минуя очередь исполнителя.
         if (!repository.claimRun(runId, null, OffsetDateTime.now())) {
             throw new IllegalStateException("Paid order upload run was claimed by another worker");
         }
@@ -246,7 +274,12 @@ public class SourceSyncService {
             saveMoodleMapping(profile, stored, request, now);
         } else {
             saveSiteMappings(profile, stored, request, now);
+            if (stored.source() == SourceCode.CUSTOMER_CRM && request != null && request.contactId() != null) {
+                crmApplier.chooseContact(stored, request.contactId());
+            }
         }
+        // Выбор вуза или программы может разрешить и другие записи с теми же ключами: ожидающие сопоставления
+        // переприменяются ограниченным пакетом (REAPPLY_LIMIT), остальные подхватит следующая загрузка.
         reapply(stored.source(), recordId, profile.id());
         int reapplied = 0;
         for (UUID otherId : repository.findNeedsMappingIds(stored.source(), REAPPLY_LIMIT)) {
@@ -258,14 +291,16 @@ public class SourceSyncService {
         return new SourceRecordApplyResult(recordView(updated), reapplied);
     }
 
-    SourceRecordApplyResult applyWebsiteMatching(UUID recordId, Predicate<SiteRecord> sameReference, UUID actorProfileId) {
-        reapply(SourceCode.WEBSITE, recordId, actorProfileId);
+    // Как apply, но из ожидающих сопоставления берутся только записи с той же ссылкой (sameReference): чужие записи
+    // этим выбором не решаются.
+    SourceRecordApplyResult applyMatching(SourceCode source, UUID recordId, Predicate<SiteRecord> sameReference, UUID actorProfileId) {
+        reapply(source, recordId, actorProfileId);
         int reapplied = 0;
-        for (UUID otherId : repository.findNeedsMappingIds(SourceCode.WEBSITE, REAPPLY_LIMIT)) {
+        for (UUID otherId : repository.findNeedsMappingIds(source, REAPPLY_LIMIT)) {
             StoredRecord other = repository.findRecord(otherId).orElse(null);
             if (other != null && !otherId.equals(recordId)
                     && sameReference.test(SiteRecord.parseStored(objectMapper, other.payload()))
-                    && reapply(SourceCode.WEBSITE, otherId, actorProfileId) == SourceRecordStatus.APPLIED) {
+                    && reapply(source, otherId, actorProfileId) == SourceRecordStatus.APPLIED) {
                 reapplied++;
             }
         }
@@ -273,16 +308,18 @@ public class SourceSyncService {
         return new SourceRecordApplyResult(recordView(updated), reapplied);
     }
 
-    void reresolveWebsiteLinked(String column, UUID targetId, Predicate<SiteRecord> sameReference, UUID actorProfileId) {
-        for (StoredRecord stored : repository.findWebsiteRecordsLinkedTo(column, targetId, REAPPLY_LIMIT)) {
+    void reresolveLinked(SourceCode source, String column, UUID targetId, Predicate<SiteRecord> sameReference, UUID actorProfileId) {
+        SourceRecordApplier recordApplier = source == SourceCode.CUSTOMER_CRM ? crmApplier : applier;
+        for (StoredRecord stored : repository.findRecordsLinkedTo(source, column, targetId, REAPPLY_LIMIT)) {
             if (!sameReference.test(SiteRecord.parseStored(objectMapper, stored.payload()))) {
                 continue;
             }
             try {
-                applier.reresolve(stored.id(), actorProfileId);
+                recordApplier.reresolve(stored.id(), actorProfileId);
             } catch (RuntimeException exception) {
+                // Сбой одной записи не срывает остальные: она помечается ошибкой, пересчёт продолжается.
                 log.warn("Source record {} was not resolved again after a mapping change", stored.id(), exception);
-                applier.markFailed(stored.id(), failureMessage(exception));
+                recordApplier.markFailed(stored.id(), failureMessage(exception));
             }
         }
     }
@@ -317,6 +354,8 @@ public class SourceSyncService {
 
     private void saveMoodleMapping(CrmProfile profile, StoredRecord stored, SourceRecordApplyRequest request, OffsetDateTime now) {
         boolean targetChosen = request != null && (request.organizationId() != null || request.programId() != null);
+        // Запись уже сопоставлена и выбор не менялся: повторное сохранение ничего не делает. Ожидающей записи нужен
+        // явный выбор вуза.
         if (!targetChosen && stored.status() != SourceRecordStatus.NEEDS_MAPPING) {
             return;
         }
@@ -324,10 +363,13 @@ public class SourceSyncService {
             throw new InteractionValidationException("organizationId", "Выберите вуз для курса или группы Moodle");
         }
         RunDates run = validatedRun(request.organizationId(), request.programId(), request.runStartsOn(), request.runEndsOn());
-        moodleApplier.saveMapping(LearningUnit.parseStored(objectMapper, stored.payload()), request.organizationId(),
-                request.programId(), run, request.runKind(), profile.id(), now);
+        LearningUnit unit = LearningUnit.parseStored(objectMapper, stored.payload());
+        moodleApplier.saveMapping(unit, request.organizationId(), request.programId(), run,
+                request.runKind() != null ? request.runKind() : suggestedRunKind(unit), profile.id(), now);
     }
 
+    // Без дат потока сопоставление не сохраняется: по датам наблюдение относится к потоку
+    // (MoodleSnapshotApplier.publish).
     RunDates validatedRun(UUID organizationId, UUID programId, LocalDate startsOn, LocalDate endsOn) {
         if (organizationId == null) {
             throw new InteractionValidationException("organizationId", "Выберите вуз для курса или группы Moodle");
@@ -353,6 +395,8 @@ public class SourceSyncService {
         return new RunDates(startsOn, endsOn);
     }
 
+    // Запуск, оставшийся «в процессе» от прежнего процесса, не завершится никогда и блокировал бы источник. Только в
+    // веб-контексте (тесты и утилиты чужие запуски не трогают) и только созданные до старта этого процесса.
     @EventListener
     public void onApplicationReady(ApplicationReadyEvent event) {
         if (event.getApplicationContext() instanceof WebServerApplicationContext) {
@@ -378,16 +422,25 @@ public class SourceSyncService {
         }
         SourceCode source = stored.run().source();
         OffsetDateTime updatedSince = repository.findUpdatedSince(source).orElse(null);
+        // Захват атомарный (PENDING → RUNNING): запуск, уже взятый другим исполнителем, второй раз не стартует. Курсор
+        // «обновлено с» фиксируется в запуске; продвигается он только после успешной загрузки, поэтому сбой не
+        // пропускает записи.
         if (!repository.claimRun(runId, updatedSince, OffsetDateTime.now())) {
             return;
         }
         try {
             if (source == SourceCode.MOODLE) {
                 runMoodle(runId, stored.startedBy(), scope);
+            } else if (source == SourceCode.LABOR_MARKET) {
+                runLaborMarket(runId, stored.startedBy());
+            } else if (source == SourceCode.CUSTOMER_CRM) {
+                crmExchange.run(runId, updatedSince, stored.startedBy());
             } else {
                 runWebsite(runId, source, updatedSince, stored.startedBy(), siteOrganizationId);
             }
         } catch (SourceFetchException exception) {
+            // Текст ошибки источника безопасен для показа; для остальных исключений в запуск пишется общее сообщение, а
+            // подробности остаются в журнале сервера.
             log.warn("Source sync run {} of {} failed: {}", runId, source, exception.code());
             repository.failRun(runId, exception.code(), exception.getMessage(), OffsetDateTime.now());
         } catch (RuntimeException exception) {
@@ -422,6 +475,8 @@ public class SourceSyncService {
             return;
         }
         List<SiteRecord> fetched = response.records();
+        // Обновление из карточки берёт только записи этого вуза и не двигает курсор updatedSince: иначе общая загрузка
+        // пропустила бы записи других вузов.
         List<SiteRecord> items = organizationId == null
                 ? fetched
                 : fetched.stream()
@@ -429,6 +484,7 @@ public class SourceSyncService {
                         .filter(item -> applier.resolvedOrganizationId(item).filter(organizationId::equals).isPresent())
                         .toList();
         SyncTotals totals = applyAll(items, runId, actorProfileId);
+        // Записи без обязательных полей считаются ошибками в итогах, а сообщение запуска называет их число.
         int unstorable = (int) items.stream().filter(item -> !item.storable()).count();
         repository.completeRun(
                 runId,
@@ -442,18 +498,30 @@ public class SourceSyncService {
         items.stream()
                 .filter(SiteRecord::storable)
                 .map(SiteRecord::updatedAt)
+                // Курсор — наибольший updatedAt среди сохранённых записей; несохранённые его не двигают.
                 .max(OffsetDateTime::compareTo)
                 .ifPresent(latest -> repository.advanceUpdatedSince(source, latest, OffsetDateTime.now()));
     }
 
+    private void runLaborMarket(UUID runId, UUID actorProfileId) {
+        LaborMarketSync.Result result = laborMarketSync.run(runId, actorProfileId);
+        repository.completeRun(runId, result.totals(), result.message(), OffsetDateTime.now());
+    }
+
     private void runMoodle(UUID runId, UUID actorProfileId, LearningScope scope) {
         SourceProperties.Moodle moodle = settings.moodle();
+        // Поток группы определяется на сегодня по МСК, как и дата наблюдения при применении.
+        LocalDate today = LocalDate.now(ZONE);
+        MoodleClient.Fetched fetched = moodleClient.fetch(moodle, scope == null ? moodle.courseIds() : scope.courseIds(),
+                groupKey -> moodleApplier.groupFlowKey(groupKey, today).orElse(null));
         List<LearningUnit> units = scope == null
-                ? moodleClient.fetch(moodle, moodle.courseIds())
-                : moodleClient.fetch(moodle, scope.courseIds()).stream().filter(unit -> scope.covers(repository, unit)).toList();
+                ? fetched.units()
+                : fetched.units().stream().filter(unit -> scope.covers(repository, unit)).toList();
+        // Одно время наблюдения на весь запуск: оно входит в ключ идемпотентности событий и в версию записей.
         OffsetDateTime observedAt = OffsetDateTime.now();
         int[] counts = new int[SyncOutcome.values().length];
         for (LearningUnit unit : units) {
+            // Ошибка одной записи не прерывает запуск: она фиксируется на записи, остальные применяются.
             SyncOutcome outcome;
             try {
                 outcome = moodleApplier.apply(unit, observedAt, runId, actorProfileId);
@@ -464,7 +532,27 @@ public class SourceSyncService {
             }
             counts[outcome.ordinal()]++;
         }
-        repository.completeRun(runId, totals(units.size(), counts), null, OffsetDateTime.now());
+        for (MoodleClient.CourseFailure failure : fetched.failures()) {
+            log.warn("Moodle course {} was not read in run {}: {}", failure.courseId(), runId, failure.error().code());
+            // Записи курса помечаются ошибкой, а их прежние числа и снимки остаются: ошибка одного курса не стирает данные.
+            moodleApplier.markCourseFailed(Long.toString(failure.courseId()), "Курс не обновлён: " + failure.error().getMessage(),
+                    runId);
+        }
+        counts[SyncOutcome.FAILED.ordinal()] += fetched.failures().size();
+        repository.completeRun(runId, totals(units.size() + fetched.failures().size(), counts),
+                partialMessage(fetched.failures()), OffsetDateTime.now());
+    }
+
+    // Частичный запуск завершается как успешный: данные прочитанных курсов применены, сообщение называет не обновлённые
+    // курсы.
+    private static String partialMessage(List<MoodleClient.CourseFailure> failures) {
+        if (failures.isEmpty()) {
+            return null;
+        }
+        return "Частично: не обновлены курсы " + failures.stream().map(failure -> Long.toString(failure.courseId()))
+                .collect(Collectors.joining(", ")) + "; их прежние данные сохранены. Причины: "
+                + failures.stream().map(failure -> failure.courseId() + " — " + failure.error().getMessage())
+                .collect(Collectors.joining("; "));
     }
 
     private SyncTotals applyAll(List<SiteRecord> items, UUID runId, UUID actorProfileId) {
@@ -538,19 +626,21 @@ public class SourceSyncService {
 
     private SourceRecordStatus reapply(SourceCode source, UUID recordId, UUID actorProfileId) {
         boolean moodle = source == SourceCode.MOODLE;
+        SourceRecordApplier recordApplier = source == SourceCode.CUSTOMER_CRM ? crmApplier : applier;
         try {
-            return moodle ? moodleApplier.reapply(recordId, actorProfileId) : applier.reapply(recordId, actorProfileId);
+            return moodle ? moodleApplier.reapply(recordId, actorProfileId) : recordApplier.reapply(recordId, actorProfileId);
         } catch (RuntimeException exception) {
             log.warn("Source record {} was not applied again", recordId, exception);
             if (moodle) {
                 moodleApplier.markFailed(recordId, failureMessage(exception));
             } else {
-                applier.markFailed(recordId, failureMessage(exception));
+                recordApplier.markFailed(recordId, failureMessage(exception));
             }
             return SourceRecordStatus.FAILED;
         }
     }
 
+    // Текст исключения показывается только для ошибок проверки; остальные могут содержать внутренние данные.
     private static String failureMessage(RuntimeException exception) {
         return exception instanceof InteractionValidationException
                 ? "Запись не применена: " + exception.getMessage()
@@ -570,7 +660,7 @@ public class SourceSyncService {
                 source.title(),
                 true,
                 configured(source),
-                source == SourceCode.WEBSITE,
+                source != SourceCode.MOODLE,
                 repository.findUpdatedSince(source).orElse(null),
                 lastSuccessAt,
                 repository.countProblems(source),
@@ -581,19 +671,29 @@ public class SourceSyncService {
         );
     }
 
+    // Вид потока, который можно предложить по названию курса: курсы преподавателей помечены «ППС». Решает администратор.
+    private RunKind suggestedRunKind(LearningUnit unit) {
+        return settings.moodle().teacherCourse(unit.courseShortname(), unit.courseName()) ? RunKind.TEACHERS : null;
+    }
+
     SourceRecordView recordView(StoredRecord stored) {
         String organizationExternalId = null;
         String organizationName;
         String programName = null;
         Integer streamNo = null;
+        String contactName = null;
+        RunKind suggestedRunKind = null;
         if (stored.source() == SourceCode.MOODLE) {
-            organizationName = LearningUnit.parseStored(objectMapper, stored.payload()).label();
+            LearningUnit unit = LearningUnit.parseStored(objectMapper, stored.payload());
+            organizationName = unit.label();
+            suggestedRunKind = suggestedRunKind(unit);
         } else {
             SiteRecord item = SiteRecord.parseStored(objectMapper, stored.payload());
             organizationExternalId = item.organizationExternalId();
             organizationName = item.organizationName();
             programName = item.programName();
             streamNo = item.streamNo();
+            contactName = stored.source() == SourceCode.CUSTOMER_CRM ? item.contactName() : null;
         }
         return new SourceRecordView(
                 stored.id(),
@@ -611,7 +711,10 @@ public class SourceSyncService {
                 stored.organizationId(),
                 stored.programId(),
                 stored.interactionId(),
-                stored.updatedAt()
+                stored.updatedAt(),
+                contactName,
+                crmApplier.candidates(stored),
+                suggestedRunKind
         );
     }
 
@@ -619,6 +722,8 @@ public class SourceSyncService {
     }
 
     private record LearningScope(UUID organizationId, UUID programId, List<Long> courseIds) {
+        // Запись входит в область, если у неё есть сопоставление именно с этим вузом и программой: курс может быть
+        // сопоставлен и с другими.
         boolean covers(SourceRepository repository, LearningUnit unit) {
             return repository.findLearningTargets(SourceCode.MOODLE, unit.mappingKind(), unit.externalId()).stream()
                     .anyMatch(target -> target.organizationId().equals(organizationId) && target.programId().equals(programId));

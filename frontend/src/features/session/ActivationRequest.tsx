@@ -10,14 +10,10 @@ type RequestState =
   | { kind: 'failed'; requestId?: string }
 
 const realmUrl = '/idp/realms/rtk-crm'
-const accountUrl = `${realmUrl}/account`
+export const passwordUrl = `${realmUrl}/account`
 
 export const keycloakLogoutUrl = () => (
   `${realmUrl}/protocol/openid-connect/logout?client_id=crm-bff&post_logout_redirect_uri=${encodeURIComponent(`${window.location.origin}/`)}`
-)
-
-export const PasswordLink = () => (
-  <a className="password-link" href={accountUrl} target="_blank" rel="noopener noreferrer">Сменить пароль</a>
 )
 
 export const ActivationRequest = ({ onSessionExpired }: { onSessionExpired: () => void }) => {

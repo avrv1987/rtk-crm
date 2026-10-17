@@ -34,8 +34,8 @@ type ProductAgreementsSectionProps = AccessHandlers & {
 type Mode = 'contract' | 'transfers'
 
 const partTitles: Record<Mode, string> = {
-  contract: 'Договор и лицензия',
-  transfers: 'Отметки передачи'
+  contract: 'Лицензии по продуктам',
+  transfers: 'Передача материалов'
 }
 
 type Editing = { agreementId: string; mode: Mode } | null
@@ -259,7 +259,7 @@ export const ProductAgreementsSection = ({
     const expiryProblem = yearProblem(contract.licenseExpiryYear)
     return (
       <form className="product-contract__form" onSubmit={(event) => void submit(event, agreement, 'contract')}>
-        <h6>Договор и лицензия: {agreement.productName}</h6>
+        <h6>Лицензия: {agreement.productName}</h6>
         <p className="product-contract__wide">
           Контакт вендора «{agreement.vendorName}» по лицензии и документации: <VendorContactDetails agreement={agreement} />
         </p>
@@ -407,9 +407,9 @@ export const ProductAgreementsSection = ({
   }
 
   return (
-    <section className="interaction-product-agreements" aria-labelledby="interaction-product-agreements-title">
-      <h5 id="interaction-product-agreements-title">{part === undefined ? 'Продукты и соглашения' : `${partTitles[part]} по продуктам`}</h5>
-      {interaction.productAgreements.length === 0 && <p>Продукты не указаны. Добавьте их в «Следующий шаг» → «Изменить шаг, срок, программу и продукты».</p>}
+    <section className="interaction-product-agreements" aria-labelledby={`interaction-product-agreements-title-${part ?? 'all'}`}>
+      <h5 id={`interaction-product-agreements-title-${part ?? 'all'}`}>{part === undefined ? 'Продукты и соглашения' : partTitles[part]}</h5>
+      {interaction.productAgreements.length === 0 && <p>Продукты не указаны. Добавьте их через «⋯» → «Программа и продукты».</p>}
       {interaction.productAgreements.length > 0 && (
         <ul>
           {interaction.productAgreements.map((agreement) => (
@@ -464,7 +464,7 @@ export const ProductAgreementsSection = ({
                 <div className="product-contract__buttons">
                   {part !== 'transfers' && (
                     <button type="button" className="button--secondary" onClick={() => start(agreement, 'contract')}>
-                      {part === undefined ? 'Договор и лицензия' : 'Изменить договор и лицензию'}
+                      {part === undefined ? 'Лицензия по продукту' : 'Изменить лицензию'}
                     </button>
                   )}
                   {part !== 'contract' && (

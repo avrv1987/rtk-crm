@@ -69,6 +69,9 @@ class SigningPlanHttpTest {
     @BeforeEach
     void setUp() {
         createSchema();
+        ru.rtk.crm.agreement.AgreementTestSchema.create(jdbcTemplate);
+        ru.rtk.crm.agreement.AgreementTestSchema.createWorkTables(jdbcTemplate);
+        ru.rtk.crm.agreement.AgreementTestSchema.clear(jdbcTemplate);
         for (String table : List.of("audit_events", "saved_reports", "command_idempotency_records", "agreements", "organizations",
                 "crm_user_profiles", "teams")) {
             jdbcTemplate.update("DELETE FROM " + table);
@@ -219,7 +222,7 @@ class SigningPlanHttpTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, 
                     partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL,
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
@@ -347,7 +350,10 @@ class SigningPlanHttpTest {
                     planned_base_until DATE,
                     parties VARCHAR(2000),
                     status VARCHAR(16) NOT NULL,
-                    file_attachment_id UUID,
+                    sent_on DATE,
+                    status_changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    university_signer_id UUID,
+                    school_signer_id UUID,
                     version INTEGER NOT NULL DEFAULT 0,
                     created_by UUID NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL,

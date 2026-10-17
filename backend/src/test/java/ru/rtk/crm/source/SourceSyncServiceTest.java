@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Base64;
@@ -30,12 +31,14 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.StreamSupport;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.assertj.core.groups.Tuple;
@@ -83,9 +86,11 @@ import ru.rtk.crm.interaction.CommandIdempotencyRepository;
 import ru.rtk.crm.interaction.Interaction;
 import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionCreateRequest;
+import ru.rtk.crm.interaction.InteractionNextStep;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionRepository;
 import ru.rtk.crm.interaction.InteractionService;
+import ru.rtk.crm.interaction.InteractionTransitionRequest;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.interaction.WorkflowTemplateRepository;
 import ru.rtk.crm.report.ReportAgreementFilters;
@@ -111,6 +116,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
+        "app.agreements.signing-stage-rule=false",
         "spring.datasource.url=jdbc:h2:mem:sources;MODE=PostgreSQL;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -123,8 +129,13 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
         AttachmentRepository.class,
         CommandIdempotencyRepository.class,
         InteractionService.class,
+        ru.rtk.crm.agreement.AgreementStages.class,
         SourceRepository.class,
         SiteRecordApplier.class,
+        CrmRecordApplier.class,
+        CrmExchangeService.class,
+        CrmEventRepository.class,
+        CrmClient.class,
         SiteApiClient.class,
         PaidOrderParser.class,
         EnrolmentAccess.class,
@@ -137,8 +148,13 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
         AuditJournalRepository.class,
         UserProfileRepository.class,
         MoodleSnapshotApplier.class,
-        MoodleClient.class,
         SourceSyncService.class,
+        LaborMarketSync.class,
+        LaborMarketSettingsService.class,
+        LaborMarketSettingsRepository.class,
+        LaborMarketClient.class,
+        LaborMarketRepository.class,
+        LaborMarketService.class,
         SourceSettingsService.class,
         SourceSettingsRepository.class,
         SourceTokenCipher.class,
@@ -150,6 +166,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
         TrainingRepository.class,
         ReportRepository.class,
         ReportService.class,
+        ru.rtk.crm.work.LmsLearningTestBeans.class,
         SourceSyncServiceTest.SourceTestConfiguration.class
 })
 class SourceSyncServiceTest {
@@ -174,7 +191,22 @@ class SourceSyncServiceTest {
     private static final Map<String, String> MOODLE_BODIES = new ConcurrentHashMap<>();
     private static final Map<String, String> COMPLETION_OVERRIDES = new ConcurrentHashMap<>();
     private static final AtomicInteger MOODLE_STATUS = new AtomicInteger(200);
+    private static final AtomicInteger MOODLE_FAIL_NEXT = new AtomicInteger();
+    private static final String LABOR_TOKEN = "labor-market-test-token";
+    private static final AtomicReference<String> LABOR_BODY = new AtomicReference<>("{\"items\":[]}");
+    private static final List<String> LABOR_QUERIES = new CopyOnWriteArrayList<>();
     private static final HttpServer SITE = startSite();
+    private static final String CRM_TOKEN = "crm-test-token";
+    private static final List<String> CRM_ORGANIZATIONS = new CopyOnWriteArrayList<>();
+    private static final List<String> CRM_CONTACTS = new CopyOnWriteArrayList<>();
+    private static final List<String> CRM_QUERIES = new CopyOnWriteArrayList<>();
+    private static final List<JsonNode> CRM_BATCHES = new CopyOnWriteArrayList<>();
+    private static final List<String> CRM_BATCH_KEYS = new CopyOnWriteArrayList<>();
+    private static final Set<String> CRM_RECEIVED = ConcurrentHashMap.newKeySet();
+    private static final Set<String> CRM_REJECTED = ConcurrentHashMap.newKeySet();
+    private static final AtomicInteger CRM_EVENTS_STATUS = new AtomicInteger(200);
+    private static final AtomicInteger CRM_LIST_STATUS = new AtomicInteger(200);
+    private static final HttpServer CRM = startCrm();
 
     private static final UUID TEAM_A = UUID.fromString("00000000-0000-0000-0000-00000000000a");
     private static final UUID TEAM_B = UUID.fromString("00000000-0000-0000-0000-00000000000b");
@@ -247,6 +279,15 @@ class SourceSyncServiceTest {
     private SourceSyncService service;
 
     @Autowired
+    private LaborMarketSync laborMarketSync;
+
+    @Autowired
+    private LaborMarketService laborMarketService;
+
+    @Autowired
+    private LaborMarketSettingsService laborMarketSettings;
+
+    @Autowired
     private SourceRepository repository;
 
     @Autowired
@@ -266,6 +307,12 @@ class SourceSyncServiceTest {
 
     @Autowired
     private SiteApiClient siteApiClient;
+
+    @Autowired
+    private CrmRecordApplier crmRecordApplier;
+
+    @Autowired
+    private CrmExchangeService crmExchangeService;
 
     @Autowired
     private MoodleSnapshotApplier moodleSnapshotApplier;
@@ -320,19 +367,24 @@ class SourceSyncServiceTest {
     @AfterAll
     static void stopSite() {
         SITE.stop(0);
+        CRM.stop(0);
     }
 
     @BeforeEach
     void setUp() {
         createSchema();
         for (String table : List.of(
-                "source_settings", "catalog_change_events", "learner_enrolments", "learners", "enrolment_streams", "audit_events",
+                "source_settings", "labor_market_settings", "labor_market_mappings", "labor_market_snapshots", "catalog_change_events", "learner_enrolments", "learners", "enrolment_streams", "audit_events",
                 "teacher_trainings", "attachments", "interaction_cycles", "learning_observations", "learning_snapshots", "source_mappings", "source_records", "sync_runs", "sources",
                 "interaction_events",
                 "command_idempotency_records", "interaction_contacts", "product_agreements", "interaction_stage_transitions",
                 "interaction_stages", "interactions", "workflow_template_transitions", "workflow_template_stages",
                 "workflow_templates", "contacts", "products", "vendors", "programs", "directions", "organizations", "crm_user_profiles"
         )) {
+            jdbcTemplate.update("DELETE FROM crm_exchange_events");
+            jdbcTemplate.update("DELETE FROM agreement_status_events");
+            jdbcTemplate.update("DELETE FROM agreements");
+            jdbcTemplate.update("DELETE FROM organization_assignment_events");
             jdbcTemplate.update("DELETE FROM " + table);
         }
         PAGES.clear();
@@ -344,7 +396,19 @@ class SourceSyncServiceTest {
         MOODLE_BODIES.clear();
         COMPLETION_OVERRIDES.clear();
         MOODLE_STATUS.set(200);
-        jdbcTemplate.update("INSERT INTO sources (code) VALUES ('WEBSITE'), ('MOODLE')");
+        MOODLE_FAIL_NEXT.set(0);
+        LABOR_BODY.set("{\"items\":[]}");
+        LABOR_QUERIES.clear();
+        CRM_ORGANIZATIONS.clear();
+        CRM_CONTACTS.clear();
+        CRM_QUERIES.clear();
+        CRM_BATCHES.clear();
+        CRM_BATCH_KEYS.clear();
+        CRM_RECEIVED.clear();
+        CRM_REJECTED.clear();
+        CRM_EVENTS_STATUS.set(200);
+        CRM_LIST_STATUS.set(200);
+        jdbcTemplate.update("INSERT INTO sources (code) VALUES ('WEBSITE'), ('MOODLE'), ('LABOR_MARKET'), ('CUSTOMER_CRM')");
         insertProfile(ADMIN, "Администратор", "ADMIN", null);
         insertProfile(KAM_A, "Анна Смирнова", "USER", TEAM_A);
         insertProfile(KAM_B, "Борис Орлов", "USER", TEAM_B);
@@ -367,6 +431,152 @@ class SourceSyncServiceTest {
         ).id();
         PAGES.put(1, page(2, PARTNERSHIP_A, PARTNERSHIP_B, APPLICATION_A, APPLICATION_UNKNOWN, PARTNERSHIP_UNKNOWN));
         PAGES.put(2, page(null, PARTNERSHIP_A, APPLICATION_WITHDRAWN, WITHOUT_EXTERNAL_ID));
+    }
+
+    @Test
+    void laborMarketSyncStoresMonthlySlicesMapsDirectionsByNameAndFeedsDemandReport() {
+        sync();
+        YearMonth month = YearMonth.now(ReportRequest.ZONE);
+        assertThat(marketColumns()).containsExactly(tuple("Java-разработчик", "не применяется", "не применяется"));
+        jdbcTemplate.update("UPDATE directions SET labor_market = TRUE WHERE id = ?", DIRECTION);
+        LABOR_BODY.set(laborBody(
+                laborItem("programming", " Программирование ", month.minusMonths(2), 100),
+                laborItem("programming", "Программирование", month.minusMonths(1), 120),
+                laborItem("programming", "Программирование", month, 150),
+                laborItem("design", "Дизайн", month, 40)));
+
+        SyncRunView first = syncLaborMarket();
+
+        assertThat(first.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(counters(first)).containsExactly(4, 4, 0, 0, 0, 0);
+        assertThat(LABOR_QUERIES.getFirst()).isEqualTo("from=" + month.minusMonths(23) + "&to=" + month);
+        assertThat(jdbcTemplate.queryForList("SELECT external_code FROM labor_market_snapshots ORDER BY external_code, period_month",
+                String.class)).containsExactly("design", "programming", "programming", "programming");
+        assertThat(jdbcTemplate.queryForMap("SELECT external_code, origin FROM labor_market_mappings WHERE direction_id = ?", DIRECTION))
+                .containsEntry("external_code", "programming").containsEntry("origin", "AUTO");
+        assertThat(marketColumns()).containsExactly(tuple("Java-разработчик", 150L, 50L));
+
+        SyncRunView repeat = syncLaborMarket();
+
+        assertThat(counters(repeat)).containsExactly(4, 0, 0, 4, 0, 0);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM labor_market_snapshots", Integer.class)).isEqualTo(4);
+
+        LABOR_BODY.set(laborBody(laborItem("programming", "Программирование", month, 180)));
+
+        assertThat(counters(syncLaborMarket())).containsExactly(1, 0, 1, 0, 0, 0);
+        assertThat(marketColumns()).containsExactly(tuple("Java-разработчик", 180L, 80L));
+    }
+
+    @Test
+    void laborMarketDirectionWithoutNameMatchNeedsMappingUntilAdministratorChoosesCode() {
+        sync();
+        YearMonth month = YearMonth.now(ReportRequest.ZONE);
+        jdbcTemplate.update("UPDATE directions SET labor_market = TRUE WHERE id = ?", DIRECTION);
+        LABOR_BODY.set(laborBody(laborItem("dev", "Разработка ПО", month.minusMonths(1), 10), laborItem("dev", "Разработка ПО", month, 12)));
+
+        SyncRunView run = syncLaborMarket();
+
+        assertThat(counters(run)).containsExactly(2, 2, 0, 0, 1, 0);
+        assertThat(run.errorMessage()).contains("без сопоставления: 1");
+        assertThat(marketColumns()).containsExactly(tuple("Java-разработчик", null, null));
+
+        LaborMarketDirection mapped = laborMarketService.update(admin, DIRECTION, new LaborMarketMappingRequest("dev", null), "request-1");
+
+        assertThat(mapped.origin()).isEqualTo("MANUAL");
+        assertThat(mapped.latestVacancies()).isEqualTo(12);
+        assertThat(marketColumns()).containsExactly(tuple("Java-разработчик", 12L, 20L));
+        assertThat(counters(syncLaborMarket())).containsExactly(2, 0, 0, 2, 0, 0);
+        assertThatThrownBy(() -> laborMarketService.update(admin, DIRECTION, new LaborMarketMappingRequest("dev", 5), "request-2"))
+                .isInstanceOfSatisfying(SourceException.class, exception -> assertThat(exception.code()).isEqualTo("VERSION_CONFLICT"));
+        assertThatThrownBy(() -> laborMarketService.update(admin, DIRECTION, new LaborMarketMappingRequest("other", 0), "request-3"))
+                .isInstanceOf(InteractionValidationException.class);
+    }
+
+    @Test
+    void demoPreparationFlagsDirectionsKeepsManualCodeAndFirstSyncMapsTheRestByName() {
+        YearMonth month = YearMonth.now(ReportRequest.ZONE);
+        UUID transformation = UUID.randomUUID();
+        UUID security = UUID.randomUUID();
+        UUID cloud = UUID.randomUUID();
+        UUID unflagged = UUID.randomUUID();
+        for (Object[] direction : List.of(new Object[] {transformation, "Демо-направление: цифровая трансформация"},
+                new Object[] {security, "Кибербезопасность"}, new Object[] {cloud, "Облачные технологии и DevOps"},
+                new Object[] {unflagged, "Тестирование"})) {
+            jdbcTemplate.update("INSERT INTO directions (id, name, archived, version) VALUES (?, ?, FALSE, 0)", direction);
+        }
+        LABOR_BODY.set(laborBody(
+                laborItem("digital-transformation", "Цифровая трансформация", month, 500),
+                laborItem("cybersecurity", "Кибербезопасность", month, 300),
+                laborItem("testing", "Тестирование", month, 100)));
+        List<String> names = List.of("Демо-направление: цифровая трансформация", "Кибербезопасность", "Облачные технологии и DevOps");
+        Map<String, String> codes = Map.of("Демо-направление: цифровая трансформация", "digital-transformation");
+
+        laborMarketService.prepareDemo(ADMIN, names, codes);
+        laborMarketService.prepareDemo(ADMIN, names, Map.of("Демо-направление: цифровая трансформация", "testing"));
+        SyncRunView run = syncLaborMarket();
+
+        assertThat(counters(run)).containsExactly(3, 3, 0, 0, 1, 0);
+        assertThat(jdbcTemplate.queryForList("SELECT name FROM directions WHERE labor_market = TRUE ORDER BY name", String.class))
+                .containsExactly("Демо-направление: цифровая трансформация", "Кибербезопасность", "Облачные технологии и DevOps");
+        assertThat(jdbcTemplate.queryForList("SELECT direction_id, external_code, origin FROM labor_market_mappings ORDER BY external_code")
+                .stream().map(row -> tuple(row.get("DIRECTION_ID"), row.get("EXTERNAL_CODE"), row.get("ORIGIN"))).toList())
+                .containsExactlyInAnyOrder(tuple(transformation, "digital-transformation", "MANUAL"),
+                        tuple(security, "cybersecurity", "AUTO"));
+        assertThat(laborMarketService.mappings(admin).directions())
+                .extracting(LaborMarketDirection::directionName, LaborMarketDirection::externalCode,
+                        LaborMarketDirection::latestVacancies)
+                .containsExactly(tuple("Демо-направление: цифровая трансформация", "digital-transformation", 500),
+                        tuple("Кибербезопасность", "cybersecurity", 300),
+                        tuple("Облачные технологии и DevOps", null, null));
+    }
+
+    @Test
+    void laborMarketRejectsBrokenItemsAndKeepsStoredDataWhenSourceFails() {
+        YearMonth month = YearMonth.now(ReportRequest.ZONE);
+        LABOR_BODY.set(laborBody(
+                laborItem("programming", "Программирование", month, 150),
+                laborItem("programming", "Программирование", month, 151),
+                laborItem("bad code", "Дизайн", month, 40),
+                laborItem("negative", "Минус", month, -1),
+                "{\"directionCode\":\"nomonth\",\"directionName\":\"Без месяца\",\"month\":\"2026-13\",\"openVacancies\":1,"
+                        + "\"dataSource\":\"Тестовый источник\",\"asOf\":\"2026-01-01\"}"));
+
+        SyncRunView run = syncLaborMarket();
+
+        assertThat(run.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(counters(run)).containsExactly(5, 1, 0, 0, 0, 4);
+        assertThat(run.errorMessage()).contains("с ошибками");
+        assertThat(jdbcTemplate.queryForObject("SELECT open_vacancies FROM labor_market_snapshots", Integer.class)).isEqualTo(150);
+
+        LABOR_BODY.set(null);
+        SyncRunView failed = syncLaborMarket();
+
+        assertThat(failed.status()).isEqualTo(SyncRunStatus.FAILED);
+        assertThat(failed.errorCode()).isEqualTo("SOURCE_UNAVAILABLE");
+        assertThat(jdbcTemplate.queryForObject("SELECT open_vacancies FROM labor_market_snapshots", Integer.class)).isEqualTo(150);
+
+        LABOR_BODY.set("{\"rows\":[]}");
+        SyncRunView invalid = syncLaborMarket();
+
+        assertThat(invalid.status()).isEqualTo(SyncRunStatus.FAILED);
+        assertThat(invalid.errorCode()).isEqualTo("SOURCE_INVALID_RESPONSE");
+    }
+
+    @Test
+    void laborMarketSourceIsAdministratorOnlyAndNeedsAnAddress() {
+        assertThat(service.sources(admin)).extracting(SourceView::source, SourceView::configured, SourceView::proposedContract)
+                .contains(tuple(SourceCode.LABOR_MARKET, true, true));
+        assertThatThrownBy(() -> service.start(kamA, SourceCode.LABOR_MARKET))
+                .isInstanceOfSatisfying(SourceException.class, exception -> assertThat(exception.code()).isEqualTo("FORBIDDEN"));
+        assertThatThrownBy(() -> service.runs(kamA, SourceCode.LABOR_MARKET)).isInstanceOf(SourceException.class);
+        assertThatThrownBy(() -> laborMarketService.mappings(kamA)).isInstanceOf(SourceException.class);
+
+        laborMarketSettings.update(admin, new LaborMarketSettingsRequest(null, null), "request-1");
+
+        assertThatThrownBy(() -> service.start(admin, SourceCode.LABOR_MARKET))
+                .isInstanceOfSatisfying(SourceException.class, exception -> assertThat(exception.code()).isEqualTo("SOURCE_NOT_CONFIGURED"));
+        assertThat(service.sources(admin)).extracting(SourceView::source, SourceView::configured)
+                .contains(tuple(SourceCode.LABOR_MARKET, false));
     }
 
     @Test
@@ -524,7 +734,9 @@ class SourceSyncServiceTest {
         assertThat(sources).extracting(SourceView::source, SourceView::adapterAvailable, SourceView::configured,
                 SourceView::proposedContract).containsExactly(
                 tuple(SourceCode.WEBSITE, true, true, true),
-                tuple(SourceCode.MOODLE, true, true, false));
+                tuple(SourceCode.MOODLE, true, true, false),
+                tuple(SourceCode.LABOR_MARKET, true, true, true),
+                tuple(SourceCode.CUSTOMER_CRM, true, true, true));
         assertThat(new SourceProperties.Moodle("http://moodle.test", MOODLE_TOKEN, List.of(), List.of("student"), List.of(),
                 Duration.ofSeconds(1), Duration.ofSeconds(1), DataSize.ofMegabytes(1)).configured()).isFalse();
         assertThat(sources.getFirst().lastRun()).isNull();
@@ -751,8 +963,11 @@ class SourceSyncServiceTest {
         MOODLE_BODIES.put("core_enrol_get_enrolled_users:" + JAVA_COURSE, "[]");
         SyncRunView withoutGroupAccess = syncMoodle();
 
-        assertThat(withoutGroupAccess.errorCode()).isEqualTo("SOURCE_UNAUTHORIZED");
-        assertThat(withoutGroupAccess.errorMessage()).contains("moodle/site:accessallgroups");
+        assertThat(withoutGroupAccess.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(withoutGroupAccess.failedCount()).isEqualTo(1);
+        assertThat(withoutGroupAccess.errorMessage()).startsWith("Частично: не обновлены курсы " + JAVA_COURSE)
+                .contains("moodle/site:accessallgroups");
+        assertThat(recordStatusById(javaRecord)).isEqualTo("FAILED");
         assertThat(jdbcTemplate.queryForMap("SELECT * FROM learning_snapshots WHERE source_record_id = ?", javaRecord))
                 .isEqualTo(published);
 
@@ -763,13 +978,276 @@ class SourceSyncServiceTest {
         assertThat(unavailable.errorCode()).isEqualTo("SOURCE_UNAVAILABLE");
         assertThat(jdbcTemplate.queryForMap("SELECT * FROM learning_snapshots WHERE source_record_id = ?", javaRecord))
                 .isEqualTo(published);
-        SourceView moodle = service.sources(admin).getLast();
+        SourceView moodle = sourceView(SourceCode.MOODLE);
         assertThat(moodle.lastRun().status()).isEqualTo(SyncRunStatus.FAILED);
         assertThat(moodle.lastSuccessAt()).isNotNull();
 
         MOODLE_STATUS.set(200);
         assertThat(syncMoodle().updatedCount()).isEqualTo(1);
         assertThat(snapshotValue(javaRecord, "completed_count", Integer.class)).isEqualTo(4);
+    }
+
+    @Test
+    void oneFailedCourseDoesNotStopTheRunAndKeepsItsPreviousData() throws IOException {
+        syncMoodle();
+        UUID javaRecord = moodleRecordId("moodle_course", Long.toString(JAVA_COURSE));
+        UUID dataRecord = moodleRecordId("moodle_course", Long.toString(DATA_COURSE));
+        service.apply(admin, javaRecord, moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
+        service.apply(admin, dataRecord, moodleRun(ORGANIZATION_B, PROGRAM_DATA));
+        Map<String, Object> dataPublished = jdbcTemplate.queryForMap("SELECT * FROM learning_snapshots WHERE source_record_id = ?",
+                dataRecord);
+        COMPLETION_OVERRIDES.put(completionUser(false), completionResponse(true));
+        MOODLE_BODIES.put("core_group_get_course_groups:" + DATA_COURSE, fixture("error-function-not-in-service.json"));
+
+        SyncRunView partial = syncMoodle();
+
+        assertThat(partial.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(counters(partial)).containsExactly(4, 0, 1, 2, 0, 1);
+        assertThat(partial.errorMessage()).startsWith("Частично: не обновлены курсы " + DATA_COURSE + ";").contains("accessexception");
+        assertThat(snapshotValue(javaRecord, "completed_count", Integer.class)).isEqualTo(4);
+        assertThat(recordStatusById(dataRecord)).isEqualTo("FAILED");
+        assertThat(moodleStatuses("moodle_group", DATA_COURSE + ":%")).containsOnly("FAILED");
+        assertThat(jdbcTemplate.queryForMap("SELECT error, organization_id, program_id FROM source_records WHERE id = ?", dataRecord))
+                .containsEntry("ORGANIZATION_ID", ORGANIZATION_B).containsEntry("PROGRAM_ID", PROGRAM_DATA)
+                .satisfies(row -> assertThat((String) row.get("ERROR")).startsWith("Курс не обновлён:"));
+        assertThat(jdbcTemplate.queryForMap("SELECT * FROM learning_snapshots WHERE source_record_id = ?", dataRecord))
+                .isEqualTo(dataPublished);
+        assertThat(sourceView(SourceCode.MOODLE).lastSuccessAt()).isNotNull();
+
+        MOODLE_BODIES.clear();
+        SyncRunView recovered = syncMoodle();
+
+        assertThat(recovered.errorMessage()).isNull();
+        assertThat(recovered.failedCount()).isZero();
+        assertThat(recordStatusById(dataRecord)).isEqualTo("APPLIED");
+
+        MOODLE_BODIES.put("core_group_get_course_groups:" + DATA_COURSE, fixture("error-function-not-in-service.json"));
+        MOODLE_BODIES.put("core_group_get_course_groups:" + JAVA_COURSE, fixture("error-function-not-in-service.json"));
+        SyncRunView allFailed = syncMoodle();
+
+        assertThat(allFailed.status()).isEqualTo(SyncRunStatus.FAILED);
+        assertThat(allFailed.errorCode()).isEqualTo("SOURCE_UNAUTHORIZED");
+        assertThat(allFailed.errorMessage()).startsWith("Данные не получены ни по одному курсу");
+    }
+
+    @Test
+    void hiddenOrDeletedCourseIsListedAsFailedWhileOtherCoursesAreRead() throws IOException {
+        JsonNode courses = JSON.readTree(fixture("courses.json"));
+        ((com.fasterxml.jackson.databind.node.ArrayNode) courses.path("courses")).remove(1);
+        MOODLE_BODIES.put("core_course_get_courses_by_field:null", courses.toString());
+
+        SyncRunView run = syncMoodle();
+
+        assertThat(run.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(run.failedCount()).isEqualTo(1);
+        assertThat(run.needsMappingCount()).isEqualTo(3);
+        assertThat(run.errorMessage()).startsWith("Частично: не обновлены курсы " + DATA_COURSE + ";")
+                .contains("moodle/course:viewhiddencourses");
+    }
+
+    @Test
+    void temporaryFailuresAreRepeatedTwiceThenStopTheRun() {
+        MOODLE_FAIL_NEXT.set(2);
+
+        SyncRunView recovered = syncMoodle();
+
+        assertThat(recovered.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(recovered.failedCount()).isZero();
+        assertThat(MOODLE_REQUESTS).extracting(form -> form.get("wsfunction")).startsWith("core_course_get_courses_by_field",
+                "core_course_get_courses_by_field", "core_course_get_courses_by_field");
+
+        MOODLE_REQUESTS.clear();
+        MOODLE_FAIL_NEXT.set(3);
+        SyncRunView unavailable = syncMoodle();
+
+        assertThat(unavailable.status()).isEqualTo(SyncRunStatus.FAILED);
+        assertThat(unavailable.errorCode()).isEqualTo("SOURCE_UNAVAILABLE");
+        assertThat(MOODLE_REQUESTS).hasSize(3);
+    }
+
+    @Test
+    void emptyCourseWithGroupsFailsOnlyInSeparateGroupsMode() throws IOException {
+        MOODLE_BODIES.put("core_enrol_get_enrolled_users:" + JAVA_COURSE, "[]");
+        JsonNode courses = JSON.readTree(fixture("courses.json"));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) courses.path("courses").get(0)).put("groupmode", 0);
+        MOODLE_BODIES.put("core_course_get_courses_by_field:null", courses.toString());
+
+        SyncRunView run = syncMoodle();
+
+        assertThat(run.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(run.errorMessage()).isNull();
+        assertThat(run.failedCount()).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT payload FROM source_records WHERE source = 'MOODLE' AND record_type = 'moodle_course' AND external_id = ?
+                """, String.class, Long.toString(JAVA_COURSE))).contains("\"participants\":0");
+    }
+
+    @Test
+    void teacherCourseMarkIsSuggestedAndUsedWhenRunKindIsNotChosen() throws IOException {
+        JsonNode courses = JSON.readTree(fixture("courses.json"));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) courses.path("courses").get(0)).put("fullname", "Курс ППС 2026");
+        MOODLE_BODIES.put("core_course_get_courses_by_field:null", courses.toString());
+        syncMoodle();
+
+        assertThat(service.problemRecords(admin)).filteredOn(record -> record.recordType().equals("moodle_course"))
+                .extracting(SourceRecordView::externalId, SourceRecordView::suggestedRunKind)
+                .containsExactlyInAnyOrder(tuple(Long.toString(JAVA_COURSE), RunKind.TEACHERS), tuple(Long.toString(DATA_COURSE), null));
+
+        service.apply(admin, moodleRecordId("moodle_course", Long.toString(JAVA_COURSE)), moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
+        service.apply(admin, moodleRecordId("moodle_course", Long.toString(DATA_COURSE)), moodleRun(ORGANIZATION_B, PROGRAM_DATA));
+
+        assertThat(jdbcTemplate.queryForList("SELECT run_kind FROM source_mappings WHERE external_key = ?", String.class,
+                Long.toString(JAVA_COURSE))).containsExactly("TEACHERS");
+        assertThat(jdbcTemplate.queryForList("SELECT run_kind FROM source_mappings WHERE external_key = ?", String.class,
+                Long.toString(DATA_COURSE))).containsExactly("STUDENTS");
+        assertThat(lastComment(existingInteractionA)).startsWith("Данные LMS (обучение преподавателей): курс «Курс ППС 2026»");
+    }
+
+    @Test
+    void dailyActivityIsStoredWithoutNewEventChangedAtOrHistoryRow() throws IOException {
+        MOODLE_BODIES.put("core_enrol_get_enrolled_users:" + JAVA_COURSE,
+                withLastAccess(Map.of(4L, 16, 5L, 1, 6L, 2, 7L, 10, 8L, 20, 9L, 40)));
+        syncMoodle();
+        UUID javaRecord = moodleRecordId("moodle_course", Long.toString(JAVA_COURSE));
+        service.apply(admin, javaRecord, moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
+
+        assertThat(jdbcTemplate.queryForMap("""
+                SELECT active_7d_count, active_30d_count, never_accessed_count, inactive_count, teachers_active_7d_count,
+                       teachers_active_14d_count
+                FROM learning_snapshots WHERE source_record_id = ?
+                """, javaRecord).values()).containsExactly(2, 4, 1, 2, 0, 0);
+        assertThat(events(existingInteractionA)).containsExactly("CREATED", "COMMENTED");
+        assertThat(lastComment(existingInteractionA)).doesNotContain("заходили");
+        OffsetDateTime changedAt = snapshotValue(javaRecord, "changed_at", OffsetDateTime.class);
+
+        MOODLE_BODIES.put("core_enrol_get_enrolled_users:" + JAVA_COURSE,
+                withLastAccess(Map.of(4L, 1, 5L, 1, 6L, 1, 7L, 1, 8L, 1, 9L, 1, 10L, 1)));
+        SyncRunView next = syncMoodle();
+
+        assertThat(next.updatedCount()).as("only activity changed: the snapshot counts are the same").isZero();
+        assertThat(snapshotValue(javaRecord, "active_7d_count", Integer.class)).isEqualTo(6);
+        assertThat(snapshotValue(javaRecord, "teachers_active_7d_count", Integer.class)).isEqualTo(1);
+        assertThat(snapshotValue(javaRecord, "changed_at", OffsetDateTime.class)).isEqualTo(changedAt);
+        assertThat(events(existingInteractionA)).containsExactly("CREATED", "COMMENTED");
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT o.active_7d_count FROM learning_observations o
+                JOIN learning_snapshots s ON s.mapping_id = o.mapping_id WHERE s.source_record_id = ?
+                """, Integer.class, javaRecord)).containsExactly(6);
+    }
+
+    @Test
+    void studentInSeveralGroupsOfOneFlowIsCountedOnce() throws IOException {
+        long firstGroup = groupId(JAVA_COURSE, "crm-demo-java-1");
+        long secondGroup = groupId(JAVA_COURSE, "crm-demo-java-2");
+        JsonNode users = JSON.readTree(fixture("users-" + JAVA_COURSE + ".json"));
+        for (JsonNode user : users) {
+            if (user.path("id").asLong() == 5) {
+                ((com.fasterxml.jackson.databind.node.ArrayNode) user.path("groups"))
+                        .addObject().put("id", secondGroup).put("name", "Поток А2");
+            }
+        }
+        MOODLE_BODIES.put("core_enrol_get_enrolled_users:" + JAVA_COURSE, users.toString());
+        syncMoodle();
+        UUID groupA1 = moodleRecordId("moodle_group", JAVA_COURSE + ":" + firstGroup);
+        UUID groupA2 = moodleRecordId("moodle_group", JAVA_COURSE + ":" + secondGroup);
+
+        service.apply(admin, groupA1, moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
+        service.apply(admin, groupA2, moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
+        SyncRunView sameFlow = syncMoodle();
+
+        assertThat(sameFlow.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(snapshotValue(groupA1, "participants_count", Integer.class)).isEqualTo(3);
+        assertThat(snapshotValue(groupA2, "participants_count", Integer.class)).isEqualTo(3);
+        assertThat(demandParticipants(kamA)).containsExactly(tuple("Java-разработчик", 6L));
+    }
+
+    @Test
+    void sharedStudentDoesNotDoubleTheFlowButEachFlowKeepsItsOwnCount() throws IOException {
+        long firstGroup = groupId(JAVA_COURSE, "crm-demo-java-1");
+        long secondGroup = groupId(JAVA_COURSE, "crm-demo-java-2");
+        JsonNode users = JSON.readTree(fixture("users-" + JAVA_COURSE + ".json"));
+        for (JsonNode user : users) {
+            if (user.path("id").asLong() == 8) {
+                ((com.fasterxml.jackson.databind.node.ArrayNode) user.path("groups"))
+                        .addObject().put("id", firstGroup).put("name", "Поток А1");
+            }
+        }
+        MOODLE_BODIES.put("core_enrol_get_enrolled_users:" + JAVA_COURSE, users.toString());
+        syncMoodle();
+        UUID groupA1 = moodleRecordId("moodle_group", JAVA_COURSE + ":" + firstGroup);
+        UUID groupA2 = moodleRecordId("moodle_group", JAVA_COURSE + ":" + secondGroup);
+
+        service.apply(admin, groupA1, moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
+        service.apply(admin, groupA2, moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
+        syncMoodle();
+
+        assertThat(snapshotValue(groupA1, "participants_count", Integer.class)).isEqualTo(4);
+        assertThat(snapshotValue(groupA2, "participants_count", Integer.class)).isEqualTo(2);
+        assertThat(lastComment(existingInteractionA)).contains("ещё 1 уже учтены в другой группе этого потока");
+        assertThat(demandParticipants(kamA)).containsExactly(tuple("Java-разработчик", 6L));
+
+        service.apply(admin, groupA2, moodleRun(ORGANIZATION_B, PROGRAM_JAVA));
+        syncMoodle();
+
+        assertThat(snapshotValue(groupA1, "participants_count", Integer.class)).isEqualTo(4);
+        assertThat(snapshotValue(groupA2, "participants_count", Integer.class)).isEqualTo(3);
+    }
+
+    @Test
+    void completedStudentWithEndedEnrolmentStaysCountedWhenMoodleReportsHisStatus() throws IOException {
+        MOODLE_BODIES.put("core_enrol_get_enrolled_users:" + JAVA_COURSE + ":all", withEndedStudents(98, 99));
+        COMPLETION_OVERRIDES.put("98", completionResponse(true));
+        COMPLETION_OVERRIDES.put("99", completionResponse(false));
+
+        syncMoodle();
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT payload FROM source_records WHERE source = 'MOODLE' AND record_type = 'moodle_course' AND external_id = ?
+                """, String.class, Long.toString(JAVA_COURSE)))
+                .contains("\"participants\":7", "\"completed\":4", "\"notCompleted\":3", "\"unknown\":0");
+        assertThat(MOODLE_REQUESTS).filteredOn(form -> "core_completion_get_course_completion_status".equals(form.get("wsfunction")))
+                .extracting(form -> form.get("userid")).contains("98", "99");
+        assertThat(MOODLE_REQUESTS).filteredOn(form -> Long.toString(DATA_COURSE).equals(form.get("courseid")))
+                .extracting(form -> form.get("options[0][value]")).doesNotContain("0");
+    }
+
+    @Test
+    void endedEnrolmentWithoutReadableStatusIsProbedOnceAndLeftOut() throws IOException {
+        MOODLE_BODIES.put("core_enrol_get_enrolled_users:" + JAVA_COURSE + ":all", withEndedStudents(98, 99));
+        String notTracked = "{\"exception\":\"moodle_exception\",\"errorcode\":\"nottracked\",\"message\":\"Not tracked\"}";
+        COMPLETION_OVERRIDES.put("98", notTracked);
+        COMPLETION_OVERRIDES.put("99", notTracked);
+
+        SyncRunView run = syncMoodle();
+
+        assertThat(run.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(run.failedCount()).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT payload FROM source_records WHERE source = 'MOODLE' AND record_type = 'moodle_course' AND external_id = ?
+                """, String.class, Long.toString(JAVA_COURSE))).contains("\"participants\":6", "\"completed\":3");
+        assertThat(MOODLE_REQUESTS).filteredOn(form -> "core_completion_get_course_completion_status".equals(form.get("wsfunction")))
+                .extracting(form -> form.get("userid")).filteredOn(user -> user.equals("98") || user.equals("99")).hasSize(1);
+    }
+
+    private static String withLastAccess(Map<Long, Integer> daysAgo) throws IOException {
+        long now = System.currentTimeMillis() / 1000;
+        JsonNode users = JSON.readTree(fixture("users-" + JAVA_COURSE + ".json"));
+        for (JsonNode user : users) {
+            Integer days = daysAgo.get(user.path("id").asLong());
+            ((com.fasterxml.jackson.databind.node.ObjectNode) user).put("lastcourseaccess", days == null ? 0 : now - days * 86_400L);
+        }
+        return users.toString();
+    }
+
+    private static String withEndedStudents(long... ids) throws IOException {
+        com.fasterxml.jackson.databind.node.ArrayNode users = (com.fasterxml.jackson.databind.node.ArrayNode) JSON.readTree(
+                fixture("users-" + JAVA_COURSE + ".json"));
+        for (long id : ids) {
+            com.fasterxml.jackson.databind.node.ObjectNode user = users.addObject().put("id", id);
+            user.putArray("roles").addObject().put("roleid", 5).put("name", "").put("shortname", "student").put("sortorder", 0);
+            user.putArray("groups").addObject().put("id", groupId(JAVA_COURSE, "crm-demo-java-1")).put("name", "Поток А1");
+        }
+        return users.toString();
     }
 
     @Test
@@ -976,11 +1454,11 @@ class SourceSyncServiceTest {
         assertThat(parallelRuns(RUN_STARTS.minusDays(1))).isEmpty();
         assertThat(parallelRuns(RUN_STARTS)).containsExactly(tuple("Java-разработчик", 1L));
         assertThat(parallelRuns(RUN_ENDS.minusDays(1)))
-                .containsExactlyInAnyOrder(tuple("Java-разработчик", 1L), tuple("Анализ данных", 1L));
-        assertThat(parallelRuns(RUN_ENDS)).containsExactlyInAnyOrder(tuple("Java-разработчик", 0L), tuple("Анализ данных", 1L));
+                .containsExactlyInAnyOrder(tuple("Java-разработчик", 1L), tuple("Анализ данных", 0L));
+        assertThat(parallelRuns(RUN_ENDS)).containsExactlyInAnyOrder(tuple("Java-разработчик", 1L), tuple("Анализ данных", 0L));
         assertThat(reportService.document(kamA, new ReportRequest(ReportKind.DEMAND, null, RUN_ENDS, null,
                 ReportFilters.none(), null, null, null, null)).notes())
-                .anyMatch(note -> note.contains("содержит " + RUN_ENDS.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))));
+                .anyMatch(note -> note.contains("по наблюдению на " + TODAY.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))));
 
         repository.saveMapping(SourceCode.MOODLE, "COURSE", Long.toString(JAVA_COURSE), ORGANIZATION_A, PROGRAM_JAVA, null,
                 ADMIN, OffsetDateTime.now());
@@ -1066,7 +1544,7 @@ class SourceSyncServiceTest {
         assertThat(demandOn(TODAY.minusDays(25))).containsExactly(tuple("Java-разработчик", null, null, 1L));
         assertThat(reportService.document(kamA, new ReportRequest(ReportKind.DEMAND, null, TODAY.minusDays(10), null,
                 ReportFilters.none(), null, null, null, null)).columnTitles())
-                .containsEntry(ReportColumn.PARTICIPANTS, "Обучающиеся (Moodle, на "
+                .containsEntry(ReportColumn.PARTICIPANTS, "Обучающиеся в потоках периода (Moodle, на "
                         + TODAY.minusDays(10).format(DateTimeFormatter.ofPattern("dd.MM.yyyy")) + ")");
 
         mappingService.deleteSnapshot(admin, run);
@@ -1639,7 +2117,7 @@ class SourceSyncServiceTest {
                 new SourceRepository.RunDates(RUN_STARTS, RUN_ENDS), RunKind.STUDENTS, ADMIN, OffsetDateTime.now());
         assertThat(card.refreshLearning(kamA, existingInteractionA).run().status()).isEqualTo(SyncRunStatus.SUCCEEDED);
 
-        SourceView beforeFirstSync = service.sources(admin).getLast();
+        SourceView beforeFirstSync = sourceView(SourceCode.MOODLE);
 
         assertThat(beforeFirstSync.lastRun()).isNull();
         assertThat(beforeFirstSync.lastSuccessAt()).isNull();
@@ -1653,7 +2131,7 @@ class SourceSyncServiceTest {
         jdbcTemplate.update("UPDATE sync_runs SET finished_at = ? WHERE status = 'SUCCEEDED'", OffsetDateTime.now().minusHours(30));
         assertThat(card.refreshLearning(kamA, existingInteractionA).run().status()).isEqualTo(SyncRunStatus.SUCCEEDED);
 
-        SourceView moodle = service.sources(admin).getLast();
+        SourceView moodle = sourceView(SourceCode.MOODLE);
 
         assertThat(moodle.lastRun().status()).isEqualTo(SyncRunStatus.FAILED);
         assertThat(moodle.lastRun().trigger()).isEqualTo(SyncTrigger.MANUAL);
@@ -1720,12 +2198,12 @@ class SourceSyncServiceTest {
         List<SourceView> sources = service.sources(admin);
         assertThat(sources).extracting(SourceView::schedule).containsOnly("0 0 * * * *");
         assertThat(sources.getFirst().nextRunAt()).isNull();
-        assertThat(sources.getLast().nextRunAt()).isAfter(OffsetDateTime.now());
+        assertThat(sourceView(SourceCode.MOODLE).nextRunAt()).isAfter(OffsetDateTime.now());
 
         jdbcTemplate.update("UPDATE sync_runs SET finished_at = ? WHERE status = 'SUCCEEDED'", OffsetDateTime.now().minusHours(30));
 
         assertThat(card.status(kamA, existingInteractionA).lms().stale()).isTrue();
-        assertThat(service.sources(admin).getLast().stale()).isTrue();
+        assertThat(sourceView(SourceCode.MOODLE).stale()).isTrue();
     }
 
     @Test
@@ -1830,17 +2308,188 @@ class SourceSyncServiceTest {
     private SourceSyncService liveService(String token, List<Long> courses) {
         SourceProperties properties = new SourceProperties(1, 1, "-", Duration.ofHours(26), null, null, new SourceProperties.Moodle(
                 System.getenv("MOODLE_TEST_URL"), token, courses, List.of("student"), List.of("editingteacher", "teacher"),
-                Duration.ofSeconds(5), Duration.ofSeconds(20), DataSize.ofMegabytes(5)));
-        MoodleClient moodleClient = new MoodleClient(properties, objectMapper);
+                Duration.ofSeconds(5), Duration.ofSeconds(20), DataSize.ofMegabytes(5)), null);
+        MoodleClient moodleClient = new MoodleClient(properties, objectMapper, 14);
         SourceSettingsService settings = new SourceSettingsService(properties, sourceSettingsRepository,
-                new SourceTokenCipher(properties), auditJournalRepository, moodleClient, siteApiClient, event -> { });
-        return new SourceSyncService(repository, siteRecordApplier, paidOrderEnrolment, siteApiClient, moodleSnapshotApplier,
-                moodleClient, sourceSyncExecutor, properties, settings, objectMapper);
+                new SourceTokenCipher(properties), auditJournalRepository, moodleClient, siteApiClient,
+                new CrmClient(properties, objectMapper), event -> { });
+        return new SourceSyncService(repository, siteRecordApplier, crmRecordApplier, crmExchangeService, paidOrderEnrolment,
+                siteApiClient, moodleSnapshotApplier, moodleClient, laborMarketSync, sourceSyncExecutor, properties, settings,
+                objectMapper);
     }
 
     private SyncRunView sync() {
         UUID runId = service.start(admin, SourceCode.WEBSITE).runId();
         return repository.findRun(runId).orElseThrow().run();
+    }
+
+    private SourceView sourceView(SourceCode code) {
+        return service.sources(admin).stream().filter(source -> source.source() == code).findFirst().orElseThrow();
+    }
+
+    private SyncRunView syncLaborMarket() {
+        UUID runId = service.start(admin, SourceCode.LABOR_MARKET).runId();
+        return repository.findRun(runId).orElseThrow().run();
+    }
+
+    private static String laborItem(String code, String name, YearMonth month, int vacancies) {
+        return "{\"directionCode\":\"" + code + "\",\"directionName\":\"" + name + "\",\"month\":\"" + month
+                + "\",\"openVacancies\":" + vacancies + ",\"medianSalary\":150000,\"dataSource\":\"Тестовый источник\","
+                + "\"asOf\":\"" + month.atEndOfMonth() + "\"}";
+    }
+
+    private static String laborBody(String... items) {
+        return "{\"items\":[" + String.join(",", items) + "]}";
+    }
+
+    private List<Tuple> marketColumns() {
+        return reportService.document(kamA, new ReportRequest(ReportKind.DEMAND, null, null, null, ReportFilters.none(), null, null,
+                        null, null)).rows().stream()
+                .map(row -> tuple(row.programName(), row.marketVacancies(), row.marketTrend()))
+                .toList();
+    }
+
+    private SyncRunView syncCrm() {
+        UUID runId = service.start(admin, SourceCode.CUSTOMER_CRM).runId();
+        return repository.findRun(runId).orElseThrow().run();
+    }
+
+    private static String crmOrganization(String id, String name, String type, String inn, String updatedAt) {
+        ObjectNode node = JSON.createObjectNode().put("externalId", id).put("name", name).put("type", type)
+                .put("region", "Москва").put("updatedAt", updatedAt);
+        if (inn != null) {
+            node.put("inn", inn);
+        }
+        return node.toString();
+    }
+
+    private static String crmContact(String id, String organizationId, String fullName, String email, String phone, String updatedAt) {
+        ObjectNode node = JSON.createObjectNode().put("externalId", id).put("organizationExternalId", organizationId)
+                .put("fullName", fullName).put("position", "Проректор").put("role", "SIGNATORY").put("updatedAt", updatedAt);
+        if (email != null) {
+            node.put("workEmail", email);
+        }
+        if (phone != null) {
+            node.put("workPhone", phone);
+        }
+        return node.toString();
+    }
+
+    private void insertAgreementStatusEvent(UUID agreementId, String fromStatus, String toStatus, OffsetDateTime occurredAt) {
+        jdbcTemplate.update("""
+                INSERT INTO agreement_status_events (id, agreement_id, from_status, to_status, actor_profile_id, occurred_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, UUID.randomUUID(), agreementId, fromStatus, toStatus, KAM_A, occurredAt);
+    }
+
+    private void insertContact(UUID organizationId, String name, String email, String status, String position) {
+        jdbcTemplate.update("""
+                INSERT INTO contacts (id, personal_data_status, organization_id, name, position, email, version, created_by,
+                    created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, UUID.randomUUID(), status, organizationId, name, position, email, KAM_A);
+    }
+
+    private UUID crmRecord(String type, String externalId) {
+        return jdbcTemplate.queryForObject("SELECT id FROM source_records WHERE source = 'CUSTOMER_CRM' AND record_type = ? AND external_id = ?",
+                UUID.class, type, externalId);
+    }
+
+    private String crmStatus(String type, String externalId) {
+        return jdbcTemplate.queryForObject("SELECT status FROM source_records WHERE source = 'CUSTOMER_CRM' AND record_type = ? AND external_id = ?",
+                String.class, type, externalId);
+    }
+
+    private static List<String> crmEventIds() {
+        return CRM_BATCHES.stream()
+                .flatMap(batch -> StreamSupport.stream(batch.path("events").spliterator(), false))
+                .map(event -> event.path("eventId").asText())
+                .toList();
+    }
+
+    private static HttpServer startCrm() {
+        try {
+            HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+            server.createContext(CrmClient.ORGANIZATIONS_PATH, exchange -> respondCrmList(exchange, CRM_ORGANIZATIONS));
+            server.createContext(CrmClient.CONTACTS_PATH, exchange -> respondCrmList(exchange, CRM_CONTACTS));
+            server.createContext(CrmClient.EVENTS_PATH, SourceSyncServiceTest::receiveCrmEvents);
+            server.start();
+            return server;
+        } catch (IOException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private static void respondCrmList(HttpExchange exchange, List<String> items) throws IOException {
+        String rawQuery = exchange.getRequestURI().getRawQuery();
+        CRM_QUERIES.add(exchange.getRequestURI().getPath() + "?" + rawQuery);
+        if (!("Bearer " + CRM_TOKEN).equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
+            sendJson(exchange, 401, "{}");
+            return;
+        }
+        if (CRM_LIST_STATUS.get() != 200) {
+            sendJson(exchange, CRM_LIST_STATUS.get(), "{}");
+            return;
+        }
+        Map<String, String> query = new HashMap<>();
+        for (String pair : rawQuery.split("&")) {
+            String[] parts = pair.split("=", 2);
+            query.put(parts[0], URLDecoder.decode(parts[1], StandardCharsets.UTF_8));
+        }
+        int page = Integer.parseInt(query.get("page"));
+        OffsetDateTime since = query.containsKey("updated_since") ? OffsetDateTime.parse(query.get("updated_since")) : null;
+        List<String> matching = items.stream().filter(item -> {
+            try {
+                return since == null || !OffsetDateTime.parse(JSON.readTree(item).path("updatedAt").asText()).isBefore(since);
+            } catch (IOException exception) {
+                throw new IllegalStateException(exception);
+            }
+        }).toList();
+        int from = Math.min((page - 1) * 2, matching.size());
+        int to = Math.min(page * 2, matching.size());
+        sendJson(exchange, 200, page(to < matching.size() ? page + 1 : null, matching.subList(from, to).toArray(String[]::new)));
+    }
+
+    private static void receiveCrmEvents(HttpExchange exchange) throws IOException {
+        byte[] request = exchange.getRequestBody().readAllBytes();
+        if (!"POST".equals(exchange.getRequestMethod())) {
+            sendJson(exchange, 405, "{}");
+            return;
+        }
+        if (!("Bearer " + CRM_TOKEN).equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
+            sendJson(exchange, 401, "{}");
+            return;
+        }
+        if (CRM_EVENTS_STATUS.get() != 200) {
+            sendJson(exchange, CRM_EVENTS_STATUS.get(), "{}");
+            return;
+        }
+        JsonNode body = JSON.readTree(request);
+        CRM_BATCHES.add(body);
+        CRM_BATCH_KEYS.add(exchange.getRequestHeaders().getFirst("Idempotency-Key"));
+        ObjectNode answer = JSON.createObjectNode();
+        int accepted = 0;
+        int duplicates = 0;
+        for (JsonNode event : body.path("events")) {
+            String id = event.path("eventId").asText();
+            if (CRM_REJECTED.contains(id)) {
+                answer.withArray("rejected").addObject().put("eventId", id).put("reason", "неизвестная организация");
+            } else if (CRM_RECEIVED.add(id)) {
+                accepted++;
+            } else {
+                duplicates++;
+            }
+        }
+        sendJson(exchange, 200, answer.put("accepted", accepted).put("duplicates", duplicates).toString());
+    }
+
+    private static void sendJson(HttpExchange exchange, int status, String body) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(status, bytes.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+            output.write(bytes);
+        }
     }
 
     private SyncRunView syncMoodle() {
@@ -1920,7 +2569,7 @@ class SourceSyncServiceTest {
         }
         MOODLE_REQUESTS.add(form);
         MOODLE_QUERIES.add(String.valueOf(exchange.getRequestURI().getRawQuery()));
-        int status = MOODLE_STATUS.get();
+        int status = MOODLE_FAIL_NEXT.getAndUpdate(left -> Math.max(0, left - 1)) > 0 ? 503 : MOODLE_STATUS.get();
         byte[] bytes = (status == 200 ? moodleBody(form) : "{}").getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");
         exchange.sendResponseHeaders(status, bytes.length);
@@ -1932,7 +2581,11 @@ class SourceSyncServiceTest {
     private static String moodleBody(Map<String, String> form) throws IOException {
         String function = form.get("wsfunction");
         String course = form.get("courseid");
-        String override = MOODLE_BODIES.get(function + ":" + course);
+        boolean withEndedEnrolments = "core_enrol_get_enrolled_users".equals(function) && "0".equals(form.get("options[0][value]"));
+        String override = MOODLE_BODIES.get(function + ":" + course + (withEndedEnrolments ? ":all" : ""));
+        if (override == null && withEndedEnrolments) {
+            override = MOODLE_BODIES.get(function + ":" + course);
+        }
         if (override != null) {
             return override;
         }
@@ -1993,10 +2646,24 @@ class SourceSyncServiceTest {
             HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
             server.createContext(SiteApiClient.RECORDS_PATH, SourceSyncServiceTest::respond);
             server.createContext(MoodleClient.REST_PATH, SourceSyncServiceTest::respondMoodle);
+            server.createContext(LaborMarketClient.DEMAND_PATH, SourceSyncServiceTest::respondLaborMarket);
             server.start();
             return server;
         } catch (IOException exception) {
             throw new IllegalStateException(exception);
+        }
+    }
+
+    private static void respondLaborMarket(HttpExchange exchange) throws IOException {
+        LABOR_QUERIES.add(exchange.getRequestURI().getRawQuery());
+        boolean authorized = ("Bearer " + LABOR_TOKEN).equals(exchange.getRequestHeaders().getFirst("Authorization"));
+        String body = LABOR_BODY.get();
+        int status = !authorized ? 401 : body == null ? 503 : 200;
+        byte[] bytes = (status == 200 ? body : "{}").getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(status, bytes.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+            output.write(bytes);
         }
     }
 
@@ -2068,7 +2735,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, login VARCHAR(200), idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     activation_requested_at TIMESTAMP WITH TIME ZONE, anonymized_at TIMESTAMP WITH TIME ZONE, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL, access_revision INTEGER NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -2102,7 +2769,27 @@ class SourceSyncServiceTest {
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS directions (
-                    id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL UNIQUE, archived BOOLEAN NOT NULL, version INTEGER NOT NULL
+                    id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL UNIQUE, archived BOOLEAN NOT NULL, version INTEGER NOT NULL,
+                    labor_market BOOLEAN NOT NULL DEFAULT FALSE
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS labor_market_settings (
+                    id SMALLINT PRIMARY KEY, base_url VARCHAR(500), token_encrypted VARCHAR(2000),
+                    token_changed_at TIMESTAMP WITH TIME ZONE, updated_by UUID NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS labor_market_snapshots (
+                    external_code VARCHAR(100) NOT NULL, period_month DATE NOT NULL, direction_name VARCHAR(300) NOT NULL,
+                    open_vacancies INTEGER NOT NULL, median_salary INTEGER, data_source VARCHAR(200) NOT NULL, as_of DATE NOT NULL,
+                    fetched_at TIMESTAMP WITH TIME ZONE NOT NULL, sync_run_id UUID, PRIMARY KEY (external_code, period_month)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS labor_market_mappings (
+                    direction_id UUID PRIMARY KEY, external_code VARCHAR(100) NOT NULL, origin VARCHAR(8) NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 0, updated_by UUID, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
                 """
@@ -2265,6 +2952,31 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS agreements (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, number VARCHAR(100) NOT NULL, concluded_on DATE,
+                    valid_until DATE, parties VARCHAR(2000), status VARCHAR(16) NOT NULL, file_attachment_id UUID,
+                    version INTEGER NOT NULL DEFAULT 0, created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agreement_status_events (
+                    id UUID PRIMARY KEY, agreement_id UUID NOT NULL, from_status VARCHAR(16), to_status VARCHAR(16) NOT NULL,
+                    comment VARCHAR(2000), actor_profile_id UUID, interaction_id UUID,
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS crm_exchange_events (
+                    id UUID PRIMARY KEY, event_key VARCHAR(200) NOT NULL UNIQUE, kind VARCHAR(24) NOT NULL,
+                    organization_id UUID NOT NULL, interaction_id UUID, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    payload VARCHAR(100000) NOT NULL, status VARCHAR(8) NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TIMESTAMP WITH TIME ZONE NOT NULL, last_error VARCHAR(500), batch_id UUID,
+                    sent_at TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS sources (
                     code VARCHAR(16) PRIMARY KEY, updated_since TIMESTAMP WITH TIME ZONE,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -2283,7 +2995,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), 
+                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), contact_id UUID, 
                     id UUID PRIMARY KEY, source VARCHAR(16) NOT NULL, record_type VARCHAR(64) NOT NULL,
                     external_id VARCHAR(200) NOT NULL, external_updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     submitted_at TIMESTAMP WITH TIME ZONE NOT NULL, external_status VARCHAR(64), payload VARCHAR(100000) NOT NULL,
@@ -2310,7 +3022,9 @@ class SourceSyncServiceTest {
                     participants_count INTEGER NOT NULL, teachers_count INTEGER NOT NULL, completed_count INTEGER,
                     not_completed_count INTEGER, unknown_count INTEGER NOT NULL, groups_count INTEGER NOT NULL,
                     observed_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                    changed_at TIMESTAMP WITH TIME ZONE NOT NULL, sync_run_id UUID
+                    changed_at TIMESTAMP WITH TIME ZONE NOT NULL, sync_run_id UUID,
+                    active_7d_count INTEGER, active_30d_count INTEGER, never_accessed_count INTEGER,
+                    inactive_count INTEGER, teachers_active_7d_count INTEGER, teachers_active_14d_count INTEGER
                 )
                 """,
                 """
@@ -2319,7 +3033,9 @@ class SourceSyncServiceTest {
                     confirmed_at TIMESTAMP WITH TIME ZONE NOT NULL, participants_count INTEGER NOT NULL,
                     teachers_count INTEGER NOT NULL, completed_count INTEGER, not_completed_count INTEGER,
                     unknown_count INTEGER NOT NULL, groups_count INTEGER NOT NULL, demo BOOLEAN NOT NULL DEFAULT FALSE,
-                    PRIMARY KEY (mapping_id, observed_from)
+                    PRIMARY KEY (mapping_id, observed_from),
+                    active_7d_count INTEGER, active_30d_count INTEGER, never_accessed_count INTEGER,
+                    inactive_count INTEGER, teachers_active_7d_count INTEGER, teachers_active_14d_count INTEGER
                 )
                 """,
                 """
@@ -2336,8 +3052,9 @@ class SourceSyncServiceTest {
                     moodle_token_changed_at TIMESTAMP WITH TIME ZONE, moodle_course_ids VARCHAR(2000) NOT NULL,
                     moodle_student_roles VARCHAR(500) NOT NULL, moodle_teacher_roles VARCHAR(500) NOT NULL,
                     website_base_url VARCHAR(500), website_token_encrypted VARCHAR(2000),
-                    website_token_changed_at TIMESTAMP WITH TIME ZONE, sync_cron VARCHAR(100), updated_by UUID NOT NULL,
-                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    website_token_changed_at TIMESTAMP WITH TIME ZONE, sync_cron VARCHAR(100), crm_base_url VARCHAR(500),
+                    crm_token_encrypted VARCHAR(2000), crm_token_changed_at TIMESTAMP WITH TIME ZONE,
+                    updated_by UUID NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
                 """
@@ -2382,6 +3099,402 @@ class SourceSyncServiceTest {
         ).forEach(jdbcTemplate::execute);
     }
 
+    @Test
+    void customerCrmOrganizationsAndContactsMatchByIdThenInnThenNameAndRepeatDoesNotDuplicate() {
+        UUID dup1 = UUID.randomUUID();
+        UUID dup2 = UUID.randomUUID();
+        insertOrganization(dup1, null, "Колледж Д1", TEAM_A, KAM_A);
+        insertOrganization(dup2, null, "Колледж Д2", TEAM_A, KAM_A);
+        jdbcTemplate.update("UPDATE organizations SET inn = '7700000001' WHERE id = ?", ORGANIZATION_A);
+        jdbcTemplate.update("UPDATE organizations SET inn = '7700000003' WHERE id IN (?, ?)", dup1, dup2);
+        CRM_ORGANIZATIONS.addAll(List.of(
+                crmOrganization("c-1", "Университет А (CRM)", "UNIVERSITY", "7700000001", "2026-10-01T10:00:00+03:00"),
+                crmOrganization("c-2", "  университет   Б ", "UNIVERSITY", null, "2026-10-02T10:00:00+03:00"),
+                crmOrganization("c-3", "Колледж Д", "COLLEGE", "7700000003", "2026-10-03T10:00:00+03:00"),
+                crmOrganization("c-4", "Школа № 7", "SCHOOL", null, "2026-10-04T10:00:00+03:00"),
+                crmOrganization("c-5", "Плохая организация", "UNIVERSITY", "123", "2026-10-05T10:00:00+03:00")));
+        CRM_CONTACTS.addAll(List.of(
+                crmContact("k-1", "c-1", "Ольга Иванова", "olga@example.test", null, "2026-10-06T10:00:00+03:00"),
+                crmContact("k-2", "c-3", "Игорь Колледжев", "igor@example.test", null, "2026-10-07T10:00:00+03:00"),
+                crmContact("k-4", "c-unknown", "Нина Неизвестная", null, null, "2026-10-08T10:00:00+03:00"),
+                crmContact("k-3", "c-1", "Пётр Сидоров", null, null, "2026-10-09T10:00:00+03:00")));
+
+        SyncRunView first = syncCrm();
+
+        assertThat(first.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(List.of(first.fetchedCount(), first.createdCount(), first.updatedCount(), first.skippedCount(),
+                first.needsMappingCount(), first.failedCount())).containsExactly(9, 4, 0, 0, 4, 1);
+        assertThat(CRM_QUERIES).filteredOn(query -> query.startsWith(CrmClient.ORGANIZATIONS_PATH))
+                .extracting(query -> query.replaceAll(".*page=(\\d+).*", "$1")).containsExactly("1", "2", "3");
+        assertThat(jdbcTemplate.queryForMap("SELECT city, inn FROM organizations WHERE id = ?", ORGANIZATION_A))
+                .containsEntry("city", "Москва").containsEntry("inn", "7700000001");
+        assertThat(jdbcTemplate.queryForObject("SELECT city FROM organizations WHERE id = ?", String.class, ORGANIZATION_B))
+                .isEqualTo("Москва");
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT external_key FROM source_mappings WHERE source = 'CUSTOMER_CRM' AND kind = 'ORGANIZATION' ORDER BY external_key
+                """, String.class)).containsExactly("id:c-1", "id:c-2");
+        assertThat(jdbcTemplate.queryForList("SELECT name FROM contacts WHERE organization_id = ? ORDER BY name", String.class,
+                ORGANIZATION_A)).containsExactly("Ольга Иванова", "Пётр Сидоров");
+        assertThat(jdbcTemplate.queryForObject("SELECT decision_role FROM contacts WHERE name = 'Ольга Иванова'", String.class))
+                .isEqualTo("SIGNATORY");
+        assertThat(crmStatus("crm_organization", "c-3")).isEqualTo("NEEDS_MAPPING");
+        assertThat(jdbcTemplate.queryForObject("SELECT error FROM source_records WHERE external_id = 'c-3'", String.class))
+                .contains("Найдено несколько организаций CRM по ИНН", "Колледж Д1", "Колледж Д2");
+        assertThat(jdbcTemplate.queryForObject("SELECT error FROM source_records WHERE external_id = 'c-4'", String.class))
+                .contains("нет в CRM");
+        assertThat(jdbcTemplate.queryForObject("SELECT error FROM source_records WHERE external_id = 'c-5'", String.class))
+                .contains("ИНН должен состоять из 10 или 12 цифр");
+        assertThat(crmStatus("crm_contact", "k-2")).isEqualTo("NEEDS_MAPPING");
+        assertThat(crmStatus("crm_contact", "k-4")).isEqualTo("NEEDS_MAPPING");
+        assertThat(jdbcTemplate.queryForObject("SELECT updated_since FROM sources WHERE code = 'CUSTOMER_CRM'", OffsetDateTime.class))
+                .isEqualTo(OffsetDateTime.parse("2026-10-09T10:00:00+03:00"));
+
+        SyncRunView repeat = syncCrm();
+
+        assertThat(List.of(repeat.fetchedCount(), repeat.createdCount(), repeat.updatedCount(), repeat.skippedCount(),
+                repeat.needsMappingCount(), repeat.failedCount())).containsExactly(1, 0, 0, 1, 0, 0);
+        assertThat(CRM_QUERIES.getLast()).contains("updated_since=2026-10-09T10%3A00%2B03%3A00");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM contacts WHERE organization_id = ?", Integer.class,
+                ORGANIZATION_A)).isEqualTo(2);
+
+        CRM_ORGANIZATIONS.set(0, crmOrganization("c-1", "Университет А — новое название", "UNIVERSITY", null, "2026-10-10T10:00:00+03:00"));
+        CRM_CONTACTS.set(0, crmContact("k-1", "c-1", "Ольга Иванова", "olga@example.test", "+7 900 000-00-01",
+                "2026-10-10T11:00:00+03:00"));
+
+        SyncRunView changed = syncCrm();
+
+        assertThat(List.of(changed.fetchedCount(), changed.createdCount(), changed.updatedCount(), changed.skippedCount()))
+                .containsExactly(3, 0, 2, 1);
+        assertThat(jdbcTemplate.queryForObject("SELECT phone FROM contacts WHERE name = 'Ольга Иванова'", String.class))
+                .isEqualTo("+7 900 000-00-01");
+        assertThat(jdbcTemplate.queryForObject("SELECT name FROM organizations WHERE id = ?", String.class, ORGANIZATION_A))
+                .isEqualTo("Университет А");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_mappings WHERE source = 'CUSTOMER_CRM'", Integer.class))
+                .isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM contacts WHERE organization_id = ?", Integer.class,
+                ORGANIZATION_A)).isEqualTo(2);
+    }
+
+    @Test
+    void ambiguousCrmRecordsAreResolvedByAdministratorThroughTheSameApplyFlow() {
+        UUID dup1 = UUID.randomUUID();
+        UUID dup2 = UUID.randomUUID();
+        insertOrganization(dup1, null, "Колледж Д1", TEAM_A, KAM_A);
+        insertOrganization(dup2, null, "Колледж Д2", TEAM_A, KAM_A);
+        jdbcTemplate.update("UPDATE organizations SET inn = '7700000003' WHERE id IN (?, ?)", dup1, dup2);
+        jdbcTemplate.update("UPDATE organizations SET inn = '7700000001' WHERE id = ?", ORGANIZATION_A);
+        insertContact(ORGANIZATION_A, "Ольга Иванова", "dup@example.test", "ACTIVE", null);
+        insertContact(ORGANIZATION_A, "Ольга И.", "DUP@example.test", "ACTIVE", null);
+        CRM_ORGANIZATIONS.addAll(List.of(
+                crmOrganization("c-1", "Университет А", "UNIVERSITY", "7700000001", "2026-10-01T10:00:00+03:00"),
+                crmOrganization("c-3", "Колледж Д", "COLLEGE", "7700000003", "2026-10-03T10:00:00+03:00"),
+                crmOrganization("c-4", "Школа № 7", "SCHOOL", null, "2026-10-04T10:00:00+03:00")));
+        CRM_CONTACTS.addAll(List.of(
+                crmContact("k-2", "c-3", "Игорь Колледжев", "igor@example.test", null, "2026-10-07T10:00:00+03:00"),
+                crmContact("k-5", "c-1", "Ольга Иванова", "dup@example.test", null, "2026-10-08T10:00:00+03:00")));
+        syncCrm();
+        UUID ambiguousOrganization = crmRecord("crm_organization", "c-3");
+        UUID waitingContact = crmRecord("crm_contact", "k-2");
+        UUID ambiguousContact = crmRecord("crm_contact", "k-5");
+
+        assertThat(crmStatus("crm_contact", "k-5")).isEqualTo("NEEDS_MAPPING");
+        List<SourceRecordView> problems = service.problemRecords(admin);
+        assertThat(problems).extracting(SourceRecordView::externalId).containsExactlyInAnyOrder("c-3", "c-4", "k-2", "k-5");
+        SourceRecordView organizationView = problems.stream().filter(record -> record.id().equals(ambiguousOrganization)).findFirst().orElseThrow();
+        assertThat(organizationView.candidates()).extracting(SourceMappingOption::name).containsExactlyInAnyOrder("Колледж Д1", "Колледж Д2");
+        SourceRecordView contactView = problems.stream().filter(record -> record.id().equals(ambiguousContact)).findFirst().orElseThrow();
+        assertThat(contactView.contactName()).isEqualTo("Ольга Иванова");
+        assertThat(contactView.organizationId()).isEqualTo(ORGANIZATION_A);
+        assertThat(contactView.candidates()).hasSize(2);
+
+        SourceRecordApplyResult organization = service.apply(admin, ambiguousOrganization,
+                new SourceRecordApplyRequest(dup1, null, null, null));
+
+        assertThat(organization.record().status()).isEqualTo(SourceRecordStatus.APPLIED);
+        assertThat(organization.record().organizationId()).isEqualTo(dup1);
+        assertThat(organization.reappliedCount()).isEqualTo(1);
+        assertThat(crmStatus("crm_contact", "k-2")).isEqualTo("APPLIED");
+        assertThat(jdbcTemplate.queryForList("SELECT name FROM contacts WHERE organization_id = ?", String.class, dup1))
+                .containsExactly("Игорь Колледжев");
+        assertThat(waitingContact).isNotNull();
+
+        UUID chosen = contactView.candidates().getFirst().id();
+        SourceRecordApplyResult contact = service.apply(admin, ambiguousContact,
+                new SourceRecordApplyRequest(null, null, null, null, null, chosen));
+
+        assertThat(contact.record().status()).isEqualTo(SourceRecordStatus.APPLIED);
+        assertThat(jdbcTemplate.queryForObject("SELECT contact_id FROM source_records WHERE id = ?", UUID.class, ambiguousContact))
+                .isEqualTo(chosen);
+        assertThat(jdbcTemplate.queryForObject("SELECT position FROM contacts WHERE id = ?", String.class, chosen))
+                .isEqualTo("Проректор");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM contacts WHERE organization_id = ?", Integer.class,
+                ORGANIZATION_A)).isEqualTo(2);
+        assertThatThrownBy(() -> service.apply(admin, ambiguousContact,
+                new SourceRecordApplyRequest(null, null, null, null, null, UUID.randomUUID())))
+                .isInstanceOf(InteractionValidationException.class);
+
+        jdbcTemplate.update("INSERT INTO teams (id, name) VALUES (?, 'Команда А')", TEAM_A);
+        SourceOrganizationCreated created = reviewService.createOrganization(admin, crmRecord("crm_organization", "c-4"),
+                new SourceOrganizationCreateRequest(null, null, TEAM_A), "request-crm");
+
+        assertThat(created.organizationName()).isEqualTo("Школа № 7");
+        assertThat(created.result().record().status()).isEqualTo(SourceRecordStatus.APPLIED);
+        assertThat(jdbcTemplate.queryForObject("SELECT type FROM organizations WHERE id = ?", String.class, created.organizationId()))
+                .isEqualTo("SCHOOL");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT external_key FROM source_mappings WHERE source = 'CUSTOMER_CRM' AND organization_id = ?
+                """, String.class, created.organizationId())).isEqualTo("id:c-4");
+        assertThat(service.problemRecords(admin)).isEmpty();
+    }
+
+    @Test
+    void crmRecordsNeverChangeRestrictedOrAnonymizedContactsAndStayAwayFromLeaderQueue() {
+        insertContact(ORGANIZATION_A, "Ольга Иванова", "olga@example.test", "RESTRICTED", "Ограничен");
+        CRM_ORGANIZATIONS.add(crmOrganization("c-1", "Университет А", "UNIVERSITY", null, "2026-10-01T10:00:00+03:00"));
+        CRM_CONTACTS.addAll(List.of(
+                crmContact("k-1", "c-1", "Ольга Иванова", "olga@example.test", "+7 900 000-00-01", "2026-10-06T10:00:00+03:00"),
+                crmContact("k-3", "c-1", "Пётр Сидоров", null, null, "2026-10-07T10:00:00+03:00")));
+
+        syncCrm();
+
+        assertThat(crmStatus("crm_contact", "k-1")).isEqualTo("SKIPPED");
+        assertThat(jdbcTemplate.queryForMap("SELECT position, phone FROM contacts WHERE name = 'Ольга Иванова'"))
+                .containsEntry("position", "Ограничен").containsEntry("phone", null);
+        assertThat(jdbcTemplate.queryForObject("SELECT error FROM source_records WHERE external_id = 'k-1'", String.class))
+                .contains("ограничена");
+        jdbcTemplate.update("UPDATE contacts SET personal_data_status = 'ANONYMIZED', name = 'Обезличено', email = NULL WHERE name = 'Пётр Сидоров'");
+        CRM_CONTACTS.set(1, crmContact("k-3", "c-1", "Пётр Сидоров", null, "+7 900 000-00-03", "2026-10-11T10:00:00+03:00"));
+
+        SyncRunView changed = syncCrm();
+
+        assertThat(changed.skippedCount()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM contacts WHERE organization_id = ?", Integer.class,
+                ORGANIZATION_A)).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("SELECT phone FROM contacts WHERE name = 'Обезличено'", String.class)).isNull();
+        CRM_ORGANIZATIONS.add(crmOrganization("c-9", "Школа № 9", "SCHOOL", null, "2026-10-12T10:00:00+03:00"));
+        syncCrm();
+        CrmProfile leader = new CrmProfile(UUID.randomUUID(), UserRole.LEADER, TEAM_A, 0);
+        assertThat(reviewService.pending(leader)).isEmpty();
+        assertThatThrownBy(() -> service.problemRecords(leader)).isInstanceOfSatisfying(SourceException.class,
+                exception -> assertThat(exception.code()).isEqualTo("FORBIDDEN"));
+        assertThatThrownBy(() -> reviewService.createOrganization(leader, crmRecord("crm_organization", "c-9"),
+                new SourceOrganizationCreateRequest(null, null, TEAM_A), "request")).isInstanceOf(SourceException.class);
+    }
+
+    @Test
+    void crmPreviewShowsOutcomesWithoutChangingAnything() {
+        UUID dup1 = UUID.randomUUID();
+        UUID dup2 = UUID.randomUUID();
+        insertOrganization(dup1, null, "Колледж Д1", TEAM_A, KAM_A);
+        insertOrganization(dup2, null, "Колледж Д2", TEAM_A, KAM_A);
+        jdbcTemplate.update("UPDATE organizations SET inn = '7700000003' WHERE id IN (?, ?)", dup1, dup2);
+        CRM_ORGANIZATIONS.addAll(List.of(
+                crmOrganization("c-1", "Университет А", "UNIVERSITY", null, "2026-10-01T10:00:00+03:00"),
+                crmOrganization("c-3", "Колледж Д", "COLLEGE", "7700000003", "2026-10-03T10:00:00+03:00"),
+                crmOrganization("c-4", "Школа № 7", "SCHOOL", null, "2026-10-04T10:00:00+03:00"),
+                crmOrganization("c-5", "Плохая", "UNIVERSITY", "123", "2026-10-05T10:00:00+03:00")));
+        CRM_CONTACTS.addAll(List.of(
+                crmContact("k-1", "c-1", "Ольга Иванова", null, null, "2026-10-06T10:00:00+03:00"),
+                crmContact("k-2", "c-3", "Игорь Колледжев", null, null, "2026-10-07T10:00:00+03:00")));
+
+        CrmPreview preview = crmExchangeService.preview(admin);
+
+        assertThat(preview.organizations()).isEqualTo(4);
+        assertThat(preview.contacts()).isEqualTo(2);
+        assertThat(preview.counts()).extracting(CrmPreviewCount::outcome, CrmPreviewCount::count).containsExactlyInAnyOrder(
+                tuple(CrmPreviewOutcome.FOUND, 1), tuple(CrmPreviewOutcome.AMBIGUOUS, 1), tuple(CrmPreviewOutcome.NOT_FOUND, 1),
+                tuple(CrmPreviewOutcome.INVALID, 1), tuple(CrmPreviewOutcome.CREATE, 1),
+                tuple(CrmPreviewOutcome.ORGANIZATION_UNRESOLVED, 1));
+        assertThat(preview.items().getFirst().outcome()).isEqualTo(CrmPreviewOutcome.INVALID);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_records WHERE source = 'CUSTOMER_CRM'", Integer.class))
+                .isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_mappings WHERE source = 'CUSTOMER_CRM'", Integer.class))
+                .isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM contacts WHERE name = 'Ольга Иванова'", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT updated_since FROM sources WHERE code = 'CUSTOMER_CRM'", OffsetDateTime.class))
+                .isNull();
+        CrmProfile leader = new CrmProfile(UUID.randomUUID(), UserRole.LEADER, TEAM_A, 0);
+        assertThatThrownBy(() -> crmExchangeService.preview(leader)).isInstanceOfSatisfying(SourceException.class,
+                exception -> assertThat(exception.code()).isEqualTo("FORBIDDEN"));
+    }
+
+    @Test
+    void crmEventsAreCollectedOnceSentInBatchesWithIdempotencyKeyAndWithoutPersonalData() {
+        repository.insertMapping(SourceCode.CUSTOMER_CRM, "ORGANIZATION", "id:crm-a", ORGANIZATION_A, null, null, null, ADMIN,
+                OffsetDateTime.now());
+        jdbcTemplate.update("UPDATE organizations SET inn = '7700000001' WHERE id = ?", ORGANIZATION_A);
+        insertContact(ORGANIZATION_A, "Ольга Иванова", "olga@example.test", "ACTIVE", null);
+        UUID stage = jdbcTemplate.queryForObject("SELECT id FROM interaction_stages WHERE interaction_id = ? AND name = 'Встреча'",
+                UUID.class, existingInteractionA);
+        interactionService.transition(kamA, existingInteractionA, new InteractionTransitionRequest(
+                interactionService.get(kamA, existingInteractionA).version(), stage, null, List.of(),
+                new InteractionNextStep("Согласовать договор", OffsetDateTime.parse("2026-11-01T12:00:00+03:00"))),
+                "crm-transition");
+        UUID agreementId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO agreements (id, organization_id, number, concluded_on, status, created_by)
+                VALUES (?, ?, 'ДЕМО-А/1', DATE '2026-09-01', 'ACTIVE', ?)
+                """, agreementId, ORGANIZATION_A, KAM_A);
+        insertAgreementStatusEvent(agreementId, null, "ACTIVE", OffsetDateTime.now());
+        jdbcTemplate.update("""
+                INSERT INTO organization_assignment_events (id, organization_id, command_id, previous_owner_manager_id,
+                    previous_owner_manager_display_name, owner_manager_id, new_owner_manager_display_name, actor_profile_id,
+                    actor_display_name, request_id, version, occurred_at)
+                VALUES (?, ?, ?, ?, 'Борис Орлов', ?, 'Анна Смирнова', ?, 'Администратор', 'rq', 1, CURRENT_TIMESTAMP)
+                """, UUID.randomUUID(), ORGANIZATION_A, UUID.randomUUID(), KAM_B, KAM_A, ADMIN);
+
+        SyncRunView first = syncCrm();
+
+        assertThat(first.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(first.errorMessage()).contains("добавлено в очередь 5", "отправлено 5");
+        assertThat(CRM_BATCHES).hasSize(1);
+        assertThat(CRM_BATCH_KEYS.getFirst()).matches("[0-9a-f-]{36}");
+        assertThat(CRM_BATCHES.getFirst().path("batchId").asText()).isEqualTo(CRM_BATCH_KEYS.getFirst());
+        JsonNode events = CRM_BATCHES.getFirst().path("events");
+        assertThat(events).hasSize(5);
+        assertThat(StreamSupport.stream(events.spliterator(), false).map(event -> event.path("kind").asText()))
+                .containsExactlyInAnyOrder("STAGE_CHANGED", "STAGE_CHANGED", "NEXT_STEP_CHANGED", "MANAGER_CHANGED", "AGREEMENT_STATUS");
+        JsonNode stageEvent = StreamSupport.stream(events.spliterator(), false)
+                .filter(event -> event.path("stage").path("from").asText().equals("Поиск контакта")).findFirst().orElseThrow();
+        assertThat(stageEvent.path("stage").path("to").asText()).isEqualTo("Встреча");
+        assertThat(stageEvent.path("organization").path("externalId").asText()).isEqualTo("crm-a");
+        assertThat(stageEvent.path("organization").path("inn").asText()).isEqualTo("7700000001");
+        assertThat(stageEvent.path("work").path("title").asText()).isEqualTo("Курс Java");
+        assertThat(stageEvent.path("work").path("program").asText()).isEqualTo("Java-разработчик");
+        assertThat(stageEvent.path("manager").path("name").asText()).isEqualTo("Анна Смирнова");
+        assertThat(stageEvent.path("occurredAt").asText()).endsWith("+03:00");
+        JsonNode planEvent = StreamSupport.stream(events.spliterator(), false)
+                .filter(event -> event.path("kind").asText().equals("NEXT_STEP_CHANGED")).findFirst().orElseThrow();
+        assertThat(planEvent.path("nextStep").path("text").asText()).isEqualTo("Согласовать договор");
+        assertThat(planEvent.path("nextStep").path("dueAt").asText()).isEqualTo("2026-11-01T12:00:00+03:00");
+        JsonNode agreementEvent = StreamSupport.stream(events.spliterator(), false)
+                .filter(event -> event.path("kind").asText().equals("AGREEMENT_STATUS")).findFirst().orElseThrow();
+        assertThat(agreementEvent.path("agreement").path("status").asText()).isEqualTo("ACTIVE");
+        assertThat(agreementEvent.path("agreement").path("number").asText()).isEqualTo("ДЕМО-А/1");
+        assertThat(CRM_BATCHES.getFirst().toString()).doesNotContain("@", "olga", "Ольга", "email", "phone", "contact");
+        CrmEventList list = crmExchangeService.events(admin, null);
+        assertThat(list.counts()).isEqualTo(new CrmEventCounts(0, 5, 0));
+        assertThat(list.items()).extracting(CrmEventView::status).containsOnly(CrmEventStatus.SENT);
+        assertThat(list.items()).extracting(CrmEventView::description).anyMatch(text -> text.equals("Этап: «Поиск контакта» → «Встреча»"))
+                .anyMatch(text -> text.startsWith("Следующий шаг: Согласовать договор, срок 01.11.2026 12:00 (МСК)"))
+                .anyMatch(text -> text.equals("Ответственный: Борис Орлов → Анна Смирнова"))
+                .anyMatch(text -> text.equals("Договор № ДЕМО-А/1: «Действует»"));
+
+        syncCrm();
+
+        assertThat(CRM_BATCHES).hasSize(1);
+        assertThat(crmExchangeService.events(admin, CrmEventStatus.SENT).counts().sent()).isEqualTo(5);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_exchange_events", Integer.class)).isEqualTo(5);
+    }
+
+    @Test
+    void crmEventsCarryEveryAgreementStatusTransitionIncludingReturns() {
+        UUID agreementId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO agreements (id, organization_id, number, concluded_on, status, created_by)
+                VALUES (?, ?, 'ДЕМО-КА/1', DATE '2026-10-01', 'TERMINATED', ?)
+                """, agreementId, ORGANIZATION_A, KAM_A);
+        List<String> statuses = Arrays.asList(null, "DRAFT", "REVIEW", "CORRECTION", "REVIEW", "SIGNING", "ACTIVE",
+                "COMPLETED", "ACTIVE", "TERMINATED");
+        OffsetDateTime start = OffsetDateTime.now().minusHours(2);
+        for (int index = 1; index < statuses.size(); index++) {
+            insertAgreementStatusEvent(agreementId, statuses.get(index - 1), statuses.get(index), start.plusMinutes(index));
+        }
+
+        SyncRunView run = syncCrm();
+
+        assertThat(run.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        List<JsonNode> sent = StreamSupport.stream(CRM_BATCHES.getFirst().path("events").spliterator(), false)
+                .filter(event -> event.path("kind").asText().equals("AGREEMENT_STATUS")).toList();
+        assertThat(sent).extracting(event -> event.path("agreement").path("status").asText())
+                .containsExactly("DRAFT", "REVIEW", "CORRECTION", "REVIEW", "SIGNING", "ACTIVE", "COMPLETED", "ACTIVE", "TERMINATED");
+        assertThat(sent.getFirst().path("agreement").path("previousStatus").isNull()).isTrue();
+        assertThat(sent.get(3).path("agreement").path("previousStatus").asText()).isEqualTo("CORRECTION");
+        assertThat(sent).extracting(event -> event.path("eventId").asText()).doesNotHaveDuplicates();
+        assertThat(crmExchangeService.events(admin, null).items()).extracting(CrmEventView::description)
+                .contains("Договор № ДЕМО-КА/1: «Проект»",
+                        "Договор № ДЕМО-КА/1: «На согласовании» → «На корректировке»",
+                        "Договор № ДЕМО-КА/1: «На корректировке» → «На согласовании»",
+                        "Договор № ДЕМО-КА/1: «На подписании» → «Действует»",
+                        "Договор № ДЕМО-КА/1: «Завершён» → «Действует»",
+                        "Договор № ДЕМО-КА/1: «Действует» → «Расторгнут»");
+
+        syncCrm();
+
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_exchange_events WHERE kind = 'AGREEMENT_STATUS'",
+                Integer.class)).isEqualTo(9);
+    }
+
+    @Test
+    void failedCrmDeliveryIsRetriedWithPauseThenStopsAsErrorAndAdministratorRequeuesIt() {
+        CRM_EVENTS_STATUS.set(500);
+
+        SyncRunView first = syncCrm();
+
+        assertThat(first.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(CRM_BATCHES).isEmpty();
+        assertThat(jdbcTemplate.queryForMap("SELECT status, attempts, last_error FROM crm_exchange_events"))
+                .containsEntry("status", "QUEUED").containsEntry("attempts", 1)
+                .containsEntry("last_error", "CRM заказчика ответила HTTP 500");
+        assertThat(jdbcTemplate.queryForObject("SELECT next_attempt_at FROM crm_exchange_events", OffsetDateTime.class))
+                .isAfter(OffsetDateTime.now().plusSeconds(30));
+        CRM_EVENTS_STATUS.set(200);
+
+        syncCrm();
+
+        assertThat(CRM_BATCHES).isEmpty();
+        assertThat(jdbcTemplate.queryForObject("SELECT attempts FROM crm_exchange_events", Integer.class)).isEqualTo(1);
+        CrmEventView waiting = crmExchangeService.events(admin, CrmEventStatus.QUEUED).items().getFirst();
+        assertThat(waiting.nextAttemptAt()).isNotNull();
+        assertThat(waiting.lastError()).contains("HTTP 500");
+
+        CRM_EVENTS_STATUS.set(500);
+        for (int attempt = 2; attempt <= 5; attempt++) {
+            jdbcTemplate.update("UPDATE crm_exchange_events SET next_attempt_at = ?", OffsetDateTime.now().minusMinutes(1));
+            syncCrm();
+        }
+
+        assertThat(jdbcTemplate.queryForMap("SELECT status, attempts FROM crm_exchange_events"))
+                .containsEntry("status", "ERROR").containsEntry("attempts", 5);
+        assertThat(crmExchangeService.events(admin, null).counts()).isEqualTo(new CrmEventCounts(0, 0, 1));
+        CRM_EVENTS_STATUS.set(200);
+        jdbcTemplate.update("UPDATE crm_exchange_events SET next_attempt_at = ?", OffsetDateTime.now().minusMinutes(1));
+        syncCrm();
+        assertThat(CRM_BATCHES).isEmpty();
+
+        CrmProfile leader = new CrmProfile(UUID.randomUUID(), UserRole.LEADER, TEAM_A, 0);
+        assertThatThrownBy(() -> crmExchangeService.requeue(leader, "request"))
+                .isInstanceOfSatisfying(SourceException.class, exception -> assertThat(exception.code()).isEqualTo("FORBIDDEN"));
+        assertThatThrownBy(() -> crmExchangeService.events(kamA, null))
+                .isInstanceOfSatisfying(SourceException.class, exception -> assertThat(exception.code()).isEqualTo("FORBIDDEN"));
+        assertThat(crmExchangeService.requeue(admin, "request-requeue").requeued()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForList("SELECT action FROM audit_events", String.class)).contains("CRM_EVENTS_REQUEUED");
+
+        SyncRunView resent = syncCrm();
+
+        assertThat(resent.errorMessage()).contains("отправлено 1");
+        assertThat(jdbcTemplate.queryForMap("SELECT status, attempts FROM crm_exchange_events"))
+                .containsEntry("status", "SENT").containsEntry("attempts", 1);
+        assertThat(CRM_BATCHES).hasSize(1);
+    }
+
+    @Test
+    void rejectedCrmEventStopsAsErrorWithReasonAndInboundFailureDoesNotBlockDelivery() {
+        CRM_LIST_STATUS.set(500);
+        CRM_REJECTED.add("stage:" + jdbcTemplate.queryForObject("SELECT id FROM interaction_events", UUID.class));
+
+        SyncRunView failed = syncCrm();
+
+        assertThat(failed.status()).isEqualTo(SyncRunStatus.FAILED);
+        assertThat(failed.errorCode()).isEqualTo("SOURCE_UNAVAILABLE");
+        assertThat(CRM_BATCHES).hasSize(1);
+        assertThat(jdbcTemplate.queryForMap("SELECT status, last_error FROM crm_exchange_events"))
+                .containsEntry("status", "ERROR")
+                .containsEntry("last_error", "CRM заказчика не приняла событие: неизвестная организация");
+        assertThat(crmExchangeService.events(admin, CrmEventStatus.ERROR).items()).singleElement()
+                .satisfies(event -> assertThat(event.lastError()).contains("неизвестная организация"));
+    }
+
     @TestConfiguration(proxyBeanMethods = false)
     static class SourceTestConfiguration {
         @Bean
@@ -2405,8 +3518,21 @@ class SourceSyncServiceTest {
                             DataSize.ofMegabytes(1)),
                     new SourceProperties.Moodle(baseUrl, MOODLE_TOKEN, List.of(JAVA_COURSE, DATA_COURSE), List.of("student"),
                             List.of("editingteacher", "teacher"), Duration.ofSeconds(2), Duration.ofSeconds(5),
-                            DataSize.ofMegabytes(1))
+                            DataSize.ofMegabytes(1)),
+                    new SourceProperties.Crm("http://127.0.0.1:" + CRM.getAddress().getPort() + "/", CRM_TOKEN, Duration.ofSeconds(2),
+                            Duration.ofSeconds(5), 10, DataSize.ofMegabytes(1))
             );
+        }
+
+        @Bean
+        MoodleClient moodleClient(SourceProperties properties, ObjectMapper objectMapper) {
+            return new MoodleClient(properties, objectMapper, Duration.ZERO);
+        }
+
+        @Bean
+        LaborMarketProperties laborMarketProperties() {
+            return new LaborMarketProperties("http://127.0.0.1:" + SITE.getAddress().getPort() + "/", LABOR_TOKEN,
+                    Duration.ofSeconds(2), Duration.ofSeconds(5), DataSize.ofMegabytes(1), 100, 24);
         }
 
         @Bean

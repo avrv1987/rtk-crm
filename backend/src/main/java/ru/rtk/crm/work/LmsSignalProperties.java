@@ -7,6 +7,12 @@ public record LmsSignalProperties(
         String classesStageName,
         int noStudentsAfterDays,
         int lowCompletionPercent,
-        int completionWindowDays
+        int completionWindowDays,
+        int activityGraceDays,
+        int lowActivityPercent,
+        int notStartedPercent,
+        int dropoutPercent,
+        int inactiveAfterDays
 ) {
+    public static final int TEACHER_INACTIVE_DAYS = 14;
 }

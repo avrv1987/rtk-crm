@@ -76,6 +76,8 @@ public class WorkflowRolloutService {
                 .toList();
     }
 
+    // Предпросмотр ничего не меняет и не резервирует ключ повтора; планы строятся тем же WorkflowRollout.plan,
+    // что и при применении, поэтому показанное совпадает с тем, что будет сохранено.
     @Transactional(readOnly = true)
     public WorkflowRolloutPreview preview(
             CrmProfile profile,
@@ -167,6 +169,8 @@ public class WorkflowRolloutService {
         if (request == null) {
             throw new InteractionValidationException("body", "Не переданы данные запроса");
         }
+        // Работы приходят вместе с версией карточки, которую видел руководитель: применение только к тому состоянию,
+        // которое он подтвердил в предпросмотре.
         List<WorkflowRolloutWorkInput> works = requiredWorks(request.works());
         boolean replaceLocalChanges = Boolean.TRUE.equals(request.replaceLocalChanges());
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
@@ -177,9 +181,12 @@ public class WorkflowRolloutService {
                 works,
                 replaceLocalChanges
         );
+        // Отпечаток запроса защищает ключ повтора: тот же ключ с другим телом — конфликт, а не молчаливый повтор.
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
         OffsetDateTime now = OffsetDateTime.now();
+        // Ключ резервируется в той же транзакции, что и перевод: при ошибке откатывается и резерв, и повтор
+        // выполнится заново; при параллельной отправке второй запрос ждёт первого и получает его сохранённый результат.
         if (!commandIdempotencyRepository.reserve(
                 commandId,
                 profile.id(),
@@ -194,8 +201,12 @@ public class WorkflowRolloutService {
         Map<UUID, UUID> overrides = overrides(request.stageMap(), target);
         Map<Integer, WorkflowRoute> sources = new HashMap<>();
         for (WorkflowRolloutWorkInput work : works) {
+            // Работы блокируются в порядке идентификаторов (список отсортирован в requiredWorks): порядок блокировок
+            // стабилен, и два одновременных перевода пересекающихся наборов не уйдут во взаимную блокировку.
             InteractionRepository.InteractionRow row = interactionRepository.findByIdForUpdate(work.id())
                     .orElseThrow(InteractionNotFoundException::new);
+            // Видимость вуза проверяется для каждой работы: руководитель не может перевести работу чужой команды,
+            // подставив её идентификатор.
             Organization organization = organizationRepository.findVisibleById(profile, row.organizationId())
                     .orElseThrow(InteractionNotFoundException::new);
             WorkflowRolloutRepository.RouteState state = workflowRolloutRepository.findState(work.id())
@@ -203,12 +214,14 @@ public class WorkflowRolloutService {
             if (row.version() != work.version()) {
                 throw InteractionConflictException.version(row.version());
             }
+            // Работа должна идти по этому шаблону, не быть завершённой и не стоять уже на целевой версии: иначе
+            // «перевод» ничего не изменит или заденет чужой маршрут.
             if (!templateId.equals(state.templateId()) || state.workflowVersion() == null
                     || state.workStatus() == InteractionWorkStatus.COMPLETED
                     || state.workflowVersion() == targetVersion) {
                 throw new InteractionValidationException(
                         "works",
-                        "Работа «" + row.title() + "» не идёт по другой версии этого шаблона или уже завершена"
+                        "Взаимодействие «" + row.title() + "» не идёт по другой версии этого шаблона или уже завершена"
                 );
             }
             int sourceVersion = state.workflowVersion();
@@ -225,9 +238,12 @@ public class WorkflowRolloutService {
             if (plan.edited() && !replaceLocalChanges) {
                 throw new InteractionValidationException(
                         "replaceLocalChanges",
-                        "У работы «" + row.title() + "» этапы изменены в карточке; подтвердите замену этих изменений"
+                        "У взаимодействия «" + row.title() + "» этапы изменены в карточке; подтвердите замену этих изменений"
                 );
             }
+            // Порядок важен: сначала версия работы и текущий этап (сверка версии карточки), затем перенос ссылок со
+            // старых этапов на этапы назначения и только после этого замена списка этапов: удаляемые этапы к этому
+            // моменту уже никем не используются.
             if (!workflowRolloutRepository.moveToVersion(work.id(), work.version(), plan.currentStageId(), targetVersion, now)) {
                 throw InteractionConflictException.version(row.version());
             }
@@ -254,6 +270,8 @@ public class WorkflowRolloutService {
                     .orElseThrow();
             String summary = (targetVersion > sourceVersion ? "Маршрут обновлён до версии " : "Маршрут возвращён к версии ")
                     + targetVersion + " шаблона «" + template.name() + "» (была версия " + sourceVersion + ")";
+            // Событие истории привязано к команде (commandId): по нему видно, что изменения этапов сделаны одним
+            // переводом. Откат и обновление различаются только текстом события.
             interactionRepository.insertEvent(
                     UUID.randomUUID(),
                     work.id(),
@@ -323,17 +341,18 @@ public class WorkflowRolloutService {
 
     private List<WorkflowRolloutWorkInput> requiredWorks(List<WorkflowRolloutWorkInput> works) {
         if (works == null || works.isEmpty() || works.size() > MAX_WORKS) {
-            throw new InteractionValidationException("works", "Выберите от 1 до 1000 работ");
+            throw new InteractionValidationException("works", "Выберите от 1 до 1000 взаимодействий");
         }
         Set<UUID> ids = new HashSet<>();
         for (WorkflowRolloutWorkInput work : works) {
             if (work == null || work.id() == null || work.version() == null || work.version() < 0) {
-                throw new InteractionValidationException("works", "Укажите работу и её версию");
+                throw new InteractionValidationException("works", "Укажите взаимодействие и его версию");
             }
             if (!ids.add(work.id())) {
-                throw new InteractionValidationException("works", "Работы не должны повторяться");
+                throw new InteractionValidationException("works", "Взаимодействия не должны повторяться");
             }
         }
+        // Сортировка даёт стабильный порядок блокировок и не зависящий от порядка отпечаток запроса.
         return works.stream().sorted(Comparator.comparing(WorkflowRolloutWorkInput::id)).toList();
     }
 
@@ -347,6 +366,8 @@ public class WorkflowRolloutService {
         return value;
     }
 
+    // Повтор возвращает сохранённый результат первого выполнения, а не пересчитывает его: после перевода
+    // «работ для перевода» уже нет, и пересчёт дал бы ошибку.
     private WorkflowRolloutResult replay(UUID actorProfileId, String idempotencyKey, String fingerprint) {
         CommandIdempotencyRepository.CommandRecord command = commandIdempotencyRepository
                 .find(actorProfileId, CommandOperation.ROLL_OUT_WORKFLOW_VERSION, idempotencyKey)

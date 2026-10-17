@@ -32,6 +32,8 @@ class SourceTokenCipher {
         return key != null;
     }
 
+    // Формат: Base64(iv):Base64(шифротекст). Контекст (источник и поле) входит в AAD, поэтому шифротекст не подменить
+    // значением из другого поля. IV случайный на каждое шифрование: повтор IV с тем же ключом в GCM раскрывает ключ.
     String encrypt(String plaintext, String context) {
         if (key == null) {
             throw new IllegalStateException("Ключ шифрования токенов источников не задан (APP_SOURCES_SETTINGS_KEY)");
@@ -50,6 +52,8 @@ class SourceTokenCipher {
         }
     }
 
+    // Чужой контекст, повреждённый текст и другой ключ дают пустой результат, а не ошибку: токен считается нечитаемым,
+    // и администратор вводит его заново.
     Optional<String> decrypt(String stored, String context) {
         String[] parts = stored.split(":", -1);
         if (key == null || parts.length != 2) {
@@ -72,6 +76,8 @@ class SourceTokenCipher {
         }
     }
 
+    // Пустой ключ — шифрование недоступно, токены с экрана не сохраняются. Допустим и URL-вариант Base64; длина ровно
+    // 32 байта, чтобы слабый ключ не прошёл молча.
     private static SecretKey key(String value) {
         if (value == null || value.isBlank()) {
             return null;

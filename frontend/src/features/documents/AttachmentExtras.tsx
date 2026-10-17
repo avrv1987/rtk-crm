@@ -1,5 +1,5 @@
 import { getModules } from '../../shared/modules'
-import { type FormEvent, useRef, useState } from 'react'
+import { type FormEvent, type ReactNode, useRef, useState } from 'react'
 import {
   ApiError,
   apiClient,
@@ -8,6 +8,7 @@ import {
   type Interaction,
   type Me
 } from '../../shared/api/client'
+import { ActionMenu, type ActionMenuItem } from '../../shared/ui/ActionMenu'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import {
   attachmentAccept,
@@ -34,9 +35,10 @@ type AttachmentExtrasProps = AccessHandlers & {
   onAttachment: (attachment: Attachment) => void
   onInteraction: (interaction: Interaction) => void
   onReload: () => void
+  children?: ReactNode
 }
 
-type Panel = 'none' | 'version' | 'delete'
+type Panel = 'none' | 'kind' | 'version' | 'delete'
 
 type ActionState =
   | { kind: 'idle' }
@@ -53,7 +55,8 @@ export const AttachmentExtras = ({
   onInteraction,
   onReload,
   onSessionExpired,
-  onProfileUnavailable
+  onProfileUnavailable,
+  children
 }: AttachmentExtrasProps) => {
   const handlers = { onSessionExpired, onProfileUnavailable }
   const [panel, setPanel] = useState<Panel>('none')
@@ -140,61 +143,63 @@ export const AttachmentExtras = ({
 
   const conflict = state.kind === 'failed' && state.error instanceof ApiError && state.error.status === 409
 
+  const partner = getModules().partner
+  const menuItems: ActionMenuItem[] = [
+    ...(canEdit ? [{ label: 'Вид документа…', onSelect: () => open('kind') }] : []),
+    ...(canEdit && partner ? [{
+      label: attachment.partnerVisible ? 'Скрыть от вуза' : 'Сделать доступным вузу',
+      onSelect: () => void changePartnerVisible(!attachment.partnerVisible)
+    }] : []),
+    ...(canEdit && replacement === undefined ? [{ label: 'Загрузить новую версию…', onSelect: () => open('version') }] : []),
+    ...(canDelete ? [{ label: 'Удалить…', onSelect: () => open('delete'), danger: true, separated: true }] : [])
+  ]
+
   return (
     <div className="document-extras">
-      <div className="document-extras__meta">
-        <label className="document-extras__kind">
-          Вид документа
-          {canEdit ? (
-            <select
-              value={attachment.kind}
-              disabled={busy}
-              onChange={(event) => void changeKind(event.target.value as AttachmentKind)}
-            >
-              {attachmentKinds.map((kind) => <option key={kind} value={kind}>{attachmentKindLabels[kind]}</option>)}
-            </select>
-          ) : (
-            <strong>{attachmentKindLabels[attachment.kind]}</strong>
-          )}
-        </label>
-        {!getModules().partner ? null : canEdit ? (
-          <label className="document-extras__partner">
-            <input
-              type="checkbox"
-              checked={attachment.partnerVisible}
-              disabled={busy}
-              onChange={(event) => void changePartnerVisible(event.target.checked)}
-            />
-            Доступен вузу
-            <span className="interaction-field-hint">
-              {attachment.status === 'CLEAN'
-                ? 'Представитель вуза увидит и скачает файл в кабинете.'
-                : 'В кабинете вуза файл можно будет скачать после проверки антивирусом.'}
-            </span>
-          </label>
-        ) : attachment.partnerVisible && <p className="document-extras__revision">Доступен вузу</p>}
-        <p className="document-extras__revision">
-          Версия {attachment.revision}
-          {previous !== undefined && <span> · заменяет версию {previous.revision}</span>}
-          {previous === undefined && attachment.replacesId !== null && <span> · прежняя версия удалена</span>}
-          {replacement !== undefined && (
-            <span className="document-extras__superseded"> · есть новая версия {replacement.revision}</span>
-          )}
-        </p>
-      </div>
+      <p className="document-extras__revision">
+        {attachmentKindLabels[attachment.kind]}
+        {' · '}Версия {attachment.revision}
+        {previous !== undefined && <span> · заменяет версию {previous.revision}</span>}
+        {previous === undefined && attachment.replacesId !== null && <span> · прежняя версия удалена</span>}
+        {replacement !== undefined && (
+          <span className="document-extras__superseded"> · есть новая версия {replacement.revision}</span>
+        )}
+        {partner && attachment.partnerVisible && <span className="status status--planned document-extras__partner-mark">Доступен вузу</span>}
+      </p>
       <div className="document-extras__actions">
+        {children}
         {canPreview(attachment) && (
           <a className="document-extras__link" href={previewUrl(attachment.id)} target="_blank" rel="noopener noreferrer">
             Просмотреть
           </a>
         )}
-        {canEdit && replacement === undefined && panel !== 'version' && (
-          <button type="button" className="button--secondary" onClick={() => open('version')}>Загрузить новую версию</button>
-        )}
-        {canDelete && panel !== 'delete' && (
-          <button type="button" className="button--secondary document-extras__delete" onClick={() => open('delete')}>Удалить</button>
-        )}
+        <ActionMenu label={`Действия с документом «${attachment.originalName}»`} items={menuItems} />
       </div>
+      {panel === 'kind' && (
+        <div className="document-extras__panel">
+          <label className="document-extras__kind">
+            Вид документа
+            <select
+              value={attachment.kind}
+              disabled={busy}
+              onChange={(event) => {
+                void changeKind(event.target.value as AttachmentKind)
+                setPanel('none')
+              }}
+            >
+              {attachmentKinds.map((kind) => <option key={kind} value={kind}>{attachmentKindLabels[kind]}</option>)}
+            </select>
+          </label>
+          <span className="interaction-field-hint">
+            {partner ? (attachment.status === 'CLEAN'
+              ? 'Если документ доступен вузу, представитель вуза увидит и скачает файл в кабинете.'
+              : 'В кабинете вуза файл можно будет скачать после проверки антивирусом.') : null}
+          </span>
+          <div className="document-extras__buttons">
+            <button type="button" className="button--secondary" onClick={() => open('none')} disabled={busy}>Отмена</button>
+          </div>
+        </div>
+      )}
       {panel === 'version' && (
         <form className="document-extras__panel" onSubmit={(event) => void submitVersion(event)}>
           <label>

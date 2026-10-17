@@ -153,7 +153,7 @@ export const OrganizationDeputyPanel = ({
     <section className="organization-deputy" aria-labelledby="organization-deputy-title">
       <h5 id="organization-deputy-title">Заместитель на время отсутствия</h5>
       <p className="organization-deputy__note">
-        Заместитель видит вуз и ведёт его работы от своего имени, ответственный не меняется и сохраняет доступ.
+        Заместитель видит вуз и ведёт его взаимодействия от своего имени, ответственный не меняется и сохраняет доступ.
         После последнего дня периода доступ заместителя закрывается автоматически.
       </p>
       {dataState.kind === 'loading' && <p className="work-control__message" role="status">Загружаем замещения…</p>}

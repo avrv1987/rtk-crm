@@ -29,7 +29,7 @@ public class LearningHistoryRepository {
             List<UUID> programIds
     ) {
         List<String> conditions = new ArrayList<>(List.of(
-                "sm.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition() + ")",
+                "sm.organization_id IN (" + scope.currentOrganizations() + ")",
                 "sm.run_ends_on > :from",
                 "sm.run_starts_on <= :to",
                 "s.observed_from < :toAt"

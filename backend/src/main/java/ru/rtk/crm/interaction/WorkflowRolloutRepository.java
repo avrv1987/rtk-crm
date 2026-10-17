@@ -97,6 +97,8 @@ public class WorkflowRolloutRepository {
                 .list();
     }
 
+    // Условие version = :expectedVersion — оптимистичная блокировка: 409 вместо тихой перезаписи, если карточку
+    // успели изменить после предпросмотра.
     public boolean moveToVersion(
             UUID interactionId,
             int expectedVersion,
@@ -118,6 +120,8 @@ public class WorkflowRolloutRepository {
                 .update() == 1;
     }
 
+    // Все ссылки на объединяемый этап (события — этап, откуда и куда, файлы) переводятся до удаления строки этапа:
+    // иначе история и вложения потеряют привязку.
     public void repointStage(UUID interactionId, UUID fromStageId, UUID toStageId) {
         for (String statement : List.of(
                 "UPDATE interaction_events SET stage_id = :toStageId WHERE interaction_id = :interactionId AND stage_id = :fromStageId",

@@ -184,7 +184,8 @@ class InteractionServiceTemplateLockTest {
                         workflowTemplateRepository,
                         attachmentRepository,
                         commandIdempotencyRepository,
-                        new ObjectMapper().findAndRegisterModules()
+                        new ObjectMapper().findAndRegisterModules(),
+                        mock(ru.rtk.crm.agreement.AgreementStages.class)
                 ),
                 workflowTemplateRepository
         );

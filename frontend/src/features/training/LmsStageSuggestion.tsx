@@ -3,7 +3,13 @@ import { apiClient, createIdempotencyKey, type Interaction, type TeacherTraining
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { todayInMoscow } from '../../shared/format/datetime'
 import { accessHandled, errorText, fieldErrors, formatDate, requestIdOf, runPeriod } from '../sources/sourceFormat'
-import { findDuplicateTraining, findLmsStageSuggestion, type LmsStageSuggestion } from './lmsStageSuggestionRules'
+import {
+  findDuplicateTraining,
+  findLmsStageSuggestion,
+  findProgramUpdateSuggestion,
+  type LmsStageSuggestion,
+  type ProgramUpdateSuggestion
+} from './lmsStageSuggestionRules'
 import '../sources/sources.css'
 
 type LmsStageSuggestionPanelProps = {
@@ -18,7 +24,12 @@ type LmsStageSuggestionPanelProps = {
 
 type SnapshotsState =
   | { kind: 'loading' }
-  | { kind: 'ready'; suggestion: LmsStageSuggestion | null; trainings: TeacherTraining[] | null }
+  | {
+      kind: 'ready'
+      suggestion: LmsStageSuggestion | null
+      programUpdate: ProgramUpdateSuggestion | null
+      trainings: TeacherTraining[] | null
+    }
   | { kind: 'failed' }
 
 type Draft = {
@@ -67,7 +78,7 @@ export const LmsStageSuggestionPanel = ({
 
   useEffect(() => {
     if (interaction.program === null) {
-      setState({ kind: 'ready', suggestion: null, trainings: null })
+      setState({ kind: 'ready', suggestion: null, programUpdate: null, trainings: null })
       return
     }
     let active = true
@@ -78,7 +89,13 @@ export const LmsStageSuggestionPanel = ({
     ])
       .then(([snapshots, trainings]) => {
         if (active) {
-          setState({ kind: 'ready', suggestion: findLmsStageSuggestion(interaction, snapshots, todayInMoscow()), trainings })
+          const programUpdate = findProgramUpdateSuggestion(interaction, snapshots)
+          setState({
+            kind: 'ready',
+            suggestion: programUpdate === null ? findLmsStageSuggestion(interaction, snapshots, todayInMoscow()) : null,
+            programUpdate,
+            trainings
+          })
         }
       })
       .catch((error: unknown) => {
@@ -94,7 +111,18 @@ export const LmsStageSuggestionPanel = ({
   if (!canEdit || state.kind === 'loading' || state.kind === 'failed') {
     return null
   }
-  const { suggestion, trainings } = state
+  const { suggestion, programUpdate, trainings } = state
+  if (programUpdate !== null) {
+    return (
+      <ProgramUpdatePanel
+        interaction={interaction}
+        suggestion={programUpdate}
+        onChanged={onChanged}
+        onOpenTransition={onOpenTransition}
+        handled={handled}
+      />
+    )
+  }
   if (suggestion === null) {
     return null
   }
@@ -175,8 +203,8 @@ export const LmsStageSuggestionPanel = ({
       <h6 id="lms-stage-suggestion-title">Предложение по данным LMS</h6>
       <p>
         Поток «{suggestion.snapshot.courseName}»{suggestion.snapshot.groupName ? `, группа «${suggestion.snapshot.groupName}»` : ''}:
-        записано {suggestion.snapshot.participants}, завершили {suggestion.snapshot.completed}. Этап «{suggestion.stage.name}» этой
-        работы ещё не отмечен выполненным.
+        записано {suggestion.snapshot.participants}, завершили {suggestion.snapshot.completed}. Этап «{suggestion.stage.name}» этого
+        взаимодействия ещё не отмечен выполненным.
       </p>
       {duplicate !== null && (
         <p className="notice" role="note">
@@ -257,6 +285,106 @@ export const LmsStageSuggestionPanel = ({
         </form>
       )}
       <p className="data-sources__hint">Поток: {runPeriod(suggestion.snapshot.runStartsOn, suggestion.snapshot.runEndsOn)}</p>
+    </section>
+  )
+}
+
+type ProgramUpdatePanelProps = {
+  interaction: Interaction
+  suggestion: ProgramUpdateSuggestion
+  onChanged: (interaction: Interaction, text?: string) => void
+  onOpenTransition: () => void
+  handled: (error: unknown) => boolean
+}
+
+const ProgramUpdatePanel = ({ interaction, suggestion, onChanged, onOpenTransition, handled }: ProgramUpdatePanelProps) => {
+  const [confirming, setConfirming] = useState(false)
+  const [completedOn, setCompletedOn] = useState(todayInMoscow())
+  const [comment, setComment] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [failure, setFailure] = useState<unknown>(undefined)
+  const key = useRef<string | null>(null)
+  const { snapshot, stage } = suggestion
+
+  const open = () => {
+    key.current = null
+    setCompletedOn(todayInMoscow())
+    setComment(`Программа актуализирована после обучения преподавателей (курс «${snapshot.courseName}»).`)
+    setFailure(undefined)
+    setConfirming(true)
+  }
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (saving) {
+      return
+    }
+    setSaving(true)
+    setFailure(undefined)
+    try {
+      const updated = await apiClient.completeInteractionStage(
+        interaction.id,
+        { version: interaction.version, stageId: stage.id, completedOn, comment, attachmentIds: [] },
+        key.current ?? (key.current = createIdempotencyKey())
+      )
+      key.current = null
+      setConfirming(false)
+      onChanged(updated, `Этап «${stage.name}» отмечен выполненным.`)
+    } catch (error) {
+      if (!handled(error)) {
+        setFailure(error)
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="interaction-learning lms-stage-suggestion" aria-labelledby="lms-program-update-title">
+      <h6 id="lms-program-update-title">Предложение по данным LMS</h6>
+      <p>
+        Преподаватели завершили курс «{snapshot.courseName}»{snapshot.groupName ? `, группа «${snapshot.groupName}»` : ''}:
+        {' '}{snapshot.completed} из {snapshot.participants}. Этап «{stage.name}» ещё не отмечен: обновите программу с учётом
+        обучения преподавателей и отметьте этап.
+      </p>
+      {!confirming && (
+        <div className="source-panel__row">
+          {suggestion.isCurrentStage
+            ? <button type="button" onClick={onOpenTransition}>Перейти на следующий этап…</button>
+            : <button type="button" onClick={open}>Отметить этап «{stage.name}»…</button>}
+        </div>
+      )}
+      {confirming && (
+        <form className="source-form" onSubmit={(event) => void submit(event)}>
+          <label>
+            <span>Дата выполнения<span className="required-mark" aria-hidden="true"> *</span></span>
+            <input
+              type="date"
+              required
+              max={todayInMoscow()}
+              value={completedOn}
+              disabled={saving}
+              onChange={(event) => setCompletedOn(event.target.value)}
+            />
+          </label>
+          <label className="source-form__wide">
+            Комментарий
+            <textarea value={comment} maxLength={2000} disabled={saving} onChange={(event) => setComment(event.target.value)} />
+          </label>
+          <div className="source-form__actions">
+            <button type="submit" disabled={saving}>{saving ? 'Сохраняем…' : 'Подтвердить и отметить этап'}</button>
+            <button type="button" className="button--secondary" onClick={() => setConfirming(false)} disabled={saving}>Отмена</button>
+          </div>
+          {failure !== undefined && (
+            <div className="source-form__wide" role="alert">
+              <p className="source-error">{errorText(failure, 'Этап не отмечен.')}</p>
+              {fieldErrors(failure).map((text) => <p key={text}>{text}</p>)}
+              <SupportDetails requestId={requestIdOf(failure)} />
+            </div>
+          )}
+        </form>
+      )}
+      <p className="data-sources__hint">Поток: {runPeriod(snapshot.runStartsOn, snapshot.runEndsOn)}</p>
     </section>
   )
 }

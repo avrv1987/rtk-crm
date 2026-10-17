@@ -5,13 +5,17 @@ import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oidcLogin;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -20,12 +24,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Set;
 import java.util.UUID;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -77,6 +83,9 @@ class EmployeeAccountHttpTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private AdminCrmProfileService adminCrmProfileService;
 
     @MockitoBean
     private KeycloakAccountClient keycloakAccountClient;
@@ -299,6 +308,109 @@ class EmployeeAccountHttpTest {
     }
 
     @Test
+    void roleAssignedInKeycloakIsReturnedWhenTheChangeIsNotSavedInCrm() throws Exception {
+        when(keycloakAccountClient.configured()).thenReturn(true);
+        doThrow(new AccountSyncException("Keycloak недоступен; учётная запись не изменена, повторите позже"))
+                .when(keycloakAccountClient).setPrivileged("kc-" + KAM, true);
+
+        mockMvc.perform(command(patch("/api/admin/crm-profiles/{id}", KAM), ADMIN, "promote-admin")
+                        .content("{\"version\":0,\"role\":\"ADMIN\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("ACCOUNT_SYNC_FAILED"));
+
+        InOrder order = inOrder(keycloakAccountClient);
+        order.verify(keycloakAccountClient).setCrmRole("kc-" + KAM, UserRole.ADMIN);
+        order.verify(keycloakAccountClient).setPrivileged("kc-" + KAM, true);
+        order.verify(keycloakAccountClient).setCrmRole("kc-" + KAM, UserRole.USER);
+        order.verify(keycloakAccountClient).setPrivileged("kc-" + KAM, false);
+        assertThat(jdbcTemplate.queryForMap("SELECT role, version, role_reconcile_required FROM crm_user_profiles WHERE id = ?", KAM))
+                .containsEntry("ROLE", "USER")
+                .containsEntry("VERSION", 0)
+                .containsEntry("ROLE_RECONCILE_REQUIRED", false);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_profile_events", Integer.class)).isZero();
+    }
+
+    @Test
+    void roleIsReturnedInKeycloakWhenCrmRejectsTheChangeAfterKeycloakAcceptedIt() throws Exception {
+        when(keycloakAccountClient.configured()).thenReturn(true);
+        doAnswer(invocation -> jdbcTemplate.update(
+                "UPDATE crm_user_profiles SET display_name = 'Руководитель А', version = version + 1 WHERE id = ?", LEADER
+        )).when(keycloakAccountClient).setCrmRole("kc-" + LEADER, UserRole.MANAGEMENT);
+
+        mockMvc.perform(command(patch("/api/admin/crm-profiles/{id}", LEADER), ADMIN, "to-management")
+                        .content("{\"version\":0,\"role\":\"MANAGEMENT\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("VERSION_CONFLICT"));
+
+        InOrder order = inOrder(keycloakAccountClient);
+        order.verify(keycloakAccountClient).setCrmRole("kc-" + LEADER, UserRole.MANAGEMENT);
+        order.verify(keycloakAccountClient).setCrmRole("kc-" + LEADER, UserRole.LEADER);
+        verify(keycloakAccountClient, never()).setPrivileged(eq("kc-" + LEADER), anyBoolean());
+        assertThat(jdbcTemplate.queryForMap("SELECT role, role_reconcile_required FROM crm_user_profiles WHERE id = ?", LEADER))
+                .containsEntry("ROLE", "LEADER")
+                .containsEntry("ROLE_RECONCILE_REQUIRED", false);
+    }
+
+    @Test
+    void profileWhoseKeycloakRoleCannotBeReturnedIsMarkedForReconciliationAndKeepsItsCrmRole() throws Exception {
+        when(keycloakAccountClient.configured()).thenReturn(true);
+        doThrow(new AccountSyncException("Keycloak недоступен; учётная запись не изменена, повторите позже"))
+                .when(keycloakAccountClient).setPrivileged("kc-" + KAM, true);
+        doThrow(new AccountSyncException("Keycloak недоступен; роль не изменена, повторите позже"))
+                .when(keycloakAccountClient).setCrmRole("kc-" + KAM, UserRole.USER);
+
+        mockMvc.perform(command(patch("/api/admin/crm-profiles/{id}", KAM), ADMIN, "promote-admin-down")
+                        .content("{\"version\":0,\"role\":\"ADMIN\"}"))
+                .andExpect(status().isServiceUnavailable());
+
+        assertThat(jdbcTemplate.queryForMap("SELECT role, role_reconcile_required FROM crm_user_profiles WHERE id = ?", KAM))
+                .containsEntry("ROLE", "USER")
+                .containsEntry("ROLE_RECONCILE_REQUIRED", true);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT details FROM audit_events WHERE action = 'ACCOUNT_SYNC_FAILED'", String.class))
+                .startsWith("роль в Keycloak требует сверки с CRM");
+        mockMvc.perform(get("/api/admin/crm-profiles").param("status", "SYNC_REQUIRED").with(login(ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(KAM.toString()))
+                .andExpect(jsonPath("$.items[0].roleReconcileRequired").value(true));
+
+        adminCrmProfileService.applyKeycloakRole(ISSUER, "kc-" + KAM, Set.of(UserRole.ADMIN), "login-request");
+        assertThat(jdbcTemplate.queryForObject("SELECT role FROM crm_user_profiles WHERE id = ?", String.class, KAM))
+                .isEqualTo("USER");
+
+        doNothing().when(keycloakAccountClient).setCrmRole("kc-" + KAM, UserRole.USER);
+        mockMvc.perform(post("/api/admin/crm-profiles/{id}/account-sync", KAM).with(login(ADMIN)).with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.roleReconcileRequired").value(false));
+        verify(keycloakAccountClient, times(2)).setCrmRole("kc-" + KAM, UserRole.USER);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_events WHERE action = 'ACCOUNT_ROLE_RECONCILED'", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    void anotherAdministratorsPasswordAndSecondFactorAreNotResetFromCrm() throws Exception {
+        UUID otherAdministrator = UUID.fromString("52000000-0000-0000-0000-000000000006");
+        insertProfile(otherAdministrator, "Второй администратор", "ADMIN", null, "admin-2");
+
+        mockMvc.perform(command(post("/api/admin/crm-profiles/{id}/account-password-reset", otherAdministrator), ADMIN, "reset-admin"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.id").value(containsString("в личном кабинете Keycloak")));
+        mockMvc.perform(command(post("/api/admin/crm-profiles/{id}/account-second-factor-reset", otherAdministrator), ADMIN, "otp-admin"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.id").value(containsString("в консоли Keycloak")));
+        mockMvc.perform(command(post("/api/admin/crm-profiles/{id}/account-logout", otherAdministrator), ADMIN, "logout-admin"))
+                .andExpect(status().isOk());
+
+        verify(keycloakAccountClient, never()).resetTemporaryPassword(anyString(), anyString());
+        verify(keycloakAccountClient, never()).removeSecondFactor(anyString());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_events WHERE action IN ('ACCOUNT_PASSWORD_RESET', 'ACCOUNT_SECOND_FACTOR_RESET')",
+                Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM command_idempotency_records", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
     void secondFactorResetUnbindsTheAppAndKeepsItRequiredForPrivilegedAccounts() throws Exception {
         when(keycloakAccountClient.removeSecondFactor("kc-" + LEADER)).thenReturn(1);
         jdbcTemplate.update("UPDATE crm_user_profiles SET enrolment_operator = TRUE WHERE id = ?", LEADER);
@@ -421,7 +533,7 @@ class EmployeeAccountHttpTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, issuer VARCHAR(512) NOT NULL, subject VARCHAR(512) NOT NULL,
                     display_name VARCHAR(200) NOT NULL, login VARCHAR(200), role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL DEFAULT TRUE, pending_activation BOOLEAN NOT NULL DEFAULT FALSE,

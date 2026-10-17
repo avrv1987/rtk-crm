@@ -48,6 +48,7 @@ import ru.rtk.crm.module.ModuleProperties;
         OrganizationRepository.class,
         ReportRepository.class,
         ReportService.class,
+        ru.rtk.crm.work.LmsLearningTestBeans.class,
         ReportViewsTest.PropertiesConfiguration.class
 })
 class ReportViewsTest {
@@ -131,7 +132,7 @@ class ReportViewsTest {
                 StatisticsGroupBy.STAGE, null, null, null, filters(), LocalDate.parse("2026-09-10"), null));
         assertThat(byStage.total()).isEqualTo(2);
         assertThat(byStage.items()).extracting(StatisticsResult.Item::label, StatisticsResult.Item::count)
-                .containsExactlyInAnyOrder(tuple("Встреча", 1L), tuple("Поиск контакта", 1L));
+                .containsExactly(tuple("Поиск контакта", 1L), tuple("Уточнение актуальности", 0L), tuple("Встреча", 1L));
 
         ReportPreview preview = reportService.preview(LEADER_A_PROFILE, snapshot(SEPTEMBER_FIRST, filters()), 0, 50);
         assertThat(preview.columns()).extracting(ReportColumnView::title).contains("Этап на дату", "Ответственный на дату");

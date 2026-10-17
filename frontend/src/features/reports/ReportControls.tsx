@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { formatCalendarDate, todayInMoscow } from '../../shared/format/datetime'
+import { HintButton } from '../../shared/ui/HintButton'
 import { matchingPreset, periodPresets, previousMonthEnd } from './reportPeriods'
 
 export type FilterOption = {
@@ -57,18 +58,10 @@ const usePopover = () => {
   return { ref, place, close }
 }
 
-export const InfoTip = ({ label, children }: { label: string; children: ReactNode }) => {
-  const { ref, place } = usePopover()
-  return (
-    <details ref={ref} className="report-tip" onToggle={place}>
-      <summary className="report-tip__toggle" aria-label={`Пояснение: ${label}`} title="Пояснение">i</summary>
-      <div className="report-popover report-tip__panel" role="note">
-        <p className="report-popover__title">{label}</p>
-        <div className="report-tip__text">{children}</div>
-      </div>
-    </details>
-  )
-}
+// Подсказка отчётов — общий знак «?»; прежний «i» с отдельной панелью убран ради единого вида.
+export const InfoTip = ({ label, children }: { label: string; children: ReactNode }) => (
+  <HintButton label={`Пояснение: ${label}`}>{children}</HintButton>
+)
 
 type ChipProps = {
   label: string
@@ -234,9 +227,9 @@ export const SelectedValues = ({ values }: { values: SelectedValue[] }) => (
   )
 )
 
-const rangeText = (from: string, to: string) => {
+const rangeText = (from: string, to: string, empty = 'без ограничения по датам') => {
   if (from === '' && to === '') {
-    return 'без ограничения по датам'
+    return empty
   }
   return `${from === '' ? 'с начала' : formatCalendarDate(from)} — ${to === '' ? 'без конца' : formatCalendarDate(to)}`
 }
@@ -247,9 +240,12 @@ type PeriodPickerProps = {
   onChange: (from: string, to: string) => void
   required?: boolean
   hint?: ReactNode
+  // Что означает пустой период в отчёте (у «Динамики обучения» — последние 12 месяцев) и до какой даты можно выбирать.
+  emptyText?: string
+  max?: string
 }
 
-export const PeriodPicker = ({ from, to, onChange, required = false, hint }: PeriodPickerProps) => {
+export const PeriodPicker = ({ from, to, onChange, required = false, hint, emptyText, max }: PeriodPickerProps) => {
   const today = todayInMoscow()
   const active = matchingPreset(from, to, today)
   const [custom, setCustom] = useState(active === null)
@@ -260,7 +256,7 @@ export const PeriodPicker = ({ from, to, onChange, required = false, hint }: Per
   return (
     <fieldset className="report-period">
       <legend className="report-period__legend">
-        Период <span className="report-period__range">{rangeText(from, to)}, МСК</span>
+        Период <span className="report-period__range">{rangeText(from, to, emptyText)}, МСК</span>
         <InfoTip label="Период">
           {hint ?? 'Даты включительно, по московскому времени. Пустая дата в своём диапазоне снимает ограничение.'}
         </InfoTip>
@@ -297,7 +293,7 @@ export const PeriodPicker = ({ from, to, onChange, required = false, hint }: Per
             type="date"
             required={required}
             value={from}
-            max={to || undefined}
+            max={to || max}
             onChange={(event) => onChange(event.target.value, to)}
           />
           <label htmlFor={toId}>по</label>
@@ -307,6 +303,7 @@ export const PeriodPicker = ({ from, to, onChange, required = false, hint }: Per
             required={required}
             value={to}
             min={from || undefined}
+            max={max}
             onChange={(event) => onChange(from, event.target.value)}
           />
         </div>
@@ -342,3 +339,30 @@ export const AsOfPicker = ({ value, onChange }: { value: string; onChange: (valu
     </fieldset>
   )
 }
+
+type ReportSegmentsProps<T extends string> = {
+  label: string
+  options: { value: T; label: string }[]
+  value: T
+  onChange: (value: T) => void
+}
+
+// Короткий выбор одного из нескольких вариантов (квартал, показатель, линии) в том же виде, что и быстрые периоды.
+export const ReportSegments = <T extends string,>({ label, options, value, onChange }: ReportSegmentsProps<T>) => (
+  <fieldset className="report-period report-segments">
+    <legend className="report-period__legend">{label}</legend>
+    <div className="report-period__presets">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className="report-period__preset"
+          aria-pressed={option.value === value}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  </fieldset>
+)

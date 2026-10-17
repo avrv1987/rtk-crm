@@ -64,6 +64,8 @@ class AccessManagementHttpTest {
     private static final UUID LEADER_A = UUID.fromString("50000000-0000-0000-0000-000000000002");
     private static final UUID USER_A = UUID.fromString("50000000-0000-0000-0000-000000000003");
     private static final UUID PENDING = UUID.fromString("50000000-0000-0000-0000-000000000004");
+    private static final UUID PARTNER = UUID.fromString("50000000-0000-0000-0000-000000000005");
+    private static final UUID MANAGEMENT = UUID.fromString("50000000-0000-0000-0000-000000000006");
     private static final UUID ORGANIZATION_A = UUID.fromString("60000000-0000-0000-0000-000000000001");
     private static final UUID ORGANIZATION_B = UUID.fromString("60000000-0000-0000-0000-000000000002");
     private static final String ENROLMENT_KEY = randomKey();
@@ -95,6 +97,7 @@ class AccessManagementHttpTest {
         createSchema();
         jdbcTemplate.update("DELETE FROM audit_events");
         jdbcTemplate.update("DELETE FROM source_settings");
+        jdbcTemplate.update("DELETE FROM crm_exchange_events");
         jdbcTemplate.update("DELETE FROM crm_profile_events");
         jdbcTemplate.update("DELETE FROM organization_assignment_events");
         jdbcTemplate.update("DELETE FROM organization_team_events");
@@ -109,6 +112,8 @@ class AccessManagementHttpTest {
         insertProfile(LEADER_A, "Руководитель А", "LEADER", TEAM_A, true, false);
         insertProfile(USER_A, "КАМ А", "USER", TEAM_A, true, false);
         insertProfile(PENDING, "Новый сотрудник", "USER", null, false, true);
+        insertProfile(PARTNER, "Партнёр", "PARTNER", null, true, false);
+        insertProfile(MANAGEMENT, "Руководство", "MANAGEMENT", null, true, false);
         insertOrganization(ORGANIZATION_A, "Университет А", TEAM_A, USER_A);
         insertOrganization(ORGANIZATION_B, "Университет Б", TEAM_B, null);
     }
@@ -415,6 +420,48 @@ class AccessManagementHttpTest {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_settings", Integer.class)).isZero();
     }
 
+    @Test
+    void crmExchangeIsAdministratorOnly() throws Exception {
+        String settings = """
+                {"moodleBaseUrl":null,"moodleCourseIds":[],"moodleStudentRoles":["student"],"moodleTeacherRoles":[],
+                 "websiteBaseUrl":null,"syncCron":null,"crmBaseUrl":"https://crm.example.test","crmToken":"http-secret-crm-token"}
+                """;
+        for (UUID profile : new UUID[] {USER_A, LEADER_A, MANAGEMENT, PARTNER}) {
+            mockMvc.perform(get("/api/admin/crm-exchange/events").with(login(profile)))
+                    .andExpect(status().isForbidden());
+            mockMvc.perform(post("/api/admin/crm-exchange/events/retry").with(login(profile)).with(csrf()))
+                    .andExpect(status().isForbidden());
+            mockMvc.perform(post("/api/admin/crm-exchange/preview").with(login(profile)).with(csrf()))
+                    .andExpect(status().isForbidden());
+            mockMvc.perform(post("/api/admin/sources/CUSTOMER_CRM/sync").with(login(profile)).with(csrf()))
+                    .andExpect(status().isForbidden());
+            mockMvc.perform(put("/api/admin/source-settings").with(login(profile)).with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON).content(settings))
+                    .andExpect(status().isForbidden());
+        }
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_settings", Integer.class)).isZero();
+
+        mockMvc.perform(get("/api/admin/crm-exchange/events").with(login(ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.counts.queued").value(0))
+                .andExpect(jsonPath("$.items").isEmpty());
+        mockMvc.perform(get("/api/admin/crm-exchange/events").param("status", "BROKEN").with(login(ADMIN)))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/admin/crm-exchange/events/retry").with(login(ADMIN)).with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requeued").value(0));
+        mockMvc.perform(post("/api/admin/crm-exchange/preview").with(login(ADMIN)).with(csrf()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SOURCE_NOT_CONFIGURED"));
+        String saved = mockMvc.perform(put("/api/admin/source-settings").with(login(ADMIN)).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(settings))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.crmBaseUrl").value("https://crm.example.test"))
+                .andExpect(jsonPath("$.crmToken.origin").value("SCREEN"))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(saved).doesNotContain("http-secret-crm-token");
+    }
+
     private RequestPostProcessor login(UUID profileId) {
         return oidcLogin().idToken(token -> token.issuer(ISSUER).subject(profileId.toString()));
     }
@@ -570,7 +617,7 @@ class AccessManagementHttpTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -709,8 +756,18 @@ class AccessManagementHttpTest {
                     moodle_token_changed_at TIMESTAMP WITH TIME ZONE, moodle_course_ids VARCHAR(2000) NOT NULL,
                     moodle_student_roles VARCHAR(500) NOT NULL, moodle_teacher_roles VARCHAR(500) NOT NULL,
                     website_base_url VARCHAR(500), website_token_encrypted VARCHAR(2000),
-                    website_token_changed_at TIMESTAMP WITH TIME ZONE, sync_cron VARCHAR(100), updated_by UUID NOT NULL,
-                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    website_token_changed_at TIMESTAMP WITH TIME ZONE, sync_cron VARCHAR(100), crm_base_url VARCHAR(500),
+                    crm_token_encrypted VARCHAR(2000), crm_token_changed_at TIMESTAMP WITH TIME ZONE,
+                    updated_by UUID NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS crm_exchange_events (
+                    id UUID PRIMARY KEY, event_key VARCHAR(200) NOT NULL UNIQUE, kind VARCHAR(24) NOT NULL,
+                    organization_id UUID NOT NULL, interaction_id UUID, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    payload VARCHAR(100000) NOT NULL, status VARCHAR(8) NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TIMESTAMP WITH TIME ZONE NOT NULL, last_error VARCHAR(500), batch_id UUID,
+                    sent_at TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """);
         jdbcTemplate.execute("""

@@ -312,10 +312,10 @@ try {
   })()`)
   phase = 'ui-comment-form'
   await kamAConcurrent.waitFor(
-    () => kamAConcurrent.evaluate("Boolean([...document.querySelectorAll('.work-card__actions button')].find((button) => button.textContent.trim() === 'Комментарий'))"),
+    () => kamAConcurrent.evaluate("Boolean([...document.querySelectorAll('.work-card__add [role=menuitem]')].find((item) => item.textContent.trim() === 'Комментарий…'))"),
     'UI comment button did not load'
   )
-  await kamAConcurrent.evaluate("[...document.querySelectorAll('.work-card__actions button')].find((button) => button.textContent.trim() === 'Комментарий').click()")
+  await kamAConcurrent.evaluate("[...document.querySelectorAll('.work-card__add [role=menuitem]')].find((item) => item.textContent.trim() === 'Комментарий…').click()")
   await kamAConcurrent.waitFor(
     () => kamAConcurrent.evaluate("Boolean(document.querySelector('dialog[open] form.interaction-comment-form'))"),
     'UI comment form did not load'

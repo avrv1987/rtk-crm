@@ -34,7 +34,6 @@ import {
 type LearnerCardViewProps = {
   learnerId: string
   initialNotice?: string
-  onBack: () => void
   onNavigateLearner: (learnerId: string, notice?: string) => void
   onAccessError: AccessErrorReporter
 }
@@ -383,7 +382,7 @@ const LearnerMoveProposal = ({ learnerId, version, current, snils, found, onCanc
   )
 }
 
-export const LearnerCardView = ({ learnerId, initialNotice, onBack, onNavigateLearner, onAccessError }: LearnerCardViewProps) => {
+export const LearnerCardView = ({ learnerId, initialNotice, onNavigateLearner, onAccessError }: LearnerCardViewProps) => {
   const [state, setState] = useState<CardState>({ kind: 'loading' })
   const [revealed, setRevealed] = useState<Partial<Record<LearnerFieldGroup, Record<string, string>>>>({})
   const [notice, setNotice] = useState<string | null>(initialNotice ?? null)
@@ -473,7 +472,6 @@ export const LearnerCardView = ({ learnerId, initialNotice, onBack, onNavigateLe
           <SupportDetails requestId={requestIdOf(state.error)} />
           <button type="button" onClick={() => void load()}>Повторить</button>
         </div>
-        <button type="button" className="button--secondary" onClick={onBack}>Назад</button>
       </section>
     )
   }
@@ -483,10 +481,7 @@ export const LearnerCardView = ({ learnerId, initialNotice, onBack, onNavigateLe
 
   return (
     <section className="enrolment" aria-labelledby="enrolment-learner-title">
-      <div>
-        <p className="eyebrow">Оператор зачисления</p>
-        <h2 id="enrolment-learner-title">Анкета слушателя</h2>
-      </div>
+      <h2 id="enrolment-learner-title">Анкета слушателя</h2>
 
       {notice !== null && <p role="status">{notice}</p>}
       {learner.status === 'RESTRICTED' && (
@@ -594,8 +589,6 @@ export const LearnerCardView = ({ learnerId, initialNotice, onBack, onNavigateLe
           )}
         </>
       )}
-
-      <button type="button" className="button--secondary" onClick={onBack}>Назад</button>
     </section>
   )
 }

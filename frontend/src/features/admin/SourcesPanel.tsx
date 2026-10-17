@@ -3,20 +3,27 @@ import {
   ApiError,
   apiClient,
   type DataSource,
-  type RunKind,
   type SourceCode,
   type SourceMappingOptions,
   type SourceRecord,
-  type SourceRecordApplyResult,
-  type SyncRun,
   type Team
 } from '../../shared/api/client'
-import { shiftCalendarDate } from '../../shared/format/datetime'
-import { formatDateTime, scheduleLabel } from '../sources/sourceFormat'
-import { SourceMappingsList } from '../sources/SourceMappingsList'
-import { SourceRunHistory } from '../sources/SourceRunHistory'
+import { EmptyState } from '../../shared/ui/EmptyState'
+import { HintButton } from '../../shared/ui/HintButton'
+import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { Toast } from '../../shared/ui/Toast'
+import { CrmExchangePanel } from '../sources/CrmExchangePanel'
+import { LaborMarketBlock } from '../sources/LaborMarketBlock'
 import { SourceConnectionSettings } from '../sources/SourceConnectionSettings'
+import { SourceMappingsList } from '../sources/SourceMappingsList'
+import { SourceReviewTab } from '../sources/SourceReviewTab'
+import { SourceSyncCard, type SyncControl } from '../sources/SourceSyncCard'
+import { SourceTabBar, tabId, tabPanelId, type SourceTabLabel } from '../sources/SourceTabBar'
+import { errorText, requestIdOf } from '../sources/sourceFormat'
+import { isRunActive, sourceState, sourceTabs, type SourcesTab } from '../sources/sourceTabs'
+import { useSourcesTab } from '../sources/useSourcesTab'
 import '../sources/sources.css'
+import '../sources/sourcePage.css'
 
 type SourcesPanelProps = {
   onSessionExpired: () => void
@@ -31,118 +38,48 @@ type PanelState =
 
 type CommandState =
   | { kind: 'idle' }
-  | { kind: 'running'; target: string }
-  | { kind: 'failed'; target: string; error: unknown }
-  | { kind: 'applied'; target: string; result: SourceRecordApplyResult }
-  | { kind: 'created'; target: string; message: string }
-
-type Mapping = {
-  organizationId: string
-  programId: string
-  runStartsOn: string
-  runLastDay: string
-  runKind: RunKind
-  newOrganizationName: string
-  newOrganizationTeamId: string
-}
+  | { kind: 'running'; target: SourceCode }
+  | { kind: 'failed'; target: SourceCode; error: unknown }
 
 const pollIntervalMs = 2000
 
-const runStatusLabels: Record<SyncRun['status'], string> = {
-  PENDING: 'В очереди',
-  RUNNING: 'Выполняется',
-  SUCCEEDED: 'Завершена',
-  FAILED: 'Ошибка'
+const pageHint = 'Курс или его группы Moodle сопоставляются с вузом, программой и датами потока обучения: параллельные потоки в отчёте '
+  + 'считаются только по потокам с датами. Повторная синхронизация не создаёт дублей, ошибка источника не меняет уже загруженные данные. '
+  + 'Начальные значения подключения берутся из конфигурации развёртывания.'
+
+const sourceHints: Partial<Record<SourcesTab, string>> = {
+  website: 'Заявки сайта сопоставляются с вузами и программами CRM; то, что не сопоставилось само, попадает на вкладку «Записи для разбора».',
+  moodle: 'Moodle читается через ограниченный веб-сервис по разрешённым курсам: в CRM остаются только названия курсов и групп и числа; '
+    + 'ФИО, которые Moodle отдаёт вместе со списком участников, CRM не сохраняет, оценки не запрашиваются.',
+  crm: 'Из CRM заказчика приходят организации и контакты: их сопоставляют по внешнему ID, затем по ИНН и по названию, неоднозначные записи '
+    + 'разбираются на вкладке «Записи для разбора». В CRM заказчика уходят события работы с вузом: смена этапа, следующий шаг, '
+    + 'ответственный менеджер, смена статуса договора с вузом.'
 }
 
-const recordTypeLabels: Record<string, string> = {
-  partnership_request: 'Заявка вуза на партнёрство',
-  learning_application: 'Заявка на обучение',
-  paid_order: 'Оплаченная заявка (сайт)',
-  moodle_course: 'Курс Moodle',
-  moodle_group: 'Группа курса Moodle'
-}
-
-const recordStatusLabels: Record<SourceRecord['status'], string> = {
-  APPLIED: 'Применена',
-  NEEDS_MAPPING: 'Требует сопоставления',
-  FAILED: 'Ошибка',
-  SKIPPED: 'Пропущена'
-}
-
-const isActive = (run: SyncRun | null | undefined) => run?.status === 'PENDING' || run?.status === 'RUNNING'
-
-const syncBlocker = (source: DataSource) => {
-  if (!source.adapterAvailable) {
-    return 'Адаптер источника ещё не подключён.'
+const tabLabelsOf = (state: PanelState): Record<SourcesTab, SourceTabLabel> => {
+  const labels = Object.fromEntries(sourceTabs.map((tab) => [tab.key, { label: tab.label }])) as Record<SourcesTab, SourceTabLabel>
+  if (state.kind === 'ready') {
+    labels.review = { label: `Записи для разбора (${state.records.length})` }
+    for (const tab of sourceTabs) {
+      const source = state.sources.find((item) => item.source === tab.source)
+      const current = source && sourceState(source)
+      if (current === 'failed') {
+        labels[tab.key] = { label: tab.label, flag: 'ошибка' }
+      } else if (current === 'stale') {
+        labels[tab.key] = { label: tab.label, flag: 'устарели', flagWarning: true }
+      }
+    }
   }
-  if (!source.configured) {
-    return source.source === 'MOODLE'
-      ? 'Источник не настроен: задайте адрес, токен и курсы Moodle в блоке «Подключение».'
-      : 'Источник не настроен: задайте адрес сайта в блоке «Подключение».'
-  }
-  if (isActive(source.lastRun)) {
-    return 'Синхронизация уже выполняется.'
-  }
-  return null
+  return labels
 }
-
-const isPaidOrder = (record: SourceRecord) => record.recordType === 'paid_order'
-
-const needsOrganization = (record: SourceRecord) => (
-  record.status === 'NEEDS_MAPPING' && !record.organizationId && !isPaidOrder(record)
-)
-
-const isMoodle = (record: SourceRecord) => record.source === 'MOODLE'
-
-const needsProgram = (record: SourceRecord) => (
-  record.status === 'NEEDS_MAPPING' && (isMoodle(record) || Boolean(record.programName)) && !record.programId
-)
-
-const needsRun = (record: SourceRecord) => isMoodle(record) && record.status === 'NEEDS_MAPPING'
-
-const nextDay = (date: string) => shiftCalendarDate(date, 1)
-
-const ErrorDetails = ({ error, message }: { error: unknown; message: string }) => (
-  <div className="interaction-command-error" role="alert">
-    <p>{error instanceof ApiError ? error.message : message}</p>
-    {error instanceof ApiError && (
-      <>
-        <p>Код: {error.code}</p>
-        {Object.entries(error.fieldErrors ?? {}).map(([field, text]) => <p key={field}>{text}</p>)}
-        <p className="request-id">Request ID: {error.requestId}</p>
-      </>
-    )}
-  </div>
-)
-
-const RunSummary = ({ run }: { run: SyncRun }) => (
-  <div className="data-sources__run">
-    <p>
-      Последний запуск: {runStatusLabels[run.status]}, {formatDateTime(run.finishedAt ?? run.startedAt ?? run.createdAt)}
-    </p>
-    <dl className="data-sources__counters">
-      <div><dt>Получено</dt><dd>{run.fetchedCount}</dd></div>
-      <div><dt>Создано</dt><dd>{run.createdCount}</dd></div>
-      <div><dt>Обновлено</dt><dd>{run.updatedCount}</dd></div>
-      <div><dt>Пропущено</dt><dd>{run.skippedCount}</dd></div>
-      <div><dt>Требуют сопоставления</dt><dd>{run.needsMappingCount}</dd></div>
-      <div><dt>Ошибки</dt><dd>{run.failedCount}</dd></div>
-    </dl>
-    {run.errorMessage && (
-      <p className={run.status === 'FAILED' ? 'data-sources__error' : undefined}>
-        {run.errorCode ? `${run.errorCode}: ` : ''}{run.errorMessage}
-      </p>
-    )}
-  </div>
-)
 
 export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable, onSynced }: SourcesPanelProps) => {
   const [state, setState] = useState<PanelState>({ kind: 'loading' })
   const [command, setCommand] = useState<CommandState>({ kind: 'idle' })
-  const [mappings, setMappings] = useState<Record<string, Mapping>>({})
+  const [notice, setNotice] = useState<string | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
   const loadVersion = useRef(0)
+  const { tab, mappingsSource, select } = useSourcesTab(state.kind === 'ready' ? state.sources : null)
 
   const handleAccessError = useCallback((error: unknown) => {
     if (error instanceof ApiError && error.code === 'UNAUTHENTICATED') {
@@ -187,7 +124,7 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable, onSynced 
   }, [load])
 
   useEffect(() => {
-    if (state.kind !== 'ready' || !state.sources.some((source) => isActive(source.lastRun))) {
+    if (state.kind !== 'ready' || !state.sources.some((source) => isRunActive(source.lastRun))) {
       return
     }
     const timer = window.setTimeout(() => void load(false), pollIntervalMs)
@@ -208,332 +145,117 @@ export const SourcesPanel = ({ onSessionExpired, onProfileUnavailable, onSynced 
     onSynced?.()
   }
 
-  const mappingOf = (record: SourceRecord): Mapping => (
-    mappings[record.id] ?? {
-      organizationId: '',
-      programId: '',
-      runStartsOn: '',
-      runLastDay: '',
-      runKind: 'STUDENTS',
-      newOrganizationName: record.organizationName ?? '',
-      newOrganizationTeamId: ''
+  const syncOf = (source: SourceCode): SyncControl => ({
+    syncing: command.kind === 'running' && command.target === source,
+    busy: command.kind === 'running',
+    error: command.kind === 'failed' && command.target === source && (
+      <div role="alert">
+        <p className="src-error">{errorText(command.error, 'Синхронизация не запущена.')}</p>
+        <SupportDetails requestId={requestIdOf(command.error)} code={command.error instanceof ApiError ? command.error.code : undefined} />
+      </div>
+    ),
+    start: () => void startSync(source)
+  })
+
+  const reload = useCallback(() => load(false), [load])
+  const notify = useCallback((message: string) => setNotice(message), [])
+  const handlers = { onSessionExpired, onProfileUnavailable }
+
+  const renderTab = (current: SourcesTab, ready: Extract<PanelState, { kind: 'ready' }>) => {
+    if (current === 'review') {
+      return (
+        <SourceReviewTab
+          records={ready.records}
+          options={ready.options}
+          teams={ready.teams}
+          onReload={reload}
+          onNotice={notify}
+          {...handlers}
+        />
+      )
     }
-  )
-
-  const updateMapping = (record: SourceRecord, patch: Partial<Mapping>) => {
-    setMappings((current) => ({ ...current, [record.id]: { ...mappingOf(record), ...patch } }))
-  }
-
-  const applyRecord = async (record: SourceRecord) => {
-    const mapping = mappingOf(record)
-    setCommand({ kind: 'running', target: record.id })
-    try {
-      const result = await apiClient.applySourceRecord(record.id, {
-        organizationId: mapping.organizationId === '' ? null : mapping.organizationId,
-        programId: mapping.programId === '' ? null : mapping.programId,
-        runStartsOn: needsRun(record) && mapping.runStartsOn !== '' ? mapping.runStartsOn : null,
-        runEndsOn: needsRun(record) && mapping.runLastDay !== '' ? nextDay(mapping.runLastDay) : null,
-        runKind: needsRun(record) ? mapping.runKind : null
-      })
-      setCommand({ kind: 'applied', target: record.id, result })
-    } catch (error) {
-      if (!handleAccessError(error)) {
-        setCommand({ kind: 'failed', target: record.id, error })
-      }
+    if (current === 'mappings') {
+      return (
+        <SourceMappingsList
+          key={mappingsSource ?? 'all'}
+          options={ready.options}
+          reloadToken={reloadToken}
+          initialSource={mappingsSource}
+          onChanged={() => void load(false)}
+          onNotice={notify}
+          {...handlers}
+        />
+      )
     }
-    await load(false)
-  }
-
-  const createOrganization = async (record: SourceRecord) => {
-    const mapping = mappingOf(record)
-    setCommand({ kind: 'running', target: record.id })
-    try {
-      const created = await apiClient.createOrganizationFromAdminSourceRecord(record.id, {
-        name: mapping.newOrganizationName,
-        teamId: mapping.newOrganizationTeamId === '' ? null : mapping.newOrganizationTeamId
-      })
-      setCommand({
-        kind: 'created',
-        target: record.id,
-        message: `Организация «${created.organizationName}» создана со статусом «Требует назначения»; запись ${created.result.record.externalId}: `
-          + `${recordStatusLabels[created.result.record.status].toLowerCase()}.`
-          + (created.result.reappliedCount > 0 ? ` Применено ещё записей этого вуза: ${created.result.reappliedCount}.` : '')
-      })
-    } catch (error) {
-      if (!handleAccessError(error)) {
-        setCommand({ kind: 'failed', target: record.id, error })
-      }
+    const code = sourceTabs.find((item) => item.key === current)?.source
+    const source = ready.sources.find((item) => item.source === code)
+    if (source === undefined || code === undefined) {
+      return <EmptyState text="Источник недоступен." />
     }
-    await load(false)
+    if (current === 'labor-market') {
+      return (
+        <LaborMarketBlock
+          source={source}
+          sync={syncOf(code)}
+          reloadToken={reloadToken}
+          onChanged={() => void load(false)}
+          onNotice={notify}
+          {...handlers}
+        />
+      )
+    }
+    const connectionSource = code === 'MOODLE' || code === 'WEBSITE' || code === 'CUSTOMER_CRM' ? code : null
+    return (
+      <SourceSyncCard
+        source={source}
+        sync={syncOf(code)}
+        mappingsSource={current === 'website' ? 'website' : current === 'moodle' ? 'moodle' : undefined}
+        hint={sourceHints[current]}
+        connection={connectionSource && (
+          <SourceConnectionSettings
+            source={connectionSource}
+            onChanged={() => void load(false)}
+            onNotice={notify}
+            {...handlers}
+          />
+        )}
+        {...handlers}
+      >
+        {current === 'crm' && (
+          <CrmExchangePanel configured={source.configured} reloadToken={reloadToken} onNotice={notify} {...handlers} />
+        )}
+      </SourceSyncCard>
+    )
   }
-
-  const busy = command.kind === 'running'
 
   return (
-    <section className="data-sources" aria-labelledby="data-sources-title" aria-busy={state.kind === 'loading' || busy}>
-      <div className="data-sources__header">
-        <div>
-          <p className="eyebrow">Администрирование</p>
-          <h2 id="data-sources-title">Источники данных</h2>
-        </div>
-        <button type="button" onClick={() => void load(true)} disabled={state.kind === 'loading'}>Обновить</button>
+    <section className="data-sources src-page" aria-labelledby="data-sources-title" aria-busy={state.kind === 'loading' || command.kind === 'running'}>
+      <div className="src-page__header">
+        <h2 id="data-sources-title">Источники данных</h2>
+        <HintButton label="Об источниках данных">{pageHint}</HintButton>
+        <button type="button" className="button--secondary src-page__refresh" onClick={() => void load(true)} disabled={state.kind === 'loading'}>
+          Обновить
+        </button>
       </div>
-      <p className="data-sources__intro">
-        Сайт подключён по предложенному контракту: API сайта заказчика ещё не получен, поэтому демонстрационный стенд
-        не подтверждает совместимость. Moodle читается через ограниченный веб-сервис по разрешённым курсам: в CRM
-        остаются только названия курсов и групп и числа; ФИО, которые Moodle отдаёт вместе со списком участников, CRM
-        не сохраняет, оценки не запрашиваются. Курс или его группы сопоставляются здесь с вузом, программой и датами потока
-        обучения: параллельные потоки в отчёте считаются только по потокам с датами. Адреса,
-        токены, список курсов и расписание задаются в блоке «Подключение»; начальные значения берутся из конфигурации
-        развёртывания. Повторная синхронизация не создаёт
-        дублей, ошибка источника не меняет уже загруженные данные.
-      </p>
 
-      {state.kind === 'loading' && <p role="status">Загружаем источники данных…</p>}
-      {state.kind === 'failed' && (
-        <>
-          <ErrorDetails error={state.error} message="Не удалось загрузить источники данных." />
-          <button type="button" onClick={() => void load(true)}>Повторить</button>
-        </>
-      )}
+      <SourceTabBar
+        active={tab ?? 'website'}
+        labels={tabLabelsOf(state)}
+        onSelect={(next) => select(next)}
+      />
 
-      {state.kind === 'ready' && (
-        <>
-          <SourceConnectionSettings
-            onChanged={() => void load(false)}
-            onSessionExpired={onSessionExpired}
-            onProfileUnavailable={onProfileUnavailable}
-          />
-          <ul className="data-sources__list">
-            {state.sources.map((source) => {
-              const blocker = syncBlocker(source)
-              return (
-                <li key={source.source} className="data-sources__item">
-                  <div className="data-sources__title">
-                    <h3>{source.title}</h3>
-                    {source.proposedContract && <span className="data-sources__badge">Предложенный контракт, DEMO</span>}
-                  </div>
-                  <p>
-                    {source.adapterAvailable ? (source.configured ? 'Настроен' : 'Не настроен') : 'Адаптер не подключён'}
-                    {source.adapterAvailable && `. Последняя успешная синхронизация: ${formatDateTime(source.lastSuccessAt)}`}
-                    {source.updatedSince && `. Изменения запрашиваются с ${formatDateTime(source.updatedSince)}`}
-                  </p>
-                  {source.configured && (
-                    <p>
-                      {source.schedule ? `Плановая синхронизация: ${scheduleLabel(source.schedule)} (МСК)` : 'Плановая синхронизация выключена'}
-                      {source.schedule && (source.nextRunAt
-                        ? `; следующий запуск — ${formatDateTime(source.nextRunAt)}`
-                        : '; начнётся после первого ручного запуска администратором')}
-                      {source.stale && <> <span className="source-badge">данные устарели</span></>}
-                    </p>
-                  )}
-                  {source.lastRun ? <RunSummary run={source.lastRun} /> : source.adapterAvailable && <p>Синхронизация ещё не запускалась.</p>}
-                  {source.adapterAvailable && (
-                    <SourceRunHistory
-                      source={source.source}
-                      onSessionExpired={onSessionExpired}
-                      onProfileUnavailable={onProfileUnavailable}
-                    />
-                  )}
-                  {source.problemCount > 0 && <p>Записей для разбора: {source.problemCount}</p>}
-                  {source.adapterAvailable && (
-                    <div className="data-sources__actions">
-                      <button type="button" onClick={() => void startSync(source.source)} disabled={blocker !== null || busy}>
-                        {command.kind === 'running' && command.target === source.source ? 'Запускаем…' : 'Запустить синхронизацию'}
-                      </button>
-                      {blocker !== null && <p className="data-sources__hint">{blocker}</p>}
-                    </div>
-                  )}
-                  {command.kind === 'failed' && command.target === source.source && (
-                    <ErrorDetails error={command.error} message="Синхронизация не запущена." />
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-
-          <section className="data-sources__records" aria-labelledby="data-sources-records-title">
-            <h3 id="data-sources-records-title">Записи для разбора</h3>
-            {state.records.length === 0 ? (
-              <p>Записей, требующих сопоставления или завершившихся ошибкой, нет.</p>
-            ) : (
-              <div className="data-sources__table-scroll" role="region" aria-label="Записи источников для разбора" tabIndex={0}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th scope="col">Запись</th>
-                      <th scope="col">Во внешнем источнике</th>
-                      <th scope="col">Состояние</th>
-                      <th scope="col">Сопоставление</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {state.records.map((record) => {
-                      const mapping = mappingOf(record)
-                      const missingOrganization = needsOrganization(record) && mapping.organizationId === ''
-                      const missingProgram = isMoodle(record) && needsProgram(record) && mapping.programId === ''
-                      const missingRun = needsRun(record) && (mapping.runStartsOn === '' || mapping.runLastDay === '')
-                      const running = command.kind === 'running' && command.target === record.id
-                      return (
-                        <tr key={record.id}>
-                          <td>
-                            <p>{recordTypeLabels[record.recordType] ?? record.recordType}</p>
-                            <p>Внешний ID: {record.externalId}</p>
-                            <p>
-                              {isMoodle(record) ? 'Наблюдение' : isPaidOrder(record) ? 'Получена CRM' : 'Изменена на сайте'}:
-                              {' '}{formatDateTime(record.externalUpdatedAt)}
-                            </p>
-                          </td>
-                          <td>
-                            <p>
-                              {record.organizationName ?? 'Вуз не указан'}
-                              {record.organizationExternalId ? ` (ID ${record.organizationExternalId})` : ''}
-                            </p>
-                            {record.programName && <p>{isPaidOrder(record) ? 'Курс' : 'Программа'}: {record.programName}</p>}
-                            {record.streamNo !== null && record.streamNo !== undefined && <p>Номер потока: {record.streamNo}</p>}
-                          </td>
-                          <td>
-                            <p>{recordStatusLabels[record.status]}</p>
-                            {record.error && <p>{record.error}</p>}
-                          </td>
-                          <td>
-                            <div className="data-sources__mapping">
-                              {needsOrganization(record) && (
-                                <label>
-                                  Вуз CRM
-                                  <select
-                                    value={mapping.organizationId}
-                                    onChange={(event) => updateMapping(record, { organizationId: event.target.value })}
-                                  >
-                                    <option value="">Выберите вуз</option>
-                                    {state.options.organizations.map((option) => (
-                                      <option key={option.id} value={option.id}>{option.name}</option>
-                                    ))}
-                                  </select>
-                                </label>
-                              )}
-                              {needsProgram(record) && (
-                                <label>
-                                  Программа CRM
-                                  <select
-                                    value={mapping.programId}
-                                    onChange={(event) => updateMapping(record, { programId: event.target.value })}
-                                  >
-                                    <option value="">{isMoodle(record) ? 'Выберите программу' : 'Искать по названию'}</option>
-                                    {state.options.programs.map((option) => (
-                                      <option key={option.id} value={option.id}>{option.name}</option>
-                                    ))}
-                                  </select>
-                                </label>
-                              )}
-                              {needsRun(record) && (
-                                <>
-                                  <label>
-                                    Вид потока
-                                    <select
-                                      value={mapping.runKind}
-                                      onChange={(event) => updateMapping(record, { runKind: event.target.value as RunKind })}
-                                    >
-                                      <option value="STUDENTS">Занятия студентов</option>
-                                      <option value="TEACHERS">Обучение преподавателей</option>
-                                    </select>
-                                  </label>
-                                  <label>
-                                    Начало потока
-                                    <input
-                                      type="date"
-                                      value={mapping.runStartsOn}
-                                      onChange={(event) => updateMapping(record, { runStartsOn: event.target.value })}
-                                    />
-                                  </label>
-                                  <label>
-                                    Последний день потока
-                                    <input
-                                      type="date"
-                                      min={mapping.runStartsOn === '' ? undefined : mapping.runStartsOn}
-                                      value={mapping.runLastDay}
-                                      onChange={(event) => updateMapping(record, { runLastDay: event.target.value })}
-                                    />
-                                  </label>
-                                </>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => void applyRecord(record)}
-                                disabled={busy || missingOrganization || missingProgram || missingRun}
-                              >
-                                {running ? 'Применяем…' : record.status === 'NEEDS_MAPPING' ? 'Сопоставить и применить' : 'Применить повторно'}
-                              </button>
-                              {(missingOrganization || missingProgram || missingRun) && (
-                                <p className="data-sources__hint">
-                                  {isMoodle(record)
-                                    ? 'Выберите вуз и программу и укажите даты потока, чтобы применить запись.'
-                                    : 'Выберите вуз, чтобы применить запись.'}
-                                </p>
-                              )}
-                              {needsOrganization(record) && !isMoodle(record) && (
-                                <details>
-                                  <summary>Вуза нет в CRM — создать организацию</summary>
-                                  <label>
-                                    Название
-                                    <input
-                                      maxLength={300}
-                                      value={mapping.newOrganizationName}
-                                      onChange={(event) => updateMapping(record, { newOrganizationName: event.target.value })}
-                                    />
-                                  </label>
-                                  <label>
-                                    Команда
-                                    <select
-                                      value={mapping.newOrganizationTeamId}
-                                      onChange={(event) => updateMapping(record, { newOrganizationTeamId: event.target.value })}
-                                    >
-                                      <option value="">Выберите команду</option>
-                                      {state.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
-                                    </select>
-                                  </label>
-                                  <button
-                                    type="button"
-                                    className="button--secondary"
-                                    onClick={() => void createOrganization(record)}
-                                    disabled={busy || mapping.newOrganizationName.trim() === '' || mapping.newOrganizationTeamId === ''}
-                                  >
-                                    Создать организацию
-                                  </button>
-                                </details>
-                              )}
-                              {command.kind === 'failed' && command.target === record.id && (
-                                <ErrorDetails error={command.error} message="Запись не применена." />
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {command.kind === 'applied' && (
-              <p role="status">
-                {command.result.record.status === 'APPLIED'
-                  ? `Запись ${command.result.record.externalId} применена.`
-                  : `Запись ${command.result.record.externalId}: ${recordStatusLabels[command.result.record.status].toLowerCase()}. ${command.result.record.error ?? ''}`}
-                {command.result.reappliedCount > 0 && ` Сопоставление применило ещё записей: ${command.result.reappliedCount}.`}
-              </p>
-            )}
-            {command.kind === 'created' && <p role="status">{command.message}</p>}
-          </section>
-
-          <SourceMappingsList
-            options={state.options}
-            reloadToken={reloadToken}
-            onChanged={() => void load(false)}
-            onSessionExpired={onSessionExpired}
-            onProfileUnavailable={onProfileUnavailable}
-          />
-        </>
-      )}
+      <div id={tabPanelId} role="tabpanel" aria-labelledby={tabId(tab ?? 'website')}>
+        {state.kind === 'loading' && <p role="status">Загружаем источники данных…</p>}
+        {state.kind === 'failed' && (
+          <div role="alert">
+            <p className="src-error">{errorText(state.error, 'Не удалось загрузить источники данных.')}</p>
+            <SupportDetails requestId={requestIdOf(state.error)} />
+            <button type="button" onClick={() => void load(true)}>Повторить</button>
+          </div>
+        )}
+        {state.kind === 'ready' && tab !== null && renderTab(tab, state)}
+      </div>
+      <Toast message={notice} onClose={() => setNotice(null)} />
     </section>
   )
 }

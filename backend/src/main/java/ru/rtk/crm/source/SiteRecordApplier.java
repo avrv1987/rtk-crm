@@ -33,7 +33,7 @@ import ru.rtk.crm.source.SourceRepository.SourceOrganization;
 import ru.rtk.crm.source.SourceRepository.StoredRecord;
 
 @Service
-public class SiteRecordApplier {
+public class SiteRecordApplier implements SourceRecordApplier {
     private static final SourceCode SOURCE = SourceCode.WEBSITE;
     private static final int MAX_COMMENT_LENGTH = 4_000;
     private static final int MAX_TITLE_LENGTH = 200;
@@ -73,6 +73,8 @@ public class SiteRecordApplier {
     @Transactional
     public PaidOrderApplied applyPaidOrder(SiteRecord item, PaidOrder order, UUID runId, UUID actorProfileId, UUID learnerActorId) {
         StoredOutcome stored = store(item, runId, actorProfileId);
+        // Слушатель создаётся только по записи, сохранённой без ошибки, и при включённом модуле «Слушатели»; запись
+        // оплаты остаётся в любом случае.
         if (stored.outcome() == SyncOutcome.FAILED || !paidOrderEnrolment.enabled()) {
             return new PaidOrderApplied(stored.outcome(), LearnerIntake.NONE);
         }
@@ -85,6 +87,7 @@ public class SiteRecordApplier {
     private StoredOutcome store(SiteRecord item, UUID runId, UUID actorProfileId) {
         OffsetDateTime now = OffsetDateTime.now();
         Optional<StoredRecord> existing = repository.findRecordForUpdate(SOURCE, item.type(), item.externalId());
+        // Ответ источника может содержать уже применённые версии: не новее хранимой не применяется повторно.
         if (existing.isPresent() && !replaces(existing.get(), item)) {
             return new StoredOutcome(existing.get().id(), SyncOutcome.SKIPPED);
         }
@@ -114,6 +117,7 @@ public class SiteRecordApplier {
         if (existing.isEmpty()) {
             repository.insertRecord(UUID.randomUUID(), SOURCE, item.version(), failedFor(item, error, null), runId, now);
         } else if (replaces(existing.get(), item)) {
+            // Сбой более старой версии не затирает уже сохранённую новую.
             repository.updateRecord(existing.get().id(), item.version(), failedFor(item, error, existing.get().interactionId()),
                     runId, now);
         }
@@ -132,6 +136,7 @@ public class SiteRecordApplier {
         return result.status();
     }
 
+    // В отличие от reapply пересчитывает и применённую запись: смена сопоставления могла изменить вуз или программу.
     @Transactional
     public SourceRecordStatus reresolve(UUID recordId, UUID actorProfileId) {
         StoredRecord stored = repository.findRecordForUpdate(recordId).orElseThrow(SourceException::recordNotFound);
@@ -160,6 +165,8 @@ public class SiteRecordApplier {
                 1, interactionId);
     }
 
+    // Оплата версии не имеет и различается по хешу содержимого. Остальные записи заменяются более новым updatedAt; та
+    // же версия применяется повторно, только если запись ждёт сопоставления или упала: новый выбор мог её разрешить.
     private static boolean replaces(StoredRecord existing, SiteRecord item) {
         if (item.paidOrder()) {
             return !Objects.equals(item.payloadHash(), existing.payloadHash())
@@ -190,6 +197,7 @@ public class SiteRecordApplier {
             return new ApplyResult(SourceRecordStatus.SKIPPED,
                     "Тип записи «" + item.type() + "» не входит в предложенный контракт", null, null, 1, previousInteractionId);
         }
+        // Нет организации — ошибка записи (сопоставлять нечего); есть, но не найдена — запись ждёт сопоставления.
         if (item.organizationKey() == null) {
             return failed("В записи не указана организация", previousInteractionId);
         }
@@ -201,6 +209,8 @@ public class SiteRecordApplier {
         UUID organizationId = organization.get().id();
         UUID programId = null;
         if (item.programName() != null) {
+            // Неоднозначное название (несколько активных программ) считается ненайденным: выбор остаётся человеку,
+            // угадывать нельзя.
             Optional<UUID> program = program(item.programName());
             if (program.isEmpty()) {
                 return new ApplyResult(SourceRecordStatus.NEEDS_MAPPING,
@@ -209,8 +219,10 @@ public class SiteRecordApplier {
             }
             programId = program.get();
         }
+        // Если сайт не прислал счётчик, одна запись считается одной заявкой.
         int applications = item.applicationsCount() == null ? 1 : item.applicationsCount();
         if (!partnership) {
+            // Отозванная заявка остаётся записью, но в спрос не идёт и карточку не создаёт.
             if (WITHDRAWN.equalsIgnoreCase(item.status())) {
                 return new ApplyResult(SourceRecordStatus.SKIPPED, "Заявка отозвана на сайте и не учитывается в спросе",
                         organizationId, programId, applications, null);
@@ -230,6 +242,7 @@ public class SiteRecordApplier {
                     "Служебная организация «" + SiteRecord.OPEN_ENROLMENT_NAME + "» не найдена в CRM", null, null, 1, null);
         }
         UUID organizationId = organization.get().id();
+        // Выбор администратора главнее названия; по названию берётся только однозначное совпадение.
         Optional<UUID> program = repository.findMappedProgramId(SOURCE, SiteRecord.programKey(item.programName()))
                 .or(() -> Optional.ofNullable(uniqueOrNull(repository.findActiveProgramIdsByNormalizedName(item.programName()))));
         if (program.isEmpty()) {
@@ -249,6 +262,9 @@ public class SiteRecordApplier {
             UUID actorProfileId,
             OffsetDateTime now
     ) {
+        // Ключ команды: запись, версия (updatedAt) и вуз. Повтор той же версии находит созданный комментарий и не
+        // дублирует его; вуз в ключе нужен, чтобы после смены сопоставления версия применилась заново в карточку нового
+        // вуза. legacyKey — ключи прежнего вида, они тоже проверяются.
         String legacyKey = "source:" + SOURCE + ":" + recordId + ":" + item.updatedAt().toInstant();
         String key = legacyKey + ":" + organization.id();
         Optional<UUID> applied = repository.findAppliedInteraction(List.of(key, legacyKey), organization.id());
@@ -256,6 +272,8 @@ public class SiteRecordApplier {
             return new ApplyResult(SourceRecordStatus.APPLIED, null, organization.id(), programId, 1, applied.get());
         }
         UUID commandId = UUID.randomUUID();
+        // Ключ занят командой без сохранённого результата: комментарий не дублируется, запись уйдёт в ошибку и будет
+        // повторена.
         if (!commandIdempotencyRepository.reserve(
                 commandId,
                 actorProfileId,
@@ -268,8 +286,13 @@ public class SiteRecordApplier {
         }
         UUID productId = uniqueOrNull(item.productName() == null ? List.of() : repository.findActiveProductIdsByName(item.productName()));
         List<Contact> matches = matchingContacts(organization.id(), item);
+        // Ограничение обработки ПДн действует и на заявки: такой контакт не привязывается, новый вместо него не
+        // создаётся, его данные в комментарий не попадают.
         boolean restricted = matches.stream().anyMatch(contact -> contact.personalDataStatus() == PersonalDataStatus.RESTRICTED);
         List<UUID> contactIds = restricted ? List.of() : contact(organization.id(), item, matches, actorProfileId, now);
+        // Новая версия заявки дополняет прежнюю карточку, если она всё ещё принадлежит этому вузу; иначе берётся
+        // последняя карточка вуза по программе и продукту, и лишь затем создаётся новая: заявки сайта не плодят
+        // карточки.
         UUID interactionId = previousInteractionId != null && repository.interactionBelongsTo(previousInteractionId, organization.id())
                 ? previousInteractionId
                 : repository.findLatestInteraction(organization.id(), programId, productId).orElse(null);
@@ -301,6 +324,7 @@ public class SiteRecordApplier {
         );
     }
 
+    // Порядок поиска: выбор администратора, внешний ID, точное название. Более явная связь главнее названия.
     private Optional<SourceOrganization> organization(SiteRecord item) {
         return repository.findMappedOrganization(SOURCE, item.organizationKey())
                 .or(() -> item.organizationExternalId() == null
@@ -316,6 +340,8 @@ public class SiteRecordApplier {
                 .or(() -> Optional.ofNullable(uniqueOrNull(repository.findActiveProgramIdsByName(programName))));
     }
 
+    // Контакт ищется внутри этого вуза: по почте без учёта регистра, без почты — по точному имени; обезличенные не
+    // совпадают.
     private List<Contact> matchingContacts(UUID organizationId, SiteRecord item) {
         if (item.contactName() == null && item.contactEmail() == null) {
             return List.of();
@@ -387,6 +413,7 @@ public class SiteRecordApplier {
         return value.length() <= maxLength ? value : value.substring(0, maxLength - 1) + "…";
     }
 
+    // Неоднозначность (ноль или несколько) считается «не найдено»: выбор остаётся человеку.
     private static UUID uniqueOrNull(List<UUID> ids) {
         return ids.size() == 1 ? ids.getFirst() : null;
     }

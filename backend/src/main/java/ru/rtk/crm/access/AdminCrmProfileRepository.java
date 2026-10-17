@@ -3,7 +3,10 @@ package ru.rtk.crm.access;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -17,6 +20,7 @@ public class AdminCrmProfileRepository {
             profile.id, profile.display_name, profile.role, profile.team_id, team.name AS team_name,
             profile.active, profile.enrolment_operator, profile.pending_activation, profile.access_revision, profile.version,
             profile.login, profile.activation_requested_at, profile.idp_enabled, profile.role_synced_at,
+            profile.role_reconcile_required, profile.last_login_at,
             (SELECT partner_organization.name FROM organizations partner_organization
              WHERE partner_organization.id = profile.partner_organization_id) AS partner_organization_name
             """;
@@ -28,31 +32,75 @@ public class AdminCrmProfileRepository {
     }
 
     public AdminCrmProfilePage findPage(AdminCrmProfileQuery query) {
-        String condition = (query.pendingOnly() ? "profile.pending_activation = TRUE" : "TRUE")
-                + (query.search() == null ? "" : " AND (LOWER(profile.display_name) LIKE :search " + SearchPattern.LIKE_ESCAPE
-                + " OR LOWER(COALESCE(profile.login, '')) LIKE :search " + SearchPattern.LIKE_ESCAPE + ")");
-        String search = query.search() == null ? null : SearchPattern.contains(query.search());
-        JdbcClient.StatementSpec itemsQuery = jdbcClient.sql("""
+        Filter filter = filter(query);
+        List<AdminCrmProfile> items = bind(jdbcClient.sql("""
                 SELECT %s
                 FROM crm_user_profiles profile
                 LEFT JOIN teams team ON team.id = profile.team_id
                 WHERE %s
                 ORDER BY %s
                 LIMIT :size OFFSET :offset
-                """.formatted(PROFILE_COLUMNS, condition, query.sort().orderBy()))
+                """.formatted(PROFILE_COLUMNS, filter.condition(), query.sort().orderBy())), filter)
                 .param("size", query.size())
-                .param("offset", query.offset());
-        JdbcClient.StatementSpec totalQuery = jdbcClient.sql("SELECT COUNT(*) FROM crm_user_profiles profile WHERE " + condition);
-        if (search != null) {
-            itemsQuery.param("search", search);
-            totalQuery.param("search", search);
-        }
-        List<AdminCrmProfile> items = itemsQuery.query(this::mapProfile).list();
-        long total = totalQuery.query(Long.class).single();
+                .param("offset", query.offset())
+                .query(this::mapProfile)
+                .list();
+        long total = bind(jdbcClient.sql("SELECT COUNT(*) FROM crm_user_profiles profile WHERE " + filter.condition()), filter)
+                .query(Long.class)
+                .single();
         long pendingTotal = jdbcClient.sql("SELECT COUNT(*) FROM crm_user_profiles WHERE pending_activation = TRUE")
                 .query(Long.class)
                 .single();
         return new AdminCrmProfilePage(items, query.page(), query.size(), total, pendingTotal);
+    }
+
+    public List<AdminCrmProfile> findRows(AdminCrmProfileQuery query, int limit) {
+        Filter filter = filter(query);
+        return bind(jdbcClient.sql("""
+                SELECT %s
+                FROM crm_user_profiles profile
+                LEFT JOIN teams team ON team.id = profile.team_id
+                WHERE %s
+                ORDER BY %s
+                LIMIT :limit
+                """.formatted(PROFILE_COLUMNS, filter.condition(), query.sort().orderBy())), filter)
+                .param("limit", limit)
+                .query(this::mapProfile)
+                .list();
+    }
+
+    private Filter filter(AdminCrmProfileQuery query) {
+        List<String> conditions = new ArrayList<>();
+        Map<String, Object> params = new LinkedHashMap<>();
+        conditions.add("TRUE");
+        if (query.status() != null) {
+            conditions.add(switch (query.status()) {
+                case ACTIVE -> "profile.active = TRUE";
+                case PENDING -> "profile.pending_activation = TRUE";
+                case BLOCKED -> "profile.active = FALSE AND profile.pending_activation = FALSE";
+                case SYNC_REQUIRED -> "(profile.role_reconcile_required = TRUE"
+                        + " OR profile.pending_activation = FALSE AND profile.active <> profile.idp_enabled)";
+            });
+        }
+        if (query.role() != null) {
+            conditions.add("profile.role = :role");
+            params.put("role", query.role().name());
+        }
+        if (query.teamId() != null) {
+            conditions.add("profile.team_id = :teamId");
+            params.put("teamId", query.teamId());
+        }
+        if (query.search() != null) {
+            conditions.add("(LOWER(profile.display_name) LIKE :search " + SearchPattern.LIKE_ESCAPE
+                    + " OR LOWER(COALESCE(profile.login, '')) LIKE :search " + SearchPattern.LIKE_ESCAPE + ")");
+            params.put("search", SearchPattern.contains(query.search()));
+        }
+        return new Filter(String.join(" AND ", conditions), params);
+    }
+
+    private static JdbcClient.StatementSpec bind(JdbcClient.StatementSpec statement, Filter filter) {
+        filter.params().forEach(statement::param);
+        return statement;
     }
 
     public Optional<AdminCrmProfile> findByIdForUpdate(UUID profileId) {
@@ -75,6 +123,7 @@ public class AdminCrmProfileRepository {
                 .optional();
     }
 
+    // Блокировка в порядке id: единый порядок захвата строк исключает взаимные блокировки (см. validate).
     public List<UUID> lockActiveAdministrators() {
         return jdbcClient.sql("""
                 SELECT id
@@ -119,6 +168,8 @@ public class AdminCrmProfileRepository {
                 .update() == 1;
     }
 
+    // Профиль, который из-за смены роли стал неактивным (КАМ или руководитель без команды), снова попадает в
+    // очередь активации: администратор видит его и назначает команду.
     public boolean applyKeycloakRole(UUID profileId, int expectedVersion, ProfileState state, OffsetDateTime updatedAt) {
         return jdbcClient.sql("""
                 UPDATE crm_user_profiles
@@ -145,6 +196,20 @@ public class AdminCrmProfileRepository {
         jdbcClient.sql("UPDATE crm_user_profiles SET role_synced_at = :syncedAt WHERE id = :profileId")
                 .param("profileId", profileId)
                 .param("syncedAt", syncedAt)
+                .update();
+    }
+
+    public void setRoleReconcileRequired(UUID profileId, boolean required) {
+        jdbcClient.sql("UPDATE crm_user_profiles SET role_reconcile_required = :required WHERE id = :profileId")
+                .param("profileId", profileId)
+                .param("required", required)
+                .update();
+    }
+
+    public void recordLogin(UUID profileId, OffsetDateTime loggedInAt) {
+        jdbcClient.sql("UPDATE crm_user_profiles SET last_login_at = :loggedInAt WHERE id = :profileId")
+                .param("profileId", profileId)
+                .param("loggedInAt", loggedInAt)
                 .update();
     }
 
@@ -289,7 +354,9 @@ public class AdminCrmProfileRepository {
                 !pendingActivation && active != resultSet.getBoolean("idp_enabled"),
                 null,
                 resultSet.getString("partner_organization_name"),
-                resultSet.getObject("role_synced_at", OffsetDateTime.class)
+                resultSet.getObject("role_synced_at", OffsetDateTime.class),
+                resultSet.getBoolean("role_reconcile_required"),
+                resultSet.getObject("last_login_at", OffsetDateTime.class)
         );
     }
 
@@ -328,5 +395,8 @@ public class AdminCrmProfileRepository {
         boolean privileged() {
             return role == UserRole.ADMIN || enrolmentOperator;
         }
+    }
+
+    private record Filter(String condition, Map<String, Object> params) {
     }
 }

@@ -25,6 +25,8 @@ public class AttachmentContentValidator {
         this.properties = properties;
     }
 
+    // Проверка за один проход по файлу: размер, SHA-256 и первые байты для сигнатуры. Размер проверяется дважды:
+    // по значению multipart и по фактически прочитанным байтам.
     public AttachmentUploadInspection inspect(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new AttachmentValidationException("file", "Выберите файл");
@@ -59,6 +61,8 @@ public class AttachmentContentValidator {
         if (sizeBytes == 0) {
             throw new AttachmentValidationException("file", "Выберите файл");
         }
+        // Расширение должно соответствовать сигнатуре: переименованный исполняемый файл с расширением .pdf не пройдёт.
+        // DOCX и XLSX — ZIP-контейнеры, поэтому для них проверяется сигнатура ZIP; содержимое дальше проверяет антивирус.
         if (!format.matches(prefix)) {
             throw new AttachmentValidationException("file", "Содержимое файла не соответствует расширению");
         }
@@ -70,6 +74,8 @@ public class AttachmentContentValidator {
         );
     }
 
+    // Имя файла приходит от клиента и не доверяется: отбрасываются пути (обе формы разделителей), управляющие
+    // символы и «.»/«..»; на диске файл хранится под случайным ключом, а не под этим именем.
     private String normalizedName(String sourceName) {
         if (sourceName == null || sourceName.isBlank()) {
             throw new AttachmentValidationException("file", "У файла нет имени");
@@ -123,6 +129,7 @@ public class AttachmentContentValidator {
                 throw new AttachmentValidationException("file", "Такой тип файла не поддерживается");
             }
             String extension = fileName.substring(separator + 1).toLowerCase(Locale.ROOT);
+            // Псевдонимы расширений: jpg — тот же JPEG, gz — тот же GZIP.
             if (extension.equals("jpg")) {
                 return JPEG;
             }
@@ -155,6 +162,8 @@ public class AttachmentContentValidator {
             };
         }
 
+        // HEIC и HEIF — контейнеры ISO BMFF: со смещения 4 идёт «ftyp», затем 4 символа бренда; принимаются только
+        // известные бренды HEIF/HEVC (снимки с телефонов).
         private static boolean heifSignature(byte[] prefix) {
             if (prefix.length < 12 || !new String(prefix, 4, 4, StandardCharsets.US_ASCII).equals("ftyp")) {
                 return false;

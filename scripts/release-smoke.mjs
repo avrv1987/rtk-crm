@@ -568,6 +568,19 @@ try {
     201,
     'Timing interaction creation failed'
   )
+  requireStatus(
+    await api(kamA, 'POST', '/api/organizations/' + organization.id + '/agreements', {
+      body: {
+        number: 'RS-' + nonce,
+        status: 'ACTIVE',
+        concludedOn: new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date()),
+        interactionIds: [route.id]
+      },
+      key: 'release-smoke-timing-contract-' + nonce
+    }),
+    201,
+    'Timing contract creation failed'
+  )
   for (let step = 0; step < 10; step += 1) {
     const order = route.stages.find((stage) => stage.id === route.currentStageId).order
     const next = route.allowedTransitions.find((option) => !option.commentRequired && route.stages.find((stage) => stage.id === option.stageId)?.order === order + 1)
@@ -702,7 +715,12 @@ try {
         if (chartRequest.groupBy === 'PROGRAM') {
           assert(statistics.unknownCount > 0, 'Program statistics has no rows without a program')
         } else {
-          assert(statistics.items.length === 3 && statistics.items.some((item) => item.count === 0) && statistics.unknownCount === 0, 'Month statistics does not keep zero months')
+          // Пустой месяц в демо-данных не гарантирован, поэтому ряд проверяется на непрерывность, а сохранение
+          // нулей — на периоде до появления данных в CRM.
+          const expectedMonths = [0, 1, 2].map((shift) => new Date(Date.UTC(Number(monthStart.slice(0, 4)), Number(monthStart.slice(5, 7)) - 1 + shift, 1)).toISOString().slice(0, 7))
+          assert(isDeepStrictEqual(statistics.items.map((item) => item.key), expectedMonths) && statistics.unknownCount === 0, 'Month statistics is not a continuous series of months')
+          const empty = requireStatus(await api(page, 'POST', '/api/statistics', { body: { ...chartRequest, from: '2000-01-01', to: '2000-03-31' } }), 200, 'Empty month statistics failed')
+          assert(isDeepStrictEqual(empty.items.map((item) => [item.key, item.count]), [['2000-01', 0], ['2000-02', 0], ['2000-03', 0]]), 'Month statistics does not keep zero months')
         }
         for (const format of ['PNG', 'PDF']) {
           const chart = await orderFile(page, { ...chartRequest, format }, name + '-' + kind + '-chart-' + chartRequest.groupBy + '-' + format)
@@ -785,10 +803,14 @@ try {
   )
   const uiTarget = uiInteraction.allowedTransitions.find((option) => !option.commentRequired)
   assert(uiTarget, 'UI interaction has no transition without a comment')
-  const dialogForms = { 'Переход этапа': 'interaction-transition-form', 'Комментарий': 'interaction-comment-form' }
+  const dialogForms = { 'Перейти на этап': 'interaction-transition-form', 'Комментарий': 'interaction-comment-form' }
+  const cardControls = {
+    'Перейти на этап': "(document.querySelector('.work-card__primary[data-action=transition]') ?? [...document.querySelectorAll('.work-card__more [role=menuitem]')].find((item) => item.textContent.trim() === 'Перейти на этап…'))",
+    'Комментарий': "[...document.querySelectorAll('.work-card__add [role=menuitem]')].find((item) => item.textContent.trim() === 'Комментарий…')"
+  }
   const formByTitle = (titleText) => `document.querySelector('dialog[open] form.${dialogForms[titleText]}')`
-  const openCardDialog = async (buttonText, titleText) => {
-    await kamA.evaluate(`[...document.querySelectorAll('.work-card__actions button')].find((button) => button.textContent.trim() === ${JSON.stringify(buttonText)}).click()`)
+  const openCardDialog = async (titleText) => {
+    await kamA.evaluate(`${cardControls[titleText]}.click()`)
     await kamA.waitFor(() => kamA.evaluate(`Boolean(${formByTitle(titleText)})`), 'UI dialog did not open: ' + titleText)
   }
   const uiState = () => kamA.evaluate(`({
@@ -808,7 +830,7 @@ try {
   )
   await kamA.evaluate(`[...document.querySelectorAll('.interaction-list-item')].find((item) => item.querySelector('.interaction-list-item__title')?.textContent === ${JSON.stringify(uiTitle)}).click()`)
   await kamA.waitFor(
-    () => kamA.evaluate("Boolean([...document.querySelectorAll('.work-card__actions button')].find((button) => button.textContent.trim() === 'Перейти к следующему этапу'))"),
+    () => kamA.evaluate("Boolean(document.querySelector('.work-card__primary'))"),
     'UI work card did not load'
   )
   await kamA.evaluate(`(() => {
@@ -817,22 +839,22 @@ try {
   })()`)
   await pause(300)
   const uiScrollBefore = (await uiState()).scroll
-  await openCardDialog('Перейти к следующему этапу', 'Переход этапа')
+  await openCardDialog('Перейти на этап')
   await kamA.evaluate(`(() => {
-    const form = ${formByTitle('Переход этапа')}
+    const form = ${formByTitle('Перейти на этап')}
     const select = form.querySelector('select')
     Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(uiTarget.stageId)})
     select.dispatchEvent(new Event('change', { bubbles: true }))
   })()`)
-  await kamA.waitFor(() => kamA.evaluate(`!${formByTitle('Переход этапа')}.querySelector('button[type=submit]').disabled`), 'UI transition is not ready')
-  await kamA.evaluate(`${formByTitle('Переход этапа')}.querySelector('button[type=submit]').click()`)
+  await kamA.waitFor(() => kamA.evaluate(`!${formByTitle('Перейти на этап')}.querySelector('button[type=submit]').disabled`), 'UI transition is not ready')
+  await kamA.evaluate(`${formByTitle('Перейти на этап')}.querySelector('button[type=submit]').click()`)
   await kamA.waitFor(
     () => kamA.evaluate(`document.querySelector('li[aria-current="step"] .interaction-path__name')?.textContent === ${JSON.stringify(uiTarget.stageName)}`),
     'UI transition did not update the path map'
   )
   const uiAfterTransition = await uiState()
   const uiComment = 'Release smoke UI comment ' + nonce
-  await openCardDialog('Комментарий', 'Комментарий')
+  await openCardDialog('Комментарий')
   await kamA.evaluate(`(() => {
     const form = ${formByTitle('Комментарий')}
     const select = form.querySelector('select')
@@ -845,7 +867,7 @@ try {
   await kamA.waitFor(() => kamA.evaluate(`!${formByTitle('Комментарий')}.querySelector('button[type=submit]').disabled`), 'UI comment is not ready')
   await kamA.evaluate(`${formByTitle('Комментарий')}.querySelector('button[type=submit]').click()`)
   await kamA.waitFor(
-    () => kamA.evaluate(`!${formByTitle('Комментарий')} && Boolean(document.querySelector('.card-notice')?.textContent.includes('Комментарий добавлен'))`),
+    () => kamA.evaluate(`!${formByTitle('Комментарий')} && Boolean(document.querySelector('.toast')?.textContent.includes('Комментарий добавлен'))`),
     'UI comment was not accepted'
   )
   const uiEvents = requireStatus(await api(kamA, 'GET', '/api/interactions/' + uiInteraction.id + '/events'), 200, 'UI history is unavailable')

@@ -614,6 +614,19 @@ try {
   )
   assert(!route.stageCompletions.some((completion) => completion.stageId === teachersStage.id), 'Stage completion was not cleared')
   route = requireStatus(await markTeachers('fr05-complete-teachers-again-' + nonce), 200, 'Marking the stage again failed')
+  phase = 'signing-contract'
+  const unsignedMove = await transition(kamA, kamACsrf, route, stageAt(route, 6).id, null, 'fr05-unsigned-' + nonce)
+  assert(unsignedMove.status === 400 && unsignedMove.body?.fieldErrors?.agreement !== undefined, 'Signing stage was completed without a signed contract')
+  requireStatus(
+    await postJson(kamA, kamACsrf, '/api/organizations/' + encodeURIComponent(organizationId) + '/agreements', {
+      number: 'FR05-' + nonce,
+      status: 'ACTIVE',
+      concludedOn: completionDay,
+      interactionIds: [route.id]
+    }, 'fr05-contract-' + nonce),
+    201,
+    'Signed contract creation failed'
+  )
   for (const order of [6, 7, 8, 9, 10, 11, 12]) {
     const target = stageAt(route, order)
     assert(route.allowedTransitions?.some((option) => option.stageId === target.id), 'Base route continuation is unavailable')

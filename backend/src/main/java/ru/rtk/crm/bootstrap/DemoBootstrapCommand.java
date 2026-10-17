@@ -29,6 +29,7 @@ import org.springframework.web.multipart.MultipartFile;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserProfileRepository;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.agreement.AgreementFileService;
 import ru.rtk.crm.attachment.AttachmentKind;
 import ru.rtk.crm.attachment.AttachmentService;
 import ru.rtk.crm.attachment.AttachmentUploadRequest;
@@ -134,6 +135,15 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             new DemoAgreement("Колледж связи (демо)", "kam-b", "ДЕМО-К/1", "ACTIVE", -200, 60, "RENEWAL", 45),
             new DemoAgreement("Школа № 1 (демо)", "kam-d", "ДЕМО-Ш/1", "DRAFT", null, null, "SIGNING", 5)
     );
+    private static final String SIGNING_STAGE = "Подписание";
+    private static final List<DemoLifecycle> DEMO_LIFECYCLE = List.of(
+            new DemoLifecycle("Колледж автоматики (демо)", "kam-g", "Демо: подписание договора", "ДЕМО-КА/1", "REVIEW", 48, null, null,
+                    List.of(), false),
+            new DemoLifecycle("Строительный университет (демо)", "kam-h", "Демо: корректировка документов", "ДЕМО-СУ/1", "CORRECTION", 11,
+                    null, null, List.of("Редакция вуза", "После корректировки"), false),
+            new DemoLifecycle("Медицинский университет (демо)", "kam-e", "Демо: продление лицензий", "ДЕМО-МУ/1", "ACTIVE", 330, -330, 25,
+                    List.of("Подписанный договор"), true)
+    );
     private static final List<DemoContract> DEMO_CONTRACTS = List.of(
             new DemoContract("ДЕМО-А/ЛС-1", 2026, 30, 14),
             new DemoContract("ДЕМО-А/ЛС-2", 2028, 7, null)
@@ -151,6 +161,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     private final InteractionIssueService interactionIssueService;
     private final AttachmentService attachmentService;
     private final ProductAgreementService productAgreementService;
+    private final AgreementFileService agreementFileService;
 
     public DemoBootstrapCommand(
             DemoBootstrapProperties properties,
@@ -160,7 +171,8 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             InteractionService interactionService,
             InteractionIssueService interactionIssueService,
             AttachmentService attachmentService,
-            ProductAgreementService productAgreementService
+            ProductAgreementService productAgreementService,
+            AgreementFileService agreementFileService
     ) {
         this.properties = properties;
         this.jdbcClient = jdbcClient;
@@ -170,6 +182,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         this.interactionIssueService = interactionIssueService;
         this.attachmentService = attachmentService;
         this.productAgreementService = productAgreementService;
+        this.agreementFileService = agreementFileService;
     }
 
     @Override
@@ -192,6 +205,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         createDemoMarks(identitiesByKey, organizationIds.get(DEMO_ORGANIZATION_NAME));
         createDemoAgreements(organizationIds, profileIds);
         createControlScenario(identitiesByKey, organizationIds, catalog);
+        createAgreementLifecycle(identitiesByKey, organizationIds, catalog);
         createPartners(identities, identitiesByKey, organizationIds);
         LOGGER.info("Demo CRM bootstrap completed");
     }
@@ -388,6 +402,12 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         UUID openEnrolmentId = createDirection("demo-direction:open-enrolment", "Демо-направление: курсы для физлиц");
         createProgram(openEnrolmentId, "demo-program:prompt-engineering", "Промпт-инжиниринг");
         createProgram(openEnrolmentId, "demo-program:software-tester", "Инженер-тестировщик");
+        UUID cybersecurityId = createDirection("demo-direction:cybersecurity", "Кибербезопасность");
+        createProgram(cybersecurityId, "demo-program:security-basics", "Демо-программа: основы кибербезопасности");
+        UUID cloudId = createDirection("demo-direction:cloud-devops", "Облачные технологии и DevOps");
+        createProgram(cloudId, "demo-program:cloud-engineering", "Демо-программа: облачная инженерия");
+        UUID developmentId = createDirection("demo-direction:software-development", "Разработка программного обеспечения");
+        createProgram(developmentId, "demo-program:web-development", "Демо-программа: веб-разработка");
         UUID vendorId = createVendor("Демо-вендор: РТК");
         UUID secureCommunicationsId = createProduct(
                 vendorId,
@@ -652,10 +672,10 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             jdbcClient.sql("""
                     INSERT INTO agreements (
                         id, organization_id, number, concluded_on, valid_until, planned_kind, planned_on, planned_base_until,
-                        parties, status, version, created_by, created_at, updated_at
+                        parties, status, status_changed_at, version, created_by, created_at, updated_at
                     ) VALUES (
                         :id, :organizationId, :number, :concludedOn, :validUntil, :plannedKind, :plannedOn, :validUntil,
-                        :parties, :status, 0, :createdBy, :now, :now
+                        :parties, :status, :now, 0, :createdBy, :now, :now
                     )
                     ON CONFLICT DO NOTHING
                     """)
@@ -671,6 +691,182 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                     .param("createdBy", createdBy)
                     .param("now", now)
                     .update();
+            UUID agreementId = stableId("agreement:" + agreement.organization() + "\u0000" + agreement.number());
+            statusEvent(agreementId, null, agreement.status(), createdBy, now, "created");
+        }
+    }
+
+    private void createAgreementLifecycle(
+            Map<String, DemoBootstrapProperties.Identity> identitiesByKey,
+            Map<String, UUID> organizationIds,
+            DemoCatalog catalog
+    ) {
+        LocalDate today = LocalDate.now(ZONE);
+        for (DemoLifecycle demo : DEMO_LIFECYCLE) {
+            UUID organizationId = organizationIds.get(demo.organization());
+            DemoBootstrapProperties.Identity identity = identitiesByKey.get(demo.actorKey());
+            if (organizationId == null || identity == null) {
+                continue;
+            }
+            CrmProfile actor = userProfileRepository.findActiveByIdentity(identity.issuer(), identity.subject())
+                    .orElseThrow(() -> new IllegalStateException("Demo bootstrap requires active " + demo.actorKey() + " profile"));
+            UUID agreementId = stableId("agreement:" + demo.organization() + "\u0000" + demo.number());
+            LocalDate changedOn = today.minusDays(demo.statusDays());
+            LocalDate concludedOn = demo.concludedDays() == null ? null : today.plusDays(demo.concludedDays());
+            LocalDate sentOn = demo.status().equals("REVIEW") ? changedOn
+                    : concludedOn == null ? changedOn.minusDays(19) : concludedOn.minusDays(26);
+            insertDemoAgreement(agreementId, organizationId, demo.number(), demo.status(), sentOn, concludedOn,
+                    demo.validUntilDays() == null ? null : today.plusDays(demo.validUntilDays()), actor.id(), changedOn);
+            List<String> path = switch (demo.status()) {
+                case "REVIEW" -> List.of("DRAFT", "REVIEW");
+                case "CORRECTION" -> List.of("DRAFT", "REVIEW", "CORRECTION");
+                default -> List.of("DRAFT", "REVIEW", "SIGNING", "ACTIVE");
+            };
+            List<LocalDate> dates = switch (demo.status()) {
+                case "REVIEW" -> List.of(sentOn.minusDays(6), sentOn);
+                case "CORRECTION" -> List.of(sentOn.minusDays(6), sentOn, changedOn);
+                default -> List.of(sentOn.minusDays(6), sentOn, concludedOn.minusDays(5), concludedOn);
+            };
+            for (int index = 0; index < path.size(); index++) {
+                statusEvent(agreementId, index == 0 ? null : path.get(index - 1), path.get(index), actor.id(),
+                        dates.get(index).atTime(11, 0).atZone(ZONE).toOffsetDateTime(), "lifecycle:" + index);
+            }
+            linkDemoWork(agreementId, organizationId, demo.workTitle());
+            jdbcClient.sql("INSERT INTO agreement_programs (agreement_id, program_id) VALUES (:agreementId, :programId) ON CONFLICT DO NOTHING")
+                    .param("agreementId", agreementId)
+                    .param("programId", catalog.programId())
+                    .update();
+            UUID supplementId = demo.supplement() ? insertDemoSupplement(agreementId, actor.id(), today) : null;
+            uploadDemoFiles(actor, agreementId, null, demo.fileComments());
+            if (supplementId != null) {
+                uploadDemoFiles(actor, agreementId, supplementId, List.of("Подписанное допсоглашение"));
+            }
+        }
+    }
+
+    private void ensureSignedDemoAgreement(CrmProfile actor, UUID organizationId, UUID interactionId, DemoControlWork work) {
+        LocalDate signedOn = LocalDate.now(ZONE).minusDays(work.lastMoveDaysAgo()
+                + (long) Math.max(0, work.stage() - 6) * CONTROL_STAGE_GAP_DAYS + CONTROL_STAGE_GAP_DAYS);
+        String number = "ДЕМО-Р/" + (DEMO_CONTROL_WORKS.indexOf(work) + 1);
+        UUID agreementId = stableId("agreement:" + work.organization() + "\u0000" + number);
+        LocalDate sentOn = signedOn.minusDays(21);
+        insertDemoAgreement(agreementId, organizationId, number, "ACTIVE", sentOn, signedOn, signedOn.plusYears(3), actor.id(), signedOn);
+        List<String> path = List.of("DRAFT", "REVIEW", "SIGNING", "ACTIVE");
+        List<LocalDate> dates = List.of(sentOn.minusDays(5), sentOn, signedOn.minusDays(4), signedOn);
+        for (int index = 0; index < path.size(); index++) {
+            statusEvent(agreementId, index == 0 ? null : path.get(index - 1), path.get(index), actor.id(),
+                    dates.get(index).atTime(11, 0).atZone(ZONE).toOffsetDateTime(), "lifecycle:" + index);
+        }
+        jdbcClient.sql("""
+                INSERT INTO agreement_interactions (agreement_id, interaction_id) VALUES (:agreementId, :interactionId)
+                ON CONFLICT DO NOTHING
+                """)
+                .param("agreementId", agreementId)
+                .param("interactionId", interactionId)
+                .update();
+    }
+
+    private void insertDemoAgreement(
+            UUID agreementId,
+            UUID organizationId,
+            String number,
+            String status,
+            LocalDate sentOn,
+            LocalDate concludedOn,
+            LocalDate validUntil,
+            UUID createdBy,
+            LocalDate changedOn
+    ) {
+        OffsetDateTime changedAt = changedOn.atTime(11, 0).atZone(ZONE).toOffsetDateTime();
+        jdbcClient.sql("""
+                INSERT INTO agreements (
+                    id, organization_id, number, concluded_on, valid_until, sent_on, planned_base_until, parties, status,
+                    status_changed_at, university_signer_id, school_signer_id, version, created_by, created_at, updated_at
+                ) VALUES (
+                    :id, :organizationId, :number, :concludedOn, :validUntil, :sentOn, :validUntil, :parties, :status, :changedAt,
+                    (SELECT id FROM contacts WHERE organization_id = :organizationId AND decision_role = 'SIGNATORY' AND inactive = FALSE
+                     ORDER BY name, id LIMIT 1),
+                    :createdBy, 0, :createdBy, :changedAt, :changedAt
+                )
+                ON CONFLICT DO NOTHING
+                """)
+                .param("id", agreementId)
+                .param("organizationId", organizationId)
+                .param("number", number)
+                .param("concludedOn", concludedOn)
+                .param("validUntil", validUntil)
+                .param("sentOn", sentOn)
+                .param("parties", "Демо: ИТ Школа РТК и вуз")
+                .param("status", status)
+                .param("changedAt", changedAt)
+                .param("createdBy", createdBy)
+                .update();
+    }
+
+    private void statusEvent(UUID agreementId, String fromStatus, String toStatus, UUID actorId, OffsetDateTime at, String key) {
+        jdbcClient.sql("""
+                INSERT INTO agreement_status_events (id, agreement_id, from_status, to_status, comment, actor_profile_id, occurred_at)
+                VALUES (:id, :agreementId, :fromStatus, :toStatus, NULL, :actorId, :at)
+                ON CONFLICT DO NOTHING
+                """)
+                .param("id", stableId("agreement-event:" + agreementId + ":" + key))
+                .param("agreementId", agreementId)
+                .param("fromStatus", fromStatus)
+                .param("toStatus", toStatus)
+                .param("actorId", actorId)
+                .param("at", at)
+                .update();
+    }
+
+    private void linkDemoWork(UUID agreementId, UUID organizationId, String workTitle) {
+        jdbcClient.sql("""
+                INSERT INTO agreement_interactions (agreement_id, interaction_id)
+                SELECT :agreementId, id FROM interactions WHERE organization_id = :organizationId AND title = :title
+                ON CONFLICT DO NOTHING
+                """)
+                .param("agreementId", agreementId)
+                .param("organizationId", organizationId)
+                .param("title", workTitle)
+                .update();
+    }
+
+    private UUID insertDemoSupplement(UUID agreementId, UUID createdBy, LocalDate today) {
+        UUID supplementId = stableId("agreement-supplement:" + agreementId + ":1");
+        OffsetDateTime now = OffsetDateTime.now();
+        jdbcClient.sql("""
+                INSERT INTO agreement_supplements (
+                    id, agreement_id, number, concluded_on, subject, status, version, created_by, created_at, updated_at
+                ) VALUES (:id, :agreementId, 'ДС-1', :concludedOn, :subject, 'SIGNED', 0, :createdBy, :now, :now)
+                ON CONFLICT DO NOTHING
+                """)
+                .param("id", supplementId)
+                .param("agreementId", agreementId)
+                .param("concludedOn", today.minusDays(40))
+                .param("subject", "Демо: добавлен ИТ-продукт в предмет договора")
+                .param("createdBy", createdBy)
+                .param("now", now)
+                .update();
+        return supplementId;
+    }
+
+    private void uploadDemoFiles(CrmProfile actor, UUID agreementId, UUID supplementId, List<String> comments) {
+        int existing = jdbcClient.sql("""
+                        SELECT COUNT(*) FROM agreement_files
+                        WHERE agreement_id = :agreementId AND COALESCE(supplement_id, agreement_id) = :ownerId
+                        """)
+                .param("agreementId", agreementId)
+                .param("ownerId", supplementId == null ? agreementId : supplementId)
+                .query(Integer.class)
+                .single();
+        for (int index = existing; index < comments.size(); index++) {
+            agreementFileService.upload(
+                    actor,
+                    agreementId,
+                    supplementId,
+                    comments.get(index),
+                    new DemoFile("Демо: договор, версия " + (index + 1) + ".pdf", pdf("Демо: договор с вузом, версия " + (index + 1))),
+                    "demo-bootstrap/v1/agreement-file:" + agreementId + ":" + supplementId + ":" + index
+            );
         }
     }
 
@@ -719,6 +915,9 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         );
         UUID interactionId = current.id();
         for (int step = 1; step <= work.stage(); step++) {
+            if (SIGNING_STAGE.equals(current.currentStageName())) {
+                ensureSignedDemoAgreement(actor, organizationId, interactionId, work);
+            }
             int order = step;
             UUID target = current.stages().stream()
                     .filter(stage -> stage.order() == order)
@@ -949,6 +1148,20 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             Integer validUntilDays,
             String plannedKind,
             Integer plannedDays
+    ) {
+    }
+
+    private record DemoLifecycle(
+            String organization,
+            String actorKey,
+            String workTitle,
+            String number,
+            String status,
+            int statusDays,
+            Integer concludedDays,
+            Integer validUntilDays,
+            List<String> fileComments,
+            boolean supplement
     ) {
     }
 

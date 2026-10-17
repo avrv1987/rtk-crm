@@ -1,12 +1,17 @@
 package ru.rtk.crm.access;
 
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
@@ -23,17 +28,26 @@ import org.springframework.web.bind.annotation.RestController;
 import ru.rtk.crm.access.EmployeeAccountService.AccountCredentials;
 import ru.rtk.crm.access.EmployeeAccountService.AccountEmailRequest;
 import ru.rtk.crm.access.EmployeeAccountService.NewEmployeeRequest;
+import ru.rtk.crm.audit.AuditAction;
+import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.module.ModuleProperties;
+import ru.rtk.crm.report.ReportException;
+import ru.rtk.crm.report.ReportProperties;
 import ru.rtk.crm.security.RequestId;
 
 @RestController
 @RequestMapping("/api/admin/crm-profiles")
 public class AdminCrmProfilesApiController {
+    private static final MediaType XLSX = MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+
     private final CurrentProfileService currentProfileService;
     private final AdminCrmProfileService adminCrmProfileService;
     private final AccountSyncService accountSyncService;
     private final EmployeeAccountService employeeAccountService;
+    private final CrmProfileWorkbook crmProfileWorkbook;
+    private final AuditJournalRepository auditJournalRepository;
+    private final ReportProperties reportProperties;
 
     private final ModuleProperties modules;
 
@@ -42,12 +56,18 @@ public class AdminCrmProfilesApiController {
             AdminCrmProfileService adminCrmProfileService,
             AccountSyncService accountSyncService,
             EmployeeAccountService employeeAccountService,
+            CrmProfileWorkbook crmProfileWorkbook,
+            AuditJournalRepository auditJournalRepository,
+            ReportProperties reportProperties,
             ModuleProperties modules
     ) {
         this.currentProfileService = currentProfileService;
         this.adminCrmProfileService = adminCrmProfileService;
         this.accountSyncService = accountSyncService;
         this.employeeAccountService = employeeAccountService;
+        this.crmProfileWorkbook = crmProfileWorkbook;
+        this.auditJournalRepository = auditJournalRepository;
+        this.reportProperties = reportProperties;
         this.modules = modules;
     }
 
@@ -122,12 +142,49 @@ public class AdminCrmProfilesApiController {
             @RequestParam(defaultValue = "25") int size,
             @RequestParam(defaultValue = "displayName,asc") String sort,
             @RequestParam(defaultValue = "false") boolean pending,
-            @RequestParam(required = false) String q
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) UserRole role,
+            @RequestParam(required = false) UUID teamId,
+            @RequestParam(required = false) AdminCrmProfileQuery.Status status
     ) {
         return adminCrmProfileService.list(
                 currentProfileService.requireActiveProfile(user),
-                AdminCrmProfileQuery.from(page, size, sort, pending, q)
+                AdminCrmProfileQuery.from(page, size, sort, pending ? AdminCrmProfileQuery.Status.PENDING : status, q, role, teamId)
         );
+    }
+
+    @GetMapping("/export")
+    public ResponseEntity<byte[]> export(
+            @AuthenticationPrincipal OidcUser user,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) UserRole role,
+            @RequestParam(required = false) UUID teamId,
+            @RequestParam(required = false) AdminCrmProfileQuery.Status status,
+            HttpServletRequest request
+    ) {
+        CrmProfile actor = currentProfileService.requireActiveProfile(user);
+        int maxRows = reportProperties.maxRows();
+        List<AdminCrmProfile> profiles = adminCrmProfileService.exportRows(
+                actor, AdminCrmProfileQuery.from(0, 1, "displayName,asc", status, q, role, teamId), maxRows + 1
+        );
+        if (profiles.size() > maxRows) {
+            throw new ReportException(
+                    HttpStatus.UNPROCESSABLE_ENTITY, "REPORT_ROW_LIMIT", "В выгрузку попадает больше " + maxRows + " профилей; сузьте фильтры"
+            );
+        }
+        byte[] content = crmProfileWorkbook.xlsx(profiles);
+        auditJournalRepository.record(
+                AuditAction.PROFILES_EXPORTED, actor.id(), "PROFILE", null, null, "строк: " + profiles.size(), RequestId.from(request)
+        );
+        return ResponseEntity.ok()
+                .contentType(XLSX)
+                .contentLength(content.length)
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                        .filename("Профили CRM " + LocalDate.now(ZoneId.of("Europe/Moscow")) + ".xlsx", StandardCharsets.UTF_8)
+                        .build()
+                        .toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .body(content);
     }
 
     @GetMapping("/{id}/events")

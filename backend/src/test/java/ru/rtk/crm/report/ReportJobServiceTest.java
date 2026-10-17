@@ -56,6 +56,7 @@ import ru.rtk.crm.module.ModuleProperties;
         OrganizationRepository.class,
         ReportRepository.class,
         ReportService.class,
+        ru.rtk.crm.work.LmsLearningTestBeans.class,
         ReportJobRepository.class,
         ReportJobService.class,
         ReportStorage.class,

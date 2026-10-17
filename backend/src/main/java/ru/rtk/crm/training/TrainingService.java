@@ -141,7 +141,7 @@ public class TrainingService {
 
     private static InteractionValidationException nextCycleExists(CycleLink next) {
         return new InteractionValidationException("previousInteractionId",
-                "Следующий цикл этой работы уже начат: «" + next.title() + "»");
+                "Следующий цикл этого взаимодействия уже начат: «" + next.title() + "»");
     }
 
     private static void validate(TeacherTrainingRequest request) {

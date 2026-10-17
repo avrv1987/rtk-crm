@@ -119,8 +119,8 @@ export const LearningTrendPanel = ({ ownTeam = false, onSessionExpired, onProfil
         <>
           <ul className="desk-tiles" aria-label="Обучающиеся на начало и конец периода">
             {[
-              { label: `Обучающихся на ${formatDate(state.trend.from)}`, value: state.trend.total.start.toLocaleString('ru-RU'), tone: '' },
-              { label: `Обучающихся на ${formatDate(state.trend.to)}`, value: state.trend.total.end.toLocaleString('ru-RU'), tone: '' },
+              { label: `Обучающихся в идущих потоках на ${formatDate(state.trend.from)}`, value: state.trend.total.start.toLocaleString('ru-RU'), tone: '' },
+              { label: `Обучающихся в идущих потоках на ${formatDate(state.trend.to)}`, value: state.trend.total.end.toLocaleString('ru-RU'), tone: '' },
               { label: 'Изменение за период', value: signed(state.trend.total.change), tone: state.trend.total.change < 0 ? ' desk-tile--danger' : ' desk-tile--plain' }
             ].map((tile) => (
               <li key={tile.label}>
@@ -132,7 +132,7 @@ export const LearningTrendPanel = ({ ownTeam = false, onSessionExpired, onProfil
             ))}
           </ul>
           <p className="work-control__caption">
-            {`Обучающиеся в потоках занятий студентов Moodle на конец дня ${formatDate(state.trend.from)} и ${formatDate(state.trend.to)} по истории наблюдений: берётся последнее наблюдение не позже этой даты; до начала потока и после его окончания — ноль.`}
+            {`Участия в потоках занятий студентов Moodle, которые идут в этот день, на конец дня ${formatDate(state.trend.from)} и ${formatDate(state.trend.to)} по истории наблюдений: берётся последнее наблюдение не позже этой даты; до начала потока и после его окончания — ноль.`}
           </p>
           {state.trend.runsWithoutData > 0 && (
             <p className="notice" role="note">

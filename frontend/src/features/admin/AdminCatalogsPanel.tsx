@@ -1,6 +1,5 @@
-import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ApiError,
   apiClient,
   createIdempotencyKey,
   type AdminCatalogEntry,
@@ -10,12 +9,26 @@ import {
   type PageAdminCatalogEntry,
   type PageCatalogChangeEvent
 } from '../../shared/api/client'
+import { ActionMenu, type ActionMenuItem } from '../../shared/ui/ActionMenu'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
+import { EmptyState } from '../../shared/ui/EmptyState'
+import { HintButton } from '../../shared/ui/HintButton'
 import { Pagination } from '../../shared/ui/Pagination'
-import { commandErrorMessage, formatDateTime, handledSessionError, requestIdOf, type SessionHandlers } from './adminShared'
+import { Segmented } from '../../shared/ui/Segmented'
+import { Toast } from '../../shared/ui/Toast'
+import { ActivityKindsPanel } from '../agreements/ActivityKindsPanel'
+import { CardDialog } from '../interactions/cardUi'
+import { formatDateTime, handledSessionError, requestIdOf, type SessionHandlers } from './adminShared'
+import { catalogAddLabels, catalogTabLabels, catalogTabSlugs, type CatalogsTabSlug } from './catalogTabs'
+import { CatalogCommandError, CatalogLoadFailure } from './catalogUi'
 import { VendorContactsPanel } from './VendorContactsPanel'
+import './adminUi.css'
+import './catalogs.css'
 
-type Tab = CatalogKind | 'journal'
+type CatalogsPanelProps = SessionHandlers & {
+  tab?: CatalogsTabSlug
+  onTabChange?: (slug: CatalogsTabSlug) => void
+}
 
 type EntryState = 'ACTIVE' | 'ARCHIVED' | 'ALL'
 
@@ -26,7 +39,7 @@ type ListState<T> =
 
 type EntryCommand = {
   entry: AdminCatalogEntry
-  mode: 'rename' | 'archive'
+  mode: 'rename' | 'archive' | 'market'
   name: string
   confirming: boolean
   saving: boolean
@@ -34,11 +47,17 @@ type EntryCommand = {
   idempotencyKey: string | null
 }
 
-const kinds: Array<{ kind: CatalogKind; label: string; single: string; parent?: CatalogKind; parentLabel?: string }> = [
-  { kind: 'directions', label: 'ИТ-направления', single: 'направление' },
-  { kind: 'programs', label: 'ИТ-программы', single: 'программу', parent: 'directions', parentLabel: 'ИТ-направление' },
-  { kind: 'vendors', label: 'Вендоры', single: 'вендора' },
-  { kind: 'products', label: 'ИТ-продукты', single: 'продукт', parent: 'vendors', parentLabel: 'Вендор' }
+const kinds: Array<{ kind: CatalogKind; label: string; parent?: CatalogKind; parentLabel?: string }> = [
+  { kind: 'directions', label: catalogTabLabels.directions },
+  { kind: 'programs', label: catalogTabLabels.programs, parent: 'directions', parentLabel: 'ИТ-направление' },
+  { kind: 'vendors', label: catalogTabLabels.vendors },
+  { kind: 'products', label: catalogTabLabels.products, parent: 'vendors', parentLabel: 'Вендор' }
+]
+
+const stateOptions: Array<{ value: EntryState; label: string }> = [
+  { value: 'ACTIVE', label: 'Действующие' },
+  { value: 'ARCHIVED', label: 'Архив' },
+  { value: 'ALL', label: 'Все' }
 ]
 
 const entityLabels: Record<CatalogEntityType, string> = {
@@ -65,15 +84,10 @@ const actionLabels: Record<CatalogChangeEvent['action'], string> = {
 const pageSize = 25
 const searchDelayMilliseconds = 300
 
-const errorBlock = (error: unknown) => (
-  <div className="interaction-command-error" role="alert">
-    <p>{commandErrorMessage(error)}</p>
-    {error instanceof ApiError && <p className="request-id">Request ID: {error.requestId}</p>}
-  </div>
-)
-
-export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: SessionHandlers) => {
-  const [tab, setTab] = useState<Tab>('directions')
+export const AdminCatalogsPanel = ({ tab: tabProp, onTabChange, onSessionExpired, onProfileUnavailable }: CatalogsPanelProps) => {
+  const [innerTab, setInnerTab] = useState<CatalogsTabSlug>('directions')
+  const tab = tabProp ?? innerTab
+  const [shownTab, setShownTab] = useState(tab)
   const [searchText, setSearchText] = useState('')
   const [search, setSearch] = useState('')
   const [entryState, setEntryState] = useState<EntryState>('ACTIVE')
@@ -82,27 +96,46 @@ export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: S
   const [events, setEvents] = useState<ListState<PageCatalogChangeEvent>>({ kind: 'loading' })
   const [entityFilter, setEntityFilter] = useState<CatalogEntityType | ''>('')
   const [parents, setParents] = useState<AdminCatalogEntry[]>([])
+  const [addOpen, setAddOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [newParentId, setNewParentId] = useState('')
   const [creating, setCreating] = useState<{ saving: boolean; error?: unknown; key: string | null }>({ saving: false, key: null })
   const [command, setCommand] = useState<EntryCommand | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [contactsVendorId, setContactsVendorId] = useState<string | null>(null)
+  const [kindsAddRequest, setKindsAddRequest] = useState(0)
   const requestVersion = useRef(0)
   const kind = kinds.find((item) => item.kind === tab)
+  const addLabel = catalogAddLabels[tab]
+
+  // Смена вкладки (кнопкой или адресом) сбрасывает поиск, окна и сообщение; делаем это при отрисовке, чтобы не грузить список дважды.
+  if (shownTab !== tab) {
+    setShownTab(tab)
+    setPageIndex(0)
+    setSearchText('')
+    setSearch('')
+    setNewName('')
+    setNewParentId('')
+    setAddOpen(false)
+    setCreating({ saving: false, key: null })
+    setCommand(null)
+    setMessage(null)
+    setContactsVendorId(null)
+  }
 
   const handleError = useCallback((error: unknown) => (
     handledSessionError(error, { onSessionExpired, onProfileUnavailable })
   ), [onProfileUnavailable, onSessionExpired])
 
+  const catalogKind = kind?.kind
   const loadEntries = useCallback(async () => {
-    if (tab === 'journal') {
+    if (catalogKind === undefined) {
       return
     }
     const version = ++requestVersion.current
     setEntries({ kind: 'loading' })
     try {
-      const page = await apiClient.listAdminCatalogEntries(tab, { page: pageIndex, size: pageSize, q: search, state: entryState })
+      const page = await apiClient.listAdminCatalogEntries(catalogKind, { page: pageIndex, size: pageSize, q: search, state: entryState })
       if (version === requestVersion.current) {
         setEntries({ kind: 'ready', page })
       }
@@ -111,7 +144,7 @@ export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: S
         setEntries({ kind: 'failed', requestId: requestIdOf(error) })
       }
     }
-  }, [entryState, handleError, pageIndex, search, tab])
+  }, [catalogKind, entryState, handleError, pageIndex, search])
 
   const loadEvents = useCallback(async () => {
     if (tab !== 'journal') {
@@ -166,17 +199,20 @@ export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: S
     return () => window.clearTimeout(timer)
   }, [search, searchText])
 
-  const selectTab = (next: Tab) => {
-    setTab(next)
-    setPageIndex(0)
-    setSearchText('')
-    setSearch('')
+  const selectTab = (next: CatalogsTabSlug) => {
+    setInnerTab(next)
+    onTabChange?.(next)
+  }
+
+  const openAdd = () => {
+    if (tab === 'activity-kinds') {
+      setKindsAddRequest((value) => value + 1)
+      return
+    }
     setNewName('')
     setNewParentId('')
     setCreating({ saving: false, key: null })
-    setCommand(null)
-    setMessage(null)
-    setContactsVendorId(null)
+    setAddOpen(true)
   }
 
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
@@ -194,6 +230,7 @@ export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: S
       }, key)
       setCreating({ saving: false, key: null })
       setNewName('')
+      setAddOpen(false)
       setMessage(`«${created.name}» добавлено и сразу доступно для выбора.`)
       await loadEntries()
     } catch (error) {
@@ -203,22 +240,30 @@ export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: S
     }
   }
 
-  const submitCommand = async () => {
-    if (kind === undefined || command === null || command.saving) {
+  const submitCommand = async (override?: EntryCommand) => {
+    const active = override ?? command
+    if (kind === undefined || active === null || active.saving) {
       return
     }
-    const key = command.idempotencyKey ?? createIdempotencyKey()
-    setCommand({ ...command, confirming: false, saving: true, error: undefined, idempotencyKey: key })
+    const key = active.idempotencyKey ?? createIdempotencyKey()
+    setCommand({ ...active, confirming: false, saving: true, error: undefined, idempotencyKey: key })
     try {
-      const changed = await apiClient.updateAdminCatalogEntry(kind.kind, command.entry.id, command.mode === 'rename'
-        ? { name: command.name.trim(), version: command.entry.version }
-        : { archived: !command.entry.archived, version: command.entry.version }, key)
+      const payload = active.mode === 'rename'
+        ? { name: active.name.trim(), version: active.entry.version }
+        : active.mode === 'market'
+          ? { laborMarket: active.entry.laborMarket !== true, version: active.entry.version }
+          : { archived: !active.entry.archived, version: active.entry.version }
+      const changed = await apiClient.updateAdminCatalogEntry(kind.kind, active.entry.id, payload, key)
       setCommand(null)
-      setMessage(command.mode === 'rename'
+      setMessage(active.mode === 'rename'
         ? `Новое название «${changed.name}» сохранено и уже видно пользователям.`
-        : changed.archived
-          ? `«${changed.name}» в архиве: не предлагается для новых взаимодействий, в истории и отчётах остаётся.`
-          : `«${changed.name}» восстановлено.`)
+        : active.mode === 'market'
+          ? changed.laborMarket === true
+            ? `Направление «${changed.name}»: спрос рынка труда учитывается в отчёте «Востребованность программ». Сопоставление с источником — в разделе «Источники данных».`
+            : `Направление «${changed.name}»: спрос рынка труда в отчёте больше не учитывается.`
+          : changed.archived
+            ? `«${changed.name}» в архиве: не предлагается для новых взаимодействий, в истории и отчётах остаётся.`
+            : `«${changed.name}» восстановлено.`)
       await loadEntries()
     } catch (error) {
       if (!handleError(error)) {
@@ -227,200 +272,163 @@ export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: S
     }
   }
 
+  const rowMenu = (entry: AdminCatalogEntry): ActionMenuItem[] => [
+    ...(kind?.kind === 'vendors' && contactsVendorId !== entry.id
+      ? [{ label: 'Контакты', onSelect: () => setContactsVendorId(entry.id) }]
+      : []),
+    ...(entry.archived
+      ? []
+      : [{
+        label: 'Переименовать',
+        onSelect: () => setCommand({ entry, mode: 'rename', name: entry.name, confirming: false, saving: false, idempotencyKey: null })
+      }]),
+    {
+      label: entry.archived ? 'Восстановить' : 'Архивировать',
+      onSelect: () => setCommand({ entry, mode: 'archive', name: entry.name, confirming: true, saving: false, idempotencyKey: null })
+    }
+  ]
+
+  const filtered = search !== '' || entryState !== 'ACTIVE'
+  const showMarket = kind?.kind === 'directions'
+  const renaming = command?.mode === 'rename' ? command : null
+  const rowError = command !== null && command.mode !== 'rename' ? command.error : undefined
+
   return (
-    <section className="admin-profiles admin-catalogs" aria-labelledby="admin-catalogs-title">
-      <div className="admin-profiles__header">
-        <div>
-          <p className="eyebrow">Администрирование</p>
-          <h2 id="admin-catalogs-title">Справочники</h2>
-        </div>
+    <section className="admin-page" aria-labelledby="admin-catalogs-title">
+      <div className="page-title">
+        <h2 id="admin-catalogs-title">Справочники</h2>
+        <HintButton label="О разделе">
+          Добавление, переименование и архивирование направлений, программ, вендоров и продуктов без Excel. Дубль по названию без учёта регистра не создаётся; архивная запись не предлагается для новых взаимодействий, но остаётся в карточках и отчётах. Каждое изменение — в журнале. Организации ведутся в разделе «Организации».
+        </HintButton>
+        <span className="page-title__spacer" />
+        {addLabel !== undefined && <button type="button" onClick={openAdd}>{addLabel}</button>}
       </div>
-      <p className="admin-profiles__intro">
-        Добавление, переименование и архивирование направлений, программ, вендоров и продуктов без Excel. Дубль по названию без учёта регистра не создаётся; архивная запись не предлагается для новых взаимодействий, но остаётся в карточках и отчётах. Каждое изменение — в журнале. Организации ведутся в блоке «Организации и команды».
-      </p>
-      <div className="admin-catalogs__tabs" role="group" aria-label="Справочник">
-        {kinds.map((item) => (
-          <button
-            key={item.kind}
-            type="button"
-            className={tab === item.kind ? undefined : 'button--secondary'}
-            aria-pressed={tab === item.kind}
-            onClick={() => selectTab(item.kind)}
-          >
-            {item.label}
+      <div className="admin-tabs catalogs-tabs" role="group" aria-label="Справочник">
+        {catalogTabSlugs.map((slug) => (
+          <button key={slug} type="button" aria-pressed={tab === slug} onClick={() => selectTab(slug)}>
+            {catalogTabLabels[slug]}
           </button>
         ))}
-        <button
-          type="button"
-          className={tab === 'journal' ? undefined : 'button--secondary'}
-          aria-pressed={tab === 'journal'}
-          onClick={() => selectTab('journal')}
-        >
-          Журнал изменений
-        </button>
       </div>
-      {message !== null && <p className="notice" role="status">{message}</p>}
+
+      {tab === 'activity-kinds' && (
+        <ActivityKindsPanel
+          addRequest={kindsAddRequest}
+          onNotify={setMessage}
+          onSessionExpired={onSessionExpired}
+          onProfileUnavailable={onProfileUnavailable}
+        />
+      )}
 
       {kind !== undefined && (
         <>
-          <form className="admin-profile-form" onSubmit={(event) => void submitCreate(event)} aria-label={`Добавить: ${kind.label}`}>
-            <label>
-              Название *
+          <div className="admin-toolbar" role="search" aria-label={`Отбор: ${kind.label}`}>
+            <label className="admin-toolbar__search">
+              <span className="catalogs-sr">Поиск по названию</span>
               <input
-                value={newName}
+                type="search"
+                value={searchText}
                 maxLength={200}
-                disabled={creating.saving}
-                onChange={(event) => {
-                  setNewName(event.target.value)
-                  setCreating({ saving: false, key: null })
-                }}
+                placeholder="Поиск по названию"
+                onChange={(event) => setSearchText(event.target.value)}
               />
             </label>
-            {kind.parent !== undefined && (
-              <label>
-                {kind.parentLabel} *
-                <select
-                  value={newParentId}
-                  disabled={creating.saving}
-                  onChange={(event) => {
-                    setNewParentId(event.target.value)
-                    setCreating({ saving: false, key: null })
-                  }}
-                >
-                  <option value="">Выберите</option>
-                  {parents.map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}
-                </select>
-              </label>
-            )}
-            <div className="admin-profiles__confirmation-actions">
-              <button
-                type="submit"
-                disabled={creating.saving || newName.trim().length === 0 || (kind.parent !== undefined && newParentId === '')}
-              >
-                {creating.saving ? 'Добавляем…' : `Добавить ${kind.single}`}
-              </button>
-            </div>
-            {creating.error !== undefined && errorBlock(creating.error)}
-          </form>
+            <Segmented
+              label="Состояние"
+              options={stateOptions}
+              value={entryState}
+              onChange={(value) => {
+                setEntryState(value)
+                setPageIndex(0)
+              }}
+            />
+          </div>
 
-          <form className="organizations-filters" role="search" aria-label={`Отбор: ${kind.label}`} onSubmit={(event) => event.preventDefault()}>
-            <label>
-              Поиск по названию
-              <input type="search" value={searchText} maxLength={200} onChange={(event) => setSearchText(event.target.value)} />
-            </label>
-            <label>
-              Состояние
-              <select
-                value={entryState}
-                onChange={(event) => {
-                  setEntryState(event.target.value as EntryState)
-                  setPageIndex(0)
-                }}
-              >
-                <option value="ACTIVE">Действующие</option>
-                <option value="ARCHIVED">Архив</option>
-                <option value="ALL">Все</option>
-              </select>
-            </label>
-          </form>
-
+          {rowError !== undefined && <CatalogCommandError error={rowError} onClose={() => setCommand(null)} />}
           {entries.kind === 'loading' && <p className="organizations-message" role="status">Загружаем справочник…</p>}
           {entries.kind === 'failed' && (
-            <div className="organizations-message organizations-message--error" role="alert">
-              <p>Не удалось загрузить справочник. Повторите попытку.</p>
-              {entries.requestId && <p className="request-id">Request ID: {entries.requestId}</p>}
-              <button type="button" onClick={() => void loadEntries()}>Повторить</button>
-            </div>
+            <CatalogLoadFailure text="Не удалось загрузить справочник. Повторите попытку." requestId={entries.requestId} onRetry={() => void loadEntries()} />
           )}
           {entries.kind === 'ready' && entries.page.items.length === 0 && (
-            <p className="organizations-message">Записей нет.</p>
+            <EmptyState
+              text="Записей нет."
+              action={filtered
+                ? (
+                  <button
+                    type="button"
+                    className="button--secondary"
+                    onClick={() => {
+                      setSearchText('')
+                      setSearch('')
+                      setEntryState('ACTIVE')
+                      setPageIndex(0)
+                    }}
+                  >
+                    Сбросить поиск и состояние
+                  </button>
+                )
+                : <button type="button" className="button--secondary" onClick={openAdd}>{addLabel}</button>}
+            />
           )}
           {entries.kind === 'ready' && entries.page.items.length > 0 && (
-            <ul className="admin-profiles__list" aria-label={kind.label}>
-              {entries.page.items.map((entry) => (
-                <li key={entry.id} className="admin-profiles__item">
-                  <div className="admin-profiles__identity">
-                    {command?.entry.id === entry.id && command.mode === 'rename' ? (
-                      <form
-                        className="admin-team-form"
-                        onSubmit={(event) => {
-                          event.preventDefault()
-                          void submitCommand()
-                        }}
-                      >
-                        <label>
-                          Новое название «{entry.name}»
-                          <input
-                            value={command.name}
-                            maxLength={200}
-                            disabled={command.saving}
-                            onChange={(event) => setCommand({ ...command, name: event.target.value, idempotencyKey: null, error: undefined })}
-                          />
-                        </label>
-                        <div className="admin-profiles__confirmation-actions">
-                          <button
-                            type="submit"
-                            disabled={command.saving || command.name.trim().length === 0 || command.name.trim() === entry.name}
-                          >
-                            {command.saving ? 'Сохраняем…' : 'Сохранить'}
-                          </button>
-                          <button type="button" className="button--secondary" disabled={command.saving} onClick={() => setCommand(null)}>
-                            Отмена
-                          </button>
-                        </div>
-                      </form>
-                    ) : (
-                      <h3>
-                        {entry.name}
-                        {entry.archived && <span className="admin-profiles__status admin-profiles__status--blocked">Архивирована</span>}
-                      </h3>
-                    )}
-                    {entry.parentName !== null && (
-                      <dl className="admin-profiles__fields">
-                        <div>
-                          <dt>{kind.parentLabel}</dt>
-                          <dd>{entry.parentName}</dd>
-                        </div>
-                      </dl>
-                    )}
-                    {command?.entry.id === entry.id && command.error !== undefined && errorBlock(command.error)}
-                    {contactsVendorId === entry.id && (
-                      <VendorContactsPanel
-                        vendor={entry}
-                        onClose={() => setContactsVendorId(null)}
-                        onSessionExpired={onSessionExpired}
-                        onProfileUnavailable={onProfileUnavailable}
-                      />
-                    )}
-                  </div>
-                  {!(command?.entry.id === entry.id && command.mode === 'rename') && (
-                    <div className="admin-profiles__actions admin-catalogs__actions">
-                      {kind.kind === 'vendors' && contactsVendorId !== entry.id && (
-                        <button type="button" className="button--secondary" onClick={() => setContactsVendorId(entry.id)}>
-                          Контакты
-                        </button>
+            <div className="admin-table-wrap">
+              <table className="admin-table" aria-label={kind.label}>
+                <thead>
+                  <tr>
+                    <th scope="col">Название</th>
+                    {showMarket && <th scope="col">Рынок труда</th>}
+                    <th scope="col" className="admin-table__actions"><span className="catalogs-sr">Действия</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.page.items.map((entry) => (
+                    <Fragment key={entry.id}>
+                      <tr>
+                        <td className="admin-table__cell-main">
+                          <span className="admin-table__main">{entry.name}</span>
+                          {entry.archived && <> <span className="admin-chip admin-chip--warn">Архивирована</span></>}
+                          {entry.parentName !== null && (
+                            <span className="admin-table__sub">{kind.parentLabel}: {entry.parentName}</span>
+                          )}
+                        </td>
+                        {showMarket && (
+                          <td data-label="Рынок труда">
+                            {kind.kind === 'directions' && !entry.archived && (
+                              <label className="catalogs-check">
+                                <input
+                                  type="checkbox"
+                                  checked={entry.laborMarket === true}
+                                  disabled={command?.saving === true}
+                                  onChange={() => void submitCommand({
+                                    entry, mode: 'market', name: entry.name, confirming: false, saving: false, idempotencyKey: null
+                                  })}
+                                />
+                                Учитывать спрос рынка труда
+                              </label>
+                            )}
+                          </td>
+                        )}
+                        <td className="admin-table__actions">
+                          <ActionMenu label={`Действия: «${entry.name}»`} items={rowMenu(entry)} />
+                        </td>
+                      </tr>
+                      {contactsVendorId === entry.id && (
+                        <tr className="admin-table__detail">
+                          <td colSpan={showMarket ? 3 : 2}>
+                            <VendorContactsPanel
+                              vendor={entry}
+                              onClose={() => setContactsVendorId(null)}
+                              onSessionExpired={onSessionExpired}
+                              onProfileUnavailable={onProfileUnavailable}
+                            />
+                          </td>
+                        </tr>
                       )}
-                      {!entry.archived && (
-                        <button
-                          type="button"
-                          className="button--secondary"
-                          onClick={() => setCommand({ entry, mode: 'rename', name: entry.name, confirming: false, saving: false, idempotencyKey: null })}
-                        >
-                          Переименовать
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="button--secondary"
-                        onClick={() => setCommand({ entry, mode: 'archive', name: entry.name, confirming: true, saving: false, idempotencyKey: null })}
-                      >
-                        {entry.archived ? 'Восстановить' : 'Архивировать'}
-                      </button>
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           {entries.kind === 'ready' && (
             <Pagination
@@ -431,14 +439,95 @@ export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: S
               onChange={setPageIndex}
             />
           )}
+
+          <CardDialog open={addOpen} title={addLabel ?? ''} onClose={() => setAddOpen(false)}>
+            <form className="admin-form" onSubmit={(event) => void submitCreate(event)} aria-label={`Добавить: ${kind.label}`}>
+              <label>
+                Название *
+                <input
+                  value={newName}
+                  maxLength={200}
+                  disabled={creating.saving}
+                  onChange={(event) => {
+                    setNewName(event.target.value)
+                    setCreating({ saving: false, key: null })
+                  }}
+                />
+              </label>
+              {kind.parent !== undefined && (
+                <label>
+                  {kind.parentLabel} *
+                  <select
+                    value={newParentId}
+                    disabled={creating.saving}
+                    onChange={(event) => {
+                      setNewParentId(event.target.value)
+                      setCreating({ saving: false, key: null })
+                    }}
+                  >
+                    <option value="">Выберите</option>
+                    {parents.map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}
+                  </select>
+                </label>
+              )}
+              {creating.error !== undefined && <CatalogCommandError error={creating.error} />}
+              <div className="admin-form__actions">
+                <button type="button" className="button--secondary" disabled={creating.saving} onClick={() => setAddOpen(false)}>Отмена</button>
+                <button
+                  type="submit"
+                  disabled={creating.saving || newName.trim().length === 0 || (kind.parent !== undefined && newParentId === '')}
+                >
+                  {creating.saving ? 'Добавляем…' : 'Добавить'}
+                </button>
+              </div>
+            </form>
+          </CardDialog>
+
+          <CardDialog
+            open={renaming !== null}
+            title={renaming === null ? '' : `Переименовать «${renaming.entry.name}»`}
+            onClose={() => (command?.saving === true ? undefined : setCommand(null))}
+          >
+            {renaming !== null && (
+              <form
+                className="admin-form"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void submitCommand()
+                }}
+              >
+                <label>
+                  Новое название «{renaming.entry.name}»
+                  <input
+                    value={renaming.name}
+                    maxLength={200}
+                    disabled={renaming.saving}
+                    onChange={(event) => setCommand({ ...renaming, name: event.target.value, idempotencyKey: null, error: undefined })}
+                  />
+                </label>
+                {renaming.error !== undefined && <CatalogCommandError error={renaming.error} />}
+                <div className="admin-form__actions">
+                  <button type="button" className="button--secondary" disabled={renaming.saving} onClick={() => setCommand(null)}>
+                    Отмена
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={renaming.saving || renaming.name.trim().length === 0 || renaming.name.trim() === renaming.entry.name}
+                  >
+                    {renaming.saving ? 'Сохраняем…' : 'Сохранить'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </CardDialog>
         </>
       )}
 
       {tab === 'journal' && (
         <>
-          <form className="organizations-filters" aria-label="Отбор журнала" onSubmit={(event) => event.preventDefault()}>
+          <div className="admin-toolbar" role="search" aria-label="Отбор журнала">
             <label>
-              Что менялось
+              Что менялось{' '}
               <select
                 value={entityFilter}
                 onChange={(event) => {
@@ -452,30 +541,22 @@ export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: S
                 ))}
               </select>
             </label>
-          </form>
+          </div>
           {events.kind === 'loading' && <p className="organizations-message" role="status">Загружаем журнал…</p>}
           {events.kind === 'failed' && (
-            <div className="organizations-message organizations-message--error" role="alert">
-              <p>Не удалось загрузить журнал. Повторите попытку.</p>
-              {events.requestId && <p className="request-id">Request ID: {events.requestId}</p>}
-              <button type="button" onClick={() => void loadEvents()}>Повторить</button>
-            </div>
+            <CatalogLoadFailure text="Не удалось загрузить журнал. Повторите попытку." requestId={events.requestId} onRetry={() => void loadEvents()} />
           )}
-          {events.kind === 'ready' && events.page.items.length === 0 && (
-            <p className="organizations-message">Изменений пока нет.</p>
-          )}
+          {events.kind === 'ready' && events.page.items.length === 0 && <EmptyState text="Изменений пока нет." />}
           {events.kind === 'ready' && events.page.items.length > 0 && (
-            <ol className="admin-catalogs__journal" aria-label="Журнал изменений справочников">
+            <ol className="catalogs-journal" aria-label="Журнал изменений справочников">
               {events.page.items.map((event) => (
                 <li key={event.id}>
-                  <p>
+                  <span>
                     <time dateTime={event.occurredAt}>{formatDateTime(event.occurredAt)}</time>
                     {' · '}{event.actorDisplayName}
-                  </p>
-                  <p>
-                    <strong>{actionLabels[event.action]}</strong> · {entityLabels[event.entityType]} «{event.entityName}»
-                  </p>
-                  {event.changes !== null && <p className="admin-profile-form__hint">{event.changes}</p>}
+                    {' · '}<strong>{actionLabels[event.action]}</strong> · {entityLabels[event.entityType]} «{event.entityName}»
+                  </span>
+                  {event.changes !== null && <span className="catalogs-journal__sub">{event.changes}</span>}
                 </li>
               ))}
             </ol>
@@ -496,6 +577,7 @@ export const AdminCatalogsPanel = ({ onSessionExpired, onProfileUnavailable }: S
         onConfirm={() => void submitCommand()}
         onCancel={() => setCommand(null)}
       />
+      <Toast message={message} onClose={() => setMessage(null)} />
     </section>
   )
 }

@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react'
-import { apiClient, type LearningDynamics, type LearningDynamicsQuery } from '../../shared/api/client'
+import { apiClient, type LearningDynamics, type LearningDynamicsQuery, type Me } from '../../shared/api/client'
 import { formatMoscowDateTime, todayInMoscow } from '../../shared/format/datetime'
 import { saveFile } from '../admin/saveFile'
 import { type AccessHandlers, handledAccessError } from '../work/workShared'
+import { reportMeta } from './ReportCatalog'
+import { PeriodPicker, ReportSegments } from './ReportControls'
 import { ErrorNotice } from './ReportErrorNotice'
+import { ExportMenu } from './ReportExportMenu'
+import { ReportHeader } from './ReportHeader'
+import { pageHints } from './reportHints'
 import { axisStep } from './StatisticsChart'
 import './reports.css'
 
@@ -11,6 +16,7 @@ type Metric = 'participants' | 'completed'
 type SeriesBy = LearningDynamics['seriesBy']
 
 export type LearningDynamicsReportProps = AccessHandlers & {
+  role: Me['role']
   organizationIds?: string[]
   programIds?: string[]
 }
@@ -28,7 +34,7 @@ const plotHeight = 240
 const labelsHeight = 44
 const leftPercent = 3
 const widthPercent = 94
-const metricTitles: Record<Metric, string> = { participants: 'Обучающиеся', completed: 'Завершили' }
+const metricTitles: Record<Metric, string> = { participants: 'Обучающиеся в потоках месяца', completed: 'Завершили' }
 const seriesTitles: Record<SeriesBy, string> = { ORGANIZATION: 'по вузам', PROGRAM: 'по ИТ-программам' }
 const monthLabel = (key: string) => `${key.slice(5, 7)}.${key.slice(2, 4)}`
 const cell = (value: number | null | undefined) => (value === null || value === undefined ? 'нет данных' : value.toLocaleString('ru-RU'))
@@ -135,7 +141,7 @@ const DynamicsChart = ({ result, metric }: { result: LearningDynamics; metric: M
   )
 }
 
-export const LearningDynamicsReport = ({ organizationIds, programIds, onSessionExpired, onProfileUnavailable }: LearningDynamicsReportProps) => {
+export const LearningDynamicsReport = ({ role, organizationIds, programIds, onSessionExpired, onProfileUnavailable }: LearningDynamicsReportProps) => {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [seriesBy, setSeriesBy] = useState<SeriesBy>('ORGANIZATION')
@@ -199,35 +205,49 @@ export const LearningDynamicsReport = ({ organizationIds, programIds, onSessionE
 
   const periodProblem = from !== '' && to !== '' && from > to ? 'Дата окончания периода раньше даты начала.' : null
 
+  const meta = reportMeta(role, 'learning-dynamics')
+  const ready = state.kind === 'ready' && download.format === null
+
   return (
-    <section className="reports__statistics" aria-labelledby="report-page-title" aria-busy={state.kind === 'loading'}>
-      <p className="reports__hint">
-        Обучающиеся и завершившие по месяцам по истории наблюдений Moodle — вузы и ИТ-программы вашей области. Без периода — последние 12 месяцев.
-      </p>
-      <form className="reports__order" onSubmit={submit}>
-        <label>
-          Начало периода
-          <input type="date" value={from} max={to || today} onChange={(event) => setFrom(event.target.value)} />
-        </label>
-        <label>
-          Конец периода
-          <input type="date" value={to} min={from || undefined} max={today} onChange={(event) => setTo(event.target.value)} />
-        </label>
-        <label>
-          Линии
-          <select value={seriesBy} onChange={(event) => setSeriesBy(event.target.value === 'PROGRAM' ? 'PROGRAM' : 'ORGANIZATION')}>
-            <option value="ORGANIZATION">по вузам</option>
-            <option value="PROGRAM">по ИТ-программам</option>
-          </select>
-        </label>
-        <label>
-          Показатель
-          <select value={metric} onChange={(event) => setMetric(event.target.value === 'completed' ? 'completed' : 'participants')}>
-            <option value="participants">Обучающиеся</option>
-            <option value="completed">Завершили</option>
-          </select>
-        </label>
-        <button type="submit" disabled={periodProblem !== null || state.kind === 'loading'}>Показать</button>
+    <section className="reports report-page" aria-labelledby="report-page-title" aria-busy={state.kind === 'loading'}>
+      <ReportHeader
+        id="report-page-title"
+        group={meta.group}
+        title={meta.title}
+        hint={`${pageHints['learning-dynamics']} Данные: ${meta.data}.`}
+        actions={(
+          <ExportMenu
+            disabled={!ready}
+            items={[{ label: 'XLSX (Excel)', onSelect: () => void save('XLSX') }, { label: 'PDF', onSelect: () => void save('PDF') }]}
+          />
+        )}
+      />
+      <form className="reports__order report-toolbar__row" onSubmit={submit}>
+        <PeriodPicker
+          from={from}
+          to={to}
+          max={today}
+          emptyText="последние 12 месяцев"
+          onChange={(nextFrom, nextTo) => {
+            setFrom(nextFrom)
+            setTo(nextTo)
+          }}
+        />
+        <ReportSegments
+          label="Линии"
+          value={seriesBy}
+          onChange={setSeriesBy}
+          options={[{ value: 'ORGANIZATION', label: 'По вузам' }, { value: 'PROGRAM', label: 'По ИТ-программам' }]}
+        />
+        <ReportSegments
+          label="Показатель"
+          value={metric}
+          onChange={setMetric}
+          options={[{ value: 'participants', label: 'Обучающиеся в потоках месяца' }, { value: 'completed', label: 'Завершили' }]}
+        />
+        <div className="report-toolbar__actions reports__actions">
+          <button type="submit" disabled={periodProblem !== null || state.kind === 'loading'}>Показать</button>
+        </div>
       </form>
       {periodProblem && <p className="reports__problem" role="alert">{periodProblem}</p>}
       {state.kind === 'loading' && <p role="status">Собираем динамику обучения…</p>}
@@ -250,7 +270,7 @@ export const LearningDynamicsReport = ({ organizationIds, programIds, onSessionE
                     <th scope="col">Вуз</th>
                     <th scope="col">ИТ-программа</th>
                     <th scope="col">Потоков с данными</th>
-                    <th scope="col">Обучающиеся (Moodle)</th>
+                    <th scope="col">Обучающиеся в потоках месяца (Moodle)</th>
                     <th scope="col">Завершили (Moodle)</th>
                     <th scope="col">Доля завершивших, %</th>
                   </tr>
@@ -273,12 +293,7 @@ export const LearningDynamicsReport = ({ organizationIds, programIds, onSessionE
           </details>
           <p className="reports__footer">
             <span>Сформировано: {formatMoscowDateTime(state.result.generatedAt)}</span>
-            <button type="button" className="button--secondary" disabled={download.format !== null} onClick={() => void save('XLSX')}>
-              {download.format === 'XLSX' ? 'Готовим XLSX…' : 'Скачать XLSX'}
-            </button>
-            <button type="button" className="button--secondary" disabled={download.format !== null} onClick={() => void save('PDF')}>
-              {download.format === 'PDF' ? 'Готовим PDF…' : 'Скачать PDF'}
-            </button>
+            {download.format !== null && <span role="status">Готовим {download.format}…</span>}
           </p>
           {download.error !== null && <ErrorNotice error={download.error} message="Не удалось скачать файл динамики обучения." />}
         </>

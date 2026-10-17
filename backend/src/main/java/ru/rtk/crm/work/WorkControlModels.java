@@ -5,6 +5,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
 import ru.rtk.crm.interaction.InteractionWorkStatus;
 import ru.rtk.crm.report.ManagerWorkDue;
 
@@ -50,7 +51,10 @@ public final class WorkControlModels {
             String issues,
             long transitions,
             boolean created,
-            boolean completed
+            boolean completed,
+            AgreementStatus agreementStatus,
+            String agreementNumber,
+            LmsSignalModels.WorkLearning learning
     ) {
     }
 

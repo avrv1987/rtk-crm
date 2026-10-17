@@ -2,5 +2,8 @@ package ru.rtk.crm.catalog;
 
 import java.util.UUID;
 
-public record CatalogEntryRequest(String name, UUID parentId, Boolean archived, Integer version) {
+public record CatalogEntryRequest(String name, UUID parentId, Boolean archived, Integer version, Boolean laborMarket) {
+    public CatalogEntryRequest(String name, UUID parentId, Boolean archived, Integer version) {
+        this(name, parentId, archived, version, null);
+    }
 }

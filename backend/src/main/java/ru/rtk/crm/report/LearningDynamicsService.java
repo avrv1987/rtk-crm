@@ -39,7 +39,7 @@ public class LearningDynamicsService {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     private static final DateTimeFormatter MONTH_KEY = DateTimeFormatter.ofPattern("yyyy-MM");
     private static final DateTimeFormatter MONTH_LABEL = DateTimeFormatter.ofPattern("LLLL yyyy", Locale.forLanguageTag("ru"));
-    private static final List<String> COLUMNS = List.of("Месяц", "Вуз", "ИТ-программа", "Потоков с данными", "Обучающиеся (Moodle)",
+    private static final List<String> COLUMNS = List.of("Месяц", "Вуз", "ИТ-программа", "Потоков с данными", "Обучающиеся в потоках месяца (Moodle)",
             "Завершили (Moodle)", "Доля завершивших, %");
     private static final int[] WIDTHS = {12, 30, 30, 10, 12, 12, 12};
 
@@ -230,13 +230,11 @@ public class LearningDynamicsService {
                 "Сформирован: " + ReportColumn.DATE_TIME.format(generatedAt.atZoneSameInstant(ReportRequest.ZONE))
                         + " (часовой пояс " + ReportRequest.ZONE.getId() + ")",
                 "Период: " + DATE.format(start) + " – " + DATE.format(end) + "; в месяц входят потоки занятий студентов"
-                        + " Moodle, которые шли в нём хотя бы один день; число потока — наблюдение из истории, действовавшее"
-                        + " на конец последнего дня месяца (у последнего месяца — на конец дня окончания периода)",
-                "Обучающиеся и завершившие — участия, а не уникальные люди; завершившие — только потоки, где Moodle"
-                        + " отслеживает завершение, иначе «нет данных»; доля завершивших — завершившие к обучающимся тех же"
-                        + " потоков, округлена до целого; поток без наблюдения к этой дате не учитывается;"
-                        + " потоки обучения преподавателей не учитываются",
-                "Фильтры: " + (filters.isEmpty() ? "не заданы" : String.join("; ", filters))
+                        + " Moodle, шедшие в нём хотя бы один день, по наблюдению, действовавшему на конец последнего дня месяца"
+                        + " (у последнего месяца — на конец дня окончания периода)",
+                "Обучающиеся и завершившие — участия (не уникальные люди); «нет данных» — завершение в Moodle не отслеживается;"
+                        + " поток без наблюдения и обучение преподавателей не учитываются",
+                "Фильтры: " + (filters.isEmpty() ? "не заданы" : String.join("; ", filters)) + "; архивные вузы не входят"
         );
     }
 

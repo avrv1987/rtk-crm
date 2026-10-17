@@ -33,10 +33,12 @@ public class SiteApiClient {
         this.paidOrderParser = paidOrderParser;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(properties.website().connectTimeout())
+                // Токен идёт в заголовке Authorization: переход на другой адрес отдал бы его чужому хосту.
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
     }
 
+    // Проверка запрашивает выборку «с текущего момента»: данных почти нет, проверяется только форма ответа.
     void check(SourceProperties.Website settings) {
         JsonNode body = json(get(settings, recordsUri(settings, OffsetDateTime.now(), 1)));
         if (!body.isArray() && !body.path("items").isArray()) {
@@ -48,6 +50,8 @@ public class SiteApiClient {
         List<SiteRecord> records = new ArrayList<>();
         int page = 1;
         for (int loaded = 0; ; loaded++) {
+            // Предел страниц защищает от зацикленной выдачи; запуск останавливается целиком, до применения, поэтому
+            // половина данных не попадает в CRM.
             if (loaded == settings.maxPages()) {
                 throw SourceFetchException.invalidResponse(
                         "Сайт вернул больше " + settings.maxPages() + " страниц; синхронизация остановлена без изменений"
@@ -55,6 +59,7 @@ public class SiteApiClient {
             }
             byte[] bytes = get(settings, recordsUri(settings, updatedSince, page));
             JsonNode body = json(bytes);
+            // Массив на первой странице — формат оплат организатора, а не записи items.
             if (body.isArray() && page == 1) {
                 return new SiteResponse(List.of(), paidOrders(bytes));
             }
@@ -70,6 +75,7 @@ public class SiteApiClient {
             if (nextPage.isMissingNode() || nextPage.isNull()) {
                 return new SiteResponse(List.copyOf(records), null);
             }
+            // nextPage обязан расти: иначе выборка зациклилась бы.
             if (!nextPage.isIntegralNumber() || nextPage.intValue() <= page) {
                 throw SourceFetchException.invalidResponse("Поле nextPage должно быть номером следующей страницы или null");
             }
@@ -123,6 +129,8 @@ public class SiteApiClient {
                 throw SourceFetchException.unavailable("Сайт ответил HTTP " + response.statusCode());
             }
             long limit = settings.maxPageSize().toBytes();
+            // Читается на байт больше лимита: так превышение отличается от ровно допустимого размера, а весь ответ в
+            // память не грузится.
             byte[] bytes = body.readNBytes(Math.toIntExact(limit + 1));
             if (bytes.length > limit) {
                 throw SourceFetchException.invalidResponse("Страница ответа сайта больше " + settings.maxPageSize());
@@ -138,6 +146,7 @@ public class SiteApiClient {
         StringBuilder uri = new StringBuilder(base.endsWith("/") ? base.substring(0, base.length() - 1) : base)
                 .append(RECORDS_PATH)
                 .append("?page=").append(page);
+        // Выборка инкрементальная: только записи, изменённые после курсора.
         if (updatedSince != null) {
             uri.append("&updated_since=").append(URLEncoder.encode(updatedSince.toString(), StandardCharsets.UTF_8));
         }

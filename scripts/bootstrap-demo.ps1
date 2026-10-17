@@ -180,7 +180,7 @@ function Set-CrmRealmRoles {
     $existing = @((Invoke-Keycloak @('get', 'roles', '-r', 'rtk-crm') | ConvertFrom-Json).name)
     foreach ($role in @('crm-user', 'crm-leader', 'crm-admin', 'crm-management', 'crm-partner')) {
         if (-not ($existing -ccontains $role)) {
-            Invoke-Keycloak @('create', 'roles', '-r', 'rtk-crm', '-s', "name=$role", '-s', 'description=CRM role, see docs/roles.md') | Out-Null
+            Invoke-Keycloak @('create', 'roles', '-r', 'rtk-crm', '-s', "name=$role", '-s', 'description=CRM role') | Out-Null
         }
     }
     $composites = @((Invoke-Keycloak @('get', 'roles/crm-admin/composites', '-r', 'rtk-crm') | ConvertFrom-Json).name)
@@ -328,6 +328,8 @@ if ([string]::IsNullOrWhiteSpace($values['MODULE_ENROLMENT_ENABLED']) -and -not 
     $values['MODULE_ENROLMENT_ENABLED'] = $values['ENROLMENT_ENABLED']
 }
 $siteFixtureUrl = 'http://site-fixture:8080'
+$laborMarketFixtureUrl = 'http://labor-market-fixture:8080'
+$crmStubUrl = 'http://crm-stub:8080'
 $defaults = [ordered]@{
     POSTGRES_SUPERUSER = 'postgres'
     CRM_DB_NAME = 'rtk_crm'
@@ -354,11 +356,13 @@ $secrets = @(
 )
 if ($values['DEMO_DATA'] -eq 'true') {
     $defaults['SITE_BASE_URL'] = $siteFixtureUrl
+    $defaults['LABOR_MARKET_BASE_URL'] = $laborMarketFixtureUrl
+    $defaults['CRM_BASE_URL'] = $crmStubUrl
     $defaults['DEMO_LMS'] = 'true'
     $defaults['MODULE_ENROLMENT_ENABLED'] = 'true'
     $defaults['MODULE_PARTNER_ENABLED'] = 'true'
     $defaults['COMPOSE_PROFILES'] = 'security,demo'
-    $secrets += @('DEMO_USER_PASSWORD', 'SITE_TOKEN')
+    $secrets += @('DEMO_USER_PASSWORD', 'SITE_TOKEN', 'LABOR_MARKET_TOKEN', 'CRM_TOKEN')
 }
 else {
     if ($values['DEMO_LMS'] -eq 'true') {
@@ -367,9 +371,15 @@ else {
     if ($values['SITE_BASE_URL'] -eq $siteFixtureUrl) {
         $values['SITE_BASE_URL'] = ''
     }
+    if ($values['LABOR_MARKET_BASE_URL'] -eq $laborMarketFixtureUrl) {
+        $values['LABOR_MARKET_BASE_URL'] = ''
+    }
+    if ($values['CRM_BASE_URL'] -eq $crmStubUrl) {
+        $values['CRM_BASE_URL'] = ''
+    }
     $defaults['DEMO_LMS'] = 'false'
-    $defaults['MODULE_ENROLMENT_ENABLED'] = 'false'
-    $defaults['MODULE_PARTNER_ENABLED'] = 'false'
+    $defaults['MODULE_ENROLMENT_ENABLED'] = 'true'
+    $defaults['MODULE_PARTNER_ENABLED'] = 'true'
     $defaults['COMPOSE_PROFILES'] = 'security'
     $defaults['CRM_ADMIN_USERNAME'] = 'admin'
     $defaults['CRM_ADMIN_DISPLAY_NAME'] = 'Администратор'
@@ -435,6 +445,20 @@ try {
         '--password', $values['KEYCLOAK_ADMIN_PASSWORD']
     ) | Out-Null
     Invoke-Keycloak @('update', 'realms/rtk-crm', '-f', '/opt/keycloak/data/import/rtk-crm-realm.json') | Out-Null
+    # Консоль Keycloak (realm master) защищена так же, как вход в CRM: временная блокировка после 10 неудачных входов
+    # (5 минут, растёт до 15, постоянной блокировки нет) и журнал событий входа на год.
+    Invoke-Keycloak @(
+        'update', 'realms/master',
+        '-s', 'bruteForceProtected=true', '-s', 'permanentLockout=false', '-s', 'failureFactor=10',
+        '-s', 'waitIncrementSeconds=300', '-s', 'maxFailureWaitSeconds=900', '-s', 'maxDeltaTimeSeconds=43200',
+        '-s', 'eventsEnabled=true', '-s', 'eventsExpiration=31536000'
+    ) | Out-Null
+    # Bootstrap входит через admin-cli realm master, поэтому вход паролем в обход формы у admin-cli realm rtk-crm не нужен.
+    $adminCli = @(Invoke-Keycloak @('get', 'clients', '-r', 'rtk-crm', '-q', 'clientId=admin-cli') | ConvertFrom-Json)
+    if ($adminCli.Count -ne 1) {
+        throw 'admin-cli client is not unique'
+    }
+    Invoke-Keycloak @('update', "clients/$($adminCli[0].id)", '-r', 'rtk-crm', '-s', 'directAccessGrantsEnabled=false') | Out-Null
     Set-PrivilegedSecondFactor
     Set-CrmRealmRoles
     $webOrigins = @($values['PUBLIC_ORIGIN'])
@@ -455,6 +479,7 @@ try {
         webOrigins = $webOrigins
         attributes = @{
             'post.logout.redirect.uris' = @($webOrigins | ForEach-Object { $_; "$_/*" }) -join '##'
+            'pkce.code.challenge.method' = 'S256'
         }
     } | ConvertTo-Json -Compress
     if ($client.Count -eq 0) {
@@ -722,6 +747,18 @@ try {
         & docker compose --env-file $envFilePath --profile demo up -d --wait site-fixture
         if ($LASTEXITCODE -ne 0) {
             throw 'Cannot start the demo site fixture'
+        }
+    }
+    if ($values['LABOR_MARKET_BASE_URL'] -eq $laborMarketFixtureUrl) {
+        & docker compose --env-file $envFilePath --profile demo up -d --wait labor-market-fixture
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Cannot start the demo labor market fixture'
+        }
+    }
+    if ($values['CRM_BASE_URL'] -eq $crmStubUrl) {
+        & docker compose --env-file $envFilePath --profile demo up -d --wait crm-stub
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Cannot start the demo customer CRM stub'
         }
     }
     $moodleFiles = @()

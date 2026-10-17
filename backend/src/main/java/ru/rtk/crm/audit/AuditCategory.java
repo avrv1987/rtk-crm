@@ -10,5 +10,6 @@ public enum AuditCategory {
     PERSONAL_DATA,
     RETENTION,
     ACCOUNT,
+    LOGIN,
     LEARNER
 }

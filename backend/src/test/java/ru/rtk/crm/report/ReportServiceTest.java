@@ -26,6 +26,7 @@ import static ru.rtk.crm.report.ReportTestData.VENDOR_BETA;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.UUID;
 
@@ -57,6 +58,7 @@ import ru.rtk.crm.module.ModuleProperties;
         OrganizationRepository.class,
         ReportRepository.class,
         ReportService.class,
+        ru.rtk.crm.work.LmsLearningTestBeans.class,
         ReportServiceTest.PropertiesConfiguration.class
 })
 class ReportServiceTest {
@@ -175,7 +177,8 @@ class ReportServiceTest {
                 statistics(ReportKind.PORTFOLIO, StatisticsGroupBy.STAGE, null, null, filters())
         );
         assertThat(byStage.total()).isEqualTo(2);
-        assertThat(byStage.items()).extracting(StatisticsResult.Item::count).containsExactly(1L, 1L);
+        assertThat(byStage.items()).extracting(StatisticsResult.Item::label, StatisticsResult.Item::count)
+                .containsExactly(tuple("Поиск контакта", 1L), tuple("Уточнение актуальности", 0L), tuple("Встреча", 1L));
 
         StatisticsResult byProduct = reportService.statistics(
                 MANAGER_A_PROFILE,
@@ -240,10 +243,10 @@ class ReportServiceTest {
         assertThat(ReportKind.PORTFOLIO.columns()).contains(ReportColumn.WORK_STATUS);
         assertThat(reportService.preview(LEADER_A_PROFILE, portfolio(filters()), 0, 50).columns())
                 .extracting(ReportColumnView::id, ReportColumnView::title)
-                .contains(tuple(ReportColumn.STAGE, "Этап"), tuple(ReportColumn.WORK_STATUS, "Статус работы"));
+                .contains(tuple(ReportColumn.STAGE, "Этап"), tuple(ReportColumn.WORK_STATUS, "Статус взаимодействия"));
         ReportDocument file = reportService.document(LEADER_A_PROFILE, portfolio(filters()));
         assertThat(file.columnTitle(ReportColumn.STAGE)).isEqualTo("Этап");
-        assertThat(file.columnTitle(ReportColumn.WORK_STATUS)).isEqualTo("Статус работы");
+        assertThat(file.columnTitle(ReportColumn.WORK_STATUS)).isEqualTo("Статус взаимодействия");
         assertThatThrownBy(() -> reportService.document(
                 LEADER_A_PROFILE,
                 demand(null, null, filters().workStatuses(InteractionWorkStatus.ACTIVE), null)
@@ -453,6 +456,94 @@ class ReportServiceTest {
     }
 
     @Test
+    void demandShowsMarketDemandOnlyForTrackedDirectionsAndNeverAsZero() {
+        ReportTestData.insertDemand(jdbcTemplate);
+        YearMonth month = YearMonth.from(ReportTestData.TODAY);
+
+        assertThat(market(LEADER_A_PROFILE, demand(null, null, filters(), null)))
+                .containsExactlyInAnyOrder(
+                        tuple("Java-разработчик", "не применяется", "не применяется"),
+                        tuple(null, "не применяется", "не применяется"),
+                        tuple("Анализ данных", "не применяется", "не применяется"));
+
+        ReportTestData.trackMarket(jdbcTemplate, DIRECTION, "programming");
+
+        assertThat(market(LEADER_A_PROFILE, demand(null, null, filters(), null)))
+                .containsExactlyInAnyOrder(
+                        tuple("Java-разработчик", null, null),
+                        tuple(null, "не применяется", "не применяется"),
+                        tuple("Анализ данных", null, null));
+
+        ReportTestData.insertMarket(jdbcTemplate, "programming", month.minusMonths(3), 100, "Тестовый источник");
+        ReportTestData.insertMarket(jdbcTemplate, "programming", month.minusMonths(2), 110, "Тестовый источник");
+        ReportTestData.insertMarket(jdbcTemplate, "programming", month.minusMonths(1), 120, "Тестовый источник");
+        ReportTestData.insertMarket(jdbcTemplate, "programming", month, 90, "Тестовый источник");
+        ReportTestData.insertMarket(jdbcTemplate, "other", month, 5000, "Тестовый источник");
+
+        assertThat(market(LEADER_A_PROFILE, demand(null, null, filters(), null)))
+                .containsExactlyInAnyOrder(
+                        tuple("Java-разработчик", 90L, -10L),
+                        tuple(null, "не применяется", "не применяется"),
+                        tuple("Анализ данных", 90L, -10L));
+        assertThat(market(MANAGER_B_PROFILE, demand(null, null, filters(), null)))
+                .containsExactly(tuple("Java-разработчик", 90L, -10L));
+        assertThat(market(MANAGER_A_PROFILE, demand(null, null, filters(), null)))
+                .contains(tuple("Java-разработчик", 90L, -10L), tuple(null, "не применяется", "не применяется"));
+        assertThat(market(ADMIN_PROFILE, demand(null, null, filters(), null))).isEmpty();
+        assertThat(market(new CrmProfile(UUID.randomUUID(), UserRole.PARTNER, null, 0), demand(null, null, filters(), null)))
+                .isEmpty();
+
+        assertThat(market(LEADER_A_PROFILE, demand(month.minusMonths(1).atDay(1), month.minusMonths(1).atEndOfMonth(), filters(), null)))
+                .contains(tuple("Java-разработчик", 120L, 9L));
+        assertThat(market(LEADER_A_PROFILE, demand(month.minusMonths(2).atDay(1), null, filters(), null)))
+                .contains(tuple("Java-разработчик", 90L, -10L));
+        assertThat(market(LEADER_A_PROFILE, demand(month.plusMonths(1).atDay(1), null, filters(), null)))
+                .contains(tuple("Java-разработчик", null, null));
+
+        jdbcTemplate.update("DELETE FROM labor_market_snapshots WHERE period_month < ?", month.minusMonths(1).atDay(1));
+
+        assertThat(market(LEADER_A_PROFILE, demand(month.minusMonths(1).atDay(1), month.minusMonths(1).atEndOfMonth(), filters(), null)))
+                .contains(tuple("Java-разработчик", 120L, null));
+    }
+
+    @Test
+    void marketColumnsAreOptionalAndPartOfTheDefaultDemandSelection() {
+        ReportRequest withoutColumns = demand(null, null, filters(), null).normalized(true);
+        ReportRequest sales = new ReportRequest(ReportKind.DEMAND, null, null, null, filters().build(),
+                List.of(ReportColumn.PROGRAM, ReportColumn.APPLICATIONS), null, null, null).normalized(true);
+
+        assertThat(withoutColumns.columns()).contains(ReportColumn.MARKET_VACANCIES, ReportColumn.MARKET_TREND);
+        assertThat(sales.columns()).containsExactly(ReportColumn.PROGRAM, ReportColumn.APPLICATIONS);
+        assertThat(ReportColumn.MARKET_VACANCIES.title(ReportKind.DEMAND)).isEqualTo("Спрос рынка: вакансии");
+        assertThat(ReportColumn.MARKET_TREND.title(ReportKind.DEMAND)).isEqualTo("Тренд спроса, %");
+        assertThat(MarketDemand.of(null, List.of(3, 4)).trendPercent()).isEqualTo(33L);
+        assertThat(MarketDemand.of(200, List.of(201)).trendPercent()).isEqualTo(1L);
+        assertThat(MarketDemand.of(0, List.of(5)).trendPercent()).isNull();
+        assertThat(MarketDemand.of(null, List.of(5)).trendPercent()).isNull();
+        assertThat(MarketDemand.of(null, List.of()).vacancies()).isNull();
+    }
+
+    @Test
+    void demandNotesDescribeMarketSourceAndSliceDate() {
+        ReportTestData.insertDemand(jdbcTemplate);
+        ReportTestData.trackMarket(jdbcTemplate, DIRECTION, "programming");
+        YearMonth month = YearMonth.from(ReportTestData.TODAY);
+
+        assertThat(reportService.document(LEADER_A_PROFILE, demand(null, null, filters(), null)).notes())
+                .anySatisfy(note -> assertThat(note).contains("Спрос рынка труда").contains("в рейтинг спрос не входит")
+                        .contains("срезов источника рынка труда в CRM пока нет"));
+
+        ReportTestData.insertMarket(jdbcTemplate, "programming", month, 90, "Тестовый источник");
+
+        assertThat(reportService.document(LEADER_A_PROFILE, demand(null, null, filters(), null)).notes())
+                .anySatisfy(note -> assertThat(note).contains("источник данных — Тестовый источник, последний срез на "
+                        + month.atEndOfMonth().format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy"))));
+        assertThat(reportService.document(LEADER_A_PROFILE, new ReportRequest(ReportKind.DEMAND, null, null, null, filters().build(),
+                List.of(ReportColumn.PROGRAM, ReportColumn.APPLICATIONS), null, null, null)).notes())
+                .noneSatisfy(note -> assertThat(note).contains("Спрос рынка труда"));
+    }
+
+    @Test
     void demandRanksProgramsBySiteApplicationsAndMoodleSnapshotsInScopeWithoutZeroForMissingData() {
         ReportTestData.insertDemand(jdbcTemplate);
 
@@ -464,16 +555,16 @@ class ReportServiceTest {
                         tuple("Анализ данных", null, 3L, 0L));
         assertThat(rows(LEADER_A_PROFILE, demand(null, ReportTestData.RUN_ENDS.minusDays(1), filters(), null)))
                 .extracting(ReportRow::programName, ReportRow::parallelRuns)
-                .containsExactlyInAnyOrder(tuple("Java-разработчик", 2L), tuple(null, null), tuple("Анализ данных", 1L));
+                .containsExactlyInAnyOrder(tuple("Java-разработчик", 2L), tuple(null, null), tuple("Анализ данных", 0L));
         assertThat(rows(LEADER_A_PROFILE, demand(null, ReportTestData.RUN_ENDS, filters(), null)))
                 .extracting(ReportRow::programName, ReportRow::parallelRuns)
-                .containsExactlyInAnyOrder(tuple("Java-разработчик", 0L), tuple(null, null), tuple("Анализ данных", 1L));
+                .containsExactlyInAnyOrder(tuple("Java-разработчик", 2L), tuple(null, null), tuple("Анализ данных", 0L));
         assertThat(rows(LEADER_A_PROFILE, demand(null, ReportTestData.TODAY.minusDays(31), filters(), null)))
                 .allSatisfy(row -> assertThat(row.participants()).isNull());
         assertThat(rows(LEADER_A_PROFILE, demand(ReportTestData.TODAY.plusDays(10), ReportTestData.TODAY.plusDays(20),
                 filters(), null)))
                 .extracting(ReportRow::programName, ReportRow::participants, ReportRow::parallelRuns)
-                .containsExactlyInAnyOrder(tuple("Java-разработчик", 8L, 2L), tuple("Анализ данных", 3L, 1L));
+                .containsExactlyInAnyOrder(tuple("Java-разработчик", 8L, 2L), tuple("Анализ данных", 3L, 0L));
         assertThat(rows(LEADER_A_PROFILE, demand(ReportTestData.RUN_ENDS, null, filters(), null)))
                 .extracting(ReportRow::programName, ReportRow::participants)
                 .containsExactly(tuple("Анализ данных", 3L));
@@ -509,15 +600,17 @@ class ReportServiceTest {
                 tuple(ReportColumn.PARTICIPANTS, ReportColumn.NO_DATA),
                 tuple(ReportColumn.LEARNERS_COMPLETED, ReportColumn.NO_DATA),
                 tuple(ReportColumn.COMPLETION_SHARE, ReportColumn.NO_DATA),
-                tuple(ReportColumn.PARALLEL_RUNS, ReportColumn.NO_DATA)
+                tuple(ReportColumn.PARALLEL_RUNS, ReportColumn.NO_DATA),
+                tuple(ReportColumn.MARKET_VACANCIES, ReportColumn.NO_DATA),
+                tuple(ReportColumn.MARKET_TREND, ReportColumn.NO_DATA)
         );
         assertThat(preview.columns()).extracting(ReportColumnView::title).contains("Заявки (сайт, весь период)")
-                .anyMatch(title -> title.startsWith("Обучающиеся (Moodle, на "));
+                .anyMatch(title -> title.startsWith("Обучающиеся в потоках периода (Moodle, на "));
         assertThat(reportService.preview(LEADER_A_PROFILE, demand(SEPTEMBER_FIRST, SEPTEMBER_LAST, filters(), null), 0, 50)
                 .columns()).extracting(ReportColumnView::title)
                 .contains("Заявки (сайт, 01.09.2026–30.09.2026)", "Параллельные потоки (Moodle, на 30.09.2026)");
-        assertThat(preview.notes()).anyMatch(note -> note.startsWith("Данные Moodle: наблюдения потоков, действовавшие на")
-                && note.contains("период заявок: весь период"));
+        assertThat(preview.notes()).anyMatch(note -> note.startsWith("Данные Moodle на ")
+                && note.contains("последнее наблюдение"));
         assertThat(preview.notes()).anyMatch(note -> note.contains("нет данных") && note.contains("сортировка: заявки"));
 
         StatisticsResult byProgram = reportService.statistics(
@@ -633,6 +726,12 @@ class ReportServiceTest {
 
     private List<UUID> interactionIds(CrmProfile profile, ReportRequest request) {
         return rows(profile, request).stream().map(ReportRow::interactionId).distinct().toList();
+    }
+
+    private List<org.assertj.core.groups.Tuple> market(CrmProfile profile, ReportRequest request) {
+        return rows(profile, request).stream()
+                .map(row -> tuple(row.programName(), row.marketVacancies(), row.marketTrend()))
+                .toList();
     }
 
     private List<ReportRow> rows(CrmProfile profile, ReportRequest request) {

@@ -19,7 +19,7 @@ public enum ReportColumn {
     MATERIALS_TRANSFERRED_ON("Передача материалов", null, true, 18, ReportRow::materialsTransferredOn),
     STAGE("Этап", null, false, 22, ReportRow::stageName),
     DAYS_ON_STAGE("Дней на этапе", null, false, 12, ReportRow::daysOnStage),
-    WORK_STATUS("Статус работы", null, false, 18, ReportRow::workStatus),
+    WORK_STATUS("Статус взаимодействия", null, false, 18, ReportRow::workStatus),
     WAITING("Ожидание", null, false, 26, ReportRow::waiting),
     PROBLEM("Проблема", null, false, 30, ReportRow::problem),
     RISK("Риск", null, false, 30, ReportRow::risk),
@@ -40,14 +40,16 @@ public enum ReportColumn {
     LEARNERS_COMPLETED("Завершили (Moodle)", 14, ReportRow::completed),
     COMPLETION_SHARE("Доля завершивших, %", 14, ReportRow::completionPercent),
     PARALLEL_RUNS("Параллельные потоки (Moodle)", 14, ReportRow::parallelRuns),
+    MARKET_VACANCIES("Спрос рынка: вакансии", 16, ReportRow::marketVacancies),
+    MARKET_TREND("Тренд спроса, %", 14, ReportRow::marketTrend),
     TEAM("Команда", null, false, 22, ReportRow::teamName),
     COMPLETED("Завершённых прохождений", 14, ReportRow::completedCount),
     AVG_DAYS("Средняя длительность, дн.", 14, ReportRow::averageDays),
     MAX_DAYS("Максимальная длительность, дн.", 14, ReportRow::maxDays),
     CURRENT("На этапе на конец периода", 14, ReportRow::currentCount),
     CURRENT_MAX_DAYS("Дольше всех на этапе, дн.", 14, ReportRow::currentMaxDays),
-    AGREEMENT("Соглашение", null, false, 22, agreement(ReportRow.AgreementLine::agreement)),
-    AGREEMENT_STATUS("Статус соглашения", null, false, 14, agreement(ReportRow.AgreementLine::agreementStatus)),
+    AGREEMENT("Договор", null, false, 22, agreement(ReportRow.AgreementLine::agreement)),
+    AGREEMENT_STATUS("Статус договора", null, false, 14, agreement(ReportRow.AgreementLine::agreementStatus)),
     AGREEMENT_TERM("Срок действия", null, false, 18, agreement(ReportRow.AgreementLine::agreementTerm)),
     ACTIVITY_KIND("Вид мероприятия", null, false, 26, agreement(ReportRow.AgreementLine::activityKind)),
     ACTIVITY("Мероприятие", null, false, 28, agreement(ReportRow.AgreementLine::activity)),
@@ -57,7 +59,7 @@ public enum ReportColumn {
     PLANNED_DATES("Плановые сроки", null, false, 18, agreement(ReportRow.AgreementLine::plannedDates)),
     ACTUAL_DATES("Фактические сроки", null, false, 18, agreement(ReportRow.AgreementLine::actualDates)),
     ACTIVITY_STATUS("Статус мероприятия", null, false, 14, agreement(ReportRow.AgreementLine::activityStatus)),
-    WORKS("Связанные работы", null, false, 26, agreement(ReportRow.AgreementLine::works)),
+    WORKS("Связанные взаимодействия", null, false, 26, agreement(ReportRow.AgreementLine::works)),
     CONFIRMATIONS("Подтверждения", null, "нет", 30, agreement(ReportRow.AgreementLine::confirmations)),
     CONFIRMATION_LINKS("Ссылки на подтверждения", null, "", 40, agreement(ReportRow.AgreementLine::confirmationLinks)),
     STAGE_AT_START("Этап на начало периода", null, "—", 24, ReportRow::stageAtStart),
@@ -66,7 +68,9 @@ public enum ReportColumn {
     TRANSITIONS("Переходов за период", 12, ReportRow::transitions),
     PERIOD_COMMENTS("Комментарии за период", null, "—", 50, ReportRow::periodComments),
     DUE_STATE("Состояние срока", null, "", 24, ReportRow::dueState),
-    OVERDUE_DAYS("Просрочено, дн.", null, "", 12, ReportRow::overdueDays);
+    OVERDUE_DAYS("Просрочено, дн.", null, "", 12, ReportRow::overdueDays),
+    LMS_LEARNING("Обучение (LMS) сейчас", null, "—", 40, ReportRow::lmsLearning),
+    LMS_CHECK("Сверка этапа с LMS", null, "", 36, ReportRow::lmsCheck);
 
     public static final String UNSPECIFIED = "Не указано";
     public static final String NO_DATA = "нет данных";
@@ -105,7 +109,7 @@ public enum ReportColumn {
             };
             case MANAGER_WORK -> switch (this) {
                 case MANAGER -> "Менеджер";
-                case INTERACTION -> "Работа";
+                case INTERACTION -> "Взаимодействие";
                 default -> title;
             };
             case PORTFOLIO, DURATION, DEMAND, AGREEMENTS -> title;

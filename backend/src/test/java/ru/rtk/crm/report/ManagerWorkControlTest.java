@@ -28,6 +28,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.junit.jupiter.api.BeforeEach;
@@ -62,7 +63,9 @@ import ru.rtk.crm.work.WorkControlService;
         OrganizationAssignmentRepository.class,
         ReportRepository.class,
         ReportService.class,
+        ru.rtk.crm.work.LmsLearningTestBeans.class,
         WorkControlService.class,
+        ru.rtk.crm.agreement.AgreementRepository.class,
         ManagerWorkControlTest.PropertiesConfiguration.class
 })
 class ManagerWorkControlTest {
@@ -81,7 +84,45 @@ class ManagerWorkControlTest {
     @BeforeEach
     void setUp() {
         ReportTestData.createSchema(jdbcTemplate);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS agreements (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, number VARCHAR(100) NOT NULL, status VARCHAR(16) NOT NULL,
+                    status_changed_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_interactions (
+                    agreement_id UUID NOT NULL, interaction_id UUID NOT NULL, PRIMARY KEY (agreement_id, interaction_id)
+                )
+                """);
+        jdbcTemplate.update("DELETE FROM agreement_interactions");
+        jdbcTemplate.update("DELETE FROM agreements");
         ReportTestData.insertScenario(jdbcTemplate);
+    }
+
+    @Test
+    void workShowsTheStatusOfItsLatestLinkedContract() {
+        UUID older = UUID.randomUUID();
+        UUID newer = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO agreements (id, organization_id, number, status, status_changed_at) VALUES
+                    (?, ?, 'Д-1', 'ACTIVE', TIMESTAMP WITH TIME ZONE '2026-09-01 10:00:00+03:00'),
+                    (?, ?, 'Д-2', 'REVIEW', TIMESTAMP WITH TIME ZONE '2026-09-10 10:00:00+03:00')
+                """, older, UUID.randomUUID(), newer, UUID.randomUUID());
+        jdbcTemplate.update("INSERT INTO agreement_interactions (agreement_id, interaction_id) VALUES (?, ?), (?, ?)",
+                older, INTERACTION_TWO_PRODUCTS, newer, INTERACTION_TWO_PRODUCTS);
+
+        List<WorkItem> works = workControlService.control(LEADER_A_PROFILE, filters(), null, null).teams().getFirst().managers().stream()
+                .flatMap(manager -> manager.works().stream())
+                .toList();
+
+        assertThat(works).filteredOn(work -> work.interactionId().equals(INTERACTION_TWO_PRODUCTS)).singleElement()
+                .satisfies(work -> {
+                    assertThat(work.agreementStatus()).isEqualTo(ru.rtk.crm.agreement.AgreementModels.AgreementStatus.REVIEW);
+                    assertThat(work.agreementNumber()).isEqualTo("Д-2");
+                });
+        assertThat(works).filteredOn(work -> work.interactionId().equals(INTERACTION_WITHOUT_LINKS)).singleElement()
+                .satisfies(work -> assertThat(work.agreementStatus()).isNull());
     }
 
     @Test
@@ -228,22 +269,26 @@ class ManagerWorkControlTest {
 
         assertThat(preview.columns()).extracting(column -> column.id().name()).contains(
                 "MANAGER", "ORGANIZATION", "STAGE_AT_START", "STAGE_AT_END", "TRANSITIONS", "PERIOD_COMMENTS", "OVERDUE_DAYS");
-        assertThat(preview.columns().getFirst().title()).isEqualTo("Менеджер");
+        assertThat(preview.columns().getFirst().title()).isEqualTo("Менеджер на конец периода");
         assertThat(preview.items()).extracting(item -> item.get("MANAGER"), item -> item.get("ORGANIZATION"))
                 .containsExactly(
                         tuple("Анна Кузнецова", "Университет «Альфа»"),
                         tuple("Анна Кузнецова", "Университет «Альфа»"),
-                        tuple("Анна Кузнецова", "Итого по менеджеру Анна Кузнецова: вузов 1, работ 2"),
-                        tuple("Требует назначения", "Институт без КАМ"),
-                        tuple("Требует назначения", "Итого по менеджеру «Требует назначения»: вузов 1, работ 1")
+                        tuple("Требует назначения", "Институт без КАМ")
                 );
-        assertThat(preview.total()).isEqualTo(5);
+        assertThat(preview.total()).isEqualTo(3);
+        assertThat(preview.groupTotals()).extracting(item -> item.get("MANAGER"), item -> item.get("ORGANIZATION"))
+                .containsExactly(
+                        tuple("Анна Кузнецова", "Итого по менеджеру Анна Кузнецова: вузов 1, взаимодействий 2"),
+                        tuple("Требует назначения", "Итого по менеджеру «Требует назначения»: вузов 1, взаимодействий 1")
+                );
         var agreement = preview.items().stream().filter(item -> "Договор на курс Java".equals(item.get("INTERACTION"))).findFirst();
         assertThat(agreement).isEmpty();
         ReportRequest withTitle = request(SEPTEMBER_FIRST, SEPTEMBER_LAST, ReportColumn.MANAGER, ReportColumn.INTERACTION,
                 ReportColumn.STAGE_AT_START, ReportColumn.STAGE_AT_END, ReportColumn.STAGE_POSITION, ReportColumn.TRANSITIONS,
                 ReportColumn.PERIOD_COMMENTS, ReportColumn.DUE_STATE, ReportColumn.OVERDUE_DAYS);
-        var rows = reportService.preview(LEADER_A_PROFILE, withTitle, 0, 50).items();
+        ReportPreview withTitlePreview = reportService.preview(LEADER_A_PROFILE, withTitle, 0, 50);
+        var rows = withTitlePreview.items();
         var row = rows.stream().filter(item -> "Договор на курс Java".equals(item.get("INTERACTION"))).findFirst().orElseThrow();
         assertThat(row.get("STAGE_AT_START")).isEqualTo("Поиск контакта");
         assertThat(row.get("STAGE_AT_END")).isEqualTo("Встреча");
@@ -253,15 +298,44 @@ class ManagerWorkControlTest {
         assertThat((String) row.get("PERIOD_COMMENTS")).contains("05.09.2026: Назначена встреча").contains("10.09.2026: ")
                 .doesNotContain("Перед периодом").doesNotContain("После периода");
         assertThat((Long) row.get("OVERDUE_DAYS")).isPositive();
-        var total = rows.stream().filter(item -> item.get("INTERACTION") == null && "Анна Кузнецова".equals(item.get("MANAGER")))
+        assertThat(rows).noneMatch(item -> item.get("INTERACTION") == null);
+        var total = withTitlePreview.groupTotals().stream().filter(item -> "Анна Кузнецова".equals(item.get("MANAGER")))
                 .findFirst().orElseThrow();
         assertThat(total.get("TRANSITIONS")).isEqualTo(1L);
         assertThat((String) total.get("DUE_STATE")).isEqualTo("просрочено 1, на этой неделе 0, без шага или срока 1");
     }
 
     @Test
+    void controlAndReportShowLmsLearningAndActiveSignalsOfTheWork() {
+        ReportTestData.learning(jdbcTemplate, 2, null, ReportTestData.ORGANIZATION_A, ReportTestData.PROGRAM, 6,
+                ReportTestData.TODAY.minusDays(30), ReportTestData.RUN_ENDS, "STUDENTS");
+        jdbcTemplate.update("""
+                UPDATE learning_snapshots SET active_7d_count = 1, active_30d_count = 6, never_accessed_count = 0,
+                    inactive_count = 0, teachers_active_7d_count = 1, teachers_active_14d_count = 1
+                WHERE course_id = 2
+                """);
+
+        WorkItem work = workControlService.control(LEADER_A_PROFILE, filters(), null, null).teams().getFirst().managers().stream()
+                .flatMap(manager -> manager.works().stream())
+                .filter(item -> item.interactionId().equals(INTERACTION_TWO_PRODUCTS))
+                .findFirst().orElseThrow();
+
+        assertThat(work.learning().runs()).isEqualTo(1);
+        assertThat(work.learning().participants()).isEqualTo(6);
+        assertThat(work.learning().active7d()).isEqualTo(1);
+        assertThat(work.learning().signalTitles()).containsExactly("Мало заходят в курс");
+        assertThat(work.learning().mismatch()).as("the route of the work has no classes stage").isNull();
+
+        var rows = reportService.preview(LEADER_A_PROFILE, request(null, null), 0, 50).items();
+        assertThat(rows).filteredOn(item -> "Договор на курс Java".equals(item.get("INTERACTION")) || item.get("LMS_LEARNING") != null)
+                .extracting(item -> item.get("LMS_LEARNING"))
+                .containsExactly("потоков идёт 1, обучающихся 6, заходили за 7 дней 1; сигналы: Мало заходят в курс");
+        assertThat(reportService.preview(ADMIN_PROFILE, request(null, null), 0, 50).items()).isEmpty();
+    }
+
+    @Test
     void managerWorkReportRespectsScopeAndRejectsUnsupportedFilters() {
-        assertThat(reportService.preview(MANAGER_A_PROFILE, request(null, null), 0, 50).total()).isEqualTo(3);
+        assertThat(reportService.preview(MANAGER_A_PROFILE, request(null, null), 0, 50).total()).isEqualTo(2);
         assertThat(reportService.preview(ADMIN_PROFILE, request(null, null), 0, 50).total()).isZero();
         assertThatThrownBy(() -> reportService.preview(LEADER_A_PROFILE, new ReportRequest(ReportKind.MANAGER_WORK, null, null, null,
                 new ReportFilters(List.of(), List.of(), false, List.of(), false, List.of(), false, List.of(), false, List.of(), null,
@@ -279,9 +353,16 @@ class ManagerWorkControlTest {
             excel.write(document, format, output);
             try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(output.toByteArray()))) {
                 assertThat(workbook.getSheetAt(0).getRow(document.notes().size() + 2).getCell(0).getStringCellValue())
-                        .isEqualTo("Менеджер");
+                        .isEqualTo("Менеджер на конец периода");
+                var dataTexts = new java.util.ArrayList<String>();
+                workbook.getSheetAt(0).forEach(row -> row.forEach(cell -> dataTexts.add(cell.toString())));
+                assertThat(dataTexts).noneMatch(text -> text.startsWith("Итого по менеджеру"));
+                assertThat(workbook.getSheetAt(0).getRow(workbook.getSheetAt(0).getLastRowNum()).getCell(0).getStringCellValue())
+                        .isEqualTo("Строк в отчёте: 3");
+                Sheet totals = workbook.getSheet(ExcelReportWriter.TOTALS_SHEET);
+                assertThat(totals).isNotNull();
                 var cells = new java.util.ArrayList<String>();
-                workbook.getSheetAt(0).forEach(row -> {
+                totals.forEach(row -> {
                     if (row.getCell(1) != null && row.getCell(1).toString().startsWith("Итого по менеджеру")) {
                         row.forEach(cell -> cells.add(cell.toString()));
                     }
@@ -297,8 +378,10 @@ class ManagerWorkControlTest {
         new JsonReportWriter(mapper).write(document, json);
         JsonNode node = mapper.readTree(json.toByteArray());
         assertThat(node.get("kind").asText()).isEqualTo("MANAGER_WORK");
-        assertThat(node.get("rows")).hasSize(5);
+        assertThat(node.get("rows")).hasSize(3);
+        assertThat(node.get("totals").get("rows").asInt()).isEqualTo(3);
         assertThat(node.get("totals").get("organizations").asInt()).isEqualTo(2);
+        assertThat(node.get("totals").get("managers")).hasSize(2);
     }
 
     private static List<UUID> works(Control control) {

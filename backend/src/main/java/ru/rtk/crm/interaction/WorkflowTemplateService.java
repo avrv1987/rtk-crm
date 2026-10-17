@@ -74,6 +74,9 @@ public class WorkflowTemplateService {
         if (current.version() != expectedVersion) {
             throw InteractionConflictException.workflowTemplateVersion(current.version());
         }
+        // Шаблон по умолчанию бывает общим и командным. Администратор меняет общий (ровно один на систему: старый
+        // снимается заменой в одной транзакции). Руководитель выбирает для своей команды любой видимый шаблон; выбор
+        // общего шаблона по умолчанию сбрасывает командный выбор (teamDefaultId = null), и команда работает по общему.
         if (profile.role() == UserRole.ADMIN) {
             if (current.teamId() != null) {
                 throw new WorkflowTemplateAccessDeniedException();
@@ -204,6 +207,8 @@ public class WorkflowTemplateService {
         if (current.version() != expectedVersion) {
             throw InteractionConflictException.workflowTemplateVersion(current.version());
         }
+        // Два разных счётчика: version шаблона — оптимистичная блокировка правки (409), а номер версии маршрута
+        // (insertVersion) растёт при каждом сохранении и неизменяем: на него ссылаются идущие работы.
         if (!workflowTemplateRepository.update(templateId, expectedVersion, name, now)) {
             int version = workflowTemplateRepository.findById(templateId)
                     .map(WorkflowTemplateRepository.WorkflowTemplateRow::version)
@@ -217,6 +222,8 @@ public class WorkflowTemplateService {
         } else {
             route = new WorkflowRoute(currentStages, workflowTemplateRepository.findTransitions(templateId));
         }
+        // Версия маршрута пишется и при правке одного названия: так сохраняется полная история, а откат — это
+        // обычный перевод работ на прежнюю версию.
         workflowTemplateRepository.insertVersion(
                 templateId,
                 workflowTemplateRepository.findLatestVersionNumber(templateId) + 1,
@@ -236,6 +243,7 @@ public class WorkflowTemplateService {
     public void delete(CrmProfile profile, UUID templateId, Integer version, String idempotencyKey) {
         WorkflowTemplateRepository.WorkflowTemplateRow current = requireVisibleTemplate(profile, templateId, true);
         requireTemplateManager(profile, current);
+        // Шаблон по умолчанию не удаляется: новые работы всегда должны иметь шаблон для создания.
         if (current.defaultTemplate()) {
             throw new InteractionValidationException("id", "Шаблон по умолчанию удалить нельзя");
         }
@@ -351,6 +359,9 @@ public class WorkflowTemplateService {
             if (stage.optional() == null) {
                 throw new InteractionValidationException("stages", "Укажите для каждого этапа, обязателен ли он");
             }
+            // Идентификатор этапа сохраняется только для этапов этого же шаблона: по нему идущие работы сопоставляют
+            // этапы при переводе на версию. Чужой или неизвестный идентификатор заменяется новым, подставить этап
+            // другого шаблона нельзя.
             boolean kept = stage.id() != null && reusableStageIds.contains(stage.id());
             if (kept && !keptStageIds.add(stage.id())) {
                 throw new InteractionValidationException("stages", "Этапы не должны повторяться");
@@ -384,6 +395,8 @@ public class WorkflowTemplateService {
             }
             transitions.add(new WorkflowTemplateTransition(from.id(), to.id(), transition.commentRequired()));
         }
+        // Структура маршрута проверяется тем же правилом, что и правка этапов в карточке: у шаблона и у работы
+        // не может быть расхождения в понятии «допустимый маршрут».
         WorkflowGraph.validate(
                 stages.stream().map(stage -> new InteractionStage(
                         stage.id(), stage.name(), stage.order(), stage.optional()

@@ -106,19 +106,19 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
 
       <nav className="partner-cabinet__nav" aria-label="Разделы кабинета">
         <a href="#partner-works" onClick={(event) => { event.preventDefault(); document.getElementById('partner-works')?.focus() }}>
-          Работы ({works.length})
+          Взаимодействия ({works.length})
         </a>
         <a href="#partner-documents" onClick={(event) => { event.preventDefault(); document.getElementById('partner-documents')?.focus() }}>
           Документы ({documents.length})
         </a>
         <a href="#partner-agreements" onClick={(event) => { event.preventDefault(); document.getElementById('partner-agreements')?.focus() }}>
-          Соглашения ({agreements.length})
+          Договоры ({agreements.length})
         </a>
       </nav>
 
       <section className="partner-cabinet__section" aria-labelledby="partner-works">
-        <h3 id="partner-works" tabIndex={-1}>Работы с ИТ Школой</h3>
-        {works.length === 0 && <p>Совместных работ пока нет.</p>}
+        <h3 id="partner-works" tabIndex={-1}>Взаимодействия с ИТ Школой</h3>
+        {works.length === 0 && <p>Совместных взаимодействий пока нет.</p>}
         <ul className="partner-cabinet__list">
           {works.map((work) => (
             <li key={work.id} className="partner-card">
@@ -192,13 +192,13 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
       </section>
 
       <section className="partner-cabinet__section" aria-labelledby="partner-agreements">
-        <h3 id="partner-agreements" tabIndex={-1}>Соглашения</h3>
-        {agreements.length === 0 && <p>Соглашений пока нет.</p>}
+        <h3 id="partner-agreements" tabIndex={-1}>Договоры</h3>
+        {agreements.length === 0 && <p>Договоров пока нет.</p>}
         <ul className="partner-cabinet__list">
           {agreements.map((agreement) => (
             <li key={agreement.id} className="partner-card">
               <div className="partner-card__header">
-                <strong>Соглашение № {agreement.number}</strong>
+                <strong>Договор № {agreement.number}</strong>
                 <span className="status status--planned">{agreementStatusLabels[agreement.status]}</span>
               </div>
               <p className="partner-card__meta">Срок: {term(agreement.concludedOn, agreement.validUntil)}</p>

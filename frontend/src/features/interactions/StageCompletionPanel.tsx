@@ -7,11 +7,13 @@ import {
   type Interaction,
   type InteractionStage
 } from '../../shared/api/client'
+import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { todayInMoscow } from '../../shared/format/datetime'
 
 type StageCompletionPanelProps = {
   interaction: Interaction
+  signingWarning?: string
   onChanged: (interaction: Interaction) => void
   onReload: () => void
   onSessionExpired: () => void
@@ -52,11 +54,13 @@ const keyFor = (pending: { current: PendingCommand | null }, version: number) =>
 
 export const StageCompletionPanel = ({
   interaction,
+  signingWarning,
   onChanged,
   onReload,
   onSessionExpired,
   onProfileUnavailable
 }: StageCompletionPanelProps) => {
+  const [confirmClear, setConfirmClear] = useState<InteractionStage['id'] | null>(null)
   const [stageId, setStageId] = useState('')
   const [completedOn, setCompletedOn] = useState(moscowToday)
   const [comment, setComment] = useState('')
@@ -154,8 +158,9 @@ export const StageCompletionPanel = ({
 
   return (
     <section className="interaction-stage-editor stage-completion" aria-labelledby="stage-completion-title">
-      <h6 id="stage-completion-title">Отметить этап выполненным</h6>
+      <h6 id="stage-completion-title" className="visually-hidden">Отметить этап выполненным</h6>
       <p>Текущий этап не меняется. Так фиксируют работу, которая идёт параллельно, например обучение преподавателей во время сопровождения внедрения.</p>
+      {signingWarning !== undefined && <p className="interaction-catalog-message" role="note">{signingWarning}</p>}
       {interaction.stageCompletions.length > 0 && (
         <ul className="stage-completion__list" aria-label="Этапы, отмеченные выполненными">
           {interaction.stageCompletions.map((completion) => (
@@ -169,7 +174,7 @@ export const StageCompletionPanel = ({
                 type="button"
                 className="button--secondary"
                 disabled={saving}
-                onClick={() => void clear(completion.stageId)}
+                onClick={() => setConfirmClear(completion.stageId)}
               >
                 {state.kind === 'saving' && state.clearingStageId === completion.stageId ? 'Снимаем…' : 'Снять отметку'}
               </button>
@@ -177,6 +182,20 @@ export const StageCompletionPanel = ({
           ))}
         </ul>
       )}
+      <ConfirmDialog
+        open={confirmClear !== null}
+        title="Снять отметку выполнения?"
+        description={`Этап «${confirmClear === null ? '' : stageNames.get(confirmClear) ?? ''}» снова будет считаться невыполненным. Снятие отметки записывается в историю.`}
+        confirmLabel="Снять отметку"
+        onCancel={() => setConfirmClear(null)}
+        onConfirm={() => {
+          const target = confirmClear
+          setConfirmClear(null)
+          if (target !== null) {
+            void clear(target)
+          }
+        }}
+      />
       <form className="stage-completion__form" onSubmit={(event) => void submit(event)}>
         <label>
           <span>Этап<span className="required-mark" aria-hidden="true"> *</span></span>

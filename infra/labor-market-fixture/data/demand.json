@@ -1,0 +1,856 @@
+{
+  "items": [
+    {
+      "directionCode": "software-development",
+      "directionName": "Разработка программного обеспечения",
+      "month": "2025-11",
+      "openVacancies": 1483,
+      "medianSalary": 90000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-11-30"
+    },
+    {
+      "directionCode": "software-development",
+      "directionName": "Разработка программного обеспечения",
+      "month": "2025-12",
+      "openVacancies": 1474,
+      "medianSalary": 91000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-12-31"
+    },
+    {
+      "directionCode": "software-development",
+      "directionName": "Разработка программного обеспечения",
+      "month": "2026-01",
+      "openVacancies": 1452,
+      "medianSalary": 92000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-01-31"
+    },
+    {
+      "directionCode": "software-development",
+      "directionName": "Разработка программного обеспечения",
+      "month": "2026-02",
+      "openVacancies": 1419,
+      "medianSalary": 92500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-02-28"
+    },
+    {
+      "directionCode": "software-development",
+      "directionName": "Разработка программного обеспечения",
+      "month": "2026-03",
+      "openVacancies": 1375,
+      "medianSalary": 93500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-03-31"
+    },
+    {
+      "directionCode": "software-development",
+      "directionName": "Разработка программного обеспечения",
+      "month": "2026-04",
+      "openVacancies": 1377,
+      "medianSalary": 94500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-04-30"
+    },
+    {
+      "directionCode": "software-development",
+      "directionName": "Разработка программного обеспечения",
+      "month": "2026-05",
+      "openVacancies": 1367,
+      "medianSalary": 95500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-05-31"
+    },
+    {
+      "directionCode": "software-development",
+      "directionName": "Разработка программного обеспечения",
+      "month": "2026-06",
+      "openVacancies": 1345,
+      "medianSalary": 96500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-06-30"
+    },
+    {
+      "directionCode": "software-development",
+      "directionName": "Разработка программного обеспечения",
+      "month": "2026-07",
+      "openVacancies": 1314,
+      "medianSalary": 97000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-07-31"
+    },
+    {
+      "directionCode": "software-development",
+      "directionName": "Разработка программного обеспечения",
+      "month": "2026-08",
+      "openVacancies": 1272,
+      "medianSalary": 98000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-08-31"
+    },
+    {
+      "directionCode": "software-development",
+      "directionName": "Разработка программного обеспечения",
+      "month": "2026-09",
+      "openVacancies": 1271,
+      "medianSalary": 99000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-09-30"
+    },
+    {
+      "directionCode": "software-development",
+      "directionName": "Разработка программного обеспечения",
+      "month": "2026-10",
+      "openVacancies": 1261,
+      "medianSalary": 100000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-10-15"
+    },
+    {
+      "directionCode": "data-analysis",
+      "directionName": "Анализ данных",
+      "month": "2025-11",
+      "openVacancies": 785,
+      "medianSalary": 97000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-11-30"
+    },
+    {
+      "directionCode": "data-analysis",
+      "directionName": "Анализ данных",
+      "month": "2025-12",
+      "openVacancies": 804,
+      "medianSalary": 98000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-12-31"
+    },
+    {
+      "directionCode": "data-analysis",
+      "directionName": "Анализ данных",
+      "month": "2026-01",
+      "openVacancies": 818,
+      "medianSalary": 99000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-01-31"
+    },
+    {
+      "directionCode": "data-analysis",
+      "directionName": "Анализ данных",
+      "month": "2026-02",
+      "openVacancies": 783,
+      "medianSalary": 99500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-02-28"
+    },
+    {
+      "directionCode": "data-analysis",
+      "directionName": "Анализ данных",
+      "month": "2026-03",
+      "openVacancies": 776,
+      "medianSalary": 100500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-03-31"
+    },
+    {
+      "directionCode": "data-analysis",
+      "directionName": "Анализ данных",
+      "month": "2026-04",
+      "openVacancies": 762,
+      "medianSalary": 101500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-04-30"
+    },
+    {
+      "directionCode": "data-analysis",
+      "directionName": "Анализ данных",
+      "month": "2026-05",
+      "openVacancies": 780,
+      "medianSalary": 102500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-05-31"
+    },
+    {
+      "directionCode": "data-analysis",
+      "directionName": "Анализ данных",
+      "month": "2026-06",
+      "openVacancies": 792,
+      "medianSalary": 103500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-06-30"
+    },
+    {
+      "directionCode": "data-analysis",
+      "directionName": "Анализ данных",
+      "month": "2026-07",
+      "openVacancies": 797,
+      "medianSalary": 104000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-07-31"
+    },
+    {
+      "directionCode": "data-analysis",
+      "directionName": "Анализ данных",
+      "month": "2026-08",
+      "openVacancies": 789,
+      "medianSalary": 105000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-08-31"
+    },
+    {
+      "directionCode": "data-analysis",
+      "directionName": "Анализ данных",
+      "month": "2026-09",
+      "openVacancies": 773,
+      "medianSalary": 106000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-09-30"
+    },
+    {
+      "directionCode": "data-analysis",
+      "directionName": "Анализ данных",
+      "month": "2026-10",
+      "openVacancies": 752,
+      "medianSalary": 107000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-10-15"
+    },
+    {
+      "directionCode": "cybersecurity",
+      "directionName": "Кибербезопасность",
+      "month": "2025-11",
+      "openVacancies": 325,
+      "medianSalary": 104000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-11-30"
+    },
+    {
+      "directionCode": "cybersecurity",
+      "directionName": "Кибербезопасность",
+      "month": "2025-12",
+      "openVacancies": 337,
+      "medianSalary": 105000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-12-31"
+    },
+    {
+      "directionCode": "cybersecurity",
+      "directionName": "Кибербезопасность",
+      "month": "2026-01",
+      "openVacancies": 347,
+      "medianSalary": 106000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-01-31"
+    },
+    {
+      "directionCode": "cybersecurity",
+      "directionName": "Кибербезопасность",
+      "month": "2026-02",
+      "openVacancies": 369,
+      "medianSalary": 106500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-02-28"
+    },
+    {
+      "directionCode": "cybersecurity",
+      "directionName": "Кибербезопасность",
+      "month": "2026-03",
+      "openVacancies": 389,
+      "medianSalary": 107500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-03-31"
+    },
+    {
+      "directionCode": "cybersecurity",
+      "directionName": "Кибербезопасность",
+      "month": "2026-04",
+      "openVacancies": 407,
+      "medianSalary": 108500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-04-30"
+    },
+    {
+      "directionCode": "cybersecurity",
+      "directionName": "Кибербезопасность",
+      "month": "2026-05",
+      "openVacancies": 422,
+      "medianSalary": 109500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-05-31"
+    },
+    {
+      "directionCode": "cybersecurity",
+      "directionName": "Кибербезопасность",
+      "month": "2026-06",
+      "openVacancies": 434,
+      "medianSalary": 110500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-06-30"
+    },
+    {
+      "directionCode": "cybersecurity",
+      "directionName": "Кибербезопасность",
+      "month": "2026-07",
+      "openVacancies": 461,
+      "medianSalary": 111000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-07-31"
+    },
+    {
+      "directionCode": "cybersecurity",
+      "directionName": "Кибербезопасность",
+      "month": "2026-08",
+      "openVacancies": 485,
+      "medianSalary": 112000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-08-31"
+    },
+    {
+      "directionCode": "cybersecurity",
+      "directionName": "Кибербезопасность",
+      "month": "2026-09",
+      "openVacancies": 507,
+      "medianSalary": 113000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-09-30"
+    },
+    {
+      "directionCode": "cybersecurity",
+      "directionName": "Кибербезопасность",
+      "month": "2026-10",
+      "openVacancies": 525,
+      "medianSalary": 114000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-10-15"
+    },
+    {
+      "directionCode": "cloud-devops",
+      "directionName": "Облачные технологии и DevOps",
+      "month": "2025-11",
+      "openVacancies": 390,
+      "medianSalary": 111000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-11-30"
+    },
+    {
+      "directionCode": "cloud-devops",
+      "directionName": "Облачные технологии и DevOps",
+      "month": "2025-12",
+      "openVacancies": 397,
+      "medianSalary": 112000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-12-31"
+    },
+    {
+      "directionCode": "cloud-devops",
+      "directionName": "Облачные технологии и DevOps",
+      "month": "2026-01",
+      "openVacancies": 416,
+      "medianSalary": 113000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-01-31"
+    },
+    {
+      "directionCode": "cloud-devops",
+      "directionName": "Облачные технологии и DevOps",
+      "month": "2026-02",
+      "openVacancies": 433,
+      "medianSalary": 113500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-02-28"
+    },
+    {
+      "directionCode": "cloud-devops",
+      "directionName": "Облачные технологии и DevOps",
+      "month": "2026-03",
+      "openVacancies": 448,
+      "medianSalary": 114500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-03-31"
+    },
+    {
+      "directionCode": "cloud-devops",
+      "directionName": "Облачные технологии и DevOps",
+      "month": "2026-04",
+      "openVacancies": 459,
+      "medianSalary": 115500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-04-30"
+    },
+    {
+      "directionCode": "cloud-devops",
+      "directionName": "Облачные технологии и DevOps",
+      "month": "2026-05",
+      "openVacancies": 454,
+      "medianSalary": 116500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-05-31"
+    },
+    {
+      "directionCode": "cloud-devops",
+      "directionName": "Облачные технологии и DevOps",
+      "month": "2026-06",
+      "openVacancies": 464,
+      "medianSalary": 117500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-06-30"
+    },
+    {
+      "directionCode": "cloud-devops",
+      "directionName": "Облачные технологии и DevOps",
+      "month": "2026-07",
+      "openVacancies": 471,
+      "medianSalary": 118000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-07-31"
+    },
+    {
+      "directionCode": "cloud-devops",
+      "directionName": "Облачные технологии и DevOps",
+      "month": "2026-08",
+      "openVacancies": 474,
+      "medianSalary": 119000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-08-31"
+    },
+    {
+      "directionCode": "cloud-devops",
+      "directionName": "Облачные технологии и DevOps",
+      "month": "2026-09",
+      "openVacancies": 473,
+      "medianSalary": 120000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-09-30"
+    },
+    {
+      "directionCode": "cloud-devops",
+      "directionName": "Облачные технологии и DevOps",
+      "month": "2026-10",
+      "openVacancies": 468,
+      "medianSalary": 121000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-10-15"
+    },
+    {
+      "directionCode": "software-testing",
+      "directionName": "Тестирование программного обеспечения",
+      "month": "2025-11",
+      "openVacancies": 518,
+      "medianSalary": 118000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-11-30"
+    },
+    {
+      "directionCode": "software-testing",
+      "directionName": "Тестирование программного обеспечения",
+      "month": "2025-12",
+      "openVacancies": 493,
+      "medianSalary": 119000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-12-31"
+    },
+    {
+      "directionCode": "software-testing",
+      "directionName": "Тестирование программного обеспечения",
+      "month": "2026-01",
+      "openVacancies": 485,
+      "medianSalary": 120000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-01-31"
+    },
+    {
+      "directionCode": "software-testing",
+      "directionName": "Тестирование программного обеспечения",
+      "month": "2026-02",
+      "openVacancies": 473,
+      "medianSalary": 120500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-02-28"
+    },
+    {
+      "directionCode": "software-testing",
+      "directionName": "Тестирование программного обеспечения",
+      "month": "2026-03",
+      "openVacancies": 457,
+      "medianSalary": 121500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-03-31"
+    },
+    {
+      "directionCode": "software-testing",
+      "directionName": "Тестирование программного обеспечения",
+      "month": "2026-04",
+      "openVacancies": 438,
+      "medianSalary": 122500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-04-30"
+    },
+    {
+      "directionCode": "software-testing",
+      "directionName": "Тестирование программного обеспечения",
+      "month": "2026-05",
+      "openVacancies": 416,
+      "medianSalary": 123500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-05-31"
+    },
+    {
+      "directionCode": "software-testing",
+      "directionName": "Тестирование программного обеспечения",
+      "month": "2026-06",
+      "openVacancies": 409,
+      "medianSalary": 124500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-06-30"
+    },
+    {
+      "directionCode": "software-testing",
+      "directionName": "Тестирование программного обеспечения",
+      "month": "2026-07",
+      "openVacancies": 398,
+      "medianSalary": 125000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-07-31"
+    },
+    {
+      "directionCode": "software-testing",
+      "directionName": "Тестирование программного обеспечения",
+      "month": "2026-08",
+      "openVacancies": 385,
+      "medianSalary": 126000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-08-31"
+    },
+    {
+      "directionCode": "software-testing",
+      "directionName": "Тестирование программного обеспечения",
+      "month": "2026-09",
+      "openVacancies": 368,
+      "medianSalary": 127000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-09-30"
+    },
+    {
+      "directionCode": "software-testing",
+      "directionName": "Тестирование программного обеспечения",
+      "month": "2026-10",
+      "openVacancies": 365,
+      "medianSalary": 128000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-10-15"
+    },
+    {
+      "directionCode": "networks-telecom",
+      "directionName": "Сети и телекоммуникации",
+      "month": "2025-11",
+      "openVacancies": 285,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-11-30"
+    },
+    {
+      "directionCode": "networks-telecom",
+      "directionName": "Сети и телекоммуникации",
+      "month": "2025-12",
+      "openVacancies": 290,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-12-31"
+    },
+    {
+      "directionCode": "networks-telecom",
+      "directionName": "Сети и телекоммуникации",
+      "month": "2026-01",
+      "openVacancies": 292,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-01-31"
+    },
+    {
+      "directionCode": "networks-telecom",
+      "directionName": "Сети и телекоммуникации",
+      "month": "2026-02",
+      "openVacancies": 291,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-02-28"
+    },
+    {
+      "directionCode": "networks-telecom",
+      "directionName": "Сети и телекоммуникации",
+      "month": "2026-03",
+      "openVacancies": 289,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-03-31"
+    },
+    {
+      "directionCode": "networks-telecom",
+      "directionName": "Сети и телекоммуникации",
+      "month": "2026-04",
+      "openVacancies": 284,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-04-30"
+    },
+    {
+      "directionCode": "networks-telecom",
+      "directionName": "Сети и телекоммуникации",
+      "month": "2026-05",
+      "openVacancies": 288,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-05-31"
+    },
+    {
+      "directionCode": "networks-telecom",
+      "directionName": "Сети и телекоммуникации",
+      "month": "2026-06",
+      "openVacancies": 290,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-06-30"
+    },
+    {
+      "directionCode": "networks-telecom",
+      "directionName": "Сети и телекоммуникации",
+      "month": "2026-07",
+      "openVacancies": 289,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-07-31"
+    },
+    {
+      "directionCode": "networks-telecom",
+      "directionName": "Сети и телекоммуникации",
+      "month": "2026-08",
+      "openVacancies": 286,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-08-31"
+    },
+    {
+      "directionCode": "networks-telecom",
+      "directionName": "Сети и телекоммуникации",
+      "month": "2026-09",
+      "openVacancies": 281,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-09-30"
+    },
+    {
+      "directionCode": "networks-telecom",
+      "directionName": "Сети и телекоммуникации",
+      "month": "2026-10",
+      "openVacancies": 284,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-10-15"
+    },
+    {
+      "directionCode": "system-administration",
+      "directionName": "Системное администрирование",
+      "month": "2025-11",
+      "openVacancies": 448,
+      "medianSalary": 132000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-11-30"
+    },
+    {
+      "directionCode": "system-administration",
+      "directionName": "Системное администрирование",
+      "month": "2025-12",
+      "openVacancies": 442,
+      "medianSalary": 133000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-12-31"
+    },
+    {
+      "directionCode": "system-administration",
+      "directionName": "Системное администрирование",
+      "month": "2026-01",
+      "openVacancies": 433,
+      "medianSalary": 134000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-01-31"
+    },
+    {
+      "directionCode": "system-administration",
+      "directionName": "Системное администрирование",
+      "month": "2026-02",
+      "openVacancies": 420,
+      "medianSalary": 134500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-02-28"
+    },
+    {
+      "directionCode": "system-administration",
+      "directionName": "Системное администрирование",
+      "month": "2026-03",
+      "openVacancies": 405,
+      "medianSalary": 135500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-03-31"
+    },
+    {
+      "directionCode": "system-administration",
+      "directionName": "Системное администрирование",
+      "month": "2026-04",
+      "openVacancies": 403,
+      "medianSalary": 136500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-04-30"
+    },
+    {
+      "directionCode": "system-administration",
+      "directionName": "Системное администрирование",
+      "month": "2026-05",
+      "openVacancies": 397,
+      "medianSalary": 137500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-05-31"
+    },
+    {
+      "directionCode": "system-administration",
+      "directionName": "Системное администрирование",
+      "month": "2026-06",
+      "openVacancies": 388,
+      "medianSalary": 138500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-06-30"
+    },
+    {
+      "directionCode": "system-administration",
+      "directionName": "Системное администрирование",
+      "month": "2026-07",
+      "openVacancies": 377,
+      "medianSalary": 139000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-07-31"
+    },
+    {
+      "directionCode": "system-administration",
+      "directionName": "Системное администрирование",
+      "month": "2026-08",
+      "openVacancies": 362,
+      "medianSalary": 140000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-08-31"
+    },
+    {
+      "directionCode": "system-administration",
+      "directionName": "Системное администрирование",
+      "month": "2026-09",
+      "openVacancies": 360,
+      "medianSalary": 141000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-09-30"
+    },
+    {
+      "directionCode": "system-administration",
+      "directionName": "Системное администрирование",
+      "month": "2026-10",
+      "openVacancies": 355,
+      "medianSalary": 142000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-10-15"
+    },
+    {
+      "directionCode": "digital-transformation",
+      "directionName": "Цифровая трансформация",
+      "month": "2025-11",
+      "openVacancies": 433,
+      "medianSalary": 139000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-11-30"
+    },
+    {
+      "directionCode": "digital-transformation",
+      "directionName": "Цифровая трансформация",
+      "month": "2025-12",
+      "openVacancies": 443,
+      "medianSalary": 140000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2025-12-31"
+    },
+    {
+      "directionCode": "digital-transformation",
+      "directionName": "Цифровая трансформация",
+      "month": "2026-01",
+      "openVacancies": 450,
+      "medianSalary": 141000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-01-31"
+    },
+    {
+      "directionCode": "digital-transformation",
+      "directionName": "Цифровая трансформация",
+      "month": "2026-02",
+      "openVacancies": 453,
+      "medianSalary": 141500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-02-28"
+    },
+    {
+      "directionCode": "digital-transformation",
+      "directionName": "Цифровая трансформация",
+      "month": "2026-03",
+      "openVacancies": 471,
+      "medianSalary": 142500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-03-31"
+    },
+    {
+      "directionCode": "digital-transformation",
+      "directionName": "Цифровая трансформация",
+      "month": "2026-04",
+      "openVacancies": 485,
+      "medianSalary": 143500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-04-30"
+    },
+    {
+      "directionCode": "digital-transformation",
+      "directionName": "Цифровая трансформация",
+      "month": "2026-05",
+      "openVacancies": 496,
+      "medianSalary": 144500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-05-31"
+    },
+    {
+      "directionCode": "digital-transformation",
+      "directionName": "Цифровая трансформация",
+      "month": "2026-06",
+      "openVacancies": 503,
+      "medianSalary": 145500,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-06-30"
+    },
+    {
+      "directionCode": "digital-transformation",
+      "directionName": "Цифровая трансформация",
+      "month": "2026-07",
+      "openVacancies": 506,
+      "medianSalary": 146000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-07-31"
+    },
+    {
+      "directionCode": "digital-transformation",
+      "directionName": "Цифровая трансформация",
+      "month": "2026-08",
+      "openVacancies": 525,
+      "medianSalary": 147000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-08-31"
+    },
+    {
+      "directionCode": "digital-transformation",
+      "directionName": "Цифровая трансформация",
+      "month": "2026-09",
+      "openVacancies": 540,
+      "medianSalary": 148000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-09-30"
+    },
+    {
+      "directionCode": "digital-transformation",
+      "directionName": "Цифровая трансформация",
+      "month": "2026-10",
+      "openVacancies": 551,
+      "medianSalary": 149000,
+      "dataSource": "Демонстрационные данные (синтетика)",
+      "asOf": "2026-10-15"
+    }
+  ]
+}

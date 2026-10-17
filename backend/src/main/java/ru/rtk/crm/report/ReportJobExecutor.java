@@ -13,6 +13,8 @@ public class ReportJobExecutor {
         executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(properties.slots());
         executor.setMaxPoolSize(properties.slots());
+        // Число потоков равно числу слотов, очередь ограничена: избыток заданий отклоняется (TaskRejectedException),
+        // а не накапливается до нехватки памяти.
         executor.setQueueCapacity(properties.queueCapacity());
         executor.setThreadNamePrefix("report-");
         executor.initialize();

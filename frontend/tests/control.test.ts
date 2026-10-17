@@ -5,11 +5,13 @@ import {
   changeNotes,
   controlFiltersFromQuery,
   controlQueryFromFilters,
+  controlStateFromHash,
   dueLabels,
   dueTones,
   emptyControlFilters,
   exportColumns,
   hasPeriod,
+  learningText,
   routeLabel,
   routeShare,
   toExportRequest
@@ -30,6 +32,19 @@ test('отборы экрана «Контроль» переживают кру
   assert.deepEqual(controlFiltersFromQuery(query), filters)
   assert.equal(controlQueryFromFilters(emptyControlFilters), '')
   assert.deepEqual(controlFiltersFromQuery(''), emptyControlFilters)
+})
+
+test('смена адреса без перезагрузки задаёт отборы и плитку «Контроля»', () => {
+  const linked = controlStateFromHash('#/control?tile=OVERDUE&from=2026-09-01&to=2026-09-30&stuck=14')
+  assert.equal(linked?.view.tile, 'OVERDUE')
+  assert.equal(linked?.view.stuckDays, 14)
+  assert.equal(linked?.filters.from, '2026-09-01')
+  assert.equal(linked?.filters.to, '2026-09-30')
+  const reset = controlStateFromHash('#/control')
+  assert.deepEqual(reset?.filters, emptyControlFilters)
+  assert.equal(reset?.view.tile, null)
+  assert.equal(controlStateFromHash('#/control?view=list&due=OVERDUE'), null)
+  assert.equal(controlStateFromHash('#/organizations?tile=OVERDUE'), null)
 })
 
 test('из адреса берутся только известные значения', () => {
@@ -68,7 +83,7 @@ test('положение на маршруте: номер из числа эт�
 test('пометки изменений за период', () => {
   const base = { created: false, completed: false, transitions: 0, stageAtStart: null, stage: 'Встреча' }
   assert.deepEqual(changeNotes(base), [])
-  assert.deepEqual(changeNotes({ ...base, created: true }), ['Новая работа'])
+  assert.deepEqual(changeNotes({ ...base, created: true }), ['Новое взаимодействие'])
   assert.deepEqual(
     changeNotes({ ...base, transitions: 2, stageAtStart: 'Поиск контакта' }),
     ['Было: Поиск контакта · 2 перехода']
@@ -98,4 +113,13 @@ test('выгрузка берёт те же отборы, что на экран
   assert.ok(!exportColumns(emptyControlFilters, true).includes('TRANSITIONS'))
   assert.equal(toExportRequest(emptyControlFilters, 'PDF', false).from, null)
   assert.equal(toExportRequest(emptyControlFilters, 'PDF', false).filters?.change, null)
+})
+
+test('колонка «Обучение (LMS)» пишет числа идущих потоков и попадает в выгрузку', () => {
+  assert.equal(learningText(null), 'Нет потоков LMS')
+  assert.equal(learningText({ runs: 0, participants: 0, signals: 1, signalTitles: ['Низкая доля завершивших'] }), 'Идущих потоков нет')
+  assert.equal(learningText({ runs: 1, participants: 6, active7d: 2, signals: 0, signalTitles: [] }), 'Обучающихся 6, за 7 дней заходили 2')
+  assert.equal(learningText({ runs: 1, participants: 6, active7d: null, signals: 0, signalTitles: [] }), 'Обучающихся 6')
+  assert.ok(exportColumns(emptyControlFilters, false).includes('LMS_LEARNING'))
+  assert.ok(exportColumns(emptyControlFilters, false).includes('LMS_CHECK'))
 })

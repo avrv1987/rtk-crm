@@ -25,11 +25,15 @@ public record StatisticsResult(
         int maxChartSeries
 ) {
     public static final int MAX_CHART_BARS = 100;
-    public static final int MAX_CHART_SERIES = 5;
+    public static final int MAX_NAMED_SERIES = 5;
+    public static final int MAX_CHART_SERIES = MAX_NAMED_SERIES + 2;
 
     public record Item(String key, String label, long count) {
     }
 
-    public record Series(String key, String label, boolean unspecified, List<Long> counts) {
+    public record Series(String key, String label, boolean unspecified, List<Long> counts, boolean others) {
+        public Series(String key, String label, boolean unspecified, List<Long> counts) {
+            this(key, label, unspecified, counts, false);
+        }
     }
 }

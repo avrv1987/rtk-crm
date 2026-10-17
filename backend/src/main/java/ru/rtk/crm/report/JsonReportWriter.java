@@ -55,6 +55,11 @@ public class JsonReportWriter {
             totals.put("organizations", document.organizationCount());
             totals.put("interactions", document.interactionCount());
         }
+        if (!document.groupTotals().isEmpty()) {
+            totals.put("managers", document.groupTotals().stream()
+                    .map(row -> ReportService.values(request.columns(), row))
+                    .toList());
+        }
 
         Map<String, Object> quality = new LinkedHashMap<>();
         quality.put("complete", true);
@@ -69,8 +74,9 @@ public class JsonReportWriter {
         if (demand) {
             quality.put("noData", Stream.of(ReportColumn.APPLICATIONS, ReportColumn.PAID_ORDERS, ReportColumn.PAID_STREAMS,
                             ReportColumn.PARTICIPANTS, ReportColumn.LEARNERS_COMPLETED, ReportColumn.COMPLETION_SHARE,
-                            ReportColumn.PARALLEL_RUNS)
+                            ReportColumn.PARALLEL_RUNS, ReportColumn.MARKET_VACANCIES, ReportColumn.MARKET_TREND)
                     .filter(column -> (column != ReportColumn.PAID_ORDERS && column != ReportColumn.PAID_STREAMS
+                            && column != ReportColumn.MARKET_VACANCIES && column != ReportColumn.MARKET_TREND
                             || request.columns().contains(column)) && document.countWithout(column) > 0)
                     .toList());
         } else if (duration) {

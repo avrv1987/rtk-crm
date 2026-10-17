@@ -8,10 +8,12 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -83,6 +85,8 @@ public class ReportRepository {
                    sn.last_event_at AS last_event_at,
             """ + NO_STAGE_ENTERED + EVENT_NULLS;
 
+    // Срез на дату собирается по истории: этап — из последнего события до границы, менеджер — владелец до
+    // первой передачи после границы, иначе текущий. Работы, созданные позже границы, в срез не входят.
     private static final String SNAPSHOT_FROM = """
             FROM interactions i
             JOIN organizations o ON o.id = i.organization_id
@@ -171,7 +175,18 @@ public class ReportRepository {
             LEFT JOIN crm_user_profiles m ON m.id = ae.owner_manager_id
             """;
 
+    // Менеджер на выбранный момент: если после него вуз передавали, им был предыдущий владелец первой передачи, иначе текущий.
+    private static final String MANAGER_AT = """
+            CASE WHEN EXISTS (SELECT 1 FROM organization_assignment_events fa
+                              WHERE fa.organization_id = o.id AND fa.occurred_at >= :%1$s)
+                 THEN (SELECT fa.previous_owner_manager_id FROM organization_assignment_events fa
+                       WHERE fa.organization_id = o.id AND fa.occurred_at >= :%1$s
+                       ORDER BY fa.occurred_at, fa.version LIMIT 1)
+                 ELSE o.owner_manager_id END""";
+
     private static final String MANAGER_WORK_FROM = PORTFOLIO_FROM + "JOIN teams t ON t.id = o.team_id\n";
+    // Этап на момент времени: последнее событие, менявшее этап, до границы. Название берётся из снимка в событии,
+    // поэтому позднейшее переименование этапа не искажает прошлые периоды.
     private static final String STAGE_AT = """
             (SELECT se.stage_name_snapshot FROM interaction_events se
              WHERE se.interaction_id = i.id AND se.occurred_at < :%s
@@ -245,7 +260,7 @@ public class ReportRepository {
             return List.of();
         }
         if (request.kind() == ReportKind.DEMAND) {
-            return findDemandRows(scope.get(), request, limit, offset);
+            return withMarket(findDemandRows(scope.get(), request, limit, offset), request);
         }
         if (request.kind() == ReportKind.AGREEMENTS) {
             return findAgreementRows(scope.get(), request, limit, offset);
@@ -306,6 +321,59 @@ public class ReportRepository {
                 .params(selection.parameters())
                 .query(Long.class)
                 .single();
+    }
+
+    public Optional<MarketSource> findMarketSource() {
+        return jdbcClient.sql("""
+                        SELECT data_source, MAX(as_of) AS as_of FROM labor_market_snapshots
+                        GROUP BY data_source ORDER BY MAX(as_of) DESC, data_source LIMIT 1
+                        """)
+                .query((resultSet, rowNumber) -> new MarketSource(
+                        resultSet.getString("data_source"), resultSet.getObject("as_of", LocalDate.class)))
+                .optional();
+    }
+
+    private List<ReportRow> withMarket(List<ReportRow> rows, ReportRequest request) {
+        if (rows.isEmpty() || !request.columns().contains(ReportColumn.MARKET_VACANCIES)
+                && !request.columns().contains(ReportColumn.MARKET_TREND)) {
+            return rows;
+        }
+        List<UUID> directionIds = rows.stream().map(ReportRow::directionId).filter(Objects::nonNull).distinct().toList();
+        Map<UUID, List<Integer>> series = new HashMap<>();
+        Map<UUID, Integer> before = new HashMap<>();
+        Set<UUID> tracked = new HashSet<>();
+        LocalDate fromMonth = request.from() == null ? null : request.from().withDayOfMonth(1);
+        if (!directionIds.isEmpty()) {
+            jdbcClient.sql("""
+                            SELECT d.id AS direction_id, d.labor_market, s.period_month, s.open_vacancies
+                            FROM directions d
+                            LEFT JOIN labor_market_mappings m ON m.direction_id = d.id
+                            LEFT JOIN labor_market_snapshots s ON s.external_code = m.external_code
+                                AND s.period_month <= :toMonth
+                            WHERE d.id IN (:directionIds)
+                            ORDER BY d.id, s.period_month
+                            """)
+                    .param("directionIds", directionIds)
+                    .param("toMonth", request.runsAsOf().withDayOfMonth(1))
+                    .query(resultSet -> {
+                        UUID directionId = resultSet.getObject("direction_id", UUID.class);
+                        if (resultSet.getBoolean("labor_market")) {
+                            tracked.add(directionId);
+                            Integer vacancies = resultSet.getObject("open_vacancies", Integer.class);
+                            List<Integer> months = series.computeIfAbsent(directionId, ignored -> new ArrayList<>());
+                            if (vacancies != null && fromMonth != null && resultSet.getObject("period_month", LocalDate.class).isBefore(fromMonth)) {
+                                before.put(directionId, vacancies);
+                            } else if (vacancies != null) {
+                                months.add(vacancies);
+                            }
+                        }
+                    });
+        }
+        return rows.stream()
+                .map(row -> row.withMarket(row.directionId() != null && tracked.contains(row.directionId())
+                        ? MarketDemand.of(before.get(row.directionId()), series.get(row.directionId()))
+                        : MarketDemand.NOT_TRACKED))
+                .toList();
     }
 
     public Optional<OffsetDateTime> findLearningObservedAt(CrmProfile profile, ReportRequest request) {
@@ -402,6 +470,17 @@ public class ReportRepository {
             LocalDate to,
             OffsetDateTime now
     ) {
+        return findManagerWork(profile, filters, from, to, now, false);
+    }
+
+    public List<ManagerWorkLine> findManagerWork(
+            CrmProfile profile,
+            ReportFilters filters,
+            LocalDate from,
+            LocalDate to,
+            OffsetDateTime now,
+            boolean managerAtPeriodEnd
+    ) {
         Optional<VisibilityScope> scope = organizationRepository.visibilityScope(profile);
         if (scope.isEmpty()) {
             return List.of();
@@ -415,16 +494,23 @@ public class ReportRepository {
         if (toAt != null) {
             parameters.put("toAt", toAt);
         }
+        // Если период уже закончился, менеджер и этап определяются на его конец по истории (передачи вуза, события),
+        // а не по текущему состоянию: иначе завершённый период пересчитывался бы по сегодняшнему владельцу вуза.
+        boolean historical = managerAtPeriodEnd && toAt != null && toAt.isBefore(now);
+        String managerId = historical ? MANAGER_AT.formatted("toAt") : "o.owner_manager_id";
         String startStage = fromAt == null ? "CAST(NULL AS VARCHAR(200))" : STAGE_AT.formatted("fromAt");
         String endStage = toAt != null && toAt.isBefore(now) ? STAGE_AT.formatted("toAt") : "s.name";
+        // Область: действующие вузы пользователя (архивные не входят) и без служебной организации для оплат
+        // физлиц: она не относится к работе менеджеров и в «Контроль» не попадает.
         List<String> conditions = new ArrayList<>(List.of(
-                "i.organization_id IN (SELECT id FROM organizations WHERE " + scope.get().condition() + ")",
-                "o.type <> 'OPEN_ENROLLMENT'",
-                OrganizationRepository.currentStatus("o")
+                "i.organization_id IN (" + scope.get().currentOrganizations() + ")",
+                "o.type <> 'OPEN_ENROLLMENT'"
         ));
         if (toAt != null) {
             conditions.add("i.created_at < :toAt");
         }
+        // Без периода показываются идущие работы. С периодом — идущие и те, по которым в периоде были события: так
+        // завершённая в периоде работа остаётся в отчёте за него.
         conditions.add(fromAt == null && toAt == null
                 ? "i.work_status = 'ACTIVE'"
                 : "(i.work_status = 'ACTIVE' OR EXISTS (SELECT 1 FROM interaction_events pe WHERE pe.interaction_id = i.id AND "
@@ -432,18 +518,25 @@ public class ReportRepository {
         organizationFilters(conditions, parameters, filters);
         dimension(conditions, parameters, "d.id", "directionIds", filters.directionIds(), filters.includeNoDirection());
         dimension(conditions, parameters, "i.program_id", "programIds", filters.programIds(), filters.includeNoProgram());
-        dimension(conditions, parameters, "o.owner_manager_id", "managerIds", filters.managerIds(), filters.includeNoManager());
+        dimension(conditions, parameters, "(" + managerId + ")", "managerIds", filters.managerIds(), filters.includeNoManager());
         products(conditions, parameters, filters);
         if (!filters.stages().isEmpty()) {
             conditions.add("(" + endStage + ") IN (:stages)");
             parameters.put("stages", filters.stages());
         }
+        // Вуз без действующего КАМ своей команды показывается строкой «не назначен», даже если в профиле остался
+        // прежний владелец: прежний сотрудник уже не отвечает за работу.
         String unassigned = OrganizationRepository.requiresAssignment("o");
+        // «Завершена в периоде»: в периоде работа вошла в последний этап маршрута либо она сейчас завершена и её
+        // статус менялся в периоде.
         String lastStage = "(SELECT fs.id FROM interaction_stages fs WHERE fs.interaction_id = i.id ORDER BY fs.stage_order DESC LIMIT 1)";
         String sql = "SELECT * FROM (SELECT i.id AS interaction_id, i.title AS interaction_title, o.id AS organization_id,"
                 + " o.name AS organization_name, t.id AS team_id, t.name AS team_name,"
-                + " CASE WHEN " + unassigned + " THEN NULL ELSE o.owner_manager_id END AS manager_id,"
-                + " CASE WHEN " + unassigned + " THEN NULL ELSE m.display_name END AS manager_name,"
+                + (historical
+                        ? " " + managerId + " AS manager_id,"
+                                + " (SELECT mp.display_name FROM crm_user_profiles mp WHERE mp.id = " + managerId + ") AS manager_name,"
+                        : " CASE WHEN " + unassigned + " THEN NULL ELSE o.owner_manager_id END AS manager_id,"
+                                + " CASE WHEN " + unassigned + " THEN NULL ELSE m.display_name END AS manager_name,")
                 + " d.name AS direction_name, p.name AS program_name, s.name AS stage_name,"
                 + " (SELECT COUNT(*) FROM interaction_stages ps WHERE ps.interaction_id = i.id AND ps.stage_order <= s.stage_order)"
                 + " AS stage_position,"
@@ -529,9 +622,14 @@ public class ReportRepository {
         }
         Map<UUID, List<String>> comments = new HashMap<>();
         for (int start = 0; start < interactionIds.size(); start += PRODUCT_BATCH_SIZE) {
-            jdbcClient.sql("SELECT e.interaction_id, e.occurred_at, " + InteractionRepository.EVENT_COMMENT + " AS event_comment"
+            // Автоматические записи источников (заявки сайта, наблюдения Moodle) помечены командой APPLY_SOURCE_RECORD:
+            // в отчёт идут только комментарии людей, без контактов, чтобы не выгружать ФИО, почту и телефоны.
+            jdbcClient.sql("SELECT e.interaction_id, e.occurred_at, NULLIF(e.comment, '') AS event_comment"
                             + " FROM interaction_events e WHERE e.interaction_id IN (:interactionIds)"
-                            + " AND e.type IN ('COMMENTED', 'TRANSITIONED') AND " + inPeriod("e.occurred_at", fromAt, toAt)
+                            + " AND e.type IN ('COMMENTED', 'TRANSITIONED')"
+                            + " AND NOT EXISTS (SELECT 1 FROM command_idempotency_records source_command"
+                            + " WHERE source_command.id = e.command_id AND source_command.operation = 'APPLY_SOURCE_RECORD')"
+                            + " AND " + inPeriod("e.occurred_at", fromAt, toAt)
                             + " ORDER BY e.occurred_at, e.version, e.id")
                     .params(parameters)
                     .param("interactionIds", interactionIds.subList(start, Math.min(start + PRODUCT_BATCH_SIZE, interactionIds.size())))
@@ -714,6 +812,39 @@ public class ReportRepository {
                 .list();
     }
 
+    // Маршрут для диаграммы по этапам: этапы шаблона по умолчанию в его порядке (в том числе без работ), затем остальные этапы
+    // видимых работ по их наименьшему номеру; при нескольких версиях маршрута одно название считается одним этапом.
+    public List<String> findStageRoute(CrmProfile profile) {
+        Optional<VisibilityScope> scope = organizationRepository.visibilityScope(profile);
+        if (scope.isEmpty()) {
+            return List.of();
+        }
+        List<String> route = new ArrayList<>(jdbcClient.sql("""
+                SELECT ts.name
+                FROM workflow_template_stages ts
+                JOIN workflow_templates t ON t.id = ts.template_id AND t.default_template = TRUE
+                GROUP BY ts.name
+                ORDER BY MIN(ts.stage_order), ts.name
+                """)
+                .query(String.class)
+                .list());
+        jdbcClient.sql("""
+                SELECT st.name
+                FROM interaction_stages st
+                JOIN interactions i ON i.id = st.interaction_id
+                WHERE i.organization_id IN (%s)
+                GROUP BY st.name
+                ORDER BY MIN(st.stage_order), st.name
+                """.formatted(scope.get().currentOrganizations()))
+                .params(scope.get().parameters())
+                .query(String.class)
+                .list()
+                .stream()
+                .filter(name -> !route.contains(name))
+                .forEach(route::add);
+        return route;
+    }
+
     public Map<UUID, String> findOrganizationNames(CrmProfile profile, List<UUID> organizationIds) {
         Optional<VisibilityScope> scope = organizationRepository.visibilityScope(profile);
         if (scope.isEmpty() || organizationIds.isEmpty()) {
@@ -766,7 +897,7 @@ public class ReportRepository {
         ReportFilters filters = request.filters();
         List<String> conditions = new ArrayList<>();
         Map<String, Object> parameters = new HashMap<>(scope.parameters());
-        conditions.add("i.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition() + ")");
+        conditions.add("i.organization_id IN (" + scope.currentOrganizations() + ")");
         period(conditions, parameters, request);
         organizationFilters(conditions, parameters, filters);
         dimension(conditions, parameters, "d.id", "directionIds", filters.directionIds(), filters.includeNoDirection());
@@ -809,7 +940,7 @@ public class ReportRepository {
         ReportFilters filters = request.filters();
         List<String> conditions = new ArrayList<>();
         Map<String, Object> parameters = new HashMap<>(scope.parameters());
-        conditions.add("ae.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition() + ")");
+        conditions.add("ae.organization_id IN (" + scope.currentOrganizations() + ")");
         conditions.addAll(bounds("ae.occurred_at", request, parameters));
         organizationFilters(conditions, parameters, filters);
         dimension(conditions, parameters, "ae.owner_manager_id", "managerIds", filters.managerIds(), filters.includeNoManager());
@@ -868,7 +999,7 @@ public class ReportRepository {
                 "r.source = 'WEBSITE'",
                 "r.record_type = 'paid_order'",
                 "r.status = 'APPLIED'",
-                "(o.type = 'OPEN_ENROLLMENT' OR r.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition() + "))"
+                "(o.type = 'OPEN_ENROLLMENT' OR r.organization_id IN (" + scope.currentOrganizations() + "))"
         ));
         Map<String, Object> parameters = new HashMap<>(scope.parameters());
         demandFilters(conditions, parameters, request.filters(), "r.program_id");
@@ -877,7 +1008,7 @@ public class ReportRepository {
 
     private Selection learningSelection(VisibilityScope scope, ReportRequest request) {
         List<String> conditions = new ArrayList<>(List.of(
-                "s.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition() + ")"
+                "s.organization_id IN (" + scope.currentOrganizations() + ")"
         ));
         Map<String, Object> parameters = new HashMap<>(scope.parameters());
         parameters.put("learningAt", request.learningAt());
@@ -898,7 +1029,7 @@ public class ReportRepository {
                 "r.source = 'WEBSITE'",
                 "r.record_type = 'learning_application'",
                 "r.status = 'APPLIED'",
-                "r.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition() + ")"
+                "r.organization_id IN (" + scope.currentOrganizations() + ")"
         ));
         Map<String, Object> parameters = new HashMap<>(scope.parameters());
         period(conditions, parameters, request);
@@ -934,6 +1065,8 @@ public class ReportRepository {
         }
     }
 
+    // Три основы периода для портфеля: созданные в периоде; имевшие события в периоде; идущие к концу периода
+    // (созданные до его конца; начало периода их не ограничивает, потому что идущая работа остаётся в портфеле).
     private void portfolioPeriod(List<String> conditions, Map<String, Object> parameters, ReportRequest request) {
         switch (request.periodBasis()) {
             case CREATED -> conditions.addAll(bounds("i.created_at", request, parameters));
@@ -1276,7 +1409,7 @@ public class ReportRepository {
         ReportFilters filters = request.filters();
         List<String> conditions = new ArrayList<>();
         Map<String, Object> parameters = new HashMap<>(scope.parameters());
-        conditions.add("ag.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition() + ")");
+        conditions.add("ag.organization_id IN (" + scope.currentOrganizations() + ")");
         AgreementRepository.periodCondition(conditions, parameters, request.from(), request.to());
         if (!filters.organizationIds().isEmpty()) {
             conditions.add("o.id IN (:organizationIds)");
@@ -1346,8 +1479,8 @@ public class ReportRepository {
             case "COMMENTED" -> "Комментарий";
             case "STAGES_EDITED" -> "Изменены этапы карточки";
             case "PLAN_UPDATED" -> "Изменён план";
-            case "DETAILS_UPDATED" -> "Изменены данные работы";
-            case "STATUS_CHANGED" -> "Изменён статус работы";
+            case "DETAILS_UPDATED" -> "Изменены данные взаимодействия";
+            case "STATUS_CHANGED" -> "Изменён статус взаимодействия";
             case "AGREEMENT_UPDATED" -> "Изменены договор и передача";
             case "ATTACHMENT_DELETED" -> "Удалён документ";
             case "STAGE_COMPLETED" -> "Этап отмечен выполненным";
@@ -1374,6 +1507,9 @@ public class ReportRepository {
         String tableName() {
             return tableName;
         }
+    }
+
+    public record MarketSource(String dataSource, LocalDate asOf) {
     }
 
     public record GroupCount(String key, String label, String seriesKey, String seriesLabel, long count) {

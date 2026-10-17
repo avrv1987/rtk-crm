@@ -25,6 +25,8 @@ class LearnerRekeyJob {
         this.cipher = cipher;
     }
 
+    // Ротация ключа без простоя: записи со старым ключом читаются, пока задача не перешифрует их порциями.
+    // Старый ключ нельзя удалять из окружения, пока счётчик «со старым ключом» на экране администратора не равен нулю.
     @Scheduled(initialDelayString = "PT1M", fixedDelayString = "PT1H")
     void reencryptWithActiveKey() {
         if (!cipher.enabled()) {
@@ -33,6 +35,8 @@ class LearnerRekeyJob {
         String activeVersion = cipher.activeKeyVersion();
         int reencrypted = 0;
         int failed = 0;
+        // Обход по курсору «id > after», а не по смещению: перешифрованная строка выпадает из выборки, а ошибочная
+        // не зацикливает задачу, потому что курсор в любом случае проходит дальше.
         UUID after = FIRST;
         List<UUID> ids;
         do {
@@ -43,6 +47,8 @@ class LearnerRekeyJob {
                         reencrypted++;
                     }
                 } catch (IllegalStateException exception) {
+                    // Анкета без ключа или с повреждённым значением не должна останавливать остальные;
+                    // причина идёт в журнал без ПДн.
                     failed++;
                     LOGGER.warn("Learner {} was not re-encrypted with key version {}: {}", id, activeVersion, exception.getMessage());
                 }

@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException;
 import ru.rtk.crm.access.ContactInteractionMutationAuthorization;
 import ru.rtk.crm.access.CrmProfile;
+import ru.rtk.crm.agreement.AgreementStages;
 import ru.rtk.crm.attachment.AttachmentRepository;
 import ru.rtk.crm.catalog.CatalogReference;
 import ru.rtk.crm.catalog.CatalogRepository;
@@ -50,6 +51,7 @@ public class InteractionService {
     private final AttachmentRepository attachmentRepository;
     private final CommandIdempotencyRepository commandIdempotencyRepository;
     private final ObjectMapper objectMapper;
+    private final AgreementStages agreementStages;
 
     public InteractionService(
             OrganizationRepository organizationRepository,
@@ -59,7 +61,8 @@ public class InteractionService {
             WorkflowTemplateRepository workflowTemplateRepository,
             AttachmentRepository attachmentRepository,
             CommandIdempotencyRepository commandIdempotencyRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            AgreementStages agreementStages
     ) {
         this.organizationRepository = organizationRepository;
         this.contactRepository = contactRepository;
@@ -69,6 +72,7 @@ public class InteractionService {
         this.attachmentRepository = attachmentRepository;
         this.commandIdempotencyRepository = commandIdempotencyRepository;
         this.objectMapper = objectMapper;
+        this.agreementStages = agreementStages;
     }
 
     @Transactional(readOnly = true)
@@ -106,6 +110,9 @@ public class InteractionService {
         return interactionRepository.findEvents(interactionId);
     }
 
+    // Общий порядок всех изменяющих команд карточки: проверка прав и входных данных, отпечаток запроса, резерв
+    // ключа повтора, и только потом сверка версии и запись. Любая ошибка после резерва откатывает всю
+    // транзакцию вместе с резервом, поэтому повтор после сбоя выполняется заново, а не «успешно» без записи.
     @Transactional
     public Interaction create(CrmProfile profile, InteractionCreateRequest request, String idempotencyKey) {
         Organization organization = requireVisibleOrganization(profile, request.organizationId());
@@ -144,6 +151,8 @@ public class InteractionService {
             return replayInteraction(profile.id(), CommandOperation.CREATE_INTERACTION, normalizedKey, fingerprint);
         }
 
+        // Работа получает снимок шаблона (копия этапов и переходов) и запоминает версию маршрута: последующая
+        // правка шаблона не меняет идущие работы, их переводят отдельной командой (WorkflowRolloutService).
         UUID interactionId = startInteraction(
                 new InteractionStart(
                         organization.id(),
@@ -189,6 +198,10 @@ public class InteractionService {
         );
     }
 
+    // Работа по записи источника стартует с первого этапа шаблона по умолчанию для вуза (источник этап не выбирает);
+    // шаблон блокируется, чтобы маршрут не сменился до снимка этапов. commandId — команда применения записи, уже
+    // зарезервированная вызывающим: события работы идут под ней, поэтому повторное применение той же версии не плодит
+    // работ. В архивной организации работа не создаётся.
     @Transactional
     public UUID createSourceInteraction(
             UUID organizationId,
@@ -215,6 +228,9 @@ public class InteractionService {
         );
     }
 
+    // Комментарий источника не меняет этап: событие COMMENTED идёт под командой применения записи, поэтому повтор
+    // находит её и второй комментарий не создаёт. Карточка блокируется и получает новую версию, как при любой правке:
+    // открытая у менеджера карточка даст конфликт версий, а не тихую перезапись.
     @Transactional
     public void appendSourceComment(
             UUID interactionId,
@@ -338,6 +354,8 @@ public class InteractionService {
         )) {
             return replayInteraction(profile.id(), CommandOperation.TRANSITION_INTERACTION, normalizedKey, fingerprint);
         }
+        // Версия сверяется ПОСЛЕ резерва ключа: повтор уже выполненной команды получает сохранённый результат, а не
+        // 409 из-за версии, которую эта же команда и подняла. Устаревшая версия новой команды даёт 409.
         requireExpectedVersion(visible.row(), expectedVersion);
         List<InteractionStage> stages = interactionRepository.findStages(interactionId);
         InteractionStage fromStage = currentStage(stages, visible.row());
@@ -350,6 +368,9 @@ public class InteractionService {
         if (transition.commentRequired() && comment == null) {
             throw new InteractionValidationException("comment", "Заполните значение");
         }
+        // Правило этапа «Подписание»: выйти из него вперёд нельзя, пока договор не подписан (см. AgreementStages).
+        agreementStages.requireSignedToLeave(interactionId, stages, fromStage, toStage);
+        // Условие version в самом UPDATE — вторая линия защиты от потерянного обновления независимо от блокировки строки.
         if (!interactionRepository.updateCurrentStage(interactionId, expectedVersion, toStage.id(), now)) {
             throw versionConflict(interactionId, visible.row().version());
         }
@@ -371,6 +392,8 @@ public class InteractionService {
                 resultVersion,
                 now
         );
+        // Файлы привязываются к событию уже после его создания и только проверенные, ещё ничем не занятые и
+        // относящиеся к этому этапу; иначе бросается ошибка и откатывается весь переход, а не часть действия.
         attachmentRepository.bindCleanUnbound(interactionId, toStage.id(), eventId, attachmentIds, now);
         Interaction updated = toInteraction(interactionRepository.findById(interactionId)
                 .orElseThrow(InteractionNotFoundException::new));
@@ -455,6 +478,8 @@ public class InteractionService {
         VisibleInteraction visible = requireVisibleInteractionForUpdate(profile, interactionId);
         requireStageEditor(profile);
         int expectedVersion = requiredVersion(request == null ? null : request.version());
+        // Правка этапов приходит пачкой операций и применяется целиком или не применяется вовсе: граф проверяется
+        // один раз по итогу, а не после каждой операции, чтобы промежуточные состояния не мешали составной правке.
         List<InteractionStageEditOperation> operations = requiredStageEditOperations(request == null ? null : request.operations());
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
         StageEditInteractionCommand command = new StageEditInteractionCommand(interactionId, expectedVersion, operations);
@@ -475,6 +500,8 @@ public class InteractionService {
         UUID currentStageId = visible.row().currentStageId();
         List<InteractionStage> previousStages = interactionRepository.findStages(interactionId);
         List<InteractionStage> stages = new ArrayList<>(previousStages);
+        // «Защищённые» этапы — те, на которые уже ссылаются события истории или файлы: их нельзя удалить или
+        // переставить, иначе история стала бы указывать на несуществующий или переехавший этап.
         Set<UUID> protectedStageIds = interactionRepository.findProtectedStageIds(interactionId);
         List<InteractionStageTransition> previousTransitions = interactionRepository.findTransitions(interactionId);
         List<InteractionStageTransition> transitions = previousTransitions;
@@ -482,9 +509,11 @@ public class InteractionService {
         for (InteractionStageEditOperation operation : operations) {
             StageEdit edit = applyStageEdit(stages, currentStageId, protectedStageIds, operation);
             normalizeStageOrders(stages);
+            // Переходы пересобираются после КАЖДОЙ операции, потому что следующая операция опирается на уже изменённый порядок.
             transitions = WorkflowGraph.rebuild(stages, transitions, edit.removedStageId(), edit.insertedStageId());
             changes.add(edit.description());
         }
+        // Переименование граф не затрагивает, поэтому проверка нужна только при изменении состава или связей.
         if (!stageIds(previousStages).equals(stageIds(stages)) || !transitions.equals(previousTransitions)) {
             WorkflowGraph.validate(stages, transitions, "operations");
         }
@@ -549,12 +578,15 @@ public class InteractionService {
         }
         requireExpectedVersion(visible.row(), expectedVersion);
         InteractionStage stage = targetStage(interactionRepository.findStages(interactionId), request.stageId(), "stageId");
+        // Текущий этап закрывается только переходом вперёд, чтобы у работы всегда был ровно один «текущий» этап.
         if (stage.id().equals(visible.row().currentStageId())) {
             throw new InteractionValidationException(
                     "stageId",
                     "Текущий этап завершается переходом; отметить выполненным можно другой этап"
             );
         }
+        // Отметить «Подписание» выполненным без подписанного договора нельзя: иначе правило этапа обходилось бы отметкой.
+        agreementStages.requireSignedToComplete(interactionId, stage);
         if (!interactionRepository.touchVersion(interactionId, expectedVersion, now)) {
             throw versionConflict(interactionId, visible.row().version());
         }
@@ -640,6 +672,8 @@ public class InteractionService {
         if (value == null) {
             throw new InteractionValidationException("completedOn", "Укажите дату выполнения");
         }
+        // Дата выполнения считается по часовому поясу заказчика (МСК), а не сервера: иначе вечером «сегодня» могло
+        // бы оказаться «завтра».
         if (value.isAfter(LocalDate.now(COMPLETION_ZONE))) {
             throw new InteractionValidationException("completedOn", "Дата выполнения не может быть позже сегодняшней");
         }
@@ -917,13 +951,13 @@ public class InteractionService {
         }
         int expectedVersion = requiredVersion(request.version());
         if (request.status() == null) {
-            throw new InteractionValidationException("status", "Выберите статус работы");
+            throw new InteractionValidationException("status", "Выберите статус взаимодействия");
         }
         String reason = optionalText(request.reason(), "reason", 1_000);
         if (reason == null && request.status() != InteractionWorkStatus.ACTIVE) {
             throw new InteractionValidationException(
                     "reason",
-                    request.status() == InteractionWorkStatus.COMPLETED ? "Укажите итог работы" : "Укажите причину приостановки"
+                    request.status() == InteractionWorkStatus.COMPLETED ? "Укажите итог взаимодействия" : "Укажите причину приостановки"
             );
         }
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
@@ -945,7 +979,7 @@ public class InteractionService {
         requireExpectedVersion(row, expectedVersion);
         InteractionMarks current = row.marks();
         if (current.status() == request.status()) {
-            throw new InteractionValidationException("status", "Работа уже в этом статусе");
+            throw new InteractionValidationException("status", "Взаимодействие уже в этом статусе");
         }
         InteractionMarks next = current.withStatus(request.status(), reason);
         return saveMarks(profile, visible, commandId, expectedVersion, next, InteractionEventType.STATUS_CHANGED,
@@ -994,6 +1028,7 @@ public class InteractionService {
         InteractionMarks current = row.marks();
         InteractionMarks next = current.withWaiting(request.waitingOn(), waitingNote);
         List<String> changes = flagChanges(current, next);
+        // Повтор без изменений не меняет версию и не пишет событие, но результат всё равно сохраняется под ключом.
         if (changes.isEmpty()) {
             return storeInteraction(commandId, toInteraction(row));
         }
@@ -1037,9 +1072,9 @@ public class InteractionService {
 
     private String statusDescription(InteractionWorkStatus status, String reason) {
         return switch (status) {
-            case ACTIVE -> reason == null ? "Работа возобновлена" : "Работа возобновлена: " + reason;
-            case PAUSED -> "Работа приостановлена. Причина: " + reason;
-            case COMPLETED -> "Работа завершена. Итог: " + reason;
+            case ACTIVE -> reason == null ? "Взаимодействие возобновлено" : "Взаимодействие возобновлено: " + reason;
+            case PAUSED -> "Взаимодействие приостановлено. Причина: " + reason;
+            case COMPLETED -> "Взаимодействие завершено. Итог: " + reason;
         };
     }
 
@@ -1059,6 +1094,7 @@ public class InteractionService {
         }
     }
 
+    // Моменты сравниваются как Instant: одно и то же время в другом часовом поясе не считается изменением.
     private boolean sameInstant(OffsetDateTime left, OffsetDateTime right) {
         return Objects.equals(left == null ? null : left.toInstant(), right == null ? null : right.toInstant());
     }
@@ -1108,6 +1144,8 @@ public class InteractionService {
                 );
     }
 
+    // Следующий шаг — частичное обновление: переданные поля заменяются, остальные остаются. Если итог совпал с
+    // текущим, план не трогается и в событие ничего не пишется (null), чтобы не засорять историю.
     private InteractionNextStep applyNextStep(InteractionRepository.InteractionRow row, NextStepPatch patch) {
         InteractionNextStep nextStep = resolveNextStep(row, patch);
         if (sameNextStep(row, nextStep)) {
@@ -1190,6 +1228,9 @@ public class InteractionService {
         );
     }
 
+    // Двигать можно только будущие этапы без событий, а ставить — после текущего или будущего: прошлое
+    // не переписывается. Переставленный этап помечается и как удалённый, и как вставленный, чтобы
+    // WorkflowGraph.rebuild сначала стянул старые переходы, а потом создал новые.
     private StageEdit moveStageAfter(
             List<InteractionStage> stages,
             UUID currentStageId,
@@ -1281,7 +1322,7 @@ public class InteractionService {
     private static void requireWorkableOrganization(boolean archived) {
         if (archived) {
             throw new InteractionValidationException(
-                    "organizationId", "Организация в архиве; восстановите её, чтобы начать новую работу"
+                    "organizationId", "Организация в архиве; восстановите её, чтобы начать новое взаимодействие"
             );
         }
     }
@@ -1294,6 +1335,8 @@ public class InteractionService {
         return new VisibleInteraction(row, organization);
     }
 
+    // Строка работы блокируется (FOR UPDATE) до любых проверок: две одновременные команды по одной карточке
+    // выполняются по очереди. Видимость вуза проверяется тут же, чужая карточка выглядит как «не найдена».
     private VisibleInteraction requireVisibleInteractionForUpdate(CrmProfile profile, UUID interactionId) {
         InteractionRepository.InteractionRow row = interactionRepository.findByIdForUpdate(interactionId)
                 .orElseThrow(InteractionNotFoundException::new);
@@ -1382,6 +1425,8 @@ public class InteractionService {
         return template;
     }
 
+    // Этапы работы получают собственные идентификаторы, а связь с этапом шаблона хранится отдельно
+    // (templateStageIds): по ней перевод на новую версию маршрута сопоставляет этапы.
     private InteractionWorkflowSnapshot snapshotWorkflow(WorkflowTemplate template) {
         Map<UUID, UUID> stageIds = new HashMap<>();
         Map<UUID, UUID> templateStageIds = new HashMap<>();

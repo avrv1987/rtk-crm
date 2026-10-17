@@ -1,0 +1,72 @@
+[
+  {
+    "externalId": "crm-contact-001",
+    "organizationExternalId": "crm-org-001",
+    "fullName": "Анна Проректорова (демо)",
+    "position": "Проректор по цифровизации",
+    "workPhone": "+7 000 000-01-01",
+    "workEmail": "prorector.a@example.test",
+    "role": "SIGNATORY",
+    "updatedAt": "2026-10-02T10:00:00+03:00"
+  },
+  {
+    "externalId": "crm-contact-002",
+    "organizationExternalId": "crm-org-001",
+    "fullName": "Борис Методистов (демо)",
+    "position": "Руководитель учебного центра",
+    "workPhone": "+7 000 000-01-02",
+    "workEmail": "metodist.a@example.test",
+    "role": "IMPLEMENTER",
+    "updatedAt": "2026-10-02T10:10:00+03:00"
+  },
+  {
+    "externalId": "crm-contact-003",
+    "organizationExternalId": "crm-org-002",
+    "fullName": "Виктор Ректоров (демо)",
+    "position": "Первый проректор",
+    "workPhone": "+7 000 000-02-01",
+    "workEmail": "rector.b@example.test",
+    "role": "SIGNATORY",
+    "updatedAt": "2026-10-02T10:20:00+03:00"
+  },
+  {
+    "externalId": "crm-contact-004",
+    "organizationExternalId": "crm-org-003",
+    "fullName": "Галина Заведующая (демо)",
+    "position": "Заведующая отделением",
+    "workPhone": "+7 000 000-03-01",
+    "workEmail": "head.college@example.test",
+    "role": "IMPLEMENTER",
+    "updatedAt": "2026-10-02T10:30:00+03:00"
+  },
+  {
+    "externalId": "crm-contact-005",
+    "organizationExternalId": "crm-org-004",
+    "fullName": "Дарья Учительская (демо)",
+    "position": "Учитель информатики",
+    "workPhone": "+7 000 000-04-01",
+    "workEmail": "teacher.school@example.test",
+    "role": "TEACHER",
+    "updatedAt": "2026-10-02T10:40:00+03:00"
+  },
+  {
+    "externalId": "crm-contact-006",
+    "organizationExternalId": "crm-org-005",
+    "fullName": "Евгений Директоров (демо)",
+    "position": "Директор колледжа",
+    "workPhone": "+7 000 000-05-01",
+    "workEmail": "director.zarya@example.test",
+    "role": "SIGNATORY",
+    "updatedAt": "2026-10-02T10:50:00+03:00"
+  },
+  {
+    "externalId": "crm-contact-007",
+    "organizationExternalId": "crm-org-005",
+    "fullName": "Жанна Секретарёва (демо)",
+    "position": "Секретарь директора",
+    "workPhone": "+7 000 000-05-02",
+    "workEmail": "office.zarya@example.test",
+    "role": "OTHER",
+    "updatedAt": "2026-10-02T10:55:00+03:00"
+  }
+]

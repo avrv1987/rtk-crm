@@ -9,6 +9,7 @@ import {
   type NewEmployee,
   type Team
 } from '../../shared/api/client'
+import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { CardDialog } from '../interactions/cardUi'
 import { commandErrorMessage, handledSessionError, roleLabels, type SessionHandlers } from './adminShared'
 
@@ -173,7 +174,7 @@ export const EmployeeAccountDialog = ({
   const renderError = () => error !== undefined && (
     <div className="interaction-command-error" role="alert">
       <p>{commandErrorMessage(error)}</p>
-      {error instanceof ApiError && <p className="request-id">Request ID: {error.requestId}</p>}
+      <SupportDetails requestId={error instanceof ApiError ? error.requestId : undefined} />
     </div>
   )
 

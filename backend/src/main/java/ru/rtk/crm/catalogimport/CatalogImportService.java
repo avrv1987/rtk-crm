@@ -125,6 +125,9 @@ public class CatalogImportService {
         return workbookReader.inspect(file);
     }
 
+    // Импорт идёт в два шага. Предпросмотр ничего не меняет в каталогах: он строит план по каждой строке (создать,
+    // обновить, без изменений, ошибка, конфликт), запоминает версии затронутых записей и сохраняет план.
+    // Применение исполняет сохранённый план, а не разбирает файл заново, поэтому показанное совпадает с применённым.
     @Transactional
     public CatalogImportPreviewResponse preview(
             CrmProfile profile,
@@ -169,12 +172,16 @@ public class CatalogImportService {
             plans.forEach(plan -> planDirectionProgram(plan, catalogs));
         } else {
             AgreementCatalogs catalogs = agreementCatalogs(normalizedMapping);
+            // Строки с данными договора обрабатываются первыми: так строка без этих данных, лишь повторяющая пару
+            // «вуз — ПО», уже ничего не создаёт и не пытается занять договор раньше строки, которая его задаёт.
             AgreementPlanning planning = new AgreementPlanning(new HashMap<>(), new HashSet<>(), new HashMap<>());
             plans.stream()
                     .sorted(Comparator.comparing((PlannedRow plan) -> !agreementRequested(plan)))
                     .forEach(plan -> planAgreement(plan, catalogs, planning));
             inheritManagers(plans, planning, normalizedMapping.unassignedTeamId());
         }
+        // Конфликты между строками файла ищутся после планирования всех строк: две строки об одной записи с разными
+        // значениями помечаются обе, а не только вторая.
         PlannedRow.resolveConflicts(plans);
         return plans.stream().map(PlannedRow::stored).toList();
     }
@@ -191,6 +198,9 @@ public class CatalogImportService {
         return repository.findJob(jobId).orElseThrow(CatalogImportJobNotFoundException::new);
     }
 
+    // Применение: ключ повтора и отпечаток запроса резервируются в той же транзакции, что и запись. Затем план
+    // блокируется, и применить можно только предпросмотр в статусе PREVIEWED нужной версии: повторное нажатие
+    // или применение устаревшего плана даёт 409 вместо повторной записи.
     @Transactional
     public CatalogImportApplyResponse apply(
             CrmProfile profile,
@@ -230,6 +240,8 @@ public class CatalogImportService {
         Map<UUID, ImportAgreementLink> missingLinks = missingLinks(stored).stream()
                 .collect(Collectors.toMap(ImportAgreementLink::agreementId, link -> link));
         List<ImportAgreementLink> archivedLinks = new ArrayList<>();
+        // Договоры, которых нет в загруженном реестре, архивируются только по явному выбору администратора, и только
+        // те, что действительно предложены в предпросмотре: молчаливое массовое архивирование недопустимо.
         for (UUID agreementId : normalizedRequest.archiveAgreementIds()) {
             ImportAgreementLink link = missingLinks.get(agreementId);
             if (link == null) {
@@ -249,6 +261,7 @@ public class CatalogImportService {
             }
             selectedRows.add(row);
         }
+        // Строки применяются в порядке файла, чтобы результат не зависел от порядка выбора в запросе.
         selectedRows.sort(Comparator.comparingInt(CatalogImportStoredRow::rowNumber));
         try {
             OffsetDateTime now = OffsetDateTime.now();
@@ -281,6 +294,8 @@ public class CatalogImportService {
             CatalogImportApplyResponse response = new CatalogImportApplyResponse(jobId, stored.id());
             commandIdempotencyRepository.complete(commandId, write(response));
             return response;
+        // Нарушение уникальности означает, что запись с тем же ключом появилась после предпросмотра: приложение
+        // сообщает о конфликте версий, и транзакция откатывается целиком, ничего не применяя наполовину.
         } catch (DataIntegrityViolationException exception) {
             throw InteractionConflictException.catalogImportVersion(stored.version());
         }
@@ -355,6 +370,8 @@ public class CatalogImportService {
         Optional<ImportProfile> manager = planManager(row, catalogs);
         Resolved<ImportOrganization> organization = planOrganization(row, catalogs, planning, organizationName, manager);
 
+        // Вендор сравнивается без организационной формы и кавычек (CatalogNames.vendorKey): «ООО Ромашка» и «Ромашка»
+        // считаются одним вендором, иначе реестр размножил бы одного поставщика.
         String vendorKey = CatalogNames.vendorKey(vendorName);
         Resolved<ImportCatalogEntry> vendor = resolve(
                 row, "vendor", "vendorName", catalogs.vendors(), null,
@@ -644,6 +661,8 @@ public class CatalogImportService {
         }
         row.claim("agreement", agreement.identity(), "contractNumber", next + "\n" + comment, "");
         if (!comment.isEmpty()) {
+            // Комментарий из файла переносится в историю один раз: ключ строится от договора и текста, и повторная
+            // загрузка того же реестра дубль комментария не создаёт.
             String commentKey = "comment:" + CommandFingerprint.of(objectMapper, List.of(agreement.key(), comment));
             boolean imported = repository.hasImportEvent(commentKey);
             row.values.put("commentExternalKey", commentKey);
@@ -715,6 +734,9 @@ public class CatalogImportService {
                 : List.of();
     }
 
+    // Договор по паре «вуз — ПО» ищется сначала по номеру; без номера в файле допускается договор без номера.
+    // Договор с другим номером этим поиском не находится: строка получает конфликт и требует UUID договора
+    // или ключ, чтобы не перезаписать чужой договор и не создать дубль.
     private static List<ImportAgreement> naturalAgreements(List<ImportAgreement> linked, String contractNumber) {
         List<ImportAgreement> sameContract = linked.stream()
                 .filter(value -> normalized(value.values().contractNumber()).equals(normalized(contractNumber)))
@@ -760,6 +782,8 @@ public class CatalogImportService {
             row.error(field, "Запись с указанным UUID не найдена");
             return Optional.empty();
         }
+        // Порядок сопоставления записи каталога: явный UUID из файла, затем внешний ключ, затем название. Если UUID
+        // и ключ указывают на разные записи, это конфликт, а не выбор одной из них.
         Optional<T> byKey = index.byKey(key.value());
         if (explicit.isPresent() && byKey.isPresent() && !explicit.get().id().equals(byKey.get().id())) {
             row.conflict(field, "Ключ и указанный UUID относятся к разным записям");
@@ -772,6 +796,8 @@ public class CatalogImportService {
             }
             return found;
         }
+        // По названию подхватывается запись без внешнего ключа (она получает его при импорте). Запись, уже связанная
+        // с другим ключом, по названию не берётся, если ключ в файле задан явно: иначе две разные записи сольются.
         List<T> candidates = sameName.stream().filter(value -> key.derived() || value.externalKey() == null).toList();
         if (candidates.isEmpty() && !sameName.isEmpty()) {
             row.conflict(field, "Запись с таким названием уже связана с ключом «" + sameName.getFirst().externalKey() + "»");
@@ -828,6 +854,8 @@ public class CatalogImportService {
         }
     }
 
+    // Запись каталога создаётся или обновляется под контролем версии из предпросмотра (requireExpectedVersion):
+    // если её успели изменить, применение прерывается. Запись с тем же названием и уже заданным ключом не трогается.
     private UUID ensureCatalogEntry(
             String table,
             String entity,
@@ -947,6 +975,8 @@ public class CatalogImportService {
                 : repository.findOrganizationById(id);
         if (existing.isEmpty()) {
             requireCreatable(id);
+            // Новый вуз попадает в команду менеджера; без менеджера — в выбранную команду «для вузов без менеджера».
+            // Если состояние изменилось с предпросмотра (профиль деактивирован, команда архивирована), применение прерывается.
             UUID teamId = manager == null ? uuid(values.get("organizationTeamId")) : manager.teamId();
             if (teamId == null || (manager == null && !repository.activeTeamExists(teamId))) {
                 throw InteractionConflictException.catalogImportVersion(0);
@@ -999,6 +1029,8 @@ public class CatalogImportService {
         return organization.id();
     }
 
+    // Смена владельца вуза через импорт ведёт себя как ручное назначение: версия вуза, ревизия доступа обоих
+    // менеджеров и событие истории назначений с причиной IMPORT.
     private void changeOwner(
             ImportOrganization organization,
             ImportProfile manager,
@@ -1205,6 +1237,8 @@ public class CatalogImportService {
         );
     }
 
+    // Если при предпросмотре запись была найдена (есть UUID), а при применении её уже нет, создавать новую
+    // нельзя: это означало бы дубль удалённой записи.
     private static void requireCreatable(UUID resolvedId) {
         if (resolvedId != null) {
             throw InteractionConflictException.catalogImportVersion(0);

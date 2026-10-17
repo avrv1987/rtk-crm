@@ -43,6 +43,7 @@ const rememberShown = (profileId: string) => {
 
 const reminderCount = (digest: ReminderDigest) => (
   digest.overdueTotal + digest.upcomingTotal + digest.expiringLicenses.length + digest.trainingCycles.length
+  + digest.qualificationDue.length
 )
 
 const cardLink = (organizationId: string, interactionId: string) => `#/organizations/${organizationId}/${interactionId}`
@@ -136,28 +137,26 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
   }
 
   const overdue = state.kind === 'ready' ? state.digest.overdueTotal : null
-  const count = state.kind === 'ready' ? reminderCount(state.digest) : null
 
   return (
     <div className="reminder-center" ref={rootRef}>
-      <a
-        className={`reminder-center__counter${overdue !== null && overdue > 0 ? ' reminder-center__counter--overdue' : ''}`}
-        href="#/work?due=OVERDUE"
-        aria-label={overdue === null ? 'Просроченные шаги' : `Просрочено шагов: ${overdue}. Открыть список`}
-      >
-        Просрочено: {overdue ?? '…'}
-      </a>
       <button
         ref={buttonRef}
         type="button"
-        className={`button--secondary reminder-center__open${fresh ? ' reminder-center__open--fresh' : ''}`}
+        className={`reminder-center__open${fresh ? ' reminder-center__open--fresh' : ''}`}
         aria-expanded={open}
         aria-controls={`${titleId}-panel`}
+        aria-label={`Напоминания${overdue === null ? '' : `, просрочено шагов: ${overdue}`}${fresh ? ', новая сводка на сегодня' : ''}`}
+        title="Напоминания"
+        data-overdue={overdue ?? undefined}
         onClick={() => open ? closePanel() : openPanel()}
       >
-        Напоминания
-        {count !== null && count > 0 && <span className="reminder-center__badge">{count}</span>}
-        {fresh && <span className="reminder-center__sr">, новая сводка на сегодня</span>}
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+          <path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+          <path d="M10 21h4" />
+        </svg>
+        {overdue !== null && overdue > 0 && <span className="reminder-center__badge" aria-hidden="true">{overdue}</span>}
+        {fresh && overdue === 0 && <span className="reminder-center__dot" aria-hidden="true" />}
       </button>
       <div
         id={`${titleId}-panel`}
@@ -209,7 +208,7 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
                   ))}
                 </ul>
               )}
-              {state.digest.overdueTotal > state.digest.overdue.length && (
+              {state.digest.overdueTotal > 0 && (
                 <a href="#/work?due=OVERDUE">Все просроченные ({state.digest.overdueTotal})</a>
               )}
             </section>
@@ -256,6 +255,22 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
                       <span>{training.organizationName}</span>
                       <span className="status status--missing">
                         {training.stageName}: {formatDate(training.trainedAt.slice(0, 10))}, следующий цикл до {formatDate(training.nextCycleOn)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            <section aria-labelledby={`${titleId}-qualification`}>
+              <h3 id={`${titleId}-qualification`}>Пора планировать повышение квалификации</h3>
+              {state.digest.qualificationDue.length === 0 ? <p>Таких взаимодействий нет.</p> : (
+                <ul className="reminder-center__list">
+                  {state.digest.qualificationDue.map((item) => (
+                    <li key={item.interactionId}>
+                      <a href={cardLink(item.organizationId, item.interactionId)}>{item.title}</a>
+                      <span>{item.organizationName}</span>
+                      <span className="status status--missing">
+                        Обучение преподавателей {formatDate(item.trainedOn)}; этап «{item.stageName}» не отмечен
                       </span>
                     </li>
                   ))}

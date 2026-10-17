@@ -193,12 +193,12 @@ public record ReportRequest(
         }
         if (!normalizedFilters.workStatuses().isEmpty()) {
             throw new InteractionValidationException(
-                    "filters.workStatuses", "Фильтр по состоянию работы недоступен для отчёта «Востребованность программ»"
+                    "filters.workStatuses", "Фильтр по состоянию взаимодействия недоступен для отчёта «Востребованность программ»"
             );
         }
         if (!normalizedFilters.flags().isEmpty()) {
             throw new InteractionValidationException(
-                    "filters.flags", "Фильтр по отметкам работы недоступен для отчёта «Востребованность программ»"
+                    "filters.flags", "Фильтр по отметкам взаимодействия недоступен для отчёта «Востребованность программ»"
             );
         }
         if (!normalizedFilters.agreement().unrestricted()) {
@@ -227,11 +227,11 @@ public record ReportRequest(
                 || !normalizedFilters.workStatuses().isEmpty() || !normalizedFilters.flags().isEmpty()
                 || !normalizedFilters.agreement().unrestricted()) {
             throw new InteractionValidationException(
-                    "filters", "Отчёт «Реализация соглашений» отбирается по вузам, типу организации, ответственным и периоду"
+                    "filters", "Отчёт «Реализация договоров» отбирается по вузам, типу организации, ответственным и периоду"
             );
         }
         if (groupBy != null) {
-            throw new InteractionValidationException("groupBy", "Для отчёта «Реализация соглашений» диаграмма не строится");
+            throw new InteractionValidationException("groupBy", "Для отчёта «Реализация договоров» диаграмма не строится");
         }
     }
 
@@ -249,6 +249,8 @@ public record ReportRequest(
         return new StatisticsRequest(kind, groupBy, from, to, periodBasis, filters, asOf, seriesBy);
     }
 
+    // Период — полуоткрытый интервал [from; to + 1 день) по московскому времени: «по» включает весь последний день,
+    // а событие в полночь следующих суток уже не входит. Так периоды можно стыковать без пропусков и двойного счёта.
     public OffsetDateTime fromAt() {
         return from == null ? null : from.atStartOfDay(ZONE).toOffsetDateTime();
     }
@@ -257,12 +259,19 @@ public record ReportRequest(
         return to == null ? null : to.plusDays(1).atStartOfDay(ZONE).toOffsetDateTime();
     }
 
+    // Срез «на дату» берёт состояние на конец этого дня, поэтому граница — начало следующих суток.
     public OffsetDateTime asOfAt() {
         return asOf == null ? null : asOf.plusDays(1).atStartOfDay(ZONE).toOffsetDateTime();
     }
 
     public LocalDate runsAsOf() {
-        return to == null ? LocalDate.now(ZONE) : to;
+        // Наблюдений Moodle в будущем не бывает: срез на дату после сегодняшней показал бы плановые даты потоков как факт.
+        LocalDate today = LocalDate.now(ZONE);
+        return to == null || to.isAfter(today) ? today : to;
+    }
+
+    public boolean periodNotEnded() {
+        return to != null && to.isAfter(LocalDate.now(ZONE));
     }
 
     public OffsetDateTime learningAt() {

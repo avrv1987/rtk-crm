@@ -45,6 +45,8 @@ public class SourceRepository {
             SELECT s.mapping_id, s.source_record_id, s.organization_id, s.program_id, s.course_id, s.group_id,
                    s.course_name, s.group_name, s.participants_count, s.teachers_count, s.completed_count,
                    s.not_completed_count, s.unknown_count, s.groups_count, s.observed_at, s.changed_at, s.interaction_id,
+                   s.active_7d_count, s.active_30d_count, s.never_accessed_count, s.inactive_count,
+                   s.teachers_active_7d_count, s.teachers_active_14d_count,
                    m.run_starts_on, m.run_ends_on, m.run_kind
             FROM learning_snapshots s
             JOIN source_mappings m ON m.id = s.mapping_id
@@ -63,11 +65,15 @@ public class SourceRepository {
             FROM source_mappings
             """;
 
+    // Окно цикла карточки: цикл начинается со своей даты и длится до начала следующего (previous_interaction_id). У
+    // карточки без цикла границ нет.
     private static final String CYCLE_WINDOW = """
             LEFT JOIN interaction_cycles cycle_start ON cycle_start.interaction_id = i.id
             LEFT JOIN interaction_cycles cycle_next ON cycle_next.previous_interaction_id = i.id
             """;
 
+    // Поток относится к карточке, если его начало внутри окна цикла; поток без даты начала в цикл с известным началом
+    // не входит.
     private static final String IN_CYCLE_WINDOW = """
             (cycle_start.starts_on IS NULL OR (m.run_starts_on IS NOT NULL AND m.run_starts_on >= cycle_start.starts_on))
             AND (cycle_next.starts_on IS NULL OR m.run_starts_on IS NULL OR m.run_starts_on < cycle_next.starts_on)
@@ -79,7 +85,12 @@ public class SourceRepository {
         this.jdbcClient = jdbcClient;
     }
 
+    // Последний запуск выбирается по created_at; при совпадении времени порядок решал бы случайный id, поэтому время
+    // запуска внутри источника строго растёт.
     void insertRun(UUID id, SourceCode source, UUID startedBy, SyncTrigger trigger, UUID organizationId, OffsetDateTime now) {
+        OffsetDateTime last = jdbcClient.sql("SELECT MAX(created_at) FROM sync_runs WHERE source = :source")
+                .param("source", source.name()).query(OffsetDateTime.class).optional().orElse(null);
+        OffsetDateTime createdAt = last != null && !now.isAfter(last) ? last.plusNanos(1_000) : now;
         jdbcClient.sql("""
                 INSERT INTO sync_runs (id, source, status, started_by, run_trigger, organization_id, created_at)
                 VALUES (:id, :source, 'PENDING', :startedBy, :trigger, :organizationId, :createdAt)
@@ -89,7 +100,7 @@ public class SourceRepository {
                 .param("startedBy", startedBy)
                 .param("trigger", trigger.name())
                 .param("organizationId", organizationId)
-                .param("createdAt", now)
+                .param("createdAt", createdAt)
                 .update();
     }
 
@@ -102,6 +113,7 @@ public class SourceRepository {
                 .single() > 0;
     }
 
+    // Условие status = 'PENDING' делает захват атомарным: второй исполнитель получит 0 строк и запуск не начнёт.
     boolean claimRun(UUID id, OffsetDateTime updatedSince, OffsetDateTime now) {
         return jdbcClient.sql("""
                 UPDATE sync_runs
@@ -114,6 +126,8 @@ public class SourceRepository {
                 .update() == 1;
     }
 
+    // Частичный запуск тоже SUCCEEDED, о непрочитанных курсах говорит сообщение. Условие RUNNING не даёт затереть
+    // запуск, уже помеченный прерванным.
     void completeRun(UUID id, SyncTotals totals, String message, OffsetDateTime now) {
         jdbcClient.sql("""
                 UPDATE sync_runs
@@ -129,11 +143,12 @@ public class SourceRepository {
                 .param("skipped", totals.skipped())
                 .param("needsMapping", totals.needsMapping())
                 .param("failed", totals.failed())
-                .param("message", message)
+                .param("message", limitError(message))
                 .param("finishedAt", now)
                 .update();
     }
 
+    // Уже завершённый запуск в ошибку не переводится.
     void failRun(UUID id, String code, String message, OffsetDateTime now) {
         jdbcClient.sql("""
                 UPDATE sync_runs
@@ -151,6 +166,7 @@ public class SourceRepository {
         jdbcClient.sql("DELETE FROM sync_runs WHERE id = :id").param("id", id).update();
     }
 
+    // Только запуски, созданные до старта этого процесса: поставленные уже после старта не трогаются.
     int failUnfinishedCreatedBefore(OffsetDateTime before, String code, String message) {
         return jdbcClient.sql("""
                 UPDATE sync_runs
@@ -242,6 +258,7 @@ public class SourceRepository {
                 .optional();
     }
 
+    // Курсор только растёт: запоздавшая или повторная загрузка не отодвигает его назад.
     void advanceUpdatedSince(SourceCode source, OffsetDateTime updatedSince, OffsetDateTime now) {
         jdbcClient.sql("""
                 UPDATE sources
@@ -254,11 +271,21 @@ public class SourceRepository {
                 .update();
     }
 
+    // FOR UPDATE сериализует применение одной записи при параллельных запусках и ручном переприменении.
     Optional<StoredRecord> findRecordForUpdate(SourceCode source, String recordType, String externalId) {
         return jdbcClient.sql(RECORD_SELECT + """
                 WHERE source = :source AND record_type = :recordType AND external_id = :externalId
                 FOR UPDATE
                 """)
+                .param("source", source.name())
+                .param("recordType", recordType)
+                .param("externalId", externalId)
+                .query(this::mapRecord)
+                .optional();
+    }
+
+    Optional<StoredRecord> findRecord(SourceCode source, String recordType, String externalId) {
+        return jdbcClient.sql(RECORD_SELECT + "WHERE source = :source AND record_type = :recordType AND external_id = :externalId")
                 .param("source", source.name())
                 .param("recordType", recordType)
                 .param("externalId", externalId)
@@ -314,18 +341,22 @@ public class SourceRepository {
                 .list();
     }
 
-    List<StoredRecord> findWebsiteRecordsLinkedTo(String column, UUID targetId, int limit) {
+    // Кроме записей с этим вузом или программой берутся ожидающие сопоставления: ссылки у них ещё нет, а новый выбор
+    // мог их разрешить. Имя столбца подставляется только из двух допустимых значений, параметром оно быть не может.
+    List<StoredRecord> findRecordsLinkedTo(SourceCode source, String column, UUID targetId, int limit) {
         return jdbcClient.sql(RECORD_SELECT + """
-                WHERE source = 'WEBSITE' AND (%s = :targetId OR status = 'NEEDS_MAPPING')
+                WHERE source = :source AND (%s = :targetId OR status = 'NEEDS_MAPPING')
                 ORDER BY updated_at, id
                 LIMIT :limit
                 """.formatted(column.equals("program_id") ? "program_id" : "organization_id"))
+                .param("source", source.name())
                 .param("targetId", targetId)
                 .param("limit", limit)
                 .query(this::mapRecord)
                 .list();
     }
 
+    // Записи курса — он сам и его группы с ключом «курс:группа». Двоеточие в шаблоне не даёт курсу 1 захватить курс 12.
     List<StoredRecord> findMoodleRecordsOfCourse(String courseKey) {
         return jdbcClient.sql(RECORD_SELECT + """
                 WHERE source = 'MOODLE' AND (external_id = :courseKey OR external_id LIKE :groups)
@@ -335,6 +366,22 @@ public class SourceRepository {
                 .param("groups", courseKey + ":%")
                 .query(this::mapRecord)
                 .list();
+    }
+
+    // Меняются только статус и ошибка: данные записи, снимки и карточки остаются, поэтому прежние числа курса не
+    // пропадают.
+    int failMoodleCourseRecords(String courseKey, String error, UUID runId, OffsetDateTime now) {
+        return jdbcClient.sql("""
+                UPDATE source_records
+                SET status = 'FAILED', error = :error, sync_run_id = :runId, updated_at = :now
+                WHERE source = 'MOODLE' AND (external_id = :courseKey OR external_id LIKE :groups)
+                """)
+                .param("courseKey", courseKey)
+                .param("groups", courseKey + ":%")
+                .param("error", limitError(error))
+                .param("runId", runId)
+                .param("now", now)
+                .update();
     }
 
     Optional<StoredRecord> findMoodleRecordForUpdate(String kind, String externalKey) {
@@ -383,6 +430,9 @@ public class SourceRepository {
                 .update();
     }
 
+    // У оплат нет даты изменения во внешней системе (в записи время загрузки), поэтому повторная загрузка
+    // external_updated_at и submitted_at не сдвигает. Переприменение без запуска (runId = null) прежний запуск
+    // сохраняет.
     void updateRecord(UUID id, RecordVersion item, ApplyResult result, UUID runId, OffsetDateTime now) {
         jdbcClient.sql("""
                 UPDATE source_records
@@ -434,6 +484,8 @@ public class SourceRepository {
                 .optional();
     }
 
+    // Сопоставление с архивной программой целей не даёт: запись останется ждать нового выбора. Потоки идут по
+    // возрастанию начала: от этого порядка зависит выбор текущего, будущего и прошлого потока в MoodleSnapshotApplier.
     List<MappedTarget> findLearningTargets(SourceCode source, String kind, String externalKey) {
         return jdbcClient.sql(TARGET_SELECT + """
                 WHERE m.source = :source AND m.kind = :kind AND m.external_key = :externalKey AND p.archived = FALSE
@@ -527,14 +579,16 @@ public class SourceRepository {
                 .query((resultSet, rowNumber) -> {
                     LocalDate endsOn = resultSet.getObject("run_ends_on", LocalDate.class);
                     OffsetDateTime observedAt = resultSet.getObject("observed_at", OffsetDateTime.class);
+                    // closed — поток закончился; последний флаг — наблюдение по открытому потоку старше начала
+                    // последнего полного запуска, то есть запуск его не подтвердил.
                     boolean closed = endsOn != null && !today.isBefore(endsOn);
                     return new SourceMappingView(
                             resultSet.getObject("id", UUID.class),
                             SourceCode.valueOf(resultSet.getString("source")),
                             resultSet.getString("kind"),
                             resultSet.getString("external_key"),
-                            mappingLabel(resultSet.getString("kind"), resultSet.getString("external_key"),
-                                    resultSet.getString("payload")),
+                            mappingLabel(SourceCode.valueOf(resultSet.getString("source")), resultSet.getString("kind"),
+                                    resultSet.getString("external_key"), resultSet.getString("payload")),
                             resultSet.getObject("organization_id", UUID.class),
                             resultSet.getString("organization_name"),
                             resultSet.getObject("program_id", UUID.class),
@@ -555,6 +609,8 @@ public class SourceRepository {
                 .list();
     }
 
+    // Карточка цикла для потока: начало потока должно попасть в окно цикла. Карточка вообще без циклов подходит в
+    // последнюю очередь, из равных берётся недавно обновлённая.
     Optional<UUID> findCycleInteraction(UUID organizationId, UUID programId, LocalDate runStartsOn) {
         return jdbcClient.sql("""
                 SELECT i.id
@@ -575,6 +631,8 @@ public class SourceRepository {
                 .optional();
     }
 
+    // Повтор применения находится по ключу в журнале команд. Карточка из результата принимается, только если
+    // принадлежит этому вузу: иначе после смены вуза комментарий ушёл бы в карточку прежнего.
     Optional<UUID> findAppliedInteraction(List<String> keys, UUID organizationId) {
         for (String key : keys) {
             Optional<UUID> interactionId = jdbcClient.sql("""
@@ -597,6 +655,7 @@ public class SourceRepository {
         return Optional.empty();
     }
 
+    // Для групп курса в шаблон передаётся «курс:%», для курса целиком — точный ключ.
     boolean hasMapping(SourceCode source, String kind, String externalKeyPattern) {
         return jdbcClient.sql("""
                 SELECT COUNT(*) FROM source_mappings
@@ -623,6 +682,8 @@ public class SourceRepository {
                 .single() > 0;
     }
 
+    // История наблюдений принадлежит тому же сопоставлению и потоку: когда снимок убирается, она к потоку уже не
+    // относится.
     int deleteSnapshot(UUID mappingId) {
         jdbcClient.sql("DELETE FROM learning_observations WHERE mapping_id = :mappingId").param("mappingId", mappingId).update();
         return jdbcClient.sql("DELETE FROM learning_snapshots WHERE mapping_id = :mappingId")
@@ -630,6 +691,8 @@ public class SourceRepository {
                 .update();
     }
 
+    // Ссылка на карточку сбрасывается: карточка принадлежит прежним вузу и программе, новая найдётся или создастся при
+    // переприменении.
     void moveSnapshot(UUID mappingId, UUID organizationId, UUID programId) {
         jdbcClient.sql("""
                 UPDATE learning_snapshots SET organization_id = :organizationId, program_id = :programId, interaction_id = NULL
@@ -641,6 +704,8 @@ public class SourceRepository {
                 .update();
     }
 
+    // Один снимок на сопоставление: сначала UPDATE, при отсутствии строки INSERT. Ссылку на карточку запуск без события
+    // не стирает (COALESCE). Запись источника заблокирована вызывающим, поэтому гонки двух вставок нет.
     void saveSnapshot(UUID sourceRecordId, LearningUnit unit, MappedTarget target, OffsetDateTime observedAt,
                       OffsetDateTime changedAt, UUID runId, UUID interactionId) {
         Map<String, Object> parameters = new HashMap<>();
@@ -659,6 +724,7 @@ public class SourceRepository {
         parameters.put("notCompleted", unit.notCompleted());
         parameters.put("unknown", unit.unknown());
         parameters.put("groupsCount", unit.groupsCount());
+        putActivity(parameters, unit.activity());
         parameters.put("observedAt", observedAt);
         parameters.put("changedAt", changedAt);
         parameters.put("runId", runId);
@@ -668,6 +734,9 @@ public class SourceRepository {
                     group_id = :groupId, course_name = :courseName, group_name = :groupName, participants_count = :participants,
                     teachers_count = :teachers, completed_count = :completed, not_completed_count = :notCompleted,
                     unknown_count = :unknown, groups_count = :groupsCount, observed_at = :observedAt,
+                    active_7d_count = :active7d, active_30d_count = :active30d, never_accessed_count = :neverAccessed,
+                    inactive_count = :inactive, teachers_active_7d_count = :teachersActive7d,
+                    teachers_active_14d_count = :teachersActive14d,
                     changed_at = :changedAt, sync_run_id = COALESCE(:runId, sync_run_id),
                     interaction_id = COALESCE(:interactionId, interaction_id)
                 WHERE mapping_id = :mappingId
@@ -679,11 +748,15 @@ public class SourceRepository {
                     INSERT INTO learning_snapshots (
                         mapping_id, source_record_id, organization_id, program_id, course_id, group_id, course_name,
                         group_name, participants_count, teachers_count, completed_count, not_completed_count, unknown_count,
-                        groups_count, observed_at, changed_at, sync_run_id, interaction_id
+                        groups_count, observed_at, changed_at, sync_run_id, interaction_id, active_7d_count,
+                        active_30d_count, never_accessed_count, inactive_count, teachers_active_7d_count,
+                        teachers_active_14d_count
                     ) VALUES (
                         :mappingId, :id, :organizationId, :programId, :courseId, :groupId, :courseName,
                         :groupName, :participants, :teachers, :completed, :notCompleted, :unknown,
-                        :groupsCount, :observedAt, :changedAt, :runId, :interactionId
+                        :groupsCount, :observedAt, :changedAt, :runId, :interactionId, :active7d,
+                        :active30d, :neverAccessed, :inactive, :teachersActive7d,
+                        :teachersActive14d
                     )
                     """)
                     .params(parameters)
@@ -716,7 +789,17 @@ public class SourceRepository {
         parameters.put("notCompleted", counts.notCompleted());
         parameters.put("unknown", counts.unknown());
         parameters.put("groupsCount", counts.groupsCount());
+        putActivity(parameters, counts.activity());
         saveObservation(parameters, confirmedAt, true);
+    }
+
+    private static void putActivity(Map<String, Object> parameters, LearningUnit.Activity activity) {
+        parameters.put("active7d", activity == null ? null : activity.active7d());
+        parameters.put("active30d", activity == null ? null : activity.active30d());
+        parameters.put("neverAccessed", activity == null ? null : activity.neverAccessed());
+        parameters.put("inactive", activity == null ? null : activity.inactive());
+        parameters.put("teachersActive7d", activity == null ? null : activity.teachersActive7d());
+        parameters.put("teachersActive14d", activity == null ? null : activity.teachersActive14d());
     }
 
     void moveDemoRunStart(UUID mappingId, LocalDate startsOn, OffsetDateTime now) {
@@ -730,6 +813,9 @@ public class SourceRepository {
                 .update();
     }
 
+    // Наблюдение — интервал от observed_from (= changed_at снимка): срез на дату строится из этой истории. Новая строка
+    // появляется только при изменении счётчиков; иначе подтверждение продвигается (confirmed_at только растёт), а числа
+    // активности обновляются, потому что они меняются без смены changed_at.
     private void saveObservation(Map<String, Object> parameters, OffsetDateTime confirmedAt, boolean demo) {
         parameters.put("confirmedAt", confirmedAt);
         parameters.put("demo", demo);
@@ -737,6 +823,9 @@ public class SourceRepository {
                 UPDATE learning_observations
                 SET participants_count = :participants, teachers_count = :teachers, completed_count = :completed,
                     not_completed_count = :notCompleted, unknown_count = :unknown, groups_count = :groupsCount,
+                    active_7d_count = :active7d, active_30d_count = :active30d, never_accessed_count = :neverAccessed,
+                    inactive_count = :inactive, teachers_active_7d_count = :teachersActive7d,
+                    teachers_active_14d_count = :teachersActive14d,
                     confirmed_at = CASE WHEN confirmed_at > :confirmedAt THEN confirmed_at ELSE :confirmedAt END
                 WHERE mapping_id = :mappingId AND observed_from = :changedAt
                 """)
@@ -746,10 +835,12 @@ public class SourceRepository {
             jdbcClient.sql("""
                     INSERT INTO learning_observations (
                         mapping_id, observed_from, confirmed_at, participants_count, teachers_count, completed_count,
-                        not_completed_count, unknown_count, groups_count, demo
+                        not_completed_count, unknown_count, groups_count, demo, active_7d_count, active_30d_count,
+                        never_accessed_count, inactive_count, teachers_active_7d_count, teachers_active_14d_count
                     ) VALUES (
                         :mappingId, :changedAt, :confirmedAt, :participants, :teachers, :completed,
-                        :notCompleted, :unknown, :groupsCount, :demo
+                        :notCompleted, :unknown, :groupsCount, :demo, :active7d, :active30d,
+                        :neverAccessed, :inactive, :teachersActive7d, :teachersActive14d
                     )
                     """)
                     .params(parameters)
@@ -768,6 +859,8 @@ public class SourceRepository {
                 .single() > 0;
     }
 
+    // Снимки показываются по вузу и программе карточки в пределах окна её цикла: карточка прошлого набора не получает
+    // потоки следующего.
     List<StoredSnapshot> findInteractionSnapshots(UUID interactionId, VisibilityScope scope) {
         return jdbcClient.sql(SNAPSHOT_SELECT + """
                 JOIN interactions i ON i.organization_id = s.organization_id AND i.program_id = s.program_id
@@ -782,6 +875,8 @@ public class SourceRepository {
                 .list();
     }
 
+    // Сводка для пояснения, почему данных нет: сколько сопоставлений у вуза и программы, сколько из них попадает в цикл
+    // карточки, сколько без дат, и причина пропуска из записи источника.
     LearningCoverage findLearningCoverage(UUID interactionId) {
         return jdbcClient.sql("""
                 SELECT COUNT(m.id) AS mapped,
@@ -849,6 +944,7 @@ public class SourceRepository {
         }
     }
 
+    // Только сопоставления без дат: уже датированный поток подтверждением не перезаписывается.
     void confirmUndatedRun(SourceCode source, String kind, String externalKey, RunDates run, OffsetDateTime now) {
         jdbcClient.sql("""
                 UPDATE source_mappings
@@ -876,6 +972,54 @@ public class SourceRepository {
                 .param("name", name)
                 .query(this::mapOrganization)
                 .optional();
+    }
+
+    // Служебная организация приёма оплат (OPEN_ENROLLMENT) в совпадения не входит: вузу заказчика её сопоставить
+    // нельзя.
+    List<SourceOrganization> findOrganizationsByInn(String inn) {
+        return jdbcClient.sql(ORGANIZATION_SELECT + "WHERE inn = :inn AND type <> 'OPEN_ENROLLMENT' ORDER BY name, id")
+                .param("inn", inn)
+                .query(this::mapOrganization)
+                .list();
+    }
+
+    List<SourceOrganization> findOrganizationsByNormalizedName(String name) {
+        return jdbcClient.sql(ORGANIZATION_SELECT + "WHERE LOWER(name) = LOWER(:name) AND type <> 'OPEN_ENROLLMENT' ORDER BY name, id")
+                .param("name", name)
+                .query(this::mapOrganization)
+                .list();
+    }
+
+    // Заполняются только пустые ИНН и город, версия растёт лишь при реальном изменении: введённое пользователем не
+    // затирается.
+    boolean fillOrganizationDetails(UUID id, String inn, String city, OffsetDateTime now) {
+        return jdbcClient.sql("""
+                UPDATE organizations
+                SET inn = COALESCE(inn, CAST(:inn AS VARCHAR(12))), city = COALESCE(city, CAST(:city AS VARCHAR(200))),
+                    version = version + 1, updated_at = :now
+                WHERE id = :id
+                  AND ((inn IS NULL AND CAST(:inn AS VARCHAR(12)) IS NOT NULL)
+                       OR (city IS NULL AND CAST(:city AS VARCHAR(200)) IS NOT NULL))
+                """)
+                .param("id", id)
+                .param("inn", inn)
+                .param("city", city)
+                .param("now", now)
+                .update() == 1;
+    }
+
+    Optional<UUID> findRecordContactId(UUID recordId) {
+        return jdbcClient.sql("SELECT contact_id FROM source_records WHERE id = :id AND contact_id IS NOT NULL")
+                .param("id", recordId)
+                .query(UUID.class)
+                .optional();
+    }
+
+    void setRecordContact(UUID recordId, UUID contactId) {
+        jdbcClient.sql("UPDATE source_records SET contact_id = :contactId WHERE id = :id")
+                .param("id", recordId)
+                .param("contactId", contactId)
+                .update();
     }
 
     Optional<SourceOrganization> findOrganizationById(UUID id) {
@@ -942,6 +1086,8 @@ public class SourceRepository {
                 .optional();
     }
 
+    // Роль и активность проверяются сейчас: ушедший или разжалованный администратор автором запусков по расписанию не
+    // станет.
     Optional<UUID> findScheduleActor(SourceCode source) {
         return jdbcClient.sql("""
                 SELECT r.started_by
@@ -1068,13 +1214,14 @@ public class SourceRepository {
         return parameters;
     }
 
-    private static String mappingLabel(String kind, String externalKey, String payload) {
+    private static String mappingLabel(SourceCode source, String kind, String externalKey, String payload) {
         if (payload != null) {
             return LearningUnit.parseStored(PAYLOADS, payload).label();
         }
         String value = externalKey.substring(externalKey.indexOf(':') + 1);
         return switch (kind) {
-            case "ORGANIZATION" -> externalKey.startsWith("id:") ? "Вуз на сайте, внешний ID " + value : "Вуз на сайте «" + value + "»";
+            case "ORGANIZATION" -> source == SourceCode.CUSTOMER_CRM ? "Организация в CRM заказчика, внешний ID " + value
+                    : externalKey.startsWith("id:") ? "Вуз на сайте, внешний ID " + value : "Вуз на сайте «" + value + "»";
             case "PROGRAM" -> "Программа на сайте «" + value + "»";
             case "GROUP" -> "Группа Moodle " + externalKey;
             default -> "Курс Moodle " + externalKey;
@@ -1188,7 +1335,16 @@ public class SourceRepository {
                         resultSet.getObject("completed_count", Integer.class),
                         resultSet.getObject("not_completed_count", Integer.class),
                         resultSet.getInt("unknown_count"),
-                        resultSet.getInt("groups_count")
+                        resultSet.getInt("groups_count"),
+                        0,
+                        resultSet.getObject("active_7d_count") == null ? null : new LearningUnit.Activity(
+                                resultSet.getInt("active_7d_count"),
+                                resultSet.getInt("active_30d_count"),
+                                resultSet.getInt("never_accessed_count"),
+                                resultSet.getInt("inactive_count"),
+                                resultSet.getInt("teachers_active_7d_count"),
+                                resultSet.getInt("teachers_active_14d_count")
+                        )
                 ),
                 resultSet.getObject("observed_at", OffsetDateTime.class),
                 resultSet.getObject("changed_at", OffsetDateTime.class),

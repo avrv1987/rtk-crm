@@ -1,0 +1,444 @@
+/* Раскладка отчётов после упрощения интерфейса (пакет 4): шапка, панель выбора, панель «Фильтры», списки. */
+
+.report-header {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-4);
+}
+
+.report-header__crumbs {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+}
+
+.report-header__crumbs a {
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.report-header__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.report-header__row h2 {
+  margin: 0;
+}
+
+.report-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.report-export > button,
+button.report-export {
+  min-height: var(--control-height);
+  padding: 0 var(--space-4);
+  font-weight: 600;
+}
+
+.report-hint__data {
+  display: block;
+  margin-top: var(--space-2);
+  color: var(--color-text-muted);
+}
+
+.reports .hint__panel {
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+}
+
+.report-toolbar {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  background: var(--color-canvas);
+}
+
+.report-toolbar__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3) var(--space-5);
+}
+
+.report-toolbar__row .report-period {
+  flex: 1 1 360px;
+}
+
+.report-toolbar__row .report-segments {
+  flex: 0 1 auto;
+}
+
+.report-toolbar__row .report-field {
+  flex: 0 1 200px;
+}
+
+.report-toolbar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.report-toolbar__actions .report-actions__status {
+  flex: none;
+}
+
+.report-toolbar__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.report-toolbar__chips .button--secondary {
+  min-height: var(--control-height-compact);
+  padding: 0 var(--space-3);
+}
+
+/* Панель «Фильтры» */
+.report-filter-group {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.report-filter-group--active {
+  border-color: var(--color-action);
+}
+
+.report-filter-group h3 {
+  margin: 0;
+}
+
+.report-filter-group__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-height);
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  color: var(--color-text);
+  background: none;
+  font-size: var(--font-size-md);
+  text-align: left;
+}
+
+.report-filter-group__toggle:hover {
+  color: var(--color-text);
+  background: var(--color-surface-accent);
+}
+
+.report-filter-group__label {
+  font-weight: 700;
+}
+
+.report-filter-group__value {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-filter-group--active .report-filter-group__value {
+  color: var(--color-action);
+  font-weight: 600;
+}
+
+.report-filter-group__caret {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.report-filter-group__body {
+  display: grid;
+  gap: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-3);
+}
+
+.report-filter-group__note {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+}
+
+.report-filter-group__search {
+  min-height: var(--control-height-compact);
+  padding: 6px var(--space-3);
+}
+
+.report-filter-group__options {
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.report-filter-group__option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-compact);
+  border-radius: var(--radius-sm);
+  padding: 4px var(--space-2);
+  color: var(--color-text);
+  font-size: var(--font-size-md);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.report-filter-group__option:hover {
+  background: var(--color-surface-accent);
+}
+
+.report-filter-group__option input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.report-filter-group__clear {
+  justify-self: start;
+  min-height: var(--control-height-compact);
+  padding: 0 var(--space-3);
+}
+
+.filter-panel .report-field__label {
+  flex-wrap: wrap;
+}
+
+/* В узкой панели подсказка раскрывается в строке, а не поверх соседних полей. */
+.filter-panel .hint {
+  display: contents;
+}
+
+.filter-panel .hint__panel {
+  position: static;
+  flex: 1 1 100%;
+  width: auto;
+  box-shadow: none;
+}
+
+/* Окна «Колонки и порядок» и «Группировка диаграммы» */
+.report-columns-list {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.report-columns-list__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+}
+
+.report-columns-list__row--chosen {
+  background: var(--color-surface-muted);
+  cursor: grab;
+}
+
+.report-columns-list__row .report-filter-group__option {
+  flex: 1 1 220px;
+}
+
+.report-columns-list__divider {
+  flex: 1 1 100%;
+  margin-top: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.report-columns-list__move {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.report-columns-list__move button {
+  min-height: var(--control-height-compact);
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+.report-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.report-grouping {
+  display: grid;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+/* Главная раздела: вкладки, список отчётов, сохранённые и выгрузки */
+.report-home {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.report-catalog__list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.report-catalog__list li + li {
+  border-top: 1px solid var(--color-border);
+}
+
+.report-catalog__list .report-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-4);
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-2);
+  background: none;
+  text-decoration: none;
+}
+
+.report-catalog__list .report-card:hover {
+  background: var(--color-surface-accent);
+}
+
+.report-catalog__list .report-card__title {
+  font-size: var(--font-size-ui);
+}
+
+.report-catalog__list .report-card__purpose {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+}
+
+.report-catalog__list .report-card__title::after {
+  content: none;
+}
+
+.saved-report__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.report-jobs__more {
+  justify-self: start;
+}
+
+.report-chart__download {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.report-page > .reports__order {
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  background: var(--color-canvas);
+}
+
+@media (max-width: 640px) {
+  .report-header__actions {
+    margin-left: 0;
+  }
+
+  .report-toolbar {
+    padding: var(--space-3);
+  }
+
+  .report-toolbar__row .report-period,
+  .report-toolbar__row .report-field,
+  .report-toolbar__row .report-segments {
+    flex: 1 1 100%;
+  }
+
+  .report-toolbar__actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  .report-toolbar__actions > button[type="submit"] {
+    flex: 1 1 auto;
+  }
+
+  .reports .hint__panel {
+    position: fixed;
+    top: auto;
+    right: var(--space-4);
+    left: var(--space-4);
+    width: auto;
+  }
+
+  .filter-panel .hint__panel {
+    position: static;
+  }
+
+  .report-catalog__list .report-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+
+  .report-columns-list__row .report-filter-group__option {
+    flex-basis: 100%;
+  }
+
+  .report-chart__download {
+    margin-left: 0;
+  }
+
+  .saved-report__actions {
+    width: auto;
+  }
+}
+
+/* Выбранный период не должен спорить с главной синей кнопкой «Показать» */
+.report-period__preset[aria-pressed="true"] {
+  border-color: var(--color-action);
+  color: var(--color-action);
+  background: var(--color-surface-accent);
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .report-period__presets {
+    flex-wrap: nowrap;
+    padding-bottom: var(--space-1);
+    overflow-x: auto;
+  }
+
+  .report-period__preset {
+    flex: none;
+  }
+}

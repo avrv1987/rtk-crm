@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useState } from 'react'
+import { type FormEvent, Fragment, useCallback, useEffect, useState } from 'react'
 import { apiClient, type EnrolmentStreams, type LearnerSearch, type LearnerSummary } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { PaidOrdersUpload } from './PaidOrdersUpload'
@@ -69,6 +69,7 @@ export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessErro
   const [searchKind, setSearchKind] = useState<LearnerSearch['kind']>('EMAIL')
   const [searchValue, setSearchValue] = useState('')
   const [search, setSearch] = useState<SearchState>({ kind: 'idle' })
+  const [expanded, setExpanded] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -103,11 +104,7 @@ export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessErro
   }
 
   return (
-    <section className="enrolment" aria-labelledby="enrolment-title">
-      <div>
-        <p className="eyebrow">Оператор зачисления</p>
-        <h2 id="enrolment-title">Зачисление</h2>
-      </div>
+    <section className="enrolment" aria-label="Потоки зачисления">
 
       {state.kind === 'loading' && <p role="status">Загружаем потоки…</p>}
 
@@ -160,40 +157,54 @@ export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessErro
                   <table aria-label="Потоки зачисления">
                     <thead>
                       <tr>
-                        <th scope="col">Курс</th>
-                        <th scope="col">Поток</th>
+                        <th scope="col">Курс, поток</th>
                         <th scope="col">Программа</th>
-                        <th scope="col">Оплачено</th>
                         <th scope="col">Анкеты</th>
-                        <th scope="col">Выгружено</th>
-                        <th scope="col">Передано</th>
-                        <th scope="col">Ожидает</th>
                         <th scope="col">Стадия</th>
                         <th scope="col">Окончание</th>
-                        <th scope="col">Хранить до</th>
                         <th scope="col">Действие</th>
                       </tr>
                     </thead>
                     <tbody>
                       {state.data.streams.map((stream) => (
-                        <tr key={stream.id}>
-                          <td>{stream.courseName}</td>
-                          <td>{stream.streamNo}</td>
-                          <td>{stream.programName ?? 'не сопоставлена'}</td>
-                          <td>{stream.paid}</td>
-                          <td>{stream.profilesComplete} из {stream.paid}</td>
-                          <td>{stream.exported}</td>
-                          <td>{stream.transferred}</td>
-                          <td>{stream.pending}</td>
-                          <td><StageBar stream={stream} /></td>
-                          <td>{stream.endsOn === null ? 'не указана' : formatIsoDate(stream.endsOn)}</td>
-                          <td>{stream.keepUntil === null ? 'срок не определён' : formatIsoDate(stream.keepUntil)}</td>
-                          <td>
-                            <button type="button" className="button--secondary" onClick={() => onOpenStream(stream.id)}>
-                              Открыть
-                            </button>
-                          </td>
-                        </tr>
+                        <Fragment key={stream.id}>
+                          <tr>
+                            <td>
+                              <button
+                                type="button"
+                                className="enrolment__expand"
+                                aria-expanded={expanded === stream.id}
+                                aria-label={`Подробнее: ${stream.courseName}, поток ${stream.streamNo}`}
+                                onClick={() => setExpanded((current) => (current === stream.id ? null : stream.id))}
+                              >
+                                {expanded === stream.id ? '▾' : '▸'}
+                              </button>
+                              {stream.courseName}, поток {stream.streamNo}
+                            </td>
+                            <td>{stream.programName ?? 'не сопоставлена'}</td>
+                            <td>{stream.profilesComplete} из {stream.paid}</td>
+                            <td><StageBar stream={stream} /></td>
+                            <td>{stream.endsOn === null ? 'не указана' : formatIsoDate(stream.endsOn)}</td>
+                            <td>
+                              <button type="button" className="button--secondary" onClick={() => onOpenStream(stream.id)}>
+                                Открыть
+                              </button>
+                            </td>
+                          </tr>
+                          {expanded === stream.id && (
+                            <tr className="enrolment__details-row">
+                              <td colSpan={6}>
+                                <dl className="enrolment__details">
+                                  <div><dt>Оплачено</dt><dd>{stream.paid}</dd></div>
+                                  <div><dt>Выгружено</dt><dd>{stream.exported}</dd></div>
+                                  <div><dt>Передано</dt><dd>{stream.transferred}</dd></div>
+                                  <div><dt>Ожидает</dt><dd>{stream.pending}</dd></div>
+                                  <div><dt>Хранить до</dt><dd>{stream.keepUntil === null ? 'срок не определён' : formatIsoDate(stream.keepUntil)}</dd></div>
+                                </dl>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>

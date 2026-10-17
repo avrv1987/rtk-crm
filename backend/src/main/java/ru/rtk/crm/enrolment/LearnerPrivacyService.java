@@ -46,6 +46,8 @@ public class LearnerPrivacyService {
         this.cipher = cipher;
     }
 
+    // Поиск по запросу субъекта идёт только по отпечаткам: условия объединяются через OR, а ФИО ищется в обоих
+    // порядках слов, потому что субъект может назвать фамилию и имя в любом порядке.
     public List<SubjectLearner> find(String name, String email, String phone, String snils) {
         boolean snilsGiven = snils != null && !snils.isBlank();
         if (snilsGiven && LearnerRules.normalizeSnils(snils) == null) {
@@ -62,6 +64,8 @@ public class LearnerPrivacyService {
         return summaries(repository.findByFingerprints(fingerprints, LearnerService.FIND_LIMIT));
     }
 
+    // Выгрузка сведений субъекту: дата форматируется явно, остальные значения показываются как хранятся.
+    // toString записей закрыт маской, чтобы значения не попали в журнал случайной строкой.
     public List<LearnerDisclosure> disclose(Collection<UUID> learnerIds) {
         if (learnerIds.isEmpty() || !cipher.enabled()) {
             return List.of();
@@ -95,6 +99,7 @@ public class LearnerPrivacyService {
         return repository.updateStatus(learnerId, expectedVersion, status, OffsetDateTime.now());
     }
 
+    // Обезличивание необратимо: стираются поля, ключ и отпечатки, остаются история и зачисления без ПДн.
     public boolean anonymize(UUID learnerId) {
         return repository.anonymize(learnerId, OffsetDateTime.now());
     }
@@ -103,6 +108,8 @@ public class LearnerPrivacyService {
         if (!cipher.enabled()) {
             return 0;
         }
+        // Срок хранения считается от окончания потока, а не от даты анкеты; потоки без даты окончания не попадают
+        // под ночное обезличивание (их число показано в счётчиках администратору).
         Set<UUID> expiredStreams = enrolmentRepository.findStreamEndDates().entrySet().stream()
                 .filter(stream -> stream.getValue().plus(term).isBefore(today))
                 .map(Map.Entry::getKey)
@@ -111,6 +118,7 @@ public class LearnerPrivacyService {
     }
 
     public Counters counters() {
+        // Обезличенные анкеты в предел не входят: они не содержат ПДн.
         long profiles = repository.countProfiles();
         return new Counters(
                 cipher.enabled(),

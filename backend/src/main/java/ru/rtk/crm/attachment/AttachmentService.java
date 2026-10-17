@@ -9,6 +9,8 @@ import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -31,6 +33,8 @@ import ru.rtk.crm.interaction.CommandFingerprint;
 
 @Service
 public class AttachmentService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(AttachmentService.class);
     private static final Set<String> PREVIEW_MEDIA_TYPES = Set.of("application/pdf", "image/png", "image/jpeg");
     private static final int MAX_REASON_LENGTH = 500;
 
@@ -77,6 +81,7 @@ public class AttachmentService {
         requireVisibleInteraction(profile, interactionId);
         ContactInteractionMutationAuthorization.requireCardEditor(profile);
         requireStage(interactionId, request.stageId());
+        // Тип файла определяется по содержимому, а не по заявленному расширению или MIME клиента (см. contentValidator).
         AttachmentUploadInspection inspection = contentValidator.inspect(file);
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
         UploadAttachmentCommand command = new UploadAttachmentCommand(
@@ -102,6 +107,7 @@ public class AttachmentService {
         )) {
             return replay(profile.id(), CommandOperation.UPLOAD_ATTACHMENT, normalizedKey, fingerprint, Attachment.class);
         }
+        // Быстрая проверка до записи файла: нет смысла сохранять и сканировать то, что заведомо нельзя принять.
         if (request.replacesId() != null) {
             requireReplaceable(interactionId, request.replacesId());
         }
@@ -109,8 +115,12 @@ public class AttachmentService {
         UUID attachmentId = UUID.randomUUID();
         UUID storageKey = UUID.randomUUID();
         try {
+            // Запись и антивирусная проверка идут до блокировки карточки: проверка может быть долгой, и она не должна
+            // держать строку работы. Состояние (видимость, этап, заменяемая версия) перепроверяется под блокировкой ниже.
             store(storageKey, file, inspection);
             AttachmentScanOutcome outcome = scan(storageKey, inspection.sizeBytes());
+            // Проверки повторены под блокировкой: за время сканирования карточку могли изменить, этап — удалить,
+            // а прежнюю версию документа — заменить другим запросом.
             requireVisibleInteractionForUpdate(profile, interactionId);
             requireStage(interactionId, request.stageId());
             AttachmentRepository.AttachmentRow replaced = request.replacesId() == null
@@ -134,6 +144,9 @@ public class AttachmentService {
                     profile.id(),
                     now
             );
+            // Исход проверки определяет судьбу файла. REJECTED: вирус найден, содержимое немедленно удаляется, запись
+            // остаётся для истории. UNVERIFIABLE: проверить не удалось (антивирус недоступен, файл слишком большой,
+            // зашифрованный архив): файл хранится, но не скачивается и не привязывается. Только CLEAN можно скачать.
             if (outcome == AttachmentScanOutcome.REJECTED) {
                 storage.delete(storageKey);
                 attachmentRepository.updateStatus(attachmentId, AttachmentStatus.REJECTED, OffsetDateTime.now());
@@ -148,6 +161,7 @@ public class AttachmentService {
             commandIdempotencyRepository.complete(commandId, write(attachment));
             return attachment;
         } catch (RuntimeException exception) {
+            // При любой ошибке сохранённый файл удаляется: в хранилище не остаётся файлов без записи в БД.
             deleteStoredFile(storageKey);
             throw exception;
         }
@@ -210,9 +224,11 @@ public class AttachmentService {
         AttachmentRepository.AttachmentRow attachment = attachmentRepository.findById(attachmentId)
                 .filter(row -> row.interactionId().equals(interactionId))
                 .orElseThrow(AttachmentNotFoundException::new);
+        // Удалять документ может его автор или руководитель; удаление «мягкое» (markDeleted) и пишется событием истории.
         if (!attachment.createdBy().equals(profile.id()) && profile.role() != UserRole.LEADER) {
             throw new AttachmentDeletionForbiddenException();
         }
+        // Документ, на который ссылается договор или подтверждение передачи, удалять нельзя: ссылка осиротела бы.
         attachmentRepository.findAgreementUsage(attachmentId).ifPresent(productName -> {
             throw new AttachmentValidationException(
                     "attachmentId",
@@ -256,6 +272,8 @@ public class AttachmentService {
     @Transactional(readOnly = true)
     public DownloadedAttachment download(CrmProfile profile, UUID attachmentId) {
         AttachmentRepository.AttachmentRow attachment = requireVisibleAttachment(profile, attachmentId);
+        // Непроверенный и отклонённый файл для пользователя выглядит как отсутствующий: даже существование
+        // карантинного файла не раскрывается.
         if (attachment.status() != AttachmentStatus.CLEAN) {
             throw new AttachmentNotFoundException();
         }
@@ -362,7 +380,9 @@ public class AttachmentService {
     private void deleteStoredFile(UUID storageKey) {
         try {
             storage.delete(storageKey);
-        } catch (AttachmentStorageException ignored) {
+        } catch (AttachmentStorageException exception) {
+            // Исходная ошибка важнее: она пробрасывается дальше, а оставшийся файл виден в журнале.
+            LOGGER.warn("Attachment file {} was not removed after a failed upload", storageKey, exception);
         }
     }
 

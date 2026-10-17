@@ -219,7 +219,7 @@ class WorkListsHttpTest {
                 .andExpect(jsonPath("$.fieldErrors.flag").value("Такой признак не поддерживается"));
         mockMvc.perform(get("/api/interactions").with(oidcLogin()).param("status", "CLOSED"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.fieldErrors.status").value("Такой статус работы не поддерживается"));
+                .andExpect(jsonPath("$.fieldErrors.status").value("Такой статус взаимодействия не поддерживается"));
 
         verifyNoInteractions(interactionService);
     }

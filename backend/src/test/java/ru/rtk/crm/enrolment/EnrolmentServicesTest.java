@@ -781,7 +781,7 @@ class EnrolmentServicesTest {
     private void createSchema() {
         List<String> statements = new ArrayList<>(List.of(
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, 
                     id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL,
                     active BOOLEAN NOT NULL, enrolment_operator BOOLEAN NOT NULL DEFAULT FALSE
                 )

@@ -48,6 +48,7 @@ public class LearnerService {
         this.auditJournalRepository = auditJournalRepository;
     }
 
+    // СНИЛС проверяется заранее для понятного сообщения, а уникальный индекс в БД ловит гонку двух одновременных вставок.
     @Transactional
     Learner create(LearnerProfile profile, UUID createdBy) {
         LearnerProfile normalized = profile.normalized();
@@ -94,6 +95,7 @@ public class LearnerService {
 
     @Transactional
     Learner update(UUID actorId, UUID id, int expectedVersion, LearnerProfile profile, String requestId) {
+        // Строка блокируется до сравнения версий: два оператора не затрут правки друг друга, а проигравший получает 409.
         Learner current = repository.lock(id).map(this::decrypted).orElseThrow(LearnerNotFoundException::new);
         requireActive(current);
         if (current.version() != expectedVersion) {
@@ -103,6 +105,7 @@ public class LearnerService {
         List<LearnerField> changed = Arrays.stream(LearnerField.values())
                 .filter(field -> !Objects.equals(current.profile().value(field), normalized.value(field)))
                 .toList();
+        // Пустая правка не меняет версию и не пишет в журнал: повторная отправка той же формы безвредна.
         if (changed.isEmpty()) {
             return current;
         }
@@ -116,10 +119,12 @@ public class LearnerService {
         if (!updated) {
             throw InteractionConflictException.learnerVersion(current.version());
         }
+        // В журнал попадают только коды изменённых полей, значения (ПДн) не пишутся.
         journal(AuditAction.LEARNER_CHANGED, actorId, id, "поля: " + codes(changed.stream()), requestId);
         return find(id).orElseThrow();
     }
 
+    // Открытие карточки фиксируется в журнале: доступ к ПДн должен быть прослеживаем, даже когда значения замаскированы.
     @Transactional
     LearnerCard card(UUID actorId, UUID id, String requestId) {
         LearnerCard card = view(id);
@@ -148,6 +153,7 @@ public class LearnerService {
         return masked;
     }
 
+    // Полные значения отдаются только по группам полей и только для активной анкеты; каждый показ пишется в журнал.
     @Transactional
     Map<LearnerField, String> reveal(UUID actorId, UUID id, Set<LearnerFieldGroup> groups, String requestId) {
         if (groups == null || groups.isEmpty()) {
@@ -168,6 +174,8 @@ public class LearnerService {
         return values;
     }
 
+    // Перешифрование под блокировкой строки; версия анкеты не растёт (содержимое не менялось), поэтому
+    // параллельная правка оператора сорвёт обновление, а не будет затёрта: repository.reencrypt сверяет версию.
     @Transactional
     boolean reencrypt(UUID id) {
         Optional<LearnerRow> row = repository.lock(id);
@@ -185,6 +193,7 @@ public class LearnerService {
         return repository.findByFingerprints(fingerprints, FIND_LIMIT).stream().map(this::decrypted).toList();
     }
 
+    // Не приводящийся к формату телефон не ищется (null), а не бросает исключение: поиск по мусору просто пуст.
     String phoneFingerprint(String phone) {
         return LearnerRules.normalizePhone(phone) == null ? null : cipher.phoneFingerprint(phone);
     }
@@ -221,6 +230,8 @@ public class LearnerService {
         }
     }
 
+    // Пустые поля не шифруются и не хранятся, а попадают в список «не заполнено»; отпечатки считаются от тех же
+    // нормализованных значений, что и шифруемые.
     private LearnerWrite encrypted(UUID id, LearnerProfile profile) {
         Map<LearnerField, String> fields = new EnumMap<>(LearnerField.class);
         Set<LearnerField> missing = EnumSet.noneOf(LearnerField.class);

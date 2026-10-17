@@ -49,6 +49,9 @@ export type InteractionCardDraft = {
   plan: InteractionPlanDraft | null
 }
 
+// Кэш действий пользователя (ФТ 13): черновики и выбор фильтров лежат в sessionStorage, то есть живут только в
+// пределах вкладки и пропадают при её закрытии. Ключи включают профиль и карточку, чтобы чужие черновики не
+// подставлялись другому сотруднику и другой карточке. Токены, ответы сервера и файлы здесь не хранятся.
 const storagePrefix = 'rtk-crm:interaction-draft:'
 const activeProfileKey = 'rtk-crm:active-profile'
 const returnRouteKey = 'rtk-crm:return-route'
@@ -102,6 +105,8 @@ const stageEditTypeValue = (value: unknown): InteractionStageEditType => (
   value === 'ADD_AFTER' || value === 'MOVE_AFTER' || value === 'DELETE' ? value : 'RENAME'
 )
 
+// Прочитанное из хранилища не доверяется: черновик мог быть записан прежней версией интерфейса или повреждён,
+// поэтому каждое поле приводится к ожидаемому типу, а неизвестные значения заменяются пустыми.
 const normalize = (value: unknown): InteractionDraft | null => {
   if (typeof value !== 'object' || value === null) {
     return null
@@ -135,6 +140,8 @@ const planFieldValue = (value: unknown): InteractionPlanField | undefined => {
     : undefined
 }
 
+// Черновик плана хранит вместе со значением исходное (base): по нему видно, что поле действительно
+// изменено пользователем, а не просто открыто. Пустой план в хранилище не сохраняется.
 export const isEmptyPlanDraft = (plan: InteractionPlanDraft) => plan.nextAction === undefined
   && plan.nextActionAt === undefined
   && plan.programId === undefined
@@ -179,6 +186,8 @@ const normalizeCard = (value: unknown): InteractionCardDraft | null => {
   }
 }
 
+// Доступ к sessionStorage может бросать исключение (закрытый режим, запрет хранения): тогда кэш просто
+// отключается, а интерфейс работает без него. По той же причине остальные функции не пробрасывают ошибки.
 const storage = () => {
   try {
     return window.sessionStorage
@@ -232,6 +241,7 @@ export const saveInteractionCardDraft = (profileId: string, interactionId: strin
   }
   const serialized = JSON.stringify(draft)
   try {
+    // Пустой черновик карточки не хранится: ключ удаляется, чтобы хранилище не копило пустые записи.
     if (serialized === JSON.stringify(emptyCardDraft())) {
       sessionStorage.removeItem(cardKeyFor(profileId, interactionId))
     } else {
@@ -298,6 +308,8 @@ export const saveFormDraft = (profileId: string, key: string, draft: object | nu
   }
 }
 
+// Адрес запоминается перед уходом на вход в Keycloak и восстанавливается после него. Принимаются только
+// внутренние адреса вида «#/…»: произвольный адрес из хранилища не станет переходом на чужой сайт.
 export const rememberReturnRoute = () => {
   const sessionStorage = storage()
   if (sessionStorage === null || !window.location.hash.startsWith('#/')) {
@@ -324,6 +336,8 @@ export const takeReturnRoute = (): string | null => {
   }
 }
 
+// При выходе и смене профиля стираются черновики этого профиля и несохранённые отметки: следующий
+// пользователь того же браузера не увидит чужих текстов.
 export const clearDraftsForProfile = (profileId: string) => {
   clearUnsavedDrafts()
   const sessionStorage = storage()
@@ -352,6 +366,7 @@ export const rememberActiveProfile = (profileId: string) => {
   }
   try {
     const previousProfileId = sessionStorage.getItem(activeProfileKey)
+    // Вкладка осталась открытой, а вошёл другой сотрудник: черновики прежнего профиля удаляются сразу.
     if (previousProfileId !== null && previousProfileId.length > 0 && previousProfileId !== profileId) {
       clearDraftsForProfile(previousProfileId)
       sessionStorage.removeItem(returnRouteKey)

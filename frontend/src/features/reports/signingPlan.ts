@@ -17,7 +17,7 @@ export const planStateLabels: Record<PlanState, string> = {
 
 export const planSourceLabels: Record<PlanSource, string> = {
   PLAN: 'задана в плане',
-  EXPIRY: 'срок действия соглашения'
+  EXPIRY: 'срок действия договора'
 }
 
 const romanQuarters = ['I', 'II', 'III', 'IV']

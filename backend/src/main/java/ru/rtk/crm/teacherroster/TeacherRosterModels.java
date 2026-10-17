@@ -72,7 +72,15 @@ public final class TeacherRosterModels {
     public record TeacherRosterRequest(String lmsCourse, String lmsGroup) {
     }
 
-    public record TeacherRosterFileRequest(FileMode mode) {
+    public record TeacherRosterFileRequest(FileMode mode, FileFormat format) {
+        public TeacherRosterFileRequest(FileMode mode) {
+            this(mode, null);
+        }
+    }
+
+    public enum FileFormat {
+        XLSX,
+        MOODLE_CSV
     }
 
     public enum FileMode {
@@ -80,7 +88,7 @@ public final class TeacherRosterModels {
         ALL
     }
 
-    public record TeacherRosterFile(UUID exportId, String fileName, int rows, int skipped, byte[] content) {
+    public record TeacherRosterFile(UUID exportId, String fileName, FileFormat format, int rows, int skipped, byte[] content) {
     }
 
     public record TeacherRosterMarked(int marked, TeacherRoster roster) {

@@ -85,6 +85,8 @@ if is_blank "${values[MODULE_ENROLMENT_ENABLED]-}" && ! is_blank "${values[ENROL
     set_value MODULE_ENROLMENT_ENABLED "${values[ENROLMENT_ENABLED]}"
 fi
 site_fixture_url=http://site-fixture:8080
+labor_market_fixture_url=http://labor-market-fixture:8080
+crm_stub_url=http://crm-stub:8080
 
 defaults=(
     POSTGRES_SUPERUSER=postgres
@@ -111,12 +113,14 @@ secrets=(
     BACKUP_ENCRYPTION_KEY
 )
 if [[ ${values[DEMO_DATA]} == true ]]; then
-    defaults+=(SITE_BASE_URL=$site_fixture_url DEMO_LMS=true MODULE_ENROLMENT_ENABLED=true MODULE_PARTNER_ENABLED=true COMPOSE_PROFILES=security,demo)
-    secrets+=(DEMO_USER_PASSWORD SITE_TOKEN)
+    defaults+=(SITE_BASE_URL=$site_fixture_url LABOR_MARKET_BASE_URL=$labor_market_fixture_url CRM_BASE_URL=$crm_stub_url DEMO_LMS=true MODULE_ENROLMENT_ENABLED=true MODULE_PARTNER_ENABLED=true COMPOSE_PROFILES=security,demo)
+    secrets+=(DEMO_USER_PASSWORD SITE_TOKEN LABOR_MARKET_TOKEN CRM_TOKEN)
 else
     [[ ${values[DEMO_LMS]-} != true ]] || fail 'DEMO_LMS=true requires DEMO_DATA=true'
     [[ ${values[SITE_BASE_URL]-} != "$site_fixture_url" ]] || set_value SITE_BASE_URL ''
-    defaults+=(DEMO_LMS=false MODULE_ENROLMENT_ENABLED=false MODULE_PARTNER_ENABLED=false COMPOSE_PROFILES=security CRM_ADMIN_USERNAME=admin 'CRM_ADMIN_DISPLAY_NAME=Администратор')
+    [[ ${values[LABOR_MARKET_BASE_URL]-} != "$labor_market_fixture_url" ]] || set_value LABOR_MARKET_BASE_URL ''
+    [[ ${values[CRM_BASE_URL]-} != "$crm_stub_url" ]] || set_value CRM_BASE_URL ''
+    defaults+=(DEMO_LMS=false MODULE_ENROLMENT_ENABLED=true MODULE_PARTNER_ENABLED=true COMPOSE_PROFILES=security CRM_ADMIN_USERNAME=admin 'CRM_ADMIN_DISPLAY_NAME=Администратор')
     defaults+=(CRM_ADMIN_EMAIL=admin@rtk-crm.local)
     secrets+=(CRM_ADMIN_PASSWORD)
 fi
@@ -291,7 +295,7 @@ ensure_crm_roles() {
     local role
     for role in "${crm_roles[@]}"; do
         if ! kcadm get "roles/$role" -r rtk-crm >/dev/null 2>&1; then
-            kcadm create roles -r rtk-crm -s "name=$role" -s 'description=CRM role, see docs/roles.md'
+            kcadm create roles -r rtk-crm -s "name=$role" -s 'description=CRM role'
         fi
     done
     if ! kcadm get roles/crm-admin/composites -r rtk-crm --fields name --format csv --noquotes | grep -qx "$privileged_role"; then
@@ -319,6 +323,14 @@ assign_crm_role() {
 compose up -d --wait postgres keycloak
 compose exec -T keycloak bash -c '/opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080 --realm master --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD"' >/dev/null
 kcadm update realms/rtk-crm -f /opt/keycloak/data/import/rtk-crm-realm.json
+# Консоль Keycloak (realm master) защищена так же, как вход в CRM: временная блокировка после 10 неудачных входов
+# (5 минут, растёт до 15, постоянной блокировки нет) и журнал событий входа на год.
+kcadm update realms/master -s bruteForceProtected=true -s permanentLockout=false -s failureFactor=10 \
+    -s waitIncrementSeconds=300 -s maxFailureWaitSeconds=900 -s maxDeltaTimeSeconds=43200 \
+    -s eventsEnabled=true -s eventsExpiration=31536000
+# Bootstrap входит через admin-cli realm master, поэтому вход паролем в обход формы у admin-cli realm rtk-crm не нужен.
+admin_cli_id=$(single_id 'admin-cli client' "$(kcadm get clients -r rtk-crm -q clientId=admin-cli --fields id --format csv --noquotes)")
+kcadm update "clients/$admin_cli_id" -r rtk-crm -s directAccessGrantsEnabled=false
 configure_privileged_mfa
 ensure_crm_roles
 
@@ -335,7 +347,7 @@ for origin in "${web_origins[@]}"; do
     origins+=("$(json_string "$origin")")
     post_logout_uris+=("$origin" "$origin/*")
 done
-client_definition=$(printf '{"clientId":"crm-bff","enabled":true,"protocol":"openid-connect","publicClient":false,"standardFlowEnabled":true,"directAccessGrantsEnabled":false,"serviceAccountsEnabled":false,"secret":%s,"redirectUris":[%s],"webOrigins":[%s],"attributes":{"post.logout.redirect.uris":%s}}' \
+client_definition=$(printf '{"clientId":"crm-bff","enabled":true,"protocol":"openid-connect","publicClient":false,"standardFlowEnabled":true,"directAccessGrantsEnabled":false,"serviceAccountsEnabled":false,"secret":%s,"redirectUris":[%s],"webOrigins":[%s],"attributes":{"post.logout.redirect.uris":%s,"pkce.code.challenge.method":"S256"}}' \
     "$(json_string "${values[CRM_OIDC_CLIENT_SECRET]}")" \
     "$(join_by , "${redirect_uris[@]}")" \
     "$(join_by , "${origins[@]}")" \
@@ -559,6 +571,12 @@ fi
 
 if [[ ${values[SITE_BASE_URL]-} == "$site_fixture_url" ]]; then
     compose --profile demo up -d --wait site-fixture
+fi
+if [[ ${values[LABOR_MARKET_BASE_URL]-} == "$labor_market_fixture_url" ]]; then
+    compose --profile demo up -d --wait labor-market-fixture
+fi
+if [[ ${values[CRM_BASE_URL]-} == "$crm_stub_url" ]]; then
+    compose --profile demo up -d --wait crm-stub
 fi
 moodle_files=()
 if [[ ${values[MOODLE_BASE_URL]-} == "$moodle_demo_url" ]]; then

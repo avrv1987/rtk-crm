@@ -30,6 +30,8 @@ public class DemoTeacherRosterBootstrap implements ApplicationRunner {
     private static final Logger LOGGER = LoggerFactory.getLogger(DemoTeacherRosterBootstrap.class);
     private static final String ORGANIZATION_NAME = "Университет А";
     private static final String INTERACTION_TITLE = "Демо: внедрение цифрового университета";
+    private static final String DEMO_LMS_COURSE = "ППС 2026: обучение преподавателей (демо)";
+    private static final String LEGACY_LMS_COURSE = "Демо: обучение преподавателей";
     private static final List<DemoTeacher> TEACHERS = List.of(
             new DemoTeacher("lectorova", "Лекторова Мария Демовна", "Доцент кафедры информатики", "lectorova.demo@example.test"),
             new DemoTeacher("seminarov", "Семинаров Павел Демович", "Старший преподаватель", "seminarov.demo@example.test"),
@@ -64,7 +66,11 @@ public class DemoTeacherRosterBootstrap implements ApplicationRunner {
             return;
         }
         Optional<DemoWork> work = demoWork();
-        if (work.isEmpty() || rosterExists(work.get().interactionId())) {
+        if (work.isEmpty()) {
+            return;
+        }
+        if (rosterExists(work.get().interactionId())) {
+            renameLegacyCourse(work.get().interactionId());
             return;
         }
         CrmProfile kam = properties.identities().stream()
@@ -73,7 +79,7 @@ public class DemoTeacherRosterBootstrap implements ApplicationRunner {
                 .flatMap(identity -> userProfileRepository.findActiveByIdentity(identity.issuer(), identity.subject()))
                 .orElseThrow(() -> new IllegalStateException("Demo teacher roster requires active kam-a profile"));
         TeacherRoster roster = rosterService.create(kam, work.get().interactionId(),
-                new TeacherRosterRequest("Демо: обучение преподавателей", ORGANIZATION_NAME));
+                new TeacherRosterRequest(DEMO_LMS_COURSE, ORGANIZATION_NAME));
         for (DemoTeacher teacher : TEACHERS) {
             Contact contact = contactService.create(
                     kam,
@@ -102,6 +108,15 @@ public class DemoTeacherRosterBootstrap implements ApplicationRunner {
                         resultSet.getObject("organization_id", UUID.class)
                 ))
                 .optional();
+    }
+
+    // Демо-курс Moodle переименован под метку «ППС»; список, созданный раньше, сравнивается с потоком по названию курса.
+    private void renameLegacyCourse(UUID interactionId) {
+        jdbcClient.sql("UPDATE teacher_rosters SET lms_course = :course WHERE interaction_id = :id AND lms_course = :legacy")
+                .param("course", DEMO_LMS_COURSE)
+                .param("id", interactionId)
+                .param("legacy", LEGACY_LMS_COURSE)
+                .update();
     }
 
     private boolean rosterExists(UUID interactionId) {

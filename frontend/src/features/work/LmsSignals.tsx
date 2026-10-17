@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { apiClient, type LmsSignal } from '../../shared/api/client'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { apiClient, createIdempotencyKey, type Interaction, type LmsSignal } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { type AccessHandlers, commandErrorText, formatDateTime, handledAccessError, requestIdOf } from './workShared'
 import './lmsSignals.css'
 
 export const lmsSignalsSectionId = 'desk-lms-signals'
+
+const activityTypes: ReadonlySet<LmsSignal['type']> = new Set(['LOW_ACTIVITY', 'NOT_STARTED', 'DROPOUT', 'TEACHER_INACTIVE', 'NO_ACTIVITY'])
+
+export const isActivitySignal = (signal: Pick<LmsSignal, 'type'>) => activityTypes.has(signal.type)
 
 const workHref = (signal: LmsSignal) => `#/organizations/${signal.organizationId}/${signal.interactionId}`
 
@@ -30,7 +34,10 @@ export const LmsSignalItem = ({
       </span>
     )}
     <p className="lms-signal__message">{signal.message}</p>
-    <span className="lms-signal__observed">Данные LMS на {formatDateTime(signal.observedAt)}</span>
+    <span className="lms-signal__observed">
+      Данные LMS на {formatDateTime(signal.observedAt)}
+      {isActivitySignal(signal) && ' · вход в курс — признак присутствия, а не учёбы'}
+    </span>
     {children}
   </article>
 )
@@ -66,6 +73,7 @@ type LmsSignalsCardProps = AccessHandlers & {
   version: number
   canEdit: boolean
   onMoveToStage: (stageId: string) => void
+  onRecordedAsRisk: (interaction: Interaction) => void
 }
 
 export const LmsSignalsCard = ({
@@ -73,6 +81,7 @@ export const LmsSignalsCard = ({
   version,
   canEdit,
   onMoveToStage,
+  onRecordedAsRisk,
   onSessionExpired,
   onProfileUnavailable
 }: LmsSignalsCardProps) => {
@@ -80,6 +89,7 @@ export const LmsSignalsCard = ({
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [error, setError] = useState<{ text: string; requestId?: string } | null>(null)
+  const riskKey = useRef<{ signalId: string; key: string } | null>(null)
 
   const handled = useCallback(
     (reason: unknown) => handledAccessError(reason, { onSessionExpired, onProfileUnavailable }),
@@ -117,11 +127,33 @@ export const LmsSignalsCard = ({
     apiClient.dismissInteractionLmsSignal(interactionId, { type: signal.type, mappingId: signal.mappingId })
       .then((result) => {
         setState({ kind: 'ready', signals: result.items })
-        setMessage(`Сигнал «${signal.title}» скрыт. Он появится снова, когда изменятся данные LMS.`)
+        setMessage(isActivitySignal(signal)
+          ? `Сигнал «${signal.title}» скрыт до конца недели.`
+          : `Сигнал «${signal.title}» скрыт. Он появится снова, когда изменятся данные LMS.`)
       })
       .catch((reason: unknown) => {
         if (!handled(reason)) {
           setError({ text: commandErrorText(reason, 'скрыть сигнал'), requestId: requestIdOf(reason) })
+        }
+      })
+      .finally(() => setBusy(null))
+  }
+
+  const recordAsRisk = (signal: LmsSignal) => {
+    if (riskKey.current?.signalId !== signal.id) {
+      riskKey.current = { signalId: signal.id, key: createIdempotencyKey() }
+    }
+    setBusy(signal.id)
+    setMessage('')
+    setError(null)
+    apiClient.recordInteractionLmsSignalRisk(interactionId, { version, type: signal.type, mappingId: signal.mappingId }, riskKey.current.key)
+      .then((updated) => {
+        riskKey.current = null
+        onRecordedAsRisk(updated)
+      })
+      .catch((reason: unknown) => {
+        if (!handled(reason)) {
+          setError({ text: commandErrorText(reason, 'записать сигнал как риск'), requestId: requestIdOf(reason) })
         }
       })
       .finally(() => setBusy(null))
@@ -163,8 +195,11 @@ export const LmsSignalsCard = ({
                         Перейти к этапу «{signal.action.stageName}»…
                       </button>
                     )}
+                    <button type="button" className="button--secondary" disabled={busy === signal.id} onClick={() => recordAsRisk(signal)}>
+                      Записать как риск
+                    </button>
                     <button type="button" className="button--secondary" disabled={busy === signal.id} onClick={() => dismiss(signal)}>
-                      {busy === signal.id ? 'Скрываем…' : 'Скрыть до изменения данных'}
+                      {busy === signal.id ? 'Сохраняем…' : isActivitySignal(signal) ? 'Скрыть до конца недели' : 'Скрыть до изменения данных'}
                     </button>
                   </div>
                 )}
@@ -179,7 +214,9 @@ export const LmsSignalsCard = ({
           <ul className="lms-signals__list">
             {dismissed.map((signal) => (
               <li key={signal.id}>
-                <LmsSignalItem signal={signal} />
+                <LmsSignalItem signal={signal}>
+                  {signal.recordedAsRisk && <p className="lms-signal__hint">Записан в реестр проблем и рисков.</p>}
+                </LmsSignalItem>
               </li>
             ))}
           </ul>

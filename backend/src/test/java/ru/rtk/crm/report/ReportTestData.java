@@ -45,7 +45,7 @@ final class ReportTestData {
 
     static void createSchema(JdbcTemplate jdbc) {
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -83,7 +83,21 @@ final class ReportTestData {
                 CREATE TABLE IF NOT EXISTS directions (
                     id UUID PRIMARY KEY,
                     name VARCHAR(200) NOT NULL,
-                    archived BOOLEAN NOT NULL DEFAULT FALSE
+                    archived BOOLEAN NOT NULL DEFAULT FALSE,
+                    labor_market BOOLEAN NOT NULL DEFAULT FALSE
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS labor_market_snapshots (
+                    external_code VARCHAR(100) NOT NULL, period_month DATE NOT NULL, direction_name VARCHAR(300) NOT NULL,
+                    open_vacancies INTEGER NOT NULL, median_salary INTEGER, data_source VARCHAR(200) NOT NULL, as_of DATE NOT NULL,
+                    fetched_at TIMESTAMP WITH TIME ZONE NOT NULL, sync_run_id UUID, PRIMARY KEY (external_code, period_month)
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS labor_market_mappings (
+                    direction_id UUID PRIMARY KEY, external_code VARCHAR(100) NOT NULL, origin VARCHAR(8) NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 0, updated_by UUID, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """);
         jdbc.execute("""
@@ -183,10 +197,21 @@ final class ReportTestData {
                     stage_name_snapshot VARCHAR(200) NOT NULL,
                     from_stage_name_snapshot VARCHAR(200),
                     comment TEXT,
+                    command_id UUID,
                     actor_profile_id UUID NOT NULL,
                     owner_manager_id_snapshot UUID,
                     version INTEGER NOT NULL DEFAULT 0,
                     occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS workflow_templates (
+                    id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL, default_template BOOLEAN NOT NULL DEFAULT FALSE
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS workflow_template_stages (
+                    id UUID PRIMARY KEY, template_id UUID NOT NULL, stage_order INTEGER NOT NULL, name VARCHAR(200) NOT NULL
                 )
                 """);
         jdbc.execute("""
@@ -207,7 +232,8 @@ final class ReportTestData {
         jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS teams (
                     id UUID PRIMARY KEY,
-                    name VARCHAR(160) NOT NULL
+                    name VARCHAR(160) NOT NULL,
+                    archived BOOLEAN NOT NULL DEFAULT FALSE
                 )
                 """);
         jdbc.execute("""
@@ -314,7 +340,9 @@ final class ReportTestData {
                     groups_count INTEGER NOT NULL,
                     observed_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     changed_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                    sync_run_id UUID
+                    sync_run_id UUID,
+                    active_7d_count INTEGER, active_30d_count INTEGER, never_accessed_count INTEGER,
+                    inactive_count INTEGER, teachers_active_7d_count INTEGER, teachers_active_14d_count INTEGER
                 )
                 """);
         jdbc.execute("""
@@ -323,7 +351,9 @@ final class ReportTestData {
                     confirmed_at TIMESTAMP WITH TIME ZONE NOT NULL, participants_count INTEGER NOT NULL,
                     teachers_count INTEGER NOT NULL, completed_count INTEGER, not_completed_count INTEGER,
                     unknown_count INTEGER NOT NULL, groups_count INTEGER NOT NULL, demo BOOLEAN NOT NULL DEFAULT FALSE,
-                    PRIMARY KEY (mapping_id, observed_from)
+                    PRIMARY KEY (mapping_id, observed_from),
+                    active_7d_count INTEGER, active_30d_count INTEGER, never_accessed_count INTEGER,
+                    inactive_count INTEGER, teachers_active_7d_count INTEGER, teachers_active_14d_count INTEGER
                 )
                 """);
         jdbc.execute("""
@@ -336,13 +366,33 @@ final class ReportTestData {
                     program_id UUID,
                     run_starts_on DATE,
                     run_ends_on DATE,
-                    run_kind VARCHAR(16) NOT NULL DEFAULT 'STUDENTS'
+                    run_kind VARCHAR(16) NOT NULL DEFAULT 'STUDENTS',
+                    version INTEGER NOT NULL DEFAULT 0
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS interaction_stage_transitions (
+                    interaction_id UUID NOT NULL, from_stage_id UUID NOT NULL, to_stage_id UUID NOT NULL,
+                    comment_required BOOLEAN NOT NULL, PRIMARY KEY (interaction_id, from_stage_id, to_stage_id)
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS interaction_cycles (
+                    interaction_id UUID PRIMARY KEY, previous_interaction_id UUID NOT NULL, starts_on DATE NOT NULL
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS lms_signal_dismissals (
+                    interaction_id UUID NOT NULL, mapping_id UUID NOT NULL, signal_type VARCHAR(32) NOT NULL,
+                    data_version VARCHAR(80) NOT NULL, dismissed_by UUID NOT NULL,
+                    dismissed_at TIMESTAMP WITH TIME ZONE NOT NULL, recorded_as_risk BOOLEAN DEFAULT FALSE NOT NULL,
+                    PRIMARY KEY (interaction_id, mapping_id, signal_type)
                 )
                 """);
         for (String table : new String[]{
-                "learning_observations", "learning_snapshots", "source_mappings", "source_records", "report_jobs", "interaction_event_contacts", "contacts", "interaction_events", "product_transfers", "product_agreements", "interaction_stages",
+                "lms_signal_dismissals", "interaction_cycles", "interaction_stage_transitions", "labor_market_mappings", "labor_market_snapshots", "learning_observations", "learning_snapshots", "source_mappings", "source_records", "report_jobs", "interaction_event_contacts", "contacts", "interaction_events", "product_transfers", "product_agreements", "interaction_stages",
                 "interaction_issues", "interactions", "products", "vendors", "programs", "directions", "organizations", "crm_user_profiles", "teams", "organization_assignment_events",
-                "command_idempotency_records", "saved_reports"
+                "command_idempotency_records", "saved_reports", "workflow_template_stages", "workflow_templates"
         }) {
             jdbc.update("DELETE FROM " + table);
         }
@@ -398,6 +448,24 @@ final class ReportTestData {
                 at("2026-09-03T09:00:00+03:00"));
         productAgreement(jdbc, INTERACTION_FOREIGN, PRODUCT_X);
         event(jdbc, INTERACTION_FOREIGN, "CREATED", "Поиск контакта", null, null, MANAGER_B, at("2026-09-03T09:00:00+03:00"));
+    }
+
+    static void insertMarket(JdbcTemplate jdbc, String code, java.time.YearMonth month, int vacancies, String dataSource) {
+        jdbc.update("""
+                INSERT INTO labor_market_snapshots (
+                    external_code, period_month, direction_name, open_vacancies, data_source, as_of, fetched_at
+                ) VALUES (?, ?, 'Программирование', ?, ?, ?, CURRENT_TIMESTAMP)
+                """, code, month.atDay(1), vacancies, dataSource, month.atEndOfMonth());
+    }
+
+    static void trackMarket(JdbcTemplate jdbc, UUID directionId, String code) {
+        jdbc.update("UPDATE directions SET labor_market = TRUE WHERE id = ?", directionId);
+        if (code != null) {
+            jdbc.update("""
+                    INSERT INTO labor_market_mappings (direction_id, external_code, origin, version, updated_at)
+                    VALUES (?, ?, 'MANUAL', 0, CURRENT_TIMESTAMP)
+                    """, directionId, code);
+        }
     }
 
     static void insertDemand(JdbcTemplate jdbc) {

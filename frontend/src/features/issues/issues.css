@@ -186,3 +186,8 @@
     white-space: normal;
   }
 }
+
+.issues-page td .issues-page__open {
+  color: inherit;
+  font-weight: 400;
+}

@@ -2,6 +2,13 @@ package ru.rtk.crm.work;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -10,6 +17,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.jdbc.JdbcTest;
@@ -17,15 +25,23 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.catalog.OrganizationRepository;
+import ru.rtk.crm.interaction.Interaction;
+import ru.rtk.crm.interaction.InteractionIssueKind;
+import ru.rtk.crm.interaction.InteractionIssueRequest;
+import ru.rtk.crm.interaction.InteractionIssueService;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.work.LmsSignalModels.LmsSignal;
 import ru.rtk.crm.work.LmsSignalModels.LmsSignalDismissalRequest;
+import ru.rtk.crm.work.LmsSignalModels.LmsSignalRiskRequest;
 import ru.rtk.crm.work.LmsSignalModels.LmsSignalType;
+import ru.rtk.crm.work.LmsSignalModels.WorkLearning;
+import ru.rtk.crm.work.LmsSignalRepository.Activity;
 import ru.rtk.crm.work.LmsSignalRepository.SignalSource;
 
 @JdbcTest(properties = {
@@ -33,9 +49,10 @@ import ru.rtk.crm.work.LmsSignalRepository.SignalSource;
         "spring.datasource.url=jdbc:h2:mem:lms_signals;MODE=PostgreSQL;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({OrganizationRepository.class, LmsSignalRepository.class, LmsSignalService.class, LmsSignalServiceTest.TestBeans.class})
+@Import({OrganizationRepository.class, LmsSignalRepository.class, LmsSignalService.class, LmsWorkLearningService.class,
+        LmsSignalServiceTest.TestBeans.class})
 class LmsSignalServiceTest {
-    private static final LmsSignalProperties PROPERTIES = new LmsSignalProperties("Занятия", 14, 50, 7);
+    private static final LmsSignalProperties PROPERTIES = LmsLearningTestBeans.PROPERTIES;
     private static final UUID TEAM_A = UUID.fromString("00000000-0000-0000-0000-000000000001");
     private static final UUID TEAM_B = UUID.fromString("00000000-0000-0000-0000-000000000002");
     private static final UUID LEADER_A = UUID.fromString("00000000-0000-0000-0000-000000000010");
@@ -52,13 +69,20 @@ class LmsSignalServiceTest {
     private final CrmProfile kamB = new CrmProfile(KAM_B, UserRole.USER, TEAM_B, 0);
     private final CrmProfile management = new CrmProfile(MANAGEMENT, UserRole.MANAGEMENT, null, 0);
     private final CrmProfile admin = new CrmProfile(ADMIN, UserRole.ADMIN, null, 0);
+    private final CrmProfile partner = new CrmProfile(UUID.randomUUID(), UserRole.PARTNER, null, 0);
     private final LocalDate today = LocalDate.now(WorkProperties.ZONE);
 
     @Autowired
     private LmsSignalService service;
 
     @Autowired
+    private LmsWorkLearningService workLearningService;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @MockitoBean
+    private InteractionIssueService issueService;
 
     @BeforeEach
     void setUp() {
@@ -235,6 +259,153 @@ class LmsSignalServiceTest {
         assertThat(service.list(kamA).items()).isEmpty();
     }
 
+    @Test
+    void activitySignalsFollowThresholdsGracePeriodAndOneCausePerSignal() {
+        LocalDate start = today.minusDays(20);
+        LocalDate end = today.plusDays(30);
+
+        assertThat(rules(activitySource(start, end, 6, 1, new Activity(2, 4, 1, 2, 1, 1)), today))
+                .as("2 of 6 active is below 40 %, 2 of 6 stopped is above 25 %")
+                .containsExactly(LmsSignalType.LOW_ACTIVITY, LmsSignalType.DROPOUT);
+        assertThat(rules(activitySource(start, end, 6, 1, new Activity(3, 5, 1, 1, 1, 1)), today))
+                .as("3 of 6 active and 1 of 6 stopped are inside the thresholds")
+                .isEmpty();
+        assertThat(rules(activitySource(start, end, 6, 1, new Activity(0, 3, 4, 0, 0, 1)), today))
+                .as("not started explains the zero activity")
+                .containsExactly(LmsSignalType.NOT_STARTED);
+        assertThat(rules(activitySource(start, end, 3, 1, new Activity(0, 2, 1, 0, 0, 0)), today))
+                .as("nobody entered for 7 days, teachers silent for 14 days")
+                .containsExactly(LmsSignalType.NO_ACTIVITY, LmsSignalType.TEACHER_INACTIVE);
+        assertThat(rules(activitySource(start, end, 3, 0, new Activity(0, 2, 1, 0, 0, 0)), today))
+                .as("no teacher with a course role: teacher silence is not a signal")
+                .containsExactly(LmsSignalType.NO_ACTIVITY);
+        assertThat(rules(activitySource(today.minusDays(6), end, 6, 1, new Activity(0, 0, 6, 0, 0, 0)), today))
+                .as("first week of the run is a grace period")
+                .isEmpty();
+        assertThat(rules(activitySource(start, end, 6, 1, null), today))
+                .as("Moodle did not return the last access: no data is not a signal")
+                .isEmpty();
+        assertThat(rules(activitySource(start.minusDays(40), today.minusDays(1), 6, 1, new Activity(0, 0, 6, 0, 0, 0),
+                today.minusDays(2)), today))
+                .as("closed run")
+                .isEmpty();
+    }
+
+    @Test
+    void dailyActivityDoesNotBringBackHiddenSignalsAndActivitySignalsHideForTheWeek() {
+        UUID work = insertWork(UNIVERSITY_A, "Работа А", 3);
+        UUID mapping = insertRun(UNIVERSITY_A, today.minusDays(20), today.plusDays(30), 6, 3, today);
+        setActivity(mapping, 1, new Activity(1, 6, 0, 5, 1, 1));
+        assertThat(service.list(kamA).items()).extracting(LmsSignal::type)
+                .containsExactly(LmsSignalType.STUDENTS_APPEARED, LmsSignalType.LOW_ACTIVITY, LmsSignalType.DROPOUT);
+
+        service.dismiss(kamA, work, new LmsSignalDismissalRequest(LmsSignalType.STUDENTS_APPEARED, mapping));
+        service.dismiss(kamA, work, new LmsSignalDismissalRequest(LmsSignalType.LOW_ACTIVITY, mapping));
+        jdbcTemplate.update("UPDATE learning_snapshots SET observed_at = ? WHERE mapping_id = ?", OffsetDateTime.now(), mapping);
+        setActivity(mapping, 1, new Activity(2, 6, 0, 4, 1, 1));
+
+        assertThat(service.list(kamA).items())
+                .as("activity changed on the next run, counts and changed_at did not")
+                .extracting(LmsSignal::type).containsExactly(LmsSignalType.DROPOUT);
+
+        jdbcTemplate.update("UPDATE lms_signal_dismissals SET data_version = 'week:2000-01-03/0' WHERE signal_type = 'LOW_ACTIVITY'");
+        assertThat(service.list(kamA).items()).as("an activity signal hidden last week is back")
+                .extracting(LmsSignal::type).containsExactly(LmsSignalType.LOW_ACTIVITY, LmsSignalType.DROPOUT);
+    }
+
+    @Test
+    void recordAsRiskCreatesARegistryEntryOnceAndHidesTheSignal() {
+        UUID work = insertWork(UNIVERSITY_A, "Работа А", 10);
+        UUID mapping = insertRun(UNIVERSITY_A, today.minusDays(20), today.plusDays(30), 6, 3, today);
+        setActivity(mapping, 1, new Activity(4, 6, 0, 0, 0, 0));
+        Interaction updated = mock(Interaction.class);
+        when(issueService.create(eq(kamA), eq(work), any(), eq("risk-1"))).thenReturn(updated);
+        LmsSignalRiskRequest request = new LmsSignalRiskRequest(5, LmsSignalType.TEACHER_INACTIVE, mapping);
+
+        assertThat(service.recordRisk(kamA, work, request, "risk-1")).isSameAs(updated);
+
+        ArgumentCaptor<InteractionIssueRequest> issue = ArgumentCaptor.forClass(InteractionIssueRequest.class);
+        verify(issueService).create(eq(kamA), eq(work), issue.capture(), eq("risk-1"));
+        assertThat(issue.getValue().kind()).isEqualTo(InteractionIssueKind.RISK);
+        assertThat(issue.getValue().version()).isEqualTo(5);
+        assertThat(issue.getValue().description()).startsWith("Сигнал LMS «Преподаватель не заходит в курс»: Поток «Демо-курс»");
+        assertThat(service.forInteraction(kamA, work).items()).singleElement()
+                .satisfies(signal -> {
+                    assertThat(signal.dismissed()).isTrue();
+                    assertThat(signal.recordedAsRisk()).isTrue();
+                });
+        clearInvocations(issueService);
+        assertThatThrownBy(() -> service.recordRisk(kamA, work, request, "risk-2"))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.getMessage()).contains("уже записан"));
+        assertThatThrownBy(() -> service.recordRisk(management, work, request, "risk-3"))
+                .isInstanceOf(ContactInteractionMutationAccessDeniedException.class);
+        assertThatThrownBy(() -> service.recordRisk(kamB, work, request, "risk-4")).isInstanceOf(InteractionNotFoundException.class);
+        assertThatThrownBy(() -> service.recordRisk(admin, work, request, "risk-5")).isInstanceOf(InteractionNotFoundException.class);
+        assertThatThrownBy(() -> service.recordRisk(partner, work, request, "risk-6")).isInstanceOf(InteractionNotFoundException.class);
+        assertThatThrownBy(() -> service.recordRisk(kamA, work,
+                new LmsSignalRiskRequest(6, LmsSignalType.NO_STUDENTS, mapping), "risk-7"))
+                .isInstanceOf(InteractionValidationException.class);
+        verify(issueService, never()).create(any(), any(), any(), any());
+    }
+
+    @Test
+    void workLearningSummarisesRunsSignalsAndStageMismatchInsideTheScope() {
+        UUID early = insertWork(UNIVERSITY_A, "Раньше занятий", 3);
+        UUID classes = insertWork(UNIVERSITY_B, "На занятиях", 10);
+        UUID earlyRun = insertRun(UNIVERSITY_A, today.minusDays(20), today.plusDays(30), 6, 3, today);
+        setActivity(earlyRun, 1, new Activity(4, 6, 0, 0, 1, 1));
+        UUID classesRun = insertRun(UNIVERSITY_B, today.minusDays(20), today.plusDays(30), 3, null, today);
+        setActivity(classesRun, 1, new Activity(0, 2, 1, 0, 0, 0));
+
+        WorkLearning earlyLearning = workLearningService.byWork(management, List.of(early, classes)).get(early);
+        assertThat(earlyLearning.runs()).isEqualTo(1);
+        assertThat(earlyLearning.participants()).isEqualTo(6);
+        assertThat(earlyLearning.active7d()).isEqualTo(4);
+        assertThat(earlyLearning.signalTitles()).containsExactly("В LMS появились обучающиеся");
+        assertThat(earlyLearning.mismatch()).isEqualTo("Этап «Этап 3» раньше этапа «Занятия», а в LMS идёт обучение: обучающихся 6");
+        assertThat(earlyLearning.summary()).isEqualTo(
+                "потоков идёт 1, обучающихся 6, заходили за 7 дней 4; сигналы: В LMS появились обучающиеся");
+
+        WorkLearning classesLearning = workLearningService.byWork(management, List.of(classes)).get(classes);
+        assertThat(classesLearning.signalTitles()).containsExactly("Поток идёт, активности нет", "Преподаватель не заходит в курс");
+        assertThat(classesLearning.mismatch()).isEqualTo("Этап «Занятия», а за 7 дней в курс LMS никто не заходил");
+
+        service.dismiss(kamA, early, new LmsSignalDismissalRequest(LmsSignalType.STUDENTS_APPEARED, earlyRun));
+        WorkLearning dismissed = workLearningService.byWork(leaderA, List.of(early, classes)).get(early);
+        assertThat(dismissed.signals()).as("hidden signals are not counted").isZero();
+        assertThat(dismissed.mismatch()).as("hiding a signal does not settle the stage check").isNotNull();
+
+        assertThat(workLearningService.byWork(leaderA, List.of(early, classes))).containsOnlyKeys(early);
+        assertThat(workLearningService.byWork(kamB, List.of(early, classes))).containsOnlyKeys(classes);
+        assertThat(workLearningService.byWork(admin, List.of(early, classes))).isEmpty();
+        assertThat(workLearningService.byWork(partner, List.of(early, classes))).isEmpty();
+    }
+
+    private SignalSource activitySource(LocalDate runStartsOn, LocalDate runEndsOn, int participants, int teachers,
+                                        Activity activity) {
+        return activitySource(runStartsOn, runEndsOn, participants, teachers, activity, today);
+    }
+
+    private static SignalSource activitySource(LocalDate runStartsOn, LocalDate runEndsOn, int participants, int teachers,
+                                               Activity activity, LocalDate observedOn) {
+        OffsetDateTime observedAt = observedOn.atTime(12, 0).atZone(WorkProperties.ZONE).toOffsetDateTime();
+        return new SignalSource(
+                UUID.randomUUID(), "Работа", UUID.randomUUID(), "Вуз", null, null, "Занятия", 10,
+                UUID.randomUUID(), "Занятия", 10, false, false, UUID.randomUUID(), 0, "Курс", null,
+                runStartsOn, runEndsOn, participants, null, observedAt, observedAt, teachers, activity
+        );
+    }
+
+    private void setActivity(UUID mappingId, int teachers, Activity activity) {
+        jdbcTemplate.update("""
+                UPDATE learning_snapshots SET teachers_count = ?, active_7d_count = ?, active_30d_count = ?,
+                    never_accessed_count = ?, inactive_count = ?, teachers_active_7d_count = ?, teachers_active_14d_count = ?
+                WHERE mapping_id = ?
+                """, teachers, activity.active7d(), activity.active30d(), activity.neverAccessed(), activity.inactive(),
+                activity.teachersActive7d(), activity.teachersActive14d(), mappingId);
+    }
+
     private static SignalSource source(
             int currentStageOrder,
             Integer classesStageOrder,
@@ -248,7 +419,7 @@ class LmsSignalServiceTest {
         return new SignalSource(
                 UUID.randomUUID(), "Работа", UUID.randomUUID(), "Вуз", null, null, "Этап", currentStageOrder,
                 UUID.randomUUID(), "Занятия", classesStageOrder, false, false, UUID.randomUUID(), 0, "Курс", null,
-                runStartsOn, runEndsOn, participants, completed, observedAt, observedAt
+                runStartsOn, runEndsOn, participants, completed, observedAt, observedAt, 0, null
         );
     }
 
@@ -298,7 +469,7 @@ class LmsSignalServiceTest {
     private void createSchema() {
         List.of(
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL
                 )
@@ -357,14 +528,17 @@ class LmsSignalServiceTest {
                     mapping_id UUID PRIMARY KEY, organization_id UUID NOT NULL, program_id UUID NOT NULL,
                     course_name VARCHAR(1333) NOT NULL, group_name VARCHAR(300), participants_count INTEGER NOT NULL,
                     completed_count INTEGER, observed_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                    changed_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    changed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    teachers_count INTEGER DEFAULT 0 NOT NULL, active_7d_count INTEGER, active_30d_count INTEGER, never_accessed_count INTEGER,
+                    inactive_count INTEGER, teachers_active_7d_count INTEGER, teachers_active_14d_count INTEGER
                 )
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS lms_signal_dismissals (
                     interaction_id UUID NOT NULL, mapping_id UUID NOT NULL, signal_type VARCHAR(32) NOT NULL,
                     data_version VARCHAR(80) NOT NULL, dismissed_by UUID NOT NULL,
-                    dismissed_at TIMESTAMP WITH TIME ZONE NOT NULL, PRIMARY KEY (interaction_id, mapping_id, signal_type)
+                    dismissed_at TIMESTAMP WITH TIME ZONE NOT NULL, recorded_as_risk BOOLEAN DEFAULT FALSE NOT NULL,
+                    PRIMARY KEY (interaction_id, mapping_id, signal_type)
                 )
                 """
         ).forEach(jdbcTemplate::execute);

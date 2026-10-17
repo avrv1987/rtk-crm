@@ -1,0 +1,17 @@
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/labor-market-fixture;
+    default_type application/json;
+
+    location = /api/labor-market/demand {
+        if ($http_authorization != "Bearer ${LABOR_MARKET_TOKEN}") {
+            return 401 '{"message":"unauthorized"}';
+        }
+        try_files /demand.json =404;
+    }
+
+    location / {
+        return 404 '{"message":"not found"}';
+    }
+}

@@ -33,6 +33,12 @@ services:
   site-fixture:
     mem_limit: 64m
 
+  labor-market-fixture:
+    mem_limit: 64m
+
+  crm-stub:
+    mem_limit: 128m
+
 networks:
   edge:
     external: true

@@ -13,7 +13,6 @@ import {
   type InteractionEvent,
   type InteractionNextStep,
   type InteractionPlanUpdate,
-  type InteractionStage,
   type InteractionStageEdit,
   type InteractionTransition,
   type Me,
@@ -31,7 +30,12 @@ import {
   type InteractionPlanDraft,
   type InteractionStageEditType
 } from './drafts'
+import { ActionMenu, type ActionMenuItem } from '../../shared/ui/ActionMenu'
+import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
+import { HintButton } from '../../shared/ui/HintButton'
+import { Segmented } from '../../shared/ui/Segmented'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { Toast } from '../../shared/ui/Toast'
 import { InteractionDetailsForm } from './InteractionDetailsForm'
 import { InteractionIssuesPanel } from '../issues/InteractionIssuesPanel'
 import { InteractionFlagsForm } from './InteractionFlagsForm'
@@ -58,8 +62,15 @@ import { InteractionCycles } from '../training/InteractionCycles'
 import { LmsStageSuggestionPanel } from '../training/LmsStageSuggestion'
 import { TeacherTrainings } from '../training/TeacherTrainings'
 import { TeacherRoster } from '../training/TeacherRoster'
-import { StageCompletionPanel, formatCompletionDate } from './StageCompletionPanel'
-import { CardDialog, CardMenu, CardTabPanel, CardTabs, RequiredMark, type CardMenuItem, type CardTab } from './cardUi'
+import { StageCompletionPanel } from './StageCompletionPanel'
+import { WorkAgreementBlock } from '../agreements/WorkAgreementBlock'
+import { agreementsApi, type WorkAgreements } from '../agreements/agreementsApi'
+import { activeStageRole } from '../agreements/agreementModel'
+import { CardDialog, CardSection, CardTabPanel, CardTabs, RequiredMark, type CardTab } from './cardUi'
+import { RouteDisclosure, daysLabel, daysSince, stagePath } from './RouteDisclosure'
+import { WorkFacts } from './WorkFacts'
+import { WorkHistoryTab } from './WorkHistoryTab'
+import { agreementFact, isSignedAgreement, primaryAction, primaryShortLabels, signingBlock } from './workCardModel'
 import { formatMoscowDateTime, isoFromMoscowInput, moscowInputValue } from './moscowTime'
 import './workCard.css'
 
@@ -70,6 +81,7 @@ type InteractionsPanelProps = {
   organizationId: Organization['id']
   initialInteractionId?: Interaction['id']
   openIssues?: boolean
+  organization?: Organization
   profileId: string
   role: Me['role']
   partnerAccess?: PartnerAccessRights
@@ -151,22 +163,6 @@ const catalogQuery = {
 
 const templatesPageSize = 25
 
-const eventLabel: Record<InteractionEvent['type'], string> = {
-  CREATED: 'Взаимодействие создано',
-  TRANSITIONED: 'Этап изменён',
-  COMMENTED: 'Добавлен комментарий',
-  STAGES_EDITED: 'Изменены этапы карточки',
-  PLAN_UPDATED: 'Изменён план',
-  DETAILS_UPDATED: 'Изменены данные работы',
-  STATUS_CHANGED: 'Изменён статус работы',
-  AGREEMENT_UPDATED: 'Изменены договор и передача',
-  ATTACHMENT_DELETED: 'Удалён документ',
-  STAGE_COMPLETED: 'Этап отмечен выполненным',
-  STAGE_COMPLETION_CLEARED: 'Снята отметка выполнения этапа'
-}
-
-const dayMilliseconds = 24 * 60 * 60 * 1000
-
 const formatDateTime = formatMoscowDateTime
 
 const requestIdOf = (error: unknown) => (
@@ -215,7 +211,8 @@ const fieldLabels: Record<string, string> = {
   id: 'Этап',
   operations: 'Операция',
   attachmentIds: 'Документы',
-  file: 'Файл'
+  file: 'Файл',
+  agreement: 'Договор'
 }
 
 const StructuredApiError = ({ error }: { error: unknown }) => {
@@ -248,18 +245,6 @@ const FieldError = ({ id, message }: { id: string; message: string | undefined }
 const toIsoDateTime = isoFromMoscowInput
 
 const toDateTimeLocal = moscowInputValue
-
-const daysLabel = (days: number) => {
-  const lastTwo = days % 100
-  const last = days % 10
-  if (last === 1 && lastTwo !== 11) {
-    return `${days} день`
-  }
-  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
-    return `${days} дня`
-  }
-  return `${days} дней`
-}
 
 const nextStepPayload = (
   interaction: Pick<Interaction, 'nextAction' | 'nextActionAt'>,
@@ -313,36 +298,55 @@ const planValuesOf = (interaction: Interaction, plan: InteractionPlanDraft | nul
   }
 }
 
-const planChanges = (interaction: Interaction, plan: InteractionPlanDraft | null): InteractionPlanUpdate => {
+type PlanPart = 'step' | 'program'
+
+const planPartFields: Record<PlanPart, PlanField[]> = {
+  step: ['nextAction', 'nextActionAt'],
+  program: ['programId']
+}
+
+// Окна «Изменить шаг и срок» и «Программа и продукты» делят один черновик плана (и прежний ключ хранения),
+// но отправляют только свои поля: несохранённая правка программы не должна уйти вместе со сроком.
+const planChanges = (interaction: Interaction, plan: InteractionPlanDraft | null, part: PlanPart): InteractionPlanUpdate => {
   const changes: InteractionPlanUpdate = { version: interaction.version }
   const current = planFromInteraction(interaction)
   const values = planValuesOf(interaction, plan)
-  if (values.nextAction.trim() !== current.nextAction) {
+  if (part === 'step' && values.nextAction.trim() !== current.nextAction) {
     changes.nextAction = values.nextAction.trim() || null
   }
-  if (values.nextActionAt !== current.nextActionAt) {
+  if (part === 'step' && values.nextActionAt !== current.nextActionAt) {
     changes.nextActionAt = toIsoDateTime(values.nextActionAt)
   }
-  if (values.programId !== current.programId) {
+  if (part === 'program' && values.programId !== current.programId) {
     changes.programId = values.programId || null
   }
   if (
-    values.productIds.length !== interaction.productIds.length
-    || values.productIds.some((id) => !interaction.productIds.includes(id))
+    part === 'program' && (values.productIds.length !== interaction.productIds.length
+    || values.productIds.some((id) => !interaction.productIds.includes(id)))
   ) {
     changes.productIds = values.productIds
   }
   return changes
 }
 
-const planConflicts = (interaction: Interaction, plan: InteractionPlanDraft | null) => {
+const withoutPlanPart = (plan: InteractionPlanDraft | null, part: PlanPart): InteractionPlanDraft | null => {
+  if (plan === null) {
+    return null
+  }
+  const next: InteractionPlanDraft = part === 'step'
+    ? { ...plan, nextAction: undefined, nextActionAt: undefined }
+    : { ...plan, programId: undefined, addedProductIds: [], removedProductIds: [] }
+  return isEmptyPlanDraft(next) ? null : next
+}
+
+const planConflicts = (interaction: Interaction, plan: InteractionPlanDraft | null, part: PlanPart) => {
   const current = planFromInteraction(interaction)
   const shown: Record<PlanField, string> = {
     nextAction: interaction.nextAction ?? 'не задан',
     nextActionAt: interaction.nextActionAt === null ? 'не задан' : formatDateTime(interaction.nextActionAt),
     programId: interaction.program?.name ?? 'не указана'
   }
-  return (Object.keys(planFieldLabels) as PlanField[])
+  return planPartFields[part]
     .filter((field) => {
       const draft = plan?.[field]
       return draft !== undefined && draft.base !== current[field] && draft.value !== current[field]
@@ -350,59 +354,7 @@ const planConflicts = (interaction: Interaction, plan: InteractionPlanDraft | nu
     .map((field) => ({ field, label: planFieldLabels[field], current: shown[field] }))
 }
 
-type StagePathStatus = 'passed' | 'current' | 'completed' | 'skipped' | 'future'
-
-type StagePathItem = {
-  stage: InteractionStage
-  status: StagePathStatus
-  enteredAt?: string
-  completedOn?: string
-}
-
-const stagePath = (interaction: Interaction, events: InteractionEvent[] | undefined): StagePathItem[] => {
-  const enteredAt = new Map<InteractionStage['id'], string>()
-  events?.forEach((event) => {
-    if ((event.type === 'CREATED' || event.type === 'TRANSITIONED') && event.toStageId) {
-      enteredAt.set(event.toStageId, event.occurredAt)
-    }
-  })
-  const completedOn = new Map(interaction.stageCompletions.map((completion) => [completion.stageId, completion.completedOn]))
-  const currentOrder = interaction.stages.find((stage) => stage.id === interaction.currentStageId)?.order ?? 0
-  return interaction.stages.map((stage) => {
-    const entered = enteredAt.get(stage.id)
-    const completed = completedOn.get(stage.id)
-    if (stage.id === interaction.currentStageId) {
-      return { stage, status: 'current', enteredAt: entered, completedOn: completed }
-    }
-    if (completed !== undefined) {
-      return { stage, status: 'completed', enteredAt: entered, completedOn: completed }
-    }
-    if (entered !== undefined) {
-      return { stage, status: 'passed', enteredAt: entered }
-    }
-    return { stage, status: events !== undefined && stage.order < currentOrder ? 'skipped' : 'future' }
-  })
-}
-
 const offered = (contact: Contact) => !contact.inactive && (contact.personalDataStatus ?? 'ACTIVE') === 'ACTIVE'
-
-const stagePathLabel = (item: StagePathItem) => {
-  if (item.status === 'current') {
-    const completedNote = item.completedOn === undefined ? '' : `; отмечен выполненным ${formatCompletionDate(item.completedOn)}`
-    if (item.enteredAt === undefined) {
-      return `Текущий этап${completedNote}`
-    }
-    const days = Math.max(0, Math.floor((Date.now() - new Date(item.enteredAt).getTime()) / dayMilliseconds))
-    return `Текущий этап: ${daysLabel(days)} на этапе${completedNote}`
-  }
-  if (item.status === 'completed' && item.completedOn !== undefined) {
-    return `Выполнен ${formatCompletionDate(item.completedOn)}`
-  }
-  if (item.status === 'passed') {
-    return item.enteredAt === undefined ? 'Пройден' : `Пройден; вход ${formatDateTime(item.enteredAt)}`
-  }
-  return item.status === 'skipped' ? 'Пропущен' : 'Впереди'
-}
 
 type NextStepFieldsProps = {
   nextAction: string
@@ -411,11 +363,13 @@ type NextStepFieldsProps = {
   onNextActionAtChange: (value: string) => void
 }
 
-const NextStepFields = ({ nextAction, nextActionAt, onNextActionChange, onNextActionAtChange }: NextStepFieldsProps) => (
-  <fieldset className="interaction-next-step-fields">
-    <legend>Изменить следующий шаг</legend>
+const NextStepFields = ({ nextAction, nextActionAt, onNextActionChange, onNextActionAtChange }: NextStepFieldsProps) => {
+  const [startOpen] = useState(nextAction.length > 0 || nextActionAt.length > 0)
+  return (
+  <details className="interaction-next-step-fields" open={startOpen}>
+    <summary>Заодно изменить следующий шаг</summary>
     <label>
-      Новый следующий шаг
+      Следующий шаг
       <textarea
         value={nextAction}
         maxLength={500}
@@ -423,7 +377,7 @@ const NextStepFields = ({ nextAction, nextActionAt, onNextActionChange, onNextAc
       />
     </label>
     <label>
-      Новый срок (МСК)
+      Срок (МСК)
       <input
         type="datetime-local"
         value={nextActionAt}
@@ -431,16 +385,8 @@ const NextStepFields = ({ nextAction, nextActionAt, onNextActionChange, onNextAc
       />
     </label>
     <span className="interaction-field-hint">Пустое поле оставляет текущее значение.</span>
-  </fieldset>
-)
-
-const eventStageDescription = (event: InteractionEvent) => {
-  if (event.type === 'TRANSITIONED') {
-    const from = event.fromStageNameSnapshot ?? 'предыдущий этап'
-    const to = event.toStageNameSnapshot ?? 'следующий этап'
-    return `${from} → ${to}`
-  }
-  return `Этап: ${event.stageNameSnapshot}`
+  </details>
+  )
 }
 
 const nextActionSchedule = (interaction: Pick<Interaction, 'nextAction' | 'nextActionAt'>) => {
@@ -507,9 +453,16 @@ const attachmentMessage = (error: unknown, action: 'upload' | 'download' | 'refr
 const attachmentLimitMegabytes = 20
 const attachmentLimitBytes = attachmentLimitMegabytes * 1024 * 1024
 
-type CardDialogKind = 'contact' | 'create' | 'transition' | 'step' | 'comment' | 'upload' | 'status' | 'flags' | 'issues' | 'stageEdit' | 'stageCompletion' | 'details'
+type CardDialogKind = 'contact' | 'create' | 'transition' | 'step' | 'program' | 'comment' | 'upload' | 'status' | 'flags' | 'issues' | 'stageEdit' | 'stageCompletion' | 'details'
 
-type CardTabId = 'history' | 'documents' | 'contract' | 'transfers' | 'route' | 'learning' | 'cycles' | 'contacts' | 'teacherRoster'
+type CardTabId = 'history' | 'documents' | 'contract' | 'learning' | 'contacts'
+
+type WorksFilter = 'ACTIVE' | 'ALL'
+
+type WorkAgreementsState =
+  | { kind: 'loading' }
+  | { kind: 'ready'; value: WorkAgreements }
+  | { kind: 'failed' }
 
 let carriedNotice: { interactionId: Interaction['id']; text: string } | null = null
 
@@ -552,6 +505,7 @@ export const InteractionsPanel = ({
   organizationId,
   initialInteractionId,
   openIssues = false,
+  organization,
   profileId,
   role,
   partnerAccess,
@@ -615,6 +569,15 @@ export const InteractionsPanel = ({
   const [dialog, setDialog] = useState<CardDialogKind | null>(null)
   const [cardTab, setCardTab] = useState<CardTabId>('history')
   const [notice, setNotice] = useState<string | null>(() => takeCarriedNotice(initialInteractionId))
+  const [worksFilter, setWorksFilter] = useState<WorksFilter>('ACTIVE')
+  const [completingStep, setCompletingStep] = useState(false)
+  const [workAgreements, setWorkAgreements] = useState<WorkAgreementsState>({ kind: 'loading' })
+  const [agreementCreateSignal, setAgreementCreateSignal] = useState(0)
+  const [signalCount, setSignalCount] = useState(0)
+  const [cyclesFocus, setCyclesFocus] = useState(0)
+  const [confirmStageDelete, setConfirmStageDelete] = useState(false)
+  const [agreementsRevision, setAgreementsRevision] = useState(0)
+  const contactFromDetails = useRef(false)
   const listRequestVersion = useRef(0)
   const detailRequestVersion = useRef(0)
   const eventsRequestVersion = useRef(0)
@@ -646,7 +609,7 @@ export const InteractionsPanel = ({
         page,
         size,
         sort: interactionSort,
-        status: 'ALL'
+        status: worksFilter
       })))
       if (requestVersion === listRequestVersion.current) {
         const items = [...new Map(results.flatMap((result) => result.items).map((item) => [item.id, item])).values()]
@@ -674,7 +637,7 @@ export const InteractionsPanel = ({
       }
       setListState({ kind: 'failed', requestId: requestIdOf(error) })
     }
-  }, [onProfileUnavailable, onSessionExpired, organizationId])
+  }, [onProfileUnavailable, onSessionExpired, organizationId, worksFilter])
 
   const loadContacts = useCallback(async () => {
     const requestVersion = ++contactsRequestVersion.current
@@ -1049,8 +1012,9 @@ export const InteractionsPanel = ({
     window.location.hash = interactionHref(id)
   }
   const planValues = currentInteraction === undefined ? undefined : planValuesOf(currentInteraction, planDraft)
-  const planPayload = currentInteraction === undefined ? undefined : planChanges(currentInteraction, planDraft)
-  const planConflictList = currentInteraction === undefined ? [] : planConflicts(currentInteraction, planDraft)
+  const planPart: PlanPart = dialog === 'program' ? 'program' : 'step'
+  const planPayload = currentInteraction === undefined ? undefined : planChanges(currentInteraction, planDraft, planPart)
+  const planConflictList = currentInteraction === undefined ? [] : planConflicts(currentInteraction, planDraft, planPart)
   const planHasChanges = planPayload !== undefined && Object.keys(planPayload).length > 1
   const currentEvents = eventsState.kind === 'ready' && eventsState.id === currentInteraction?.id
     ? eventsState.events
@@ -1102,6 +1066,61 @@ export const InteractionsPanel = ({
     }
   }, [initialInteractionId, openIssues, selectedInteractionId])
     ?? (detailState.kind === 'loading' || detailState.kind === 'failed' ? detailState.id : undefined)
+
+  useEffect(() => {
+    if (view !== 'card' || currentInteractionId === undefined) {
+      return
+    }
+    let active = true
+    agreementsApi.workAgreements(currentInteractionId)
+      .then((value) => {
+        if (active) {
+          setWorkAgreements({ kind: 'ready', value })
+        }
+      })
+      .catch((error: unknown) => {
+        if (!active) {
+          return
+        }
+        if (isUnauthenticated(error)) {
+          onSessionExpired()
+        } else if (isProfileUnavailable(error)) {
+          onProfileUnavailable(error.requestId)
+        } else {
+          setWorkAgreements({ kind: 'failed' })
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [agreementsRevision, currentInteractionId, currentVersion, onProfileUnavailable, onSessionExpired, view])
+
+  useEffect(() => {
+    if (view !== 'card' || currentInteractionId === undefined) {
+      return
+    }
+    let active = true
+    apiClient.listInteractionLmsSignals(currentInteractionId)
+      .then((result) => {
+        if (active) {
+          setSignalCount(result.items.filter((signal) => !signal.dismissed).length)
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setSignalCount(0)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [currentInteractionId, currentVersion, view])
+
+  useEffect(() => {
+    if (cyclesFocus > 0 && cardTab === 'learning') {
+      window.requestAnimationFrame(() => document.getElementById('work-cycles')?.scrollIntoView({ block: 'start' }))
+    }
+  }, [cardTab, cyclesFocus])
 
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1181,7 +1200,13 @@ export const InteractionsPanel = ({
       setContactRole('')
       setContactCreateState({ kind: 'idle' })
       setSelectedContactIds((ids) => ids.includes(contact.id) ? ids : [...ids, contact.id])
-      setDialog((current) => current === 'contact' && view === 'works' ? 'create' : null)
+      setDialog((current) => {
+        if (current !== 'contact') {
+          return null
+        }
+        return view === 'works' ? 'create' : contactFromDetails.current ? 'details' : null
+      })
+      contactFromDetails.current = false
       setNotice(`Контакт «${contact.name}» добавлен${view === 'works' ? ' и выбран для нового взаимодействия' : ''}.`)
       void loadContacts()
       onContactsChanged?.()
@@ -1402,8 +1427,16 @@ export const InteractionsPanel = ({
     }
   }
 
-  const submitStageEdit = async (event: FormEvent<HTMLFormElement>) => {
+  const submitStageEdit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (stageEditType === 'DELETE') {
+      setConfirmStageDelete(true)
+      return
+    }
+    void runStageEdit()
+  }
+
+  const runStageEdit = async () => {
     if (currentInteraction === undefined || !stageEditCanSubmit) {
       return
     }
@@ -1433,7 +1466,7 @@ export const InteractionsPanel = ({
       setStageEditName('')
       setStageEditOptional(false)
       setStageEditState({ kind: 'idle' })
-      finish('Этапы этой работы изменены. Изменение записано в историю.', 'route')
+      finish('Этапы этого взаимодействия изменены. Изменение записано в историю.')
       void loadEvents(interaction.id)
       refreshList()
     } catch (error) {
@@ -1454,7 +1487,8 @@ export const InteractionsPanel = ({
     if (currentInteraction === undefined || planDraft === null) {
       return
     }
-    const payload = planChanges(currentInteraction, planDraft)
+    const part = planPart
+    const payload = planChanges(currentInteraction, planDraft, part)
     if (Object.keys(payload).length === 1) {
       return
     }
@@ -1467,9 +1501,11 @@ export const InteractionsPanel = ({
       )
       planKey.current = null
       setDetailState({ kind: 'ready', interaction })
-      setPlanDraft(null)
+      setPlanDraft((draft) => withoutPlanPart(draft, part))
       setPlanState({ kind: 'idle' })
-      finish(`План сохранён. Следующий шаг: ${interaction.nextAction ?? 'не задан'}.`)
+      finish(part === 'step'
+        ? `Следующий шаг сохранён: ${interaction.nextAction ?? 'не задан'}.`
+        : `Программа и продукты сохранены: ${interaction.program?.name ?? 'программа не указана'}.`)
       void loadEvents(interaction.id)
       refreshList()
     } catch (error) {
@@ -1525,7 +1561,7 @@ export const InteractionsPanel = ({
 
   const resetPlan = () => {
     planKey.current = null
-    setPlanDraft(null)
+    setPlanDraft((draft) => withoutPlanPart(draft, planPart))
     setPlanState({ kind: 'idle' })
   }
 
@@ -1782,15 +1818,14 @@ export const InteractionsPanel = ({
 
   const closeDialog = () => setDialog(null)
 
-  const noticeSlot = (
-    <div className="card-notice-slot" role="status" aria-live="polite">
-      {notice !== null && <p className="card-notice">{notice}</p>}
-    </div>
-  )
+  const noticeSlot = <Toast message={notice} onClose={() => setNotice(null)} />
 
   const readOnlyNote = !canManageDailyWork && (
     <p className="interactions-read-only">
-      Режим просмотра портфеля: доступны контакты, взаимодействия и история. Добавлять контакты, создавать взаимодействия, комментарии и переходы может ответственный КАМ.
+      Только просмотр
+      <HintButton label="Что доступно в режиме просмотра">
+        Доступны контакты, взаимодействия и история. Добавлять контакты, создавать взаимодействия, комментарии и переходы может ответственный КАМ.
+      </HintButton>
     </p>
   )
 
@@ -1914,13 +1949,17 @@ export const InteractionsPanel = ({
   if (view === 'works') {
     return (
       <section className="interactions-panel interactions-panel--works" aria-labelledby="interactions-title">
+        <h4 id="interactions-title" className="visually-hidden">Взаимодействия</h4>
         <div className="interactions-header">
-          <div>
-            <h4 id="interactions-title">Взаимодействия</h4>
-            {listState.kind === 'ready' && <p className="interactions-total">Всего: {listState.total}</p>}
-          </div>
+          <Segmented
+            label="Какие взаимодействия показать"
+            options={[{ value: 'ACTIVE', label: 'Активные' }, { value: 'ALL', label: 'Все' }]}
+            value={worksFilter}
+            onChange={setWorksFilter}
+          />
+          {listState.kind === 'ready' && <p className="interactions-total">Всего: {listState.total}</p>}
           {canManageDailyWork && (
-            <button type="button" onClick={() => setDialog('create')}>Новое взаимодействие</button>
+            <button type="button" className="interactions-header__create" onClick={() => setDialog('create')}>Новое взаимодействие</button>
           )}
         </div>
         {readOnlyNote}
@@ -1937,12 +1976,14 @@ export const InteractionsPanel = ({
         )}
         {listState.kind === 'ready' && (
           listState.items.length === 0 ? (
-            <p className="organizations-message">У этой организации пока нет взаимодействий.</p>
+            <p className="organizations-message">
+              {worksFilter === 'ACTIVE' ? 'Активных взаимодействий нет.' : 'У этого вуза пока нет взаимодействий.'}
+            </p>
           ) : (
             <ul className="interactions-list" aria-label="Взаимодействия организации" aria-busy={listState.refreshing}>
               {listState.items.map((interaction) => {
                 const itemSchedule = nextActionSchedule(interaction)
-                const days = Math.max(0, Math.floor((Date.now() - new Date(interaction.stageEnteredAt).getTime()) / dayMilliseconds))
+                const days = daysSince(interaction.stageEnteredAt)
                 return (
                   <li key={interaction.id}>
                     <a className="interaction-list-item" href={interactionHref(interaction.id)}>
@@ -2222,36 +2263,179 @@ export const InteractionsPanel = ({
   const currentPathItem = pathItems.find((item) => item.status === 'current')
   const uploadStage = currentInteraction?.stages.find((stage) => stage.id === uploadStageId)
   const commentStage = currentInteraction?.stages.find((stage) => stage.id === commentStageId)
-  const allowedFromCurrent = currentInteraction?.transitions.filter((transition) => transition.fromStageId === currentInteraction.currentStageId) ?? []
   const workStatus = currentInteraction?.marks.status
-  const cardMenuItems: CardMenuItem[] = canManageDailyWork ? [
-    { label: 'Проблемы и риски…', onSelect: () => setDialog('issues') },
-    { label: 'Чего ждём…', onSelect: () => setDialog('flags') },
-    { label: 'Изменить данные работы…', onSelect: () => setDialog('details') },
-    { label: 'Отметить этап выполненным…', onSelect: () => setDialog('stageCompletion') },
-    { label: 'Изменить этапы этой работы…', onSelect: () => setDialog('stageEdit') },
-    {
-      label: workStatus === 'ACTIVE' ? 'Приостановить или завершить работу…' : 'Возобновить работу…',
-      onSelect: () => setDialog('status'),
-      danger: workStatus === 'ACTIVE'
+  const work = workAgreements.kind === 'ready' ? workAgreements.value : null
+  const stageRole = work === null || currentInteraction === undefined ? null : activeStageRole(work.stages, currentInteraction.currentStageId)
+  const nextTransition = currentInteraction === undefined ? undefined : nextAllowedTransition(currentInteraction)
+  const signingBlockedNext = currentInteraction === undefined || nextTransition === undefined
+    ? null
+    : signingBlock(work, currentInteraction.stages, currentInteraction.currentStageId, nextTransition.stageId)
+  const transitionSigningBlock = currentInteraction === undefined || selectedTransition === undefined
+    ? null
+    : signingBlock(work, currentInteraction.stages, currentInteraction.currentStageId, selectedTransition.stageId)
+  const hasNextStep = (currentInteraction?.nextAction?.trim() ?? '').length > 0
+  const hasStepOrDue = hasNextStep || (currentInteraction?.nextActionAt ?? null) !== null
+  const primary = currentInteraction === undefined ? null : primaryAction({
+    canEdit: canManageDailyWork,
+    status: currentInteraction.marks.status,
+    hasNextStep,
+    transitionCount: currentInteraction.allowedTransitions.length,
+    agreementStageRole: stageRole,
+    agreementCount: work?.agreements.length ?? 0,
+    signingBlocked: signingBlockedNext
+  })
+  const startAgreementCreate = () => {
+    setCardTab('contract')
+    setAgreementCreateSignal((value) => value + 1)
+  }
+  const startNewCycle = () => {
+    setCardTab('learning')
+    setCyclesFocus((value) => value + 1)
+  }
+  const runPrimary = () => {
+    if (primary === null) {
+      return
     }
+    if (primary.kind === 'transition') {
+      openTransition()
+    } else if (primary.kind === 'resume') {
+      setDialog('status')
+    } else if (primary.kind === 'createAgreement') {
+      startAgreementCreate()
+    } else if (primary.kind === 'openAgreement') {
+      setCardTab('contract')
+    } else {
+      setDialog('step')
+    }
+  }
+  const addItems: ActionMenuItem[] = canManageDailyWork ? [
+    { label: 'Комментарий…', onSelect: () => setDialog('comment') },
+    { label: 'Документ…', onSelect: () => setDialog('upload') },
+    { label: 'Проблема или риск…', onSelect: () => setDialog('issues') }
   ] : []
+  const moreItems: ActionMenuItem[] = canManageDailyWork ? [
+    { label: 'Изменить шаг и срок…', onSelect: () => setDialog('step') },
+    ...(primary?.kind === 'transition' ? [] : [{ label: 'Перейти на этап…', onSelect: openTransition }]),
+    { label: 'Отметить этап выполненным…', onSelect: () => setDialog('stageCompletion') },
+    { label: 'Чего ждём от вуза или РТК…', onSelect: () => setDialog('flags') },
+    { label: 'Проблемы и риски…', onSelect: () => setDialog('issues') },
+    { label: 'Изменить данные взаимодействия…', onSelect: () => setDialog('details'), separated: true },
+    { label: 'Программа и продукты…', onSelect: () => setDialog('program') },
+    { label: 'Изменить этапы этого взаимодействия…', onSelect: () => setDialog('stageEdit') },
+    { label: 'Начать новый цикл…', onSelect: startNewCycle },
+    {
+      label: workStatus === 'ACTIVE' ? 'Приостановить или завершить…' : 'Возобновить…',
+      onSelect: () => setDialog('status'),
+      danger: workStatus === 'ACTIVE',
+      separated: true
+    }
+  ] : [{ label: 'Проблемы и риски…', onSelect: () => setDialog('issues') }]
   const cardTabs: CardTab<CardTabId>[] = currentInteraction === undefined ? [] : [
     { id: 'history', label: 'История', count: currentEvents?.length },
     { id: 'documents', label: 'Документы', count: currentInteraction.attachments.length },
-    { id: 'contract', label: 'Договор и лицензия', count: currentInteraction.productAgreements.length },
-    { id: 'transfers', label: 'Отметки передачи' },
-    { id: 'route', label: 'Маршрут' },
-    { id: 'learning', label: 'Обучение' },
-    { id: 'cycles', label: 'Циклы' },
-    { id: 'contacts', label: 'Контакты', count: currentInteraction.contactIds.length },
-    { id: 'teacherRoster', label: 'Преподаватели на ПК' }
+    { id: 'contract', label: 'Договор и лицензии', count: (work?.agreements.length ?? 0) + currentInteraction.productAgreements.length },
+    { id: 'learning', label: 'Обучение', count: signalCount > 0 ? signalCount : undefined },
+    { id: 'contacts', label: 'Контакты', count: currentInteraction.contactIds.length }
   ]
   const reload = () => {
     if (currentInteraction !== undefined) {
       openInteraction(currentInteraction.id)
     }
   }
+  const planForm = (part: PlanPart) => planValues !== undefined && currentInteraction !== undefined && (
+    <form className="interaction-plan-form" onSubmit={(event) => void submitPlan(event)}>
+      {planConflictList.length > 0 && (
+        <div className="interaction-catalog-message" role="status">
+          <p>Пока вы редактировали, в карточке изменились поля, которые вы тоже меняете. При сохранении останутся ваши значения.</p>
+          <ul>
+            {planConflictList.map((conflict) => (
+              <li key={conflict.field}>{conflict.label}: сейчас в карточке {conflict.current}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {part === 'step' && (
+        <>
+          <label>
+            Следующий шаг
+            <textarea
+              value={planValues.nextAction}
+              maxLength={500}
+              onChange={(event) => changePlan('nextAction', event.target.value)}
+              {...invalidProps(fieldErrorOf(planState, 'nextAction'), 'interaction-plan-next-action-error')}
+            />
+            <FieldError id="interaction-plan-next-action-error" message={fieldErrorOf(planState, 'nextAction')} />
+          </label>
+          <label>
+            Срок (МСК)
+            <input
+              type="datetime-local"
+              value={planValues.nextActionAt}
+              onChange={(event) => changePlan('nextActionAt', event.target.value)}
+            />
+          </label>
+        </>
+      )}
+      {part === 'program' && (catalogState.kind === 'ready' ? (
+        <>
+          <label>
+            Программа
+            <select value={planValues.programId} onChange={(event) => changePlan('programId', event.target.value)}>
+              <option value="">Не указана</option>
+              {planProgramOptions.map((program) => (
+                <option key={program.id} value={program.id}>{program.name}</option>
+              ))}
+            </select>
+          </label>
+          <fieldset className="interaction-catalog-picker">
+            <legend>Продукты</legend>
+            {planProductOptions.length === 0 ? (
+              <p>Доступных продуктов нет.</p>
+            ) : (
+              <ul>
+                {planProductOptions.map((product) => (
+                  <li key={product.id}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={planValues.productIds.includes(product.id)}
+                        disabled={lockedProductIds.has(product.id) && planValues.productIds.includes(product.id)}
+                        onChange={() => togglePlanProduct(product.id)}
+                      />
+                      <span>{product.name}</span>
+                      {lockedProductIds.has(product.id) && <small>Есть данные лицензии, снять нельзя</small>}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </fieldset>
+        </>
+      ) : (
+        <p className="interaction-catalog-message">Программу и продукты можно изменить после загрузки справочника.</p>
+      ))}
+      <div className="interaction-plan-form__actions">
+        <button type="submit" disabled={planState.kind === 'saving' || !planHasChanges} title={planHasChanges ? undefined : 'Измените поле, чтобы сохранить'}>
+          {planState.kind === 'saving' ? 'Сохраняем…' : 'Сохранить'}
+        </button>
+        {planHasChanges && (
+          <button type="button" className="button--secondary" disabled={planState.kind === 'saving'} onClick={resetPlan}>
+            Сбросить изменения
+          </button>
+        )}
+      </div>
+      {planState.kind === 'failed' && (
+        <div className="interaction-command-error" role="alert">
+          <p>{commandMessage(planState.error)}</p>
+          <StructuredApiError error={planState.error} />
+          {planState.error instanceof ApiError && <SupportDetails requestId={planState.error.requestId} code={planState.error.code} />}
+          {planState.error instanceof ApiError && planState.error.status === 409 && (
+            <button type="button" onClick={reload}>Обновить карточку</button>
+          )}
+        </div>
+      )}
+    </form>
+  )
 
   return (
     <section className="interaction-detail work-card" aria-labelledby="interaction-detail-title">
@@ -2274,86 +2458,100 @@ export const InteractionsPanel = ({
           <button type="button" onClick={() => openInteraction(detailState.id)}>Повторить</button>
         </div>
       )}
-      {currentInteraction !== undefined && (
+      {currentInteraction !== undefined && schedule !== undefined && (
         <>
           <div className="work-card__top">
             <div className="work-card__heading">
               <h3 id="interaction-detail-title" ref={detailHeading} tabIndex={-1}>{currentInteraction.title}</h3>
               <div className="work-card__chips">
-                {currentInteraction.marks.status === 'ACTIVE' && (
-                  <span className="status status--planned">{workStatusLabels.ACTIVE}</span>
-                )}
+                {workStatus === 'ACTIVE' && <span className="status status--planned">{workStatusLabels.ACTIVE}</span>}
                 <InteractionMarkBadges marks={currentInteraction.marks} onOpenIssues={() => setDialog('issues')} />
+                {signalCount > 0 && (
+                  <button type="button" className="status status--missing work-card__chip-button" onClick={() => setCardTab('learning')}>
+                    Сигналы LMS: {signalCount}
+                  </button>
+                )}
               </div>
-              <p className="work-card__meta">
-                Программа: {currentInteraction.program === null ? 'не указана' : currentInteraction.program.name}
-                {currentInteraction.program?.archived && <span className="interaction-archived">Архивирована</span>}
-                {' · '}Продукты: {currentInteraction.productAgreements.length === 0 ? 'не указаны' : currentInteraction.productAgreements.map((agreement) => agreement.productName).join(', ')}
-                {' · '}Последний контакт: {lastContactLabel(currentInteraction.lastContactAt)}
-              </p>
               {currentInteraction.marks.status !== 'ACTIVE' && currentInteraction.marks.statusReason && (
                 <p className="work-card__meta">
                   {currentInteraction.marks.status === 'COMPLETED' ? 'Итог' : 'Причина'}: {currentInteraction.marks.statusReason}
                 </p>
               )}
+              {readOnlyNote}
             </div>
-            {canManageDailyWork && (
-              <div className="work-card__actions">
+            <div className="work-card__actions">
+              {primary !== null && (
                 <button
                   type="button"
-                  onClick={openTransition}
-                  disabled={currentInteraction.allowedTransitions.length === 0}
-                  title={currentInteraction.allowedTransitions.length === 0 ? 'Из текущего этапа переходы не разрешены' : undefined}
+                  className="work-card__primary"
+                  data-action={primary.kind}
+                  onClick={runPrimary}
+                  disabled={primary.kind === 'transition' && primary.disabled}
+                  title={'hint' in primary ? primary.hint : undefined}
                 >
-                  Перейти к следующему этапу
+                  <span className="work-card__primary-full">{primary.label}</span>
+                  <span className="work-card__primary-short">{primaryShortLabels[primary.kind]}</span>
                 </button>
-                <button type="button" className="button--secondary" onClick={() => setDialog('step')}>Следующий шаг</button>
-                <button type="button" className="button--secondary" onClick={() => setDialog('comment')}>Комментарий</button>
-                <button type="button" className="button--secondary" onClick={() => setDialog('upload')}>Файл</button>
-                <CardMenu label="Ещё действия с работой" items={cardMenuItems} />
+              )}
+              <ActionMenu label="Добавить" toggle="Добавить ▾" className="work-card__add" items={addItems} />
+              <ActionMenu label="Ещё действия со взаимодействием" className="work-card__more" items={moreItems} />
+            </div>
+          </div>
+          {primary?.kind === 'openAgreement' && <p className="work-card__rule" role="note">{primary.hint}</p>}
+
+          <WorkFacts
+            interaction={currentInteraction}
+            organization={organization}
+            stageNumber={stageNumber}
+            daysOnStage={currentPathItem?.enteredAt === undefined ? null : daysSince(currentPathItem.enteredAt)}
+            schedule={schedule}
+            agreement={workAgreements.kind === 'ready' ? agreementFact(work, currentInteraction.currentStageId) : workAgreements.kind}
+            canEdit={canManageDailyWork}
+            onCreateAgreement={startAgreementCreate}
+          />
+
+          <div className={`work-step ${schedule.className}`}>
+            <p className="work-step__text">
+              <span>Следующий шаг: <strong>{currentInteraction.nextAction ?? 'не задан'}</strong></span>
+              {getModules().partner && currentInteraction.nextStepPartnerVisible && <span className="status status--planned">Виден вузу</span>}
+              <span className="work-step__due">{schedule.label}</span>
+            </p>
+            {canManageDailyWork && !completingStep && (
+              <div className="work-step__actions">
+                {hasStepOrDue && (
+                  <button type="button" className="button--secondary" onClick={() => setCompletingStep(true)}>Шаг выполнен</button>
+                )}
+                <button type="button" className="button--secondary" onClick={() => setDialog('step')}>Изменить</button>
               </div>
             )}
-          </div>
-
-          <div className="work-card__route">
-            <h4 id="interaction-path-title" className="work-card__route-title">Маршрут этапов</h4>
-            {currentInteraction.route && (
-              <p className="work-card__route-version">
-                По шаблону «{currentInteraction.route.templateName}», версия {currentInteraction.route.version}
-                {currentInteraction.route.latestVersion > currentInteraction.route.version
-                  ? ` (есть версия ${currentInteraction.route.latestVersion}; обновляет руководитель)`
-                  : ''}
-              </p>
+            {canManageDailyWork && completingStep && (
+              <StepCompletion
+                key={currentInteraction.id}
+                interaction={currentInteraction}
+                startOpen
+                onCancel={() => setCompletingStep(false)}
+                onCompleted={(interaction) => {
+                  setCompletingStep(false)
+                  setDetailState({ kind: 'ready', interaction })
+                  finish('Шаг отмечен выполненным и записан в историю.')
+                  void loadEvents(interaction.id)
+                  refreshList()
+                }}
+                onReload={reload}
+                onSessionExpired={onSessionExpired}
+                onProfileUnavailable={onProfileUnavailable}
+              />
             )}
-            <ol className="interaction-path interaction-path--strip" aria-labelledby="interaction-path-title">
-              {pathItems.map((item, index) => (
-                <li
-                  key={item.stage.id}
-                  className={`interaction-path__stage interaction-path__stage--${item.status}${item.stage.optional ? ' interaction-path__stage--optional' : ''}`}
-                  aria-current={item.status === 'current' ? 'step' : undefined}
-                  title={`${index + 1}. ${item.stage.name} — ${stagePathLabel(item)}${item.stage.optional ? '; необязательный' : ''}`}
-                >
-                  <span className="interaction-path__number" aria-hidden="true">{index + 1}</span>
-                  <span className="interaction-path__name">{item.stage.name}</span>
-                  <span className="interaction-path__status">{stagePathLabel(item)}</span>
-                </li>
-              ))}
-            </ol>
-            <p className="work-card__stage">
-              Этап {stageNumber} из {currentInteraction.stages.length}: <strong>{currentInteraction.currentStageName}</strong>
-              {currentPathItem?.enteredAt !== undefined && (
-                <> · {daysLabel(Math.max(0, Math.floor((Date.now() - new Date(currentPathItem.enteredAt).getTime()) / dayMilliseconds)))} на этапе</>
-              )}
-            </p>
           </div>
 
-          <p className={`work-card__next ${schedule?.className ?? ''}`}>
-            <span>Следующий шаг: <strong>{currentInteraction.nextAction ?? 'не задан'}</strong></span>
-            {getModules().partner && currentInteraction.nextStepPartnerVisible && <span className="status status--planned">Виден вузу</span>}
-            <span>{schedule?.label}</span>
-          </p>
+          <RouteDisclosure
+            interaction={currentInteraction}
+            items={pathItems}
+            canEdit={canManageDailyWork}
+            onCompleteStage={() => setDialog('stageCompletion')}
+            onEditStages={() => setDialog('stageEdit')}
+          />
 
-          {readOnlyNote}
           {noticeSlot}
 
           <CardTabs label="Разделы карточки взаимодействия" idPrefix="work-card" tabs={cardTabs} active={cardTab} onChange={(tab) => {
@@ -2362,75 +2560,35 @@ export const InteractionsPanel = ({
           }} />
           <CardTabPanel idPrefix="work-card" active={cardTab}>
             {cardTab === 'history' && (
-              <section className="interaction-events" aria-labelledby="interaction-events-title">
-                <div className="interaction-events__header">
-                  <h5 id="interaction-events-title">История</h5>
-                  <button type="button" className="button--secondary" onClick={() => void loadEvents(currentInteraction.id)}>Обновить историю</button>
-                </div>
-                {eventsState.kind === 'loading' && eventsState.id === currentInteraction.id && (
-                  <p className="organizations-message" role="status">Загружаем историю…</p>
-                )}
-                {eventsState.kind === 'failed' && eventsState.id === currentInteraction.id && (
-                  <div className="organizations-message organizations-message--error" role="alert">
-                    <p>Не удалось загрузить историю.</p>
-                    <SupportDetails requestId={eventsState.requestId} />
-                    <button type="button" onClick={() => void loadEvents(currentInteraction.id)}>Повторить</button>
-                  </div>
-                )}
-                {currentEvents !== undefined && (
-                  currentEvents.length === 0 ? (
-                    <p className="organizations-message">История пока пуста.</p>
-                  ) : (
-                    <ol className="interaction-events__list">
-                      {currentEvents.map((item) => {
-                        const eventAttachments = attachmentsByEvent.get(item.id) ?? []
-                        return (
-                          <li key={item.id}>
-                            <div>
-                              <strong>{eventLabel[item.type]}</strong>
-                              <time dateTime={item.occurredAt}>{formatDateTime(item.occurredAt)}</time>
-                            </div>
-                            <p>{eventStageDescription(item)}</p>
-                            {item.comment && <p className="interaction-events__comment">{item.comment}</p>}
-                            {item.nextStep && (
-                              <p className="interaction-events__next-step">
-                                Следующий шаг: {item.nextStep.nextAction ?? 'не задан'}; срок: {item.nextStep.nextActionAt === null ? 'не задан' : formatDateTime(item.nextStep.nextActionAt)}
-                              </p>
-                            )}
-                            {eventAttachments.length > 0 && (
-                              <p className="interaction-events__attachments">
-                                Документы: {eventAttachments.map((attachment) => attachment.originalName).join(', ')}
-                              </p>
-                            )}
-                            <p className="interaction-events__meta">Автор: {item.actorDisplayName}</p>
-                          </li>
-                        )
-                      })}
-                    </ol>
-                  )
-                )}
-              </section>
+              <WorkHistoryTab
+                key={currentInteraction.id}
+                events={currentEvents}
+                loading={eventsState.kind === 'loading' && eventsState.id === currentInteraction.id}
+                failedRequestId={eventsState.kind === 'failed' && eventsState.id === currentInteraction.id ? eventsState.requestId ?? null : undefined}
+                attachmentsByEvent={attachmentsByEvent}
+                onRefresh={() => void loadEvents(currentInteraction.id)}
+              />
             )}
 
             {cardTab === 'documents' && (
               <section className="interaction-attachments" aria-labelledby="interaction-attachments-title">
                 <div className="interaction-events__header">
-                  <h5 id="interaction-attachments-title">Документы</h5>
+                  <h5 id="interaction-attachments-title" className="visually-hidden">Документы</h5>
+                  {currentInteraction.attachments.length > 0 && (
+                    <label className="document-filter">
+                      Отбор по виду документа
+                      <select value={attachmentKindFilter} onChange={(event) => setAttachmentKindFilter(event.target.value as AttachmentKind | '')}>
+                        <option value="">Все виды</option>
+                        {attachmentKinds.map((kind) => <option key={kind} value={kind}>{attachmentKindLabels[kind]}</option>)}
+                      </select>
+                    </label>
+                  )}
                   {canManageDailyWork && (
-                    <button type="button" onClick={() => setDialog('upload')}>Загрузить документ</button>
+                    <button type="button" className="button--secondary" onClick={() => setDialog('upload')}>Загрузить документ</button>
                   )}
                 </div>
                 {currentInteraction.attachments.length === 0 && (
-                  <p>Документы к этому взаимодействию пока не загружены.</p>
-                )}
-                {currentInteraction.attachments.length > 0 && (
-                  <label className="document-filter">
-                    Отбор по виду документа
-                    <select value={attachmentKindFilter} onChange={(event) => setAttachmentKindFilter(event.target.value as AttachmentKind | '')}>
-                      <option value="">Все виды</option>
-                      {attachmentKinds.map((kind) => <option key={kind} value={kind}>{attachmentKindLabels[kind]}</option>)}
-                    </select>
-                  </label>
+                  <p>Документов пока нет.</p>
                 )}
                 {attachmentKindFilter !== '' && currentInteraction.attachments.length > 0
                   && !currentInteraction.attachments.some((attachment) => attachment.kind === attachmentKindFilter) && (
@@ -2467,21 +2625,18 @@ export const InteractionsPanel = ({
                             onReload={reload}
                             onSessionExpired={onSessionExpired}
                             onProfileUnavailable={onProfileUnavailable}
-                          />
-                          {(attachment.status === 'CLEAN' || attachment.status === 'QUARANTINE') && (
-                            <div className="interaction-attachment__actions">
-                              {attachment.status === 'CLEAN' && (
-                                <button type="button" className="button--secondary" onClick={() => void downloadAttachment(attachment)} disabled={downloading}>
-                                  {downloading ? 'Готовим скачивание…' : 'Скачать файл'}
-                                </button>
-                              )}
-                              {attachment.status === 'QUARANTINE' && (
-                                <button type="button" className="button--secondary" onClick={() => void refreshAttachment(attachment)} disabled={refreshing}>
-                                  {refreshing ? 'Обновляем статус…' : 'Обновить статус'}
-                                </button>
-                              )}
-                            </div>
-                          )}
+                          >
+                            {attachment.status === 'CLEAN' && (
+                              <button type="button" className="button--secondary" onClick={() => void downloadAttachment(attachment)} disabled={downloading}>
+                                {downloading ? 'Готовим скачивание…' : 'Скачать'}
+                              </button>
+                            )}
+                            {attachment.status === 'QUARANTINE' && (
+                              <button type="button" className="button--secondary" onClick={() => void refreshAttachment(attachment)} disabled={refreshing}>
+                                {refreshing ? 'Обновляем статус…' : 'Обновить статус'}
+                              </button>
+                            )}
+                          </AttachmentExtras>
                           {attachmentRefreshState.kind === 'failed' && attachmentRefreshState.id === attachment.id && (
                             <div className="interaction-command-error" role="alert">
                               <p>{attachmentMessage(attachmentRefreshState.error, 'refresh')}</p>
@@ -2504,160 +2659,124 @@ export const InteractionsPanel = ({
               </section>
             )}
 
-            {(cardTab === 'contract' || cardTab === 'transfers') && (
-              <ProductAgreementsSection
-                key={cardTab}
-                part={cardTab === 'contract' ? 'contract' : 'transfers'}
-                interaction={currentInteraction}
-                canEdit={canManageDailyWork}
-                onInteraction={(interaction) => {
-                  acceptInteraction(interaction)
-                  setNotice(cardTab === 'contract' ? 'Договор и лицензия сохранены.' : 'Отметки передачи сохранены.')
-                }}
-                onReload={reload}
-                onSessionExpired={onSessionExpired}
-                onProfileUnavailable={onProfileUnavailable}
-              />
-            )}
-
-            {cardTab === 'route' && (
-              <div className="interaction-stages">
-                <div className="interaction-events__header">
-                  <h5 id="interaction-route-title">Карта пути</h5>
-                  {canManageDailyWork && (
-                    <div className="work-card__inline-actions">
-                      <button type="button" className="button--secondary" onClick={() => setDialog('stageCompletion')}>Отметить этап выполненным</button>
-                      <button type="button" className="button--secondary" onClick={() => setDialog('stageEdit')}>Изменить этапы</button>
-                    </div>
-                  )}
-                </div>
-                <ol className="interaction-path" aria-labelledby="interaction-route-title">
-                  {pathItems.map((item, index) => (
-                    <li
-                      key={item.stage.id}
-                      className={`interaction-path__stage interaction-path__stage--${item.status}`}
-                      aria-current={item.status === 'current' ? 'step' : undefined}
-                    >
-                      <span className="interaction-path__number" aria-hidden="true">{index + 1}</span>
-                      <span className="interaction-path__name">{item.stage.name}</span>
-                      <span className="interaction-path__status">{stagePathLabel(item)}</span>
-                      {item.stage.optional && <span className="interaction-path__optional">Необязательный</span>}
-                    </li>
-                  ))}
-                </ol>
-                <div className="interaction-stage-transitions">
-                  <h6>Переходы из текущего этапа</h6>
-                  {allowedFromCurrent.length === 0 ? (
-                    <p>Из текущего этапа переходы не заданы.</p>
-                  ) : (
-                    <ul>
-                      {allowedFromCurrent.map((transition) => (
-                        <li key={transition.toStageId}>
-                          → {attachmentStageNames.get(transition.toStageId) ?? 'Недоступный этап'}
-                          {transition.commentRequired && <span>Комментарий обязателен</span>}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <details className="work-card__rules">
-                    <summary>Все правила переходов этой работы ({currentInteraction.transitions.length})</summary>
-                    {currentInteraction.transitions.length === 0 ? (
-                      <p>Для этой работы переходы не заданы.</p>
-                    ) : (
-                      <ul>
-                        {currentInteraction.transitions.map((transition) => (
-                          <li key={`${transition.fromStageId}:${transition.toStageId}`}>
-                            {attachmentStageNames.get(transition.fromStageId) ?? 'Недоступный этап'} → {attachmentStageNames.get(transition.toStageId) ?? 'Недоступный этап'}
-                            {transition.commentRequired && <span>Комментарий обязателен</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </details>
-                </div>
+            {cardTab === 'contract' && (
+              <div className="work-contract">
+                <WorkAgreementBlock
+                  key={`agreement:${currentInteraction.id}`}
+                  interactionId={currentInteraction.id}
+                  organizationId={organizationId}
+                  currentStageId={currentInteraction.currentStageId}
+                  revision={currentInteraction.version}
+                  canEdit={canManageDailyWork}
+                  startCreate={agreementCreateSignal > 0}
+                  onCreateStarted={() => setAgreementCreateSignal(0)}
+                  onChanged={() => setAgreementsRevision((value) => value + 1)}
+                  onSessionExpired={onSessionExpired}
+                  onProfileUnavailable={onProfileUnavailable}
+                />
+                {(['contract', 'transfers'] as const).map((part) => (
+                  <ProductAgreementsSection
+                    key={part}
+                    part={part}
+                    interaction={currentInteraction}
+                    canEdit={canManageDailyWork}
+                    onInteraction={(interaction) => {
+                      acceptInteraction(interaction)
+                      setNotice(part === 'contract' ? 'Лицензия по продукту сохранена.' : 'Отметки передачи сохранены.')
+                    }}
+                    onReload={reload}
+                    onSessionExpired={onSessionExpired}
+                    onProfileUnavailable={onProfileUnavailable}
+                  />
+                ))}
               </div>
             )}
 
             {cardTab === 'learning' && (
-              <>
+              <div className="work-training">
                 <LmsStageSuggestionPanel
                   interaction={currentInteraction}
                   canEdit={canManageDailyWork}
                   onChanged={applyUpdatedInteraction}
                   onOpenTransition={openTransition}
-                  onOpenCycles={() => setCardTab('cycles')}
+                  onOpenCycles={startNewCycle}
                   onSessionExpired={onSessionExpired}
                   onProfileUnavailable={onProfileUnavailable}
                 />
-                <LmsSignalsCard
-                  interactionId={currentInteraction.id}
-                  version={currentInteraction.version}
-                  canEdit={canManageDailyWork}
-                  onMoveToStage={(stageId) => {
-                    changeTransitionStage(stageId)
-                    setDialog('transition')
-                  }}
-                  onSessionExpired={onSessionExpired}
-                  onProfileUnavailable={onProfileUnavailable}
-                />
-                <LearningSnapshots
-                  interactionId={currentInteraction.id}
-                  version={currentInteraction.version}
-                  hasProgram={currentInteraction.program !== null}
-                  canRefresh={canManageDailyWork}
-                  onRefreshed={() => {
-                    setNotice('Данные источников обновлены.')
-                    openInteraction(currentInteraction.id)
-                  }}
-                  onSessionExpired={onSessionExpired}
-                  onProfileUnavailable={onProfileUnavailable}
-                />
-                <TeacherTrainings
-                  interaction={currentInteraction}
-                  canEdit={canManageDailyWork}
-                  onSaved={() => {
-                    setNotice('Запись об обучении преподавателей сохранена.')
-                    openInteraction(currentInteraction.id)
-                  }}
-                  onSessionExpired={onSessionExpired}
-                  onProfileUnavailable={onProfileUnavailable}
-                />
-              </>
-            )}
-
-            {cardTab === 'cycles' && (
-              <InteractionCycles
-                key={`cycles:${currentInteraction.id}`}
-                interaction={currentInteraction}
-                canEdit={canManageDailyWork}
-                onOpen={goToInteraction}
-                onStarted={(id) => {
-                  carriedNotice = { interactionId: id, text: 'Новый цикл начат. Это его карточка.' }
-                  goToInteraction(id)
-                }}
-                onSessionExpired={onSessionExpired}
-                onProfileUnavailable={onProfileUnavailable}
-              />
-            )}
-
-            {cardTab === 'teacherRoster' && (
-              <TeacherRoster
-                key={`teacher-roster:${currentInteraction.id}`}
-                interaction={currentInteraction}
-                contacts={contactsState.kind === 'ready' ? contactsState.contacts : null}
-                profileId={profileId}
-                canEdit={canManageDailyWork}
-                onAddContact={() => {
-                  setContactRole('TEACHER')
-                  setDialog('contact')
-                }}
-                onContactsChanged={() => {
-                  void loadContacts()
-                  onContactsChanged?.()
-                }}
-                onSessionExpired={onSessionExpired}
-                onProfileUnavailable={onProfileUnavailable}
-              />
+                <CardSection title="Сигналы LMS" count={signalCount} defaultOpen={signalCount > 0}>
+                  <LmsSignalsCard
+                    interactionId={currentInteraction.id}
+                    version={currentInteraction.version}
+                    canEdit={canManageDailyWork}
+                    onMoveToStage={(stageId) => {
+                      changeTransitionStage(stageId)
+                      setDialog('transition')
+                    }}
+                    onRecordedAsRisk={(updated) => applyUpdatedInteraction(updated, 'Сигнал LMS записан в реестр проблем и рисков взаимодействия.')}
+                    onSessionExpired={onSessionExpired}
+                    onProfileUnavailable={onProfileUnavailable}
+                  />
+                </CardSection>
+                <CardSection title="Данные LMS" defaultOpen>
+                  <LearningSnapshots
+                    interactionId={currentInteraction.id}
+                    version={currentInteraction.version}
+                    hasProgram={currentInteraction.program !== null}
+                    canRefresh={canManageDailyWork}
+                    onRefreshed={() => {
+                      setNotice('Данные источников обновлены.')
+                      openInteraction(currentInteraction.id)
+                    }}
+                    onSessionExpired={onSessionExpired}
+                    onProfileUnavailable={onProfileUnavailable}
+                  />
+                </CardSection>
+                <CardSection title="Повышение квалификации">
+                  <TeacherTrainings
+                    interaction={currentInteraction}
+                    canEdit={canManageDailyWork}
+                    onSaved={() => {
+                      setNotice('Запись об обучении преподавателей сохранена.')
+                      openInteraction(currentInteraction.id)
+                    }}
+                    onSessionExpired={onSessionExpired}
+                    onProfileUnavailable={onProfileUnavailable}
+                  />
+                </CardSection>
+                <CardSection title="Списки на курс LMS">
+                  <TeacherRoster
+                    key={`teacher-roster:${currentInteraction.id}`}
+                    interaction={currentInteraction}
+                    contacts={contactsState.kind === 'ready' ? contactsState.contacts : null}
+                    profileId={profileId}
+                    canEdit={canManageDailyWork}
+                    onAddContact={() => {
+                      setContactRole('TEACHER')
+                      setDialog('contact')
+                    }}
+                    onContactsChanged={() => {
+                      void loadContacts()
+                      onContactsChanged?.()
+                    }}
+                    onSessionExpired={onSessionExpired}
+                    onProfileUnavailable={onProfileUnavailable}
+                  />
+                </CardSection>
+                <CardSection id="work-cycles" title="Циклы взаимодействия" defaultOpen={cyclesFocus > 0}>
+                  <InteractionCycles
+                    key={`cycles:${currentInteraction.id}`}
+                    interaction={currentInteraction}
+                    canEdit={canManageDailyWork}
+                    onOpen={goToInteraction}
+                    onStarted={(id) => {
+                      carriedNotice = { interactionId: id, text: 'Новый цикл начат. Это его карточка.' }
+                      goToInteraction(id)
+                    }}
+                    onSessionExpired={onSessionExpired}
+                    onProfileUnavailable={onProfileUnavailable}
+                  />
+                </CardSection>
+              </div>
             )}
 
             {cardTab === 'contacts' && (
@@ -2665,7 +2784,7 @@ export const InteractionsPanel = ({
                 <div className="interaction-events__header">
                   <h5 id="interaction-linked-contacts-title">Связанные контакты</h5>
                   {canManageDailyWork && (
-                    <button type="button" className="button--secondary" onClick={() => setDialog('details')}>Изменить данные работы</button>
+                    <button type="button" className="button--secondary" onClick={() => setDialog('details')}>Изменить состав</button>
                   )}
                 </div>
                 {linkedContacts.length === 0 && <p>Контакты для этого взаимодействия не выбраны.</p>}
@@ -2673,14 +2792,14 @@ export const InteractionsPanel = ({
                   <p>Загружаем сведения о связанных контактах…</p>
                 )}
                 {linkedContacts.length > 0 && contactsState.kind === 'failed' && (
-                  <p>Не удалось получить текущий список контактов организации.</p>
+                  <p>Не удалось получить текущий список контактов вуза.</p>
                 )}
                 {linkedContacts.length > 0 && contactsState.kind === 'ready' && (
                   <ul>
                     {linkedContacts.map(({ id, contact }) => (
                       <li key={id}>
                         {contact === undefined ? (
-                          <span>Контакт больше недоступен в текущем списке организации.</span>
+                          <span>Контакт больше недоступен в текущем списке вуза.</span>
                         ) : (
                           <>
                             <strong>{contact.name}</strong>
@@ -2714,7 +2833,7 @@ export const InteractionsPanel = ({
 
           {canManageDailyWork && (
             <>
-              <CardDialog open={dialog === 'transition'} title="Переход этапа" onClose={closeDialog}>
+              <CardDialog open={dialog === 'transition'} title="Перейти на этап" onClose={closeDialog}>
                 <div className="interaction-commands">
                   <form className="interaction-transition-form" onSubmit={(event) => void submitTransition(event)}>
                     <p className="interaction-stage-choice">Текущий этап: {currentInteraction.currentStageName}.</p>
@@ -2736,6 +2855,9 @@ export const InteractionsPanel = ({
                       <p className="interaction-stage-choice">
                         Выбран этап: {selectedTransition.stageName}{selectedTransition.commentRequired ? '; комментарий обязателен (пропуск или возврат этапа)' : ''}
                       </p>
+                    )}
+                    {transitionSigningBlock !== null && (
+                      <p className="interaction-catalog-message interaction-catalog-message--error work-card__signing" role="alert">{transitionSigningBlock}</p>
                     )}
                     <label>
                       <span>Комментарий к переходу{selectedTransition?.commentRequired && <RequiredMark />}</span>
@@ -2796,27 +2918,8 @@ export const InteractionsPanel = ({
                 </div>
               </CardDialog>
 
-              <CardDialog open={dialog === 'step'} title="Следующий шаг" onClose={closeDialog}>
-                <div className="card-dialog__section">
-                  <h3>Шаг выполнен</h3>
-                  {(currentInteraction.nextAction?.trim() ?? '').length === 0 && currentInteraction.nextActionAt === null ? (
-                    <p className="interaction-field-hint">Следующий шаг не задан. Задайте его ниже.</p>
-                  ) : (
-                    <StepCompletion
-                      key={currentInteraction.id}
-                      interaction={currentInteraction}
-                      onCompleted={(interaction) => {
-                        setDetailState({ kind: 'ready', interaction })
-                        finish('Шаг отмечен выполненным и записан в историю.')
-                        void loadEvents(interaction.id)
-                        refreshList()
-                      }}
-                      onReload={reload}
-                      onSessionExpired={onSessionExpired}
-                      onProfileUnavailable={onProfileUnavailable}
-                    />
-                  )}
-                </div>
+              <CardDialog open={dialog === 'step'} title="Изменить шаг и срок" onClose={closeDialog}>
+                {planForm('step')}
                 {getModules().partner && (
                   <PartnerStepToggle
                     key={`partner-step:${currentInteraction.id}:${currentInteraction.version}`}
@@ -2829,99 +2932,10 @@ export const InteractionsPanel = ({
                     onProfileUnavailable={onProfileUnavailable}
                   />
                 )}
-                {planValues !== undefined && (
-                  <form className="interaction-plan-form card-dialog__section" onSubmit={(event) => void submitPlan(event)}>
-                    <h3>Изменить шаг, срок, программу и продукты</h3>
-                    <p>Срок и следующий шаг показывают, что должно произойти на текущем этапе. Изменение попадает в историю.</p>
-                    {planConflictList.length > 0 && (
-                      <div className="interaction-catalog-message" role="status">
-                        <p>Пока вы редактировали план, в карточке изменились поля, которые вы тоже меняете. При сохранении останутся ваши значения.</p>
-                        <ul>
-                          {planConflictList.map((conflict) => (
-                            <li key={conflict.field}>{conflict.label}: сейчас в карточке {conflict.current}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    <label>
-                      Следующий шаг
-                      <textarea
-                        value={planValues.nextAction}
-                        maxLength={500}
-                        onChange={(event) => changePlan('nextAction', event.target.value)}
-                        {...invalidProps(fieldErrorOf(planState, 'nextAction'), 'interaction-plan-next-action-error')}
-                      />
-                      <FieldError id="interaction-plan-next-action-error" message={fieldErrorOf(planState, 'nextAction')} />
-                    </label>
-                    <label>
-                      Срок (МСК)
-                      <input
-                        type="datetime-local"
-                        value={planValues.nextActionAt}
-                        onChange={(event) => changePlan('nextActionAt', event.target.value)}
-                      />
-                    </label>
-                    {catalogState.kind === 'ready' ? (
-                      <>
-                        <label>
-                          Программа
-                          <select value={planValues.programId} onChange={(event) => changePlan('programId', event.target.value)}>
-                            <option value="">Не указана</option>
-                            {planProgramOptions.map((program) => (
-                              <option key={program.id} value={program.id}>{program.name}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <fieldset className="interaction-catalog-picker">
-                          <legend>Продукты</legend>
-                          {planProductOptions.length === 0 ? (
-                            <p>Доступных продуктов нет.</p>
-                          ) : (
-                            <ul>
-                              {planProductOptions.map((product) => (
-                                <li key={product.id}>
-                                  <label>
-                                    <input
-                                      type="checkbox"
-                                      checked={planValues.productIds.includes(product.id)}
-                                      disabled={lockedProductIds.has(product.id) && planValues.productIds.includes(product.id)}
-                                      onChange={() => togglePlanProduct(product.id)}
-                                    />
-                                    <span>{product.name}</span>
-                                    {lockedProductIds.has(product.id) && <small>Есть данные договора, снять нельзя</small>}
-                                  </label>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </fieldset>
-                      </>
-                    ) : (
-                      <p className="interaction-catalog-message">Программу и продукты можно изменить после загрузки справочника.</p>
-                    )}
-                    <div className="interaction-plan-form__actions">
-                      <button type="submit" disabled={planState.kind === 'saving' || !planHasChanges} title={planHasChanges ? undefined : 'Измените поле, чтобы сохранить план'}>
-                        {planState.kind === 'saving' ? 'Сохраняем…' : 'Сохранить план'}
-                      </button>
-                      {planDraft !== null && (
-                        <button type="button" className="interaction-plan-form__reset" disabled={planState.kind === 'saving'} onClick={resetPlan}>
-                          Отменить изменения
-                        </button>
-                      )}
-                    </div>
-                    {!planHasChanges && <p className="interaction-field-hint">Кнопка «Сохранить план» станет доступна после изменения поля.</p>}
-                    {planState.kind === 'failed' && (
-                      <div className="interaction-command-error" role="alert">
-                        <p>{commandMessage(planState.error)}</p>
-                        <StructuredApiError error={planState.error} />
-                        {planState.error instanceof ApiError && <SupportDetails requestId={planState.error.requestId} code={planState.error.code} />}
-                        {planState.error instanceof ApiError && planState.error.status === 409 && (
-                          <button type="button" onClick={reload}>Обновить карточку</button>
-                        )}
-                      </div>
-                    )}
-                  </form>
-                )}
+              </CardDialog>
+
+              <CardDialog open={dialog === 'program'} title="Программа и продукты" onClose={closeDialog}>
+                {planForm('program')}
               </CardDialog>
 
               <CardDialog open={dialog === 'comment'} title="Комментарий" onClose={closeDialog}>
@@ -2997,7 +3011,7 @@ export const InteractionsPanel = ({
                 </div>
               </CardDialog>
 
-              <CardDialog open={dialog === 'upload'} title="Загрузить документ" onClose={closeDialog}>
+              <CardDialog open={dialog === 'upload'} title="Документ" onClose={closeDialog}>
                 <form className="interaction-attachment-upload" onSubmit={(event) => void submitUpload(event)}>
                   <label>
                     <span>Этап документа<RequiredMark /></span>
@@ -3052,19 +3066,19 @@ export const InteractionsPanel = ({
                 </form>
               </CardDialog>
 
-              <CardDialog open={dialog === 'status'} title="Статус работы" onClose={closeDialog}>
+              <CardDialog open={dialog === 'status'} title="Статус взаимодействия" onClose={closeDialog}>
                 <InteractionStatusPanel
                   key={`status:${currentInteraction.id}`}
                   interaction={currentInteraction}
                   profileId={profileId}
-                  onChanged={(interaction) => applyUpdatedInteraction(interaction, `Статус работы: ${workStatusLabels[interaction.marks.status]}.`)}
+                  onChanged={(interaction) => applyUpdatedInteraction(interaction, `Статус взаимодействия: ${workStatusLabels[interaction.marks.status]}.`)}
                   onRefresh={reload}
                   onSessionExpired={onSessionExpired}
                   onProfileUnavailable={onProfileUnavailable}
                 />
               </CardDialog>
 
-              <CardDialog open={dialog === 'flags'} title="Чего ждём" onClose={closeDialog}>
+              <CardDialog open={dialog === 'flags'} title="Чего ждём от вуза или РТК" onClose={closeDialog}>
                 <InteractionFlagsForm
                   key={`flags:${currentInteraction.id}`}
                   interaction={currentInteraction}
@@ -3076,34 +3090,40 @@ export const InteractionsPanel = ({
                 />
               </CardDialog>
 
-              <CardDialog open={dialog === 'details'} title="Данные работы" onClose={closeDialog}>
+              <CardDialog open={dialog === 'details'} title="Данные взаимодействия" onClose={closeDialog}>
                 <InteractionDetailsForm
                   key={`details:${currentInteraction.id}`}
                   interaction={currentInteraction}
                   contacts={contactsState.kind === 'ready' ? contactsState.contacts : null}
                   profileId={profileId}
-                  onChanged={(interaction) => applyUpdatedInteraction(interaction, 'Данные работы сохранены.')}
+                  onAddContact={() => {
+                    contactFromDetails.current = true
+                    setDialog('contact')
+                  }}
+                  onChanged={(interaction) => applyUpdatedInteraction(interaction, 'Данные взаимодействия сохранены.')}
                   onRefresh={reload}
                   onSessionExpired={onSessionExpired}
                   onProfileUnavailable={onProfileUnavailable}
                 />
               </CardDialog>
 
-              {cardTab === 'teacherRoster' && (
-                <CardDialog open={dialog === 'contact'} title="Новый контакт" onClose={closeDialog}>
-                  {contactForm}
-                </CardDialog>
-              )}
+              <CardDialog open={dialog === 'contact'} title="Новый контакт" onClose={closeDialog}>
+                {contactForm}
+              </CardDialog>
 
               <CardDialog open={dialog === 'stageCompletion'} title="Отметить этап выполненным" onClose={closeDialog}>
                 <StageCompletionPanel
                   interaction={currentInteraction}
+                  signingWarning={work !== null && work.signingRuleEnabled && work.stages.some((stage) => stage.role === 'SIGNING')
+                    && !work.agreements.some(isSignedAgreement)
+                    ? 'Этап «Подписание» можно отметить выполненным только при подписанном договоре с вузом.'
+                    : undefined}
                   onChanged={(interaction) => {
                     const attachableIds = attachableIdsOf(interaction)
                     setCommentAttachmentIds((ids) => ids.filter((attachmentId) => attachableIds.has(attachmentId)))
                     setTransitionAttachmentIds((ids) => ids.filter((attachmentId) => attachableIds.has(attachmentId)))
                     setDetailState({ kind: 'ready', interaction })
-                    finish('Отметки выполнения этапов сохранены.', 'route')
+                    finish('Отметки выполнения этапов сохранены.')
                     void loadEvents(interaction.id)
                     refreshList()
                   }}
@@ -3113,9 +3133,9 @@ export const InteractionsPanel = ({
                 />
               </CardDialog>
 
-              <CardDialog open={dialog === 'stageEdit'} title="Изменить этапы этой работы" onClose={closeDialog}>
-                <form className="interaction-stage-editor" onSubmit={(event) => void submitStageEdit(event)}>
-                  <p>Изменение касается только маршрута этой работы. Шаблон команды и другие работы не меняются.</p>
+              <CardDialog open={dialog === 'stageEdit'} title="Изменить этапы этого взаимодействия" onClose={closeDialog}>
+                <form className="interaction-stage-editor" onSubmit={submitStageEdit}>
+                  <p>Изменение касается только маршрута этого взаимодействия. Шаблон команды и другие взаимодействия не меняются.</p>
                   <label>
                     Что изменить
                     <select value={stageEditType} onChange={(event) => changeStageEditType(event.target.value as InteractionStageEditType)}>
@@ -3172,8 +3192,12 @@ export const InteractionsPanel = ({
                       Необязательный этап
                     </label>
                   )}
-                  <button type="submit" disabled={stageEditState.kind === 'saving' || !stageEditCanSubmit}>
-                    {stageEditState.kind === 'saving' ? 'Сохраняем…' : 'Применить изменение'}
+                  <button
+                    type="submit"
+                    className={stageEditType === 'DELETE' ? 'button--danger' : undefined}
+                    disabled={stageEditState.kind === 'saving' || !stageEditCanSubmit}
+                  >
+                    {stageEditState.kind === 'saving' ? 'Сохраняем…' : stageEditType === 'DELETE' ? 'Удалить этап…' : 'Применить изменение'}
                   </button>
                   {stageEditState.kind === 'failed' && (
                     <div className="interaction-command-error" role="alert">
@@ -3187,6 +3211,17 @@ export const InteractionsPanel = ({
                   )}
                 </form>
               </CardDialog>
+              <ConfirmDialog
+                open={confirmStageDelete}
+                title="Удалить этап?"
+                description={`Этап «${currentInteraction.stages.find((stage) => stage.id === stageEditId)?.name ?? ''}» исчезнет из маршрута этого взаимодействия. Шаблон команды и другие взаимодействия не изменятся, удаление записывается в историю.`}
+                confirmLabel="Удалить этап"
+                onCancel={() => setConfirmStageDelete(false)}
+                onConfirm={() => {
+                  setConfirmStageDelete(false)
+                  void runStageEdit()
+                }}
+              />
             </>
           )}
         </>

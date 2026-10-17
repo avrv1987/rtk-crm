@@ -1,6 +1,7 @@
 package ru.rtk.crm.agreement;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -76,9 +77,15 @@ import ru.rtk.crm.module.ModuleProperties;
         CommandIdempotencyRepository.class,
         AgreementRepository.class,
         AgreementService.class,
+        AgreementStages.class,
+        AgreementFileService.class,
+        AgreementRegistryService.class,
+        ru.rtk.crm.attachment.AttachmentContentValidator.class,
+        ru.rtk.crm.attachment.AttachmentStorage.class,
         AuditJournalRepository.class,
         ReportRepository.class,
         ReportService.class,
+        ru.rtk.crm.work.LmsLearningTestBeans.class,
         AgreementServiceTest.TestBeans.class
 })
 class AgreementServiceTest {
@@ -120,13 +127,27 @@ class AgreementServiceTest {
     private ReportService reportService;
 
     @Autowired
+    private AgreementFileService agreementFileService;
+
+    @Autowired
+    private AgreementRegistryService registryService;
+
+    @Autowired
+    private AgreementStages agreementStages;
+
+    @Autowired
+    private AgreementRepository agreementRepository;
+
+    @Autowired
     private JdbcTemplate jdbc;
 
     @BeforeEach
     void setUp() {
         createSchema();
         for (String table : List.of(
-                "agreement_activity_attachments", "agreement_activity_interactions", "agreement_activities", "agreements",
+                "agreement_activity_attachments", "agreement_activity_interactions", "agreement_activities", "agreement_files",
+                "agreement_supplements", "agreement_programs", "agreement_products", "agreement_directions", "agreement_interactions",
+                "agreement_status_events", "agreements", "programs", "products", "directions", "contacts",
                 "audit_events", "agreement_activity_kinds", "learning_observations", "learning_snapshots", "source_mappings", "source_records", "attachments", "interaction_stages", "interactions",
                 "command_idempotency_records", "organizations", "crm_user_profiles", "teams"
         )) {
@@ -250,14 +271,23 @@ class AgreementServiceTest {
         ), "a5")).isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
                 .isEqualTo("kindId"));
         assertThatThrownBy(() -> agreementService.update(managerA, agreement.id(), new AgreementRequest(
-                0, "7/2026", LocalDate.parse("2026-02-01"), YEAR_END, null, AgreementStatus.ACTIVE, FOREIGN_CLEAN, null, null
+                0, "7/2026", LocalDate.parse("2026-02-01"), YEAR_END, null, null, AgreementStatus.ACTIVE, FOREIGN_CLEAN, null, null,
+                null, null, null, null, null, null
         ), "u1", "req")).isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
                 .isEqualTo("fileAttachmentId"));
 
         Agreement withFile = agreementService.update(managerA, agreement.id(), new AgreementRequest(
-                0, "7/2026", LocalDate.parse("2026-02-01"), YEAR_END, "РТК — Университет А", AgreementStatus.ACTIVE, PROGRAM_CLEAN, null, null
+                0, "7/2026", LocalDate.parse("2026-02-01"), YEAR_END, null, "РТК — Университет А", AgreementStatus.ACTIVE, PROGRAM_CLEAN,
+                null, null, null, null, null, null, null, null
         ), "u2", "req");
-        assertThat(withFile.file().originalName()).isEqualTo("рабочая-программа.docx");
+        assertThat(withFile.currentFile().originalName()).isEqualTo("рабочая-программа.docx");
+        assertThat(withFile.currentFile().interactionTitle()).isEqualTo("Повышение квалификации преподавателей");
+        assertThat(withFile.files()).singleElement().satisfies(file -> assertThat(file.versionNumber()).isEqualTo(1));
+        Agreement sameFile = agreementService.update(managerA, agreement.id(), new AgreementRequest(
+                withFile.version(), "7/2026", LocalDate.parse("2026-02-01"), YEAR_END, null, "РТК — Университет А", null, PROGRAM_CLEAN,
+                null, null, null, null, null, null, null, null
+        ), "u3", "req");
+        assertThat(sameFile.files()).hasSize(1);
         assertThat(agreementService.linkOptions(managerA, ORGANIZATION_A).attachments())
                 .extracting(AgreementModels.LinkedAttachment::id)
                 .containsExactlyInAnyOrder(ACT_CLEAN, PROGRAM_CLEAN);
@@ -319,7 +349,7 @@ class AgreementServiceTest {
                 AgreementConfirmationArchive.INVENTORY_NAME
         );
         String inventory = entries.get(AgreementConfirmationArchive.INVENTORY_NAME);
-        assertThat(inventory).startsWith("\uFEFF\"№\";\"Вуз\";\"Соглашение\";\"Вид мероприятия\"");
+        assertThat(inventory).startsWith("\uFEFF\"№\";\"Вуз\";\"Договор\";\"Вид мероприятия\"");
         assertThat(inventory).contains("\"Университет А\";\"7/2026\";\"Обучение и повышение квалификации преподавателей\";"
                 + "\"Курсы повышения квалификации\";\"01.03.2026 – 30.03.2026\"");
     }
@@ -336,7 +366,8 @@ class AgreementServiceTest {
                 List.of(), List.of()
         ), "activity-2");
         Agreement empty = agreementService.create(managerA, ORGANIZATION_A, new AgreementRequest(
-                null, "1/2025", LocalDate.parse("2025-01-10"), LocalDate.parse("2025-12-31"), null, AgreementStatus.COMPLETED, null, null, null
+                null, "1/2025", LocalDate.parse("2025-01-10"), LocalDate.parse("2025-12-31"), null, null, AgreementStatus.ACTIVE, null,
+                null, null, null, null, null, null, null, null
         ), "create-2", "req");
 
         ReportPreview preview = reportService.preview(managerA, report(YEAR_START, YEAR_END), 0, 50);
@@ -441,7 +472,7 @@ class AgreementServiceTest {
         assertThat(jdbc.queryForMap("SELECT category, action, actor_profile_id, object_name, details, request_id FROM audit_events"))
                 .containsEntry("ACTION", "AGREEMENT_PLAN_CHANGED")
                 .containsEntry("CATEGORY", "ORGANIZATION")
-                .containsEntry("OBJECT_NAME", "Университет А, соглашение № 7/2026")
+                .containsEntry("OBJECT_NAME", "Университет А, договор № 7/2026")
                 .containsEntry("DETAILS", "план: не задан → подписание 15.11.2026")
                 .containsEntry("REQUEST_ID", "req-1");
 
@@ -450,19 +481,19 @@ class AgreementServiceTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_events", Integer.class)).isEqualTo(1);
 
         Agreement renewal = agreementService.update(managerA, created.id(),
-                plannedRequest(1, "7/2026-А", AgreementStatus.ACTIVE, "2027-12-31", PlanKind.RENEWAL, "2026-12-01"), "plan-3", "req-3");
+                plannedRequest(1, "7/2026-А", null, "2027-12-31", PlanKind.RENEWAL, "2026-12-01"), "plan-3", "req-3");
         assertThat(renewal.plannedKind()).isEqualTo(PlanKind.RENEWAL);
         assertThat(jdbc.queryForObject("SELECT details FROM audit_events WHERE request_id = 'req-3'", String.class))
                 .isEqualTo("план: подписание 15.11.2026 → продление 01.12.2026");
         assertThat(jdbc.queryForObject("SELECT planned_base_until FROM agreements", LocalDate.class)).isEqualTo(LocalDate.parse("2027-12-31"));
 
         agreementService.update(managerA, created.id(),
-                plannedRequest(2, "7/2026-А", AgreementStatus.ACTIVE, "2028-12-31", PlanKind.RENEWAL, "2026-12-01"), "plan-4", "req-4");
+                plannedRequest(2, "7/2026-А", null, "2028-12-31", PlanKind.RENEWAL, "2026-12-01"), "plan-4", "req-4");
         assertThat(jdbc.queryForObject("SELECT planned_base_until FROM agreements", LocalDate.class)).isEqualTo(LocalDate.parse("2027-12-31"));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_events", Integer.class)).isEqualTo(2);
 
         Agreement cleared = agreementService.update(managerA, created.id(),
-                plannedRequest(3, "7/2026-А", AgreementStatus.ACTIVE, "2028-12-31", null, null), "plan-5", "req-5");
+                plannedRequest(3, "7/2026-А", null, "2028-12-31", null, null), "plan-5", "req-5");
         assertThat(cleared.plannedKind()).isNull();
         assertThat(cleared.plannedOn()).isNull();
         assertThat(jdbc.queryForObject("SELECT details FROM audit_events WHERE request_id = 'req-5'", String.class))
@@ -502,6 +533,314 @@ class AgreementServiceTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_events", Integer.class)).isEqualTo(1);
     }
 
+    @Test
+    void contractGoesThroughApprovalWithHistoryReturnsNeedACommentAndActiveNeedsASignatureDate() {
+        Agreement draft = agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "Д-1", null, List.of(INTERACTION_A)),
+                "c-1", "req");
+        assertThat(draft.status()).isEqualTo(AgreementStatus.DRAFT);
+        assertThat(draft.interactions()).extracting(AgreementModels.LinkedInteraction::id).containsExactly(INTERACTION_A);
+        assertThat(draft.transitions()).extracting(AgreementModels.TransitionOption::toStatus).containsExactly(AgreementStatus.REVIEW);
+
+        assertThatThrownBy(() -> agreementService.transition(managerA, draft.id(), transition(0, AgreementStatus.ACTIVE, null), "t-0"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("toStatus"));
+        Agreement review = agreementService.transition(managerA, draft.id(), new AgreementModels.TransitionRequest(
+                0, AgreementStatus.REVIEW, null, null, null, null, INTERACTION_A), "t-1");
+        assertThat(review.status()).isEqualTo(AgreementStatus.REVIEW);
+        assertThat(review.sentOn()).isEqualTo(LocalDate.now(AgreementService.ZONE));
+        assertThat(agreementService.transition(managerA, draft.id(), new AgreementModels.TransitionRequest(
+                0, AgreementStatus.REVIEW, null, null, null, null, INTERACTION_A), "t-1").version()).isEqualTo(review.version());
+        assertThatThrownBy(() -> agreementService.transition(managerA, draft.id(), transition(0, AgreementStatus.CORRECTION, null), "t-stale"))
+                .isInstanceOfSatisfying(AgreementException.class, exception -> {
+                    assertThat(exception.status().value()).isEqualTo(409);
+                    assertThat(exception.currentVersion()).isEqualTo(review.version());
+                });
+        assertThatThrownBy(() -> agreementService.transition(managerA, draft.id(), transition(0, AgreementStatus.CORRECTION, null), "t-1"))
+                .isInstanceOf(InteractionConflictException.class);
+
+        Agreement correction = agreementService.transition(managerA, draft.id(), transition(review.version(), AgreementStatus.CORRECTION,
+                null), "t-2");
+        assertThatThrownBy(() -> agreementService.transition(managerA, draft.id(), transition(correction.version(), AgreementStatus.REVIEW,
+                " "), "t-3")).isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
+                .isEqualTo("comment"));
+        Agreement again = agreementService.transition(leaderA, draft.id(), transition(correction.version(), AgreementStatus.REVIEW,
+                "Вуз прислал замечания повторно"), "t-3");
+        Agreement signing = agreementService.transition(managerA, draft.id(), transition(again.version(), AgreementStatus.SIGNING, null),
+                "t-4");
+        assertThatThrownBy(() -> agreementService.transition(managerA, draft.id(), transition(signing.version(), AgreementStatus.ACTIVE,
+                null), "t-5")).isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
+                .isEqualTo("signedOn"));
+        Agreement active = agreementService.transition(managerA, draft.id(), new AgreementModels.TransitionRequest(signing.version(),
+                AgreementStatus.ACTIVE, null, LocalDate.parse("2026-03-01"), LocalDate.parse("2029-02-28"), null, null), "t-6");
+
+        assertThat(active.status()).isEqualTo(AgreementStatus.ACTIVE);
+        assertThat(active.concludedOn()).isEqualTo(LocalDate.parse("2026-03-01"));
+        assertThat(active.validUntil()).isEqualTo(LocalDate.parse("2029-02-28"));
+        assertThat(active.sentOn()).isEqualTo(review.sentOn());
+        assertThat(active.history()).extracting(AgreementModels.StatusEvent::toStatus).containsExactly(
+                AgreementStatus.ACTIVE, AgreementStatus.SIGNING, AgreementStatus.REVIEW, AgreementStatus.CORRECTION,
+                AgreementStatus.REVIEW, AgreementStatus.DRAFT);
+        assertThat(active.history()).filteredOn(event -> event.comment() != null).singleElement().satisfies(event -> {
+            assertThat(event.actorName()).isEqualTo("Вера Ковалёва");
+            assertThat(event.fromStatus()).isEqualTo(AgreementStatus.CORRECTION);
+        });
+        assertThat(active.history()).filteredOn(event -> event.interactionTitle() != null).singleElement()
+                .satisfies(event -> assertThat(event.toStatus()).isEqualTo(AgreementStatus.REVIEW));
+        assertThatThrownBy(() -> agreementService.transition(managerA, draft.id(), transition(active.version(), AgreementStatus.TERMINATED,
+                null), "t-7")).isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
+                .isEqualTo("comment"));
+        assertThatThrownBy(() -> agreementService.update(managerA, draft.id(), contractRequest(active.version(), "Д-1",
+                AgreementStatus.TERMINATED, null), "u-status", "req")).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("status"));
+    }
+
+    @Test
+    void onlyEditorsOfTheUniversityMoveTheContractAndWorkLinksStayInsideTheUniversity() {
+        CrmProfile management = new CrmProfile(uuid(16), UserRole.MANAGEMENT, null, 0);
+        Agreement draft = agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "Д-2", null, List.of()), "c-1", "req");
+
+        assertThatThrownBy(() -> agreementService.transition(management, draft.id(), transition(0, AgreementStatus.REVIEW, null), "m"))
+                .isInstanceOf(ContactInteractionMutationAccessDeniedException.class);
+        assertThatThrownBy(() -> agreementService.transition(managerB, draft.id(), transition(0, AgreementStatus.REVIEW, null), "b"))
+                .isInstanceOfSatisfying(AgreementException.class, exception -> assertThat(exception.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> agreementService.transition(admin, draft.id(), transition(0, AgreementStatus.REVIEW, null), "a"))
+                .isInstanceOfSatisfying(AgreementException.class, exception -> assertThat(exception.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> agreementService.transition(managerA, draft.id(), new AgreementModels.TransitionRequest(
+                0, AgreementStatus.REVIEW, null, null, null, null, INTERACTION_A), "w")).isInstanceOfSatisfying(
+                InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("interactionId"));
+        assertThatThrownBy(() -> agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "Д-3", null,
+                List.of(INTERACTION_B)), "c-2", "req")).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("interactionIds"));
+        assertThatThrownBy(() -> agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "Д-4", AgreementStatus.REVIEW,
+                List.of()), "c-3", "req")).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("status"));
+        assertThat(agreementService.get(management, draft.id()).status()).isEqualTo(AgreementStatus.DRAFT);
+        assertThat(agreementService.workAgreements(management, INTERACTION_A).agreements()).isEmpty();
+        assertThatThrownBy(() -> agreementService.workAgreements(managerB, INTERACTION_A))
+                .isInstanceOf(ru.rtk.crm.interaction.InteractionNotFoundException.class);
+    }
+
+    @Test
+    void subjectSignersAndWorksAreKeptWhenTheyAreNotSentAndReplacedWhenTheyAre() {
+        UUID direction = uuid(701);
+        UUID program = uuid(702);
+        UUID product = uuid(703);
+        UUID signer = uuid(704);
+        UUID foreignContact = uuid(705);
+        jdbc.update("INSERT INTO directions (id, name) VALUES (?, 'Сети')", direction);
+        jdbc.update("INSERT INTO programs (id, name) VALUES (?, 'Сетевое администрирование')", program);
+        jdbc.update("INSERT INTO products (id, name) VALUES (?, 'Учебный стенд')", product);
+        jdbc.update("INSERT INTO contacts (id, organization_id, name, position, decision_role) VALUES (?, ?, 'Иван Ректоров', 'Ректор', 'SIGNATORY'),"
+                + " (?, ?, 'Чужой', NULL, 'SIGNATORY')", signer, ORGANIZATION_A, foreignContact, ORGANIZATION_B);
+        AgreementRequest request = new AgreementRequest(null, "Д-5", null, null, null, null, null, null, null, null, signer, LEADER_A,
+                List.of(INTERACTION_A), List.of(program), List.of(product), List.of(direction));
+
+        Agreement created = agreementService.create(managerA, ORGANIZATION_A, request, "c-1", "req");
+        assertThat(created.universitySigner().name()).isEqualTo("Иван Ректоров");
+        assertThat(created.schoolSigner().name()).isEqualTo("Вера Ковалёва");
+        assertThat(created.programs()).extracting(AgreementModels.Party::name).containsExactly("Сетевое администрирование");
+        assertThat(created.products()).extracting(AgreementModels.Party::name).containsExactly("Учебный стенд");
+        assertThat(created.directions()).extracting(AgreementModels.Party::name).containsExactly("Сети");
+        assertThat(agreementService.linkOptions(managerA, ORGANIZATION_A).contacts()).singleElement()
+                .satisfies(contact -> assertThat(contact.signatory()).isTrue());
+        assertThat(agreementService.linkOptions(managerA, ORGANIZATION_A).schoolSigners()).extracting(AgreementModels.Responsible::id)
+                .containsExactlyInAnyOrder(MANAGER_A, LEADER_A);
+
+        Agreement kept = agreementService.update(managerA, created.id(), new AgreementRequest(0, "Д-5", null, null, null, null, null, null,
+                null, null, signer, LEADER_A, null, null, null, null), "u-1", "req");
+        assertThat(kept.interactions()).hasSize(1);
+        assertThat(kept.programs()).hasSize(1);
+        Agreement cleared = agreementService.update(managerA, created.id(), new AgreementRequest(1, "Д-5", null, null, null, null, null,
+                null, null, null, null, null, List.of(), List.of(), null, null), "u-2", "req");
+        assertThat(cleared.interactions()).isEmpty();
+        assertThat(cleared.programs()).isEmpty();
+        assertThat(cleared.products()).hasSize(1);
+        assertThat(cleared.universitySigner()).isNull();
+
+        assertThatThrownBy(() -> agreementService.update(managerA, created.id(), new AgreementRequest(2, "Д-5", null, null, null, null,
+                null, null, null, null, foreignContact, null, null, null, null, null), "u-3", "req"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
+                        .isEqualTo("universitySignerContactId"));
+        assertThatThrownBy(() -> agreementService.update(managerA, created.id(), new AgreementRequest(2, "Д-5", null, null, null, null,
+                null, null, null, null, null, MANAGER_B, null, null, null, null), "u-4", "req"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
+                        .isEqualTo("schoolSignerProfileId"));
+        assertThatThrownBy(() -> agreementService.update(managerA, created.id(), new AgreementRequest(2, "Д-5", null, null, null, null,
+                null, null, null, null, null, null, null, List.of(uuid(799)), null, null), "u-5", "req"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field())
+                        .isEqualTo("programIds"));
+    }
+
+    @Test
+    void contractFileVersionsAreUploadedThroughTheAttachmentPipelineAndSupplementsHaveTheirOwnVersions() throws IOException {
+        Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "Д-6", null, List.of()), "c-1", "req");
+        AgreementModels.AgreementFile first = agreementFileService.upload(managerA, agreement.id(), null, "Редакция вуза",
+                pdf("договор-вуз.pdf"), "f-1");
+        AgreementModels.AgreementFile replay = agreementFileService.upload(managerA, agreement.id(), null, "Редакция вуза",
+                pdf("договор-вуз.pdf"), "f-1");
+        TestBeans.SCAN.set(ru.rtk.crm.attachment.AttachmentScanOutcome.REJECTED);
+        AgreementModels.AgreementFile infected = agreementFileService.upload(leaderA, agreement.id(), null, null, pdf("вирус.pdf"), "f-2");
+        TestBeans.SCAN.set(ru.rtk.crm.attachment.AttachmentScanOutcome.CLEAN);
+        AgreementModels.AgreementFile second = agreementFileService.upload(managerA, agreement.id(), null, "После корректировки",
+                pdf("договор-итог.pdf"), "f-3");
+
+        assertThat(replay.id()).isEqualTo(first.id());
+        assertThat(first.versionNumber()).isEqualTo(1);
+        assertThat(infected.versionNumber()).isEqualTo(2);
+        assertThat(infected.downloadable()).isFalse();
+        assertThat(second.versionNumber()).isEqualTo(3);
+        Agreement loaded = agreementService.get(leaderA, agreement.id());
+        assertThat(loaded.currentFile().id()).isEqualTo(second.id());
+        assertThat(loaded.files()).extracting(AgreementModels.AgreementFile::versionNumber).containsExactly(3, 2, 1);
+        assertThat(loaded.files().getLast().createdByName()).isEqualTo("Анна Смирнова");
+        try (var content = agreementFileService.download(leaderA, first.id()).content()) {
+            assertThat(new String(content.readAllBytes(), StandardCharsets.UTF_8)).startsWith("%PDF-");
+        }
+        assertThatThrownBy(() -> agreementFileService.download(managerA, infected.id()))
+                .isInstanceOfSatisfying(AgreementException.class, exception -> assertThat(exception.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> agreementFileService.download(managerB, first.id()))
+                .isInstanceOfSatisfying(AgreementException.class, exception -> assertThat(exception.status().value()).isEqualTo(404));
+        assertThatThrownBy(() -> agreementFileService.upload(new CrmProfile(uuid(16), UserRole.MANAGEMENT, null, 0), agreement.id(), null,
+                null, pdf("чтение.pdf"), "f-4")).isInstanceOf(ContactInteractionMutationAccessDeniedException.class);
+        assertThatThrownBy(() -> agreementFileService.upload(managerA, agreement.id(), null, null,
+                new org.springframework.mock.web.MockMultipartFile("file", "run.exe", "application/octet-stream", new byte[] {1, 2, 3}), "f-5"))
+                .isInstanceOf(ru.rtk.crm.attachment.AttachmentValidationException.class);
+
+        AgreementModels.Supplement supplement = agreementService.createSupplement(managerA, agreement.id(),
+                new AgreementModels.SupplementRequest(null, "ДС-1", LocalDate.parse("2026-05-01"), "Новый продукт",
+                        AgreementModels.SupplementStatus.DRAFT), "s-1");
+        assertThatThrownBy(() -> agreementService.createSupplement(managerA, agreement.id(), new AgreementModels.SupplementRequest(
+                null, "ДС-1", null, null, AgreementModels.SupplementStatus.DRAFT), "s-2"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("number"));
+        AgreementModels.AgreementFile supplementFile = agreementFileService.upload(managerA, agreement.id(), supplement.id(), "Скан",
+                pdf("дс-1.pdf"), "f-6");
+        assertThat(supplementFile.versionNumber()).isEqualTo(1);
+        AgreementModels.Supplement signed = agreementService.updateSupplement(leaderA, supplement.id(), new AgreementModels.SupplementRequest(
+                0, "ДС-1", LocalDate.parse("2026-05-01"), "Новый продукт", AgreementModels.SupplementStatus.SIGNED), "s-3");
+        assertThat(signed.status()).isEqualTo(AgreementModels.SupplementStatus.SIGNED);
+        assertThat(signed.currentFile().id()).isEqualTo(supplementFile.id());
+        assertThatThrownBy(() -> agreementService.updateSupplement(managerA, supplement.id(), new AgreementModels.SupplementRequest(
+                0, "ДС-1", null, null, AgreementModels.SupplementStatus.DRAFT), "s-4"))
+                .isInstanceOfSatisfying(AgreementException.class, exception -> assertThat(exception.status().value()).isEqualTo(409));
+        assertThatThrownBy(() -> agreementService.updateSupplement(managerB, supplement.id(), new AgreementModels.SupplementRequest(
+                1, "ДС-1", null, null, AgreementModels.SupplementStatus.DRAFT), "s-5"))
+                .isInstanceOfSatisfying(AgreementException.class, exception -> assertThat(exception.status().value()).isEqualTo(404));
+        Agreement withSupplement = agreementService.get(managerA, agreement.id());
+        assertThat(withSupplement.files()).hasSize(3);
+        assertThat(withSupplement.supplements()).singleElement().satisfies(item -> assertThat(item.files()).hasSize(1));
+    }
+
+    @Test
+    void signingStageIsCompletedOnlyWithASignedContractAndTheRuleCanBeSwitchedOff() {
+        UUID exchange = uuid(411);
+        UUID signingStage = uuid(412);
+        UUID transfer = uuid(413);
+        jdbc.update("UPDATE interaction_stages SET stage_order = 3, name = 'Обмен документами' WHERE id = ?", STAGE_A);
+        jdbc.update("INSERT INTO interaction_stages (id, interaction_id, stage_order, name, template_stage_id) VALUES (?, ?, 4, ?, NULL),"
+                        + " (?, ?, 5, 'Подписание договора', ?), (?, ?, 6, 'Передача материалов', NULL)",
+                exchange, INTERACTION_A, "Корректировка документов", signingStage, INTERACTION_A,
+                UUID.fromString("00000000-0000-0000-0000-000000000816"), transfer, INTERACTION_A);
+        List<ru.rtk.crm.interaction.InteractionStage> stages = List.of(
+                new ru.rtk.crm.interaction.InteractionStage(STAGE_A, "Обмен документами", 3, false),
+                new ru.rtk.crm.interaction.InteractionStage(exchange, "Корректировка документов", 4, true),
+                new ru.rtk.crm.interaction.InteractionStage(signingStage, "Подписание договора", 5, false),
+                new ru.rtk.crm.interaction.InteractionStage(transfer, "Передача материалов", 6, false)
+        );
+
+        assertThat(agreementStages.stages(INTERACTION_A)).extracting(AgreementModels.WorkStage::role).containsExactly(
+                AgreementModels.StageRole.EXCHANGE, AgreementModels.StageRole.CORRECTION, AgreementModels.StageRole.SIGNING);
+        assertThatThrownBy(() -> agreementStages.requireSignedToLeave(INTERACTION_A, stages, stages.get(2), stages.get(3)))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
+                    assertThat(exception.field()).isEqualTo("agreement");
+                    assertThat(exception.getMessage()).contains("Создайте договор");
+                });
+        assertThatThrownBy(() -> agreementStages.requireSignedToLeave(INTERACTION_A, stages, stages.get(0), stages.get(3)))
+                .isInstanceOf(InteractionValidationException.class);
+        assertThatThrownBy(() -> agreementStages.requireSignedToComplete(INTERACTION_A, stages.get(2)))
+                .isInstanceOf(InteractionValidationException.class);
+        agreementStages.requireSignedToLeave(INTERACTION_A, stages, stages.get(3), stages.get(1));
+        agreementStages.requireSignedToLeave(INTERACTION_A, stages, stages.get(0), stages.get(1));
+        agreementStages.requireSignedToComplete(INTERACTION_A, stages.get(3));
+
+        Agreement draft = agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "Д-7", null, List.of(INTERACTION_A)),
+                "c-1", "req");
+        assertThatThrownBy(() -> agreementStages.requireSignedToComplete(INTERACTION_A, stages.get(2)))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.getMessage())
+                        .contains("№ Д-7"));
+        jdbc.update("UPDATE agreements SET status = 'ACTIVE' WHERE id = ?", draft.id());
+        assertThatThrownBy(() -> agreementStages.requireSignedToComplete(INTERACTION_A, stages.get(2)))
+                .isInstanceOf(InteractionValidationException.class);
+        jdbc.update("UPDATE agreements SET concluded_on = DATE '2026-03-01' WHERE id = ?", draft.id());
+        agreementStages.requireSignedToLeave(INTERACTION_A, stages, stages.get(2), stages.get(3));
+        agreementStages.requireSignedToComplete(INTERACTION_A, stages.get(2));
+
+        jdbc.update("UPDATE agreements SET status = 'DRAFT' WHERE id = ?", draft.id());
+        new AgreementStages(org.springframework.jdbc.core.simple.JdbcClient.create(jdbc), false, List.of(), List.of(), List.of("Подписание"))
+                .requireSignedToLeave(INTERACTION_A, stages, stages.get(2), stages.get(3));
+        assertThat(agreementService.workAgreements(managerA, INTERACTION_A).agreements()).singleElement()
+                .satisfies(summary -> assertThat(summary.number()).isEqualTo("Д-7"));
+    }
+
+    @Test
+    void registryAndPeriodReportFollowTheScopeAndCountSigningTermination() {
+        Agreement review = agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "Р-1", null, List.of()), "c-1", "req");
+        agreementService.transition(managerA, review.id(), new AgreementModels.TransitionRequest(0, AgreementStatus.REVIEW, null, null, null,
+                LocalDate.now(AgreementService.ZONE).minusDays(40), null), "t-1");
+        jdbc.update("UPDATE agreements SET status_changed_at = ? WHERE id = ?", OffsetDateTime.now().minusDays(40), review.id());
+        Agreement signed = agreementService.create(managerA, ORGANIZATION_A, new AgreementRequest(null, "Р-2",
+                LocalDate.now(AgreementService.ZONE).minusDays(5), LocalDate.now(AgreementService.ZONE).plusDays(20),
+                LocalDate.now(AgreementService.ZONE).minusDays(15), null, AgreementStatus.ACTIVE, null, null, null, null, null, null, null,
+                null, null), "c-2", "req");
+        agreementService.transition(managerA, signed.id(), transition(0, AgreementStatus.TERMINATED, "Вуз отказался"), "t-2");
+        agreementService.create(managerB, ORGANIZATION_B, contractRequest(null, "Б-1", null, List.of()), "c-3", "req");
+
+        assertThat(registryService.registry(managerA, new AgreementModels.RegistryQuery(null, null, null, null, null)))
+                .extracting(AgreementModels.RegistryRow::number).containsExactly("Р-1", "Р-2");
+        assertThat(registryService.registry(managerA, new AgreementModels.RegistryQuery(null, null, null, null, 30)))
+                .singleElement().satisfies(row -> {
+                    assertThat(row.number()).isEqualTo("Р-1");
+                    assertThat(row.daysInStatus()).isGreaterThanOrEqualTo(39);
+                    assertThat(row.managerName()).isEqualTo("Анна Смирнова");
+                });
+        assertThat(registryService.registry(managerA, new AgreementModels.RegistryQuery(List.of(AgreementStatus.TERMINATED), null, null,
+                null, null))).extracting(AgreementModels.RegistryRow::number).containsExactly("Р-2");
+        assertThat(registryService.registry(leaderA, new AgreementModels.RegistryQuery(null, null, MANAGER_A,
+                LocalDate.now(AgreementService.ZONE).plusDays(30), null))).extracting(AgreementModels.RegistryRow::number)
+                .containsExactly("Р-2");
+        assertThat(registryService.registry(new CrmProfile(uuid(16), UserRole.MANAGEMENT, null, 0),
+                new AgreementModels.RegistryQuery(null, null, null, null, null))).hasSize(3);
+        assertThatThrownBy(() -> registryService.registry(admin, new AgreementModels.RegistryQuery(null, null, null, null, null)))
+                .isInstanceOfSatisfying(AgreementException.class, exception -> assertThat(exception.status().value()).isEqualTo(403));
+        assertThatThrownBy(() -> registryService.registry(managerA, new AgreementModels.RegistryQuery(null, null, null, null, 0)))
+                .isInstanceOf(InteractionValidationException.class);
+
+        AgreementModels.PeriodReport report = registryService.period(managerA, null, null, 30);
+        assertThat(report.totals().signed()).isEqualTo(1);
+        assertThat(report.totals().terminated()).isEqualTo(1);
+        assertThat(report.totals().transitions()).isEqualTo(2);
+        assertThat(report.totals().averageApprovalDays()).isEqualTo(10.0);
+        assertThat(report.longReview()).extracting(AgreementModels.RegistryRow::number).containsExactly("Р-1");
+        assertThatThrownBy(() -> registryService.period(admin, null, null, null)).isInstanceOf(AgreementException.class);
+        java.io.ByteArrayOutputStream xlsx = new java.io.ByteArrayOutputStream();
+        assertThatCode(() -> registryService.writePeriod(report, ru.rtk.crm.report.ReportFormat.XLSX, xlsx)).doesNotThrowAnyException();
+        java.io.ByteArrayOutputStream pdf = new java.io.ByteArrayOutputStream();
+        assertThatCode(() -> registryService.writePeriod(report, ru.rtk.crm.report.ReportFormat.PDF, pdf)).doesNotThrowAnyException();
+        assertThat(new String(pdf.toByteArray(), 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+        assertThat(agreementRepository.findWorkStatuses(List.of(INTERACTION_A))).isEmpty();
+    }
+
+    private static AgreementModels.TransitionRequest transition(int version, AgreementStatus status, String comment) {
+        return new AgreementModels.TransitionRequest(version, status, comment, null, null, null, null);
+    }
+
+    private static AgreementRequest contractRequest(Integer version, String number, AgreementStatus status, List<UUID> works) {
+        return new AgreementRequest(version, number, null, null, null, null, status, null, null, null, null, null, works, null, null, null);
+    }
+
+    private static org.springframework.mock.web.MockMultipartFile pdf(String name) {
+        return new org.springframework.mock.web.MockMultipartFile("file", name, "application/pdf",
+                ("%PDF-1.4 " + name).getBytes(StandardCharsets.UTF_8));
+    }
+
     private static AgreementRequest plannedRequest(
             Integer version,
             String number,
@@ -510,8 +849,8 @@ class AgreementServiceTest {
             PlanKind kind,
             String plannedOn
     ) {
-        return new AgreementRequest(version, number, LocalDate.parse("2026-02-01"), LocalDate.parse(validUntil), null, status, null, kind,
-                plannedOn == null ? null : LocalDate.parse(plannedOn));
+        return new AgreementRequest(version, number, LocalDate.parse("2026-02-01"), LocalDate.parse(validUntil), null, null, status, null,
+                kind, plannedOn == null ? null : LocalDate.parse(plannedOn), null, null, null, null, null, null);
     }
 
     private ReportRequest report(LocalDate from, LocalDate to) {
@@ -524,8 +863,8 @@ class AgreementServiceTest {
 
     private static AgreementRequest agreementRequest(Integer version, String number) {
         return new AgreementRequest(
-                version, number, LocalDate.parse("2026-02-01"), LocalDate.parse("2027-12-31"),
-                "ПАО «Ростелеком», ИТ Школа; Университет А", AgreementStatus.ACTIVE, null, null, null
+                version, number, LocalDate.parse("2026-02-01"), LocalDate.parse("2027-12-31"), null,
+                "ПАО «Ростелеком», ИТ Школа; Университет А", AgreementStatus.ACTIVE, null, null, null, null, null, null, null, null, null
         );
     }
 
@@ -624,7 +963,7 @@ class AgreementServiceTest {
                 """);
         jdbc.execute("CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL)");
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     display_name VARCHAR(200) NOT NULL,
                     role VARCHAR(16) NOT NULL,
@@ -653,6 +992,9 @@ class AgreementServiceTest {
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
                     name VARCHAR(200) NOT NULL,
+                    position VARCHAR(200),
+                    decision_role VARCHAR(32),
+                    inactive BOOLEAN DEFAULT FALSE NOT NULL,
                     confirmed_at TIMESTAMP WITH TIME ZONE,
                     confirmed_by UUID
                 )
@@ -714,6 +1056,8 @@ class AgreementServiceTest {
                     media_type VARCHAR(160) NOT NULL,
                     size_bytes BIGINT NOT NULL,
                     storage_key UUID NOT NULL,
+                    checksum CHAR(64) DEFAULT 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' NOT NULL,
+                    created_by UUID,
                     status VARCHAR(32) NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     deleted_at TIMESTAMP WITH TIME ZONE
@@ -754,7 +1098,9 @@ class AgreementServiceTest {
                     confirmed_at TIMESTAMP WITH TIME ZONE NOT NULL, participants_count INTEGER NOT NULL,
                     teachers_count INTEGER NOT NULL, completed_count INTEGER, not_completed_count INTEGER,
                     unknown_count INTEGER NOT NULL, groups_count INTEGER NOT NULL, demo BOOLEAN NOT NULL DEFAULT FALSE,
-                    PRIMARY KEY (mapping_id, observed_from)
+                    PRIMARY KEY (mapping_id, observed_from),
+                    active_7d_count INTEGER, active_30d_count INTEGER, never_accessed_count INTEGER,
+                    inactive_count INTEGER, teachers_active_7d_count INTEGER, teachers_active_14d_count INTEGER
                 )
                 """);
         jdbc.execute("""
@@ -793,12 +1139,51 @@ class AgreementServiceTest {
                     planned_base_until DATE,
                     parties VARCHAR(2000),
                     status VARCHAR(16) NOT NULL,
-                    file_attachment_id UUID,
+                    sent_on DATE,
+                    status_changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    university_signer_id UUID,
+                    school_signer_id UUID,
                     version INTEGER NOT NULL DEFAULT 0,
                     created_by UUID NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     CONSTRAINT agreements_organization_number_key UNIQUE (organization_id, number)
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_status_events (
+                    id UUID PRIMARY KEY, agreement_id UUID NOT NULL REFERENCES agreements(id) ON DELETE CASCADE,
+                    from_status VARCHAR(16), to_status VARCHAR(16) NOT NULL, comment VARCHAR(2000), actor_profile_id UUID,
+                    interaction_id UUID, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_interactions (
+                    agreement_id UUID NOT NULL REFERENCES agreements(id) ON DELETE CASCADE, interaction_id UUID NOT NULL,
+                    PRIMARY KEY (agreement_id, interaction_id)
+                )
+                """);
+        for (String link : List.of("program", "product", "direction")) {
+            jdbc.execute("CREATE TABLE IF NOT EXISTS " + link + "s (id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL,"
+                    + " archived BOOLEAN DEFAULT FALSE NOT NULL)");
+            jdbc.execute("CREATE TABLE IF NOT EXISTS agreement_" + link + "s (agreement_id UUID NOT NULL REFERENCES agreements(id)"
+                    + " ON DELETE CASCADE, " + link + "_id UUID NOT NULL, PRIMARY KEY (agreement_id, " + link + "_id))");
+        }
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_supplements (
+                    id UUID PRIMARY KEY, agreement_id UUID NOT NULL REFERENCES agreements(id) ON DELETE CASCADE,
+                    number VARCHAR(100) NOT NULL, concluded_on DATE, subject VARCHAR(2000), status VARCHAR(16) NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 0, created_by UUID NOT NULL, created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL, CONSTRAINT agreement_supplements_number_key UNIQUE (agreement_id, number)
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_files (
+                    id UUID PRIMARY KEY, agreement_id UUID NOT NULL REFERENCES agreements(id) ON DELETE CASCADE,
+                    supplement_id UUID, version_number INTEGER NOT NULL, attachment_id UUID, storage_key UUID UNIQUE,
+                    original_name VARCHAR(255) NOT NULL, media_type VARCHAR(160) NOT NULL, size_bytes BIGINT NOT NULL,
+                    checksum CHAR(64) NOT NULL, status VARCHAR(32) NOT NULL, comment VARCHAR(500), created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """);
         jdbc.execute("""
@@ -854,9 +1239,23 @@ class AgreementServiceTest {
             return new ModuleProperties(new ModuleProperties.Toggle(true), null);
         }
 
+        static final java.util.concurrent.atomic.AtomicReference<ru.rtk.crm.attachment.AttachmentScanOutcome> SCAN =
+                new java.util.concurrent.atomic.AtomicReference<>(ru.rtk.crm.attachment.AttachmentScanOutcome.CLEAN);
+
         @Bean
         ReportProperties reportProperties() {
             return new ReportProperties(Path.of("target", "test-reports"), 10, 5, 1_000, 1_000);
+        }
+
+        @Bean
+        ru.rtk.crm.attachment.AttachmentProperties attachmentProperties() {
+            return new ru.rtk.crm.attachment.AttachmentProperties(Path.of("target", "test-agreement-files"), "localhost", 3310,
+                    java.time.Duration.ofSeconds(1), java.time.Duration.ofSeconds(1), org.springframework.util.unit.DataSize.ofMegabytes(20));
+        }
+
+        @Bean
+        ru.rtk.crm.attachment.AttachmentScanner attachmentScanner() {
+            return (input, sizeBytes) -> SCAN.get();
         }
     }
 }

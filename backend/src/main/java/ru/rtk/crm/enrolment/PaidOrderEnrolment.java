@@ -37,6 +37,10 @@ public class PaidOrderEnrolment {
         return cipher.enabled();
     }
 
+    // Идемпотентность: одна оплата (запись источника) даёт не больше одного зачисления. Повторная загрузка
+    // того же файла ищет зачисление по записи источника и только дополняет анкету, дублей не создаёт.
+    // Новый слушатель создаётся лишь тогда, когда нет анкеты с тем же телефоном или почтой И с теми же фамилией
+    // и именем (LearnerRules.samePerson): общий контакт у разных людей (семейный телефон) анкеты не склеивает.
     @Transactional
     public LearnerIntake accept(PaidOrder order, String courseKey, UUID sourceRecordId, UUID actorId) {
         OffsetDateTime now = OffsetDateTime.now();
@@ -72,6 +76,9 @@ public class PaidOrderEnrolment {
                 "запуск: " + runId + "; " + intake.details(), null);
     }
 
+    // Известная оплата пришла снова, возможно, уже с другим потоком (заказ перенесли). Если слушатель уже
+    // записан на новый поток, старое зачисление удаляется, иначе переносится. Признак «после передачи в LMS»
+    // нужен оператору: слушателя, уже выгруженного в LMS, придётся перенести там вручную.
     private LearnerIntake acceptKnown(
             LearnerEnrolment enrolment,
             EnrolmentStream stream,
@@ -93,6 +100,7 @@ public class PaidOrderEnrolment {
         return new LearnerIntake(0, 1, 0, 0, 1, afterLms, contactsDiffer);
     }
 
+    // Совпадают только активные анкеты: ограниченную или обезличенную анкету оплата не оживляет и не меняет.
     private Optional<Learner> match(PaidOrder order) {
         return learnerService.findByContacts(order.email(), order.phone()).stream()
                 .filter(learner -> learner.status() == PersonalDataStatus.ACTIVE)
@@ -100,6 +108,8 @@ public class PaidOrderEnrolment {
                 .findFirst();
     }
 
+    // Оплата только дополняет пустые поля анкеты и никогда не перезаписывает введённые оператором значения;
+    // расхождение телефона или почты не правится, а считается в итоге для проверки оператором.
     private boolean complete(Learner learner, PaidOrder order, UUID actorId) {
         if (learner.status() != PersonalDataStatus.ACTIVE) {
             return false;

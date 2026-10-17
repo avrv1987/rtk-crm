@@ -12,10 +12,14 @@ import java.util.HexFormat;
 import java.util.UUID;
 
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 public class AttachmentStorage {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(AttachmentStorage.class);
     private static final int BUFFER_SIZE = 8_192;
 
     private final AttachmentProperties properties;
@@ -36,6 +40,7 @@ public class AttachmentStorage {
     }
 
     public void store(UUID storageKey, InputStream input, AttachmentUploadInspection inspection) {
+        // Файл создаётся только новым (CREATE_NEW) и под ключом-UUID: перезаписать чужой файл нельзя.
         Path target = pathFor(storageKey);
         long sizeBytes = 0;
         MessageDigest digest = sha256();
@@ -57,6 +62,8 @@ public class AttachmentStorage {
             deleteQuietly(target);
             throw exception;
         }
+        // Сверка с результатом первичной проверки: если содержимое изменилось между проверкой сигнатуры и записью,
+        // файл удаляется, а не принимается с чужим хешем.
         if (sizeBytes != inspection.sizeBytes()
                 || !MessageDigest.isEqual(
                 HexFormat.of().parseHex(inspection.checksum()),
@@ -88,6 +95,7 @@ public class AttachmentStorage {
         return Files.isRegularFile(pathFor(storageKey));
     }
 
+    // Защита от выхода за каталог: путь строится только из UUID, а результат проверяется на прямое вхождение в корень.
     private Path pathFor(UUID storageKey) {
         Path target = root.resolve(storageKey.toString()).normalize();
         if (!target.getParent().equals(root)) {
@@ -107,7 +115,9 @@ public class AttachmentStorage {
     private void deleteQuietly(Path target) {
         try {
             Files.deleteIfExists(target);
-        } catch (IOException ignored) {
+        } catch (IOException exception) {
+            // Вызывается только на пути ошибки записи: исходная ошибка пробрасывается, недоудалённый файл виден в журнале.
+            LOGGER.warn("Partial attachment file {} was not removed", target.getFileName(), exception);
         }
     }
 }

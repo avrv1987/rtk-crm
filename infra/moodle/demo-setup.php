@@ -67,6 +67,10 @@ function crm_demo_course(string $shortname, string $fullname, int $enablecomplet
             'enablecompletion' => $enablecompletion,
         ]);
     }
+    if ($course->fullname !== $fullname) {
+        $DB->set_field('course', 'fullname', $fullname, ['id' => $course->id]);
+        $course->fullname = $fullname;
+    }
     return $course;
 }
 
@@ -83,6 +87,29 @@ function crm_demo_enrol(stdClass $course, stdClass $user, string $roleshortname,
     $instance = $DB->get_record('enrol', ['courseid' => $course->id, 'enrol' => 'manual'], '*', MUST_EXIST);
     $roleid = (int) $DB->get_field('role', 'id', ['shortname' => $roleshortname], MUST_EXIST);
     enrol_get_plugin('manual')->enrol_user($instance, $user->id, $roleid, 0, 0, $status);
+}
+
+// Синтетический последний вход в курс считается от времени запуска, поэтому повторный запуск даёт те же числа.
+// $daysago < 0 — пользователь в курс не заходил.
+function crm_demo_access(stdClass $course, stdClass $user, int $daysago): void {
+    global $DB;
+    $conditions = ['userid' => $user->id, 'courseid' => $course->id];
+    if ($daysago < 0) {
+        $DB->delete_records('user_lastaccess', $conditions);
+        return;
+    }
+    $timeaccess = time() - $daysago * DAYSECS - HOURSECS;
+    $record = $DB->get_record('user_lastaccess', $conditions);
+    if ($record) {
+        $record->timeaccess = $timeaccess;
+        $DB->update_record('user_lastaccess', $record);
+    } else {
+        $DB->insert_record('user_lastaccess', (object) [
+            'userid' => $user->id,
+            'courseid' => $course->id,
+            'timeaccess' => $timeaccess,
+        ]);
+    }
 }
 
 $serviceuser = crm_demo_user(CRM_SERVICE_USERNAME, 'CRM', 'Web Service');
@@ -191,7 +218,7 @@ foreach ([7, 8, 9, 10] as $number) {
     groups_add_member($datagroup, $students[$number]->id);
 }
 
-$teach = crm_demo_course('CRM-DEMO-TEACH', 'Демо: обучение преподавателей', 1);
+$teach = crm_demo_course('CRM-DEMO-TEACH', 'ППС 2026: обучение преподавателей (демо)', 1);
 if (!$DB->record_exists('course_completion_criteria', ['course' => $teach->id, 'criteriatype' => COMPLETION_CRITERIA_TYPE_SELF])) {
     $criterion = new completion_criteria_self();
     $criteriadata = (object) ['id' => $teach->id, 'criteria_self' => 1];
@@ -228,6 +255,24 @@ if (!$completion->is_complete()) {
 
 $empty = crm_demo_course('CRM-DEMO-SEC', 'Демо: информационная безопасность', 0);
 crm_demo_enrol($empty, $teacher, 'editingteacher');
+
+// Java («Университет А») буксует: за неделю заходили двое, двое перестали, преподаватель не заходил 16 дней.
+// Группа Б1 идёт нормально. Веб-разработка («Школа № 1»): за неделю не заходил никто.
+foreach ([1 => 0, 2 => 2, 3 => 10, 4 => 20, 5 => 40, 6 => -1] as $number => $daysago) {
+    crm_demo_access($java, $students[$number], $daysago);
+}
+crm_demo_access($java, $teacher, 16);
+foreach ([7 => 0, 8 => 1, 9 => 3, 10 => 5] as $number => $daysago) {
+    crm_demo_access($data, $students[$number], $daysago);
+}
+crm_demo_access($data, $teacher, 1);
+foreach ([8 => 12, 9 => 10, 10 => -1] as $number => $daysago) {
+    crm_demo_access($web, $students[$number], $daysago);
+}
+crm_demo_access($web, $teacher, 9);
+foreach ([1 => 30, 2 => 25, 3 => 20, 4 => -1] as $number => $daysago) {
+    crm_demo_access($teach, $trainees[$number], $daysago);
+}
 
 $jury = crm_demo_user(CRM_JURY_USERNAME, 'Жюри', 'Демо');
 update_internal_user_password($jury, $jurypassword);

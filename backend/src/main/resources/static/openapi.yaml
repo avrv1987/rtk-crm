@@ -1136,6 +1136,69 @@ paths:
           $ref: '#/components/responses/CrmProfileRequired'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/reports/agreements-period:
+    get:
+      tags: [Reports]
+      summary: Отчёт по договорам с вузами за период
+      operationId: getAgreementPeriodReport
+      description: >-
+        Переходы статусов за период, подписанные (дата подписания в периоде) и расторгнутые договоры, среднее время
+        согласования (от отправки на согласование до подписания) и договоры, которые сейчас на согласовании дольше N дней.
+        Область данных как у реестра; администратор и представитель вуза получают 403.
+      parameters:
+        - $ref: '#/components/parameters/AgreementPeriodFrom'
+        - $ref: '#/components/parameters/AgreementPeriodTo'
+        - $ref: '#/components/parameters/AgreementRegistryReviewLonger'
+      responses:
+        '200':
+          description: Итоги и строки отчёта
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementPeriodReport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/reports/agreements-period/file:
+    get:
+      tags: [Reports]
+      summary: Скачать отчёт по договорам за период в XLSX или PDF
+      operationId: downloadAgreementPeriodReport
+      parameters:
+        - name: format
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [XLSX, PDF]
+        - $ref: '#/components/parameters/AgreementPeriodFrom'
+        - $ref: '#/components/parameters/AgreementPeriodTo'
+        - $ref: '#/components/parameters/AgreementRegistryReviewLonger'
+      responses:
+        '200':
+          description: Файл; Content-Disposition содержит имя файла в UTF-8 (filename*)
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/reports/signing-plan:
     get:
       tags: [Reports]
@@ -1374,7 +1437,7 @@ paths:
         КАМ — свои вузы (включая действующее замещение), руководитель — вузы команды, «Руководство» — все вузы, только чтение;
         администратору — 403. Сигналы считаются по последним снимкам потоков Moodle вида «Занятия студентов», сопоставленных
         той же паре вуз–программа, что и незавершённая работа, в окне её цикла. Скрытые до изменения данных сигналы в список
-        не входят. Правила и пороги (app.lms-signals) описаны в docs/integrations.md.
+        не входят. Пороги задаются настройками app.lms-signals.
       responses:
         '200':
           description: Действующие нескрытые сигналы
@@ -1449,6 +1512,45 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/lms-signals/risks:
+    post:
+      tags: [Work]
+      summary: Записать сигнал LMS как риск
+      operationId: recordInteractionLmsSignalRisk
+      description: >-
+        Только USER и LEADER, которые могут вести карточку (как «Добавить проблему или риск»). Добавляет в реестр проблем и
+        рисков работы риск среднего уровня с описанием «Сигнал LMS «…»: …», ответственный — КАМ вуза (или автор), и скрывает
+        сигнал с отметкой recordedAsRisk до изменения данных. Сигнал, который уже не действует, — 400 VALIDATION_ERROR
+        (поле mappingId); уже записанный с той же версией данных — 400 VALIDATION_ERROR (поле type). Повышает версию работы.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LmsSignalRisk'
+      responses:
+        '200':
+          description: Работа после добавления риска
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/programs:
@@ -2247,6 +2349,9 @@ paths:
         только готовые (без причин в problems); число неготовых в выбранном круге — X-Roster-Skipped. Не переданным
         ставится идентификатор выгрузки (X-Roster-Export-Id). Нет строк — 400. Журнал — TEACHER_ROSTER_EXPORTED
         без ПДн. Файл не хранится, повторный запрос создаёт новую выгрузку. Имя файла — курс, группа и дата.
+        format MOODLE_CSV (по умолчанию XLSX) отдаёт вместо шаблона организатора CSV штатной загрузки пользователей
+        Moodle (tool_uploaduser): UTF-8, заголовки username, firstname, lastname, email, course1, group1, role1;
+        username — почта в нижнем регистре, course1 и group1 — курс и группа списка, role1 — student.
       parameters:
         - $ref: '#/components/parameters/TeacherRosterId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -2275,6 +2380,9 @@ paths:
               schema:
                 type: string
                 format: binary
+            text/csv:
+              schema:
+                type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2750,6 +2858,33 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/agreements:
+    get:
+      tags: [Agreements]
+      summary: Договоры работы и этапы маршрута, связанные с договором
+      operationId: getInteractionAgreements
+      description: >-
+        Этапы «Обмен документами», «Корректировка документов» и «Подписание» определяются по постоянному идентификатору этапа
+        базового шаблона или по названию из настройки app.agreements.*-stage-names.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Договоры, связанные с работой, и роли её этапов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkAgreements'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/interactions/{id}/attachments:
@@ -3258,6 +3393,250 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/agreements/{id}/transitions:
+    post:
+      tags: [Agreements]
+      summary: Перевести договор в другой статус
+      operationId: transitionAgreement
+      description: >-
+        Переходы по графу: проект → на согласовании → на корректировке ↔ на согласовании → на подписании → действует →
+        завершён; возвраты (на согласовании → проект, на корректировке → на согласовании, на подписании → на корректировке,
+        завершён → действует) и расторжение действующего договора требуют комментария. Для «действует» нужна дата подписания.
+        Переход записывается в историю: кто, когда, комментарий, из какой работы. USER для своих вузов, LEADER для команды.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementTransitionInput'
+      responses:
+        '200':
+          description: Договор в новом статусе
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agreement'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/agreements/{id}/files:
+    post:
+      tags: [Agreements]
+      summary: Загрузить новую версию файла договора или допсоглашения
+      operationId: uploadAgreementFile
+      description: >-
+        Тот же конвейер, что у вложений работ: карантин, проверка сигнатуры, антивирус ClamAV, до 20 МБ, форматы ТЗ.
+        Каждая загрузка — новая версия с автором, датой и комментарием. USER для своих вузов, LEADER для команды.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: PNG, JPEG, HEIC/HEIF, PDF, ZIP, GZIP, RAR, DOC, DOCX, XLS или XLSX до 20 МБ; расширение должно соответствовать сигнатуре файла
+                comment:
+                  type: string
+                  maxLength: 500
+                  description: Например «редакция вуза», «после корректировки»
+                supplementId:
+                  type: string
+                  format: uuid
+                  description: Версия файла допсоглашения этого договора
+      responses:
+        '201':
+          description: Версия сохранена и проверена; скачать можно только версию CLEAN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementFile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/agreement-files/{id}/download:
+    get:
+      tags: [Agreements]
+      summary: Скачать версию файла договора
+      operationId: downloadAgreementFile
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Байты версии со статусом CLEAN; скачивание записывается в журнал безопасности
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/agreements/{id}/supplements:
+    post:
+      tags: [Agreements]
+      summary: Добавить допсоглашение к договору
+      operationId: createAgreementSupplement
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementSupplementInput'
+      responses:
+        '201':
+          description: Допсоглашение создано; номер уникален в пределах договора
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementSupplement'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/agreement-supplements/{id}:
+    patch:
+      tags: [Agreements]
+      summary: Изменить допсоглашение
+      operationId: updateAgreementSupplement
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementSupplementInput'
+      responses:
+        '200':
+          description: Допсоглашение изменено; version обязательна
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementSupplement'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/agreement-registry:
+    get:
+      tags: [Agreements]
+      summary: Реестр договоров с вузами
+      operationId: listAgreementRegistry
+      description: >-
+        Договоры вузов области данных: КАМ — свои вузы, руководитель — вузы команды, «Руководство» — все вузы.
+        Администратор и представитель вуза получают 403.
+      parameters:
+        - $ref: '#/components/parameters/AgreementRegistryStatus'
+        - $ref: '#/components/parameters/AgreementRegistryOrganization'
+        - $ref: '#/components/parameters/AgreementRegistryManager'
+        - $ref: '#/components/parameters/AgreementRegistryExpiresBefore'
+        - $ref: '#/components/parameters/AgreementRegistryReviewLonger'
+      responses:
+        '200':
+          description: Строки реестра, сначала дольше всего в текущем статусе
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgreementRegistryRow'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/agreement-registry/file:
+    get:
+      tags: [Agreements]
+      summary: Выгрузить реестр договоров в XLSX
+      operationId: downloadAgreementRegistry
+      description: Те же отборы и строки, что у listAgreementRegistry; скачивание записывается в журнал безопасности.
+      parameters:
+        - $ref: '#/components/parameters/AgreementRegistryStatus'
+        - $ref: '#/components/parameters/AgreementRegistryOrganization'
+        - $ref: '#/components/parameters/AgreementRegistryManager'
+        - $ref: '#/components/parameters/AgreementRegistryExpiresBefore'
+        - $ref: '#/components/parameters/AgreementRegistryReviewLonger'
+      responses:
+        '200':
+          description: Файл XLSX; Content-Disposition содержит имя файла в UTF-8 (filename*)
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/agreements/{id}/activities:
     post:
       tags: [Agreements]
@@ -3462,7 +3841,7 @@ paths:
       operationId: createReportJob
       x-implementation-stage: 5
       description: >
-        Сохраняет задание отчёта со статусом PENDING и передаёт его в один из ограниченных слотов отчётов. Тот же Idempotency-Key с тем же телом возвращает тот же jobId; другое тело под тем же ключом возвращает 409 IDEMPOTENCY_CONFLICT. 503 REPORT_CAPACITY_EXCEEDED с Retry-After означает, что все слоты и ограниченная очередь заняты и задание не сохранено. При указании groupBy задание строит диаграмму POST /api/statistics для того же запроса в виде PNG или PDF (диаграмма, базовая таблица, единица измерения, период, фильтры и время формирования) вместо построчного отчёта. chartType LINE (или seriesBy) строит линейный график с группировкой MONTH, по одной линии на группу seriesBy; более maxChartSeries линий или maxChartBars месяцев приводит к ошибке задания REPORT_CHART_LIMIT. DURATION отклоняет groupBy с 400 VALIDATION_ERROR.
+        Сохраняет задание отчёта со статусом PENDING и передаёт его в один из ограниченных слотов отчётов. Тот же Idempotency-Key с тем же телом возвращает тот же jobId; другое тело под тем же ключом возвращает 409 IDEMPOTENCY_CONFLICT. 503 REPORT_CAPACITY_EXCEEDED с Retry-After означает, что все слоты и ограниченная очередь заняты и задание не сохранено. При указании groupBy задание строит диаграмму POST /api/statistics для того же запроса в виде PNG или PDF (диаграмма, базовая таблица, единица измерения, период, фильтры и время формирования) вместо построчного отчёта. chartType LINE (или seriesBy) строит линейный график с группировкой MONTH, по одной линии на группу seriesBy (пять крупнейших, остальные сливаются в «Остальные»); более maxChartBars месяцев приводит к ошибке задания REPORT_CHART_LIMIT. DURATION отклоняет groupBy с 400 VALIDATION_ERROR.
       parameters:
         - $ref: '#/components/parameters/CsrfHeader'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -4174,6 +4553,28 @@ paths:
           schema:
             type: string
             maxLength: 200
+        - name: role
+          in: query
+          required: false
+          description: Только профили с этой ролью
+          schema:
+            type: string
+            enum: [USER, LEADER, ADMIN, MANAGEMENT, PARTNER]
+        - name: teamId
+          in: query
+          required: false
+          description: Только профили этой команды
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          required: false
+          description: >-
+            Состояние профиля: ACTIVE — доступ открыт, PENDING — ожидает активации, BLOCKED — доступ закрыт, SYNC_REQUIRED — учётная запись Keycloak не синхронизирована с доступом или роль требует сверки
+          schema:
+            type: string
+            enum: [ACTIVE, PENDING, BLOCKED, SYNC_REQUIRED]
       responses:
         '200':
           description: Профили CRM, которыми управляет администратор; pendingTotal считает все профили, ожидающие активации
@@ -4181,10 +4582,71 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PageCrmProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-profiles/export:
+    get:
+      tags: [Administration]
+      summary: Выгрузить список профилей CRM в XLSX
+      operationId: exportCrmProfiles
+      description: >-
+        Только администратор. Те же фильтры, что у списка, без постраничного вывода: сотрудник, логин, роль, подтверждена ли роль Keycloak, команда или вуз, состояние, флаг «Оператор зачисления», синхронизация с Keycloak, последний вход (МСК). Выгрузка записывается в журнал администратора.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Часть отображаемого имени или логина Keycloak без учёта регистра
+          schema:
+            type: string
+            maxLength: 200
+        - name: role
+          in: query
+          required: false
+          description: Только профили с этой ролью
+          schema:
+            type: string
+            enum: [USER, LEADER, ADMIN, MANAGEMENT, PARTNER]
+        - name: teamId
+          in: query
+          required: false
+          description: Только профили этой команды
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          required: false
+          description: >-
+            Состояние профиля: ACTIVE — доступ открыт, PENDING — ожидает активации, BLOCKED — доступ закрыт, SYNC_REQUIRED — учётная запись Keycloak не синхронизирована с доступом или роль требует сверки
+          schema:
+            type: string
+            enum: [ACTIVE, PENDING, BLOCKED, SYNC_REQUIRED]
+      responses:
+        '200':
+          description: Файл XLSX
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: REPORT_ROW_LIMIT — в выгрузку попадает больше строк, чем разрешено; сузьте фильтры
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '500':
           $ref: '#/components/responses/InternalError'
     post:
@@ -4248,7 +4710,7 @@ paths:
       responses:
         '200':
           description: >-
-            Профиль CRM обновлён; изменение роли, команды или активности увеличивает accessRevision, каждое изменение записывается в журнал профиля. Роль хранится в Keycloak: смена роли сначала назначает роль realm crm-* учётной записи клиентом crm-account-sync и снимает прежнюю, затем меняет профиль CRM; если Keycloak недоступен или служебный клиент не настроен, роль не меняется (503). Закрытие или открытие доступа также отключает или включает учётную запись Keycloak через Admin API; если Keycloak недоступен или подключение не настроено, изменение CRM сохраняется, accountSyncRequired равно true, а accountSyncError объясняет, почему учётная запись не была синхронизирована. Если меняется, нужен ли второй фактор (роль «Администратор» или флаг «Оператор зачисления»), CRM сразу меняет это в Keycloak; при недоступном Keycloak изменение не сохраняется (503).
+            Профиль CRM обновлён; изменение роли, команды или активности увеличивает accessRevision, каждое изменение записывается в журнал профиля. Роль хранится в Keycloak: смена роли сначала назначает роль realm crm-* учётной записи клиентом crm-account-sync и снимает прежнюю, затем меняет профиль CRM; если Keycloak недоступен или служебный клиент не настроен, роль не меняется (503). Если профиль CRM после этого не сохранился (конфликт версии, ошибка проверки), роль и обязательный второй фактор в Keycloak возвращаются к сохранённым в CRM; если вернуть не удалось, у профиля roleReconcileRequired равно true, пока администратор не выполнит синхронизацию. Закрытие или открытие доступа также отключает или включает учётную запись Keycloak через Admin API; если Keycloak недоступен или подключение не настроено, изменение CRM сохраняется, accountSyncRequired равно true, а accountSyncError объясняет, почему учётная запись не была синхронизирована. Если меняется, нужен ли второй фактор (роль «Администратор» или флаг «Оператор зачисления»), CRM сразу меняет это в Keycloak; при недоступном Keycloak изменение не сохраняется (503).
           content:
             application/json:
               schema:
@@ -4332,7 +4794,7 @@ paths:
       summary: Синхронизировать учётную запись Keycloak с доступом в CRM
       operationId: syncCrmProfileAccount
       description: >-
-        Отключает учётную запись Keycloak заблокированного профиля и завершает её сессии либо включает учётную запись активного профиля. Ничего не делает, если учётная запись уже синхронизирована.
+        Отключает учётную запись Keycloak заблокированного профиля и завершает её сессии либо включает учётную запись активного профиля. Если роль требует сверки (roleReconcileRequired), записывает в Keycloak роль и обязательный второй фактор, сохранённые в CRM. Ничего не делает, если учётная запись уже синхронизирована.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -4365,7 +4827,7 @@ paths:
       summary: Выдать новый временный пароль Keycloak
       operationId: resetCrmProfilePassword
       description: >-
-        Только администратор, не для своей учётной записи. Пароль генерируется на сервере, возвращается один раз и не хранится; при следующем входе Keycloak потребует сменить его. Включённость учётной записи и действующие сеансы не меняются. Повтор с тем же ключом возвращает профиль без пароля.
+        Только администратор, не для своей учётной записи и не для другого администратора (400: пароль администратор меняет сам в личном кабинете Keycloak или через консоль Keycloak). Пароль генерируется на сервере, возвращается один раз и не хранится; при следующем входе Keycloak потребует сменить его. Включённость учётной записи и действующие сеансы не меняются. Повтор с тем же ключом возвращает профиль без пароля.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -4437,7 +4899,7 @@ paths:
       summary: Сбросить второй фактор сотрудника
       operationId: resetCrmProfileSecondFactor
       description: >-
-        Только администратор, не для своей учётной записи. Удаляет у пользователя Keycloak привязанные приложения-аутентификаторы (OTP). Администратору и оператору зачисления заново назначает обязательный второй фактор: при следующем входе Keycloak попросит подключить приложение. Сеансы не завершаются. Если Keycloak недоступен, ничего не меняется.
+        Только администратор, не для своей учётной записи и не для другого администратора (400: второй фактор администратора сбрасывают в консоли Keycloak). Удаляет у пользователя Keycloak привязанные приложения-аутентификаторы (OTP). Администратору и оператору зачисления заново назначает обязательный второй фактор: при следующем входе Keycloak попросит подключить приложение. Сеансы не завершаются. Если Keycloak недоступен, ничего не меняется.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -5080,7 +5542,7 @@ paths:
       operationId: listDataSources
       x-implementation-stage: 4
       description: >
-        Только ADMIN. WEBSITE — адаптер предложенного контракта сайта (docs/integrations/site-api.yaml), а не подтверждённый API заказчика; MOODLE читает агрегированные данные курсов и групп через ограниченный веб-сервис Moodle (docs/integrations.md). Адреса, токены и список курсов задаются на экране (GET/PUT /api/admin/source-settings), начальные значения — конфигурация развёртывания; токены никогда не возвращаются.
+        Только ADMIN. WEBSITE — адаптер предложенного контракта сайта, а не подтверждённый API заказчика; CUSTOMER_CRM — обмен с CRM заказчика по предложенному контракту: организации и контакты приходят в CRM, события работы с вузом уходят в CRM заказчика; LABOR_MARKET — адаптер контракта «Рынок труда»: месячные срезы числа вакансий по ИТ-направлениям, адрес и токен задаются отдельным блоком (GET/PUT /api/admin/labor-market/settings); MOODLE читает агрегированные данные курсов и групп через ограниченный веб-сервис Moodle. Адреса, токены и список курсов задаются на экране (GET/PUT /api/admin/source-settings), начальные значения — конфигурация развёртывания; токены никогда не возвращаются.
       responses:
         '200':
           description: Источники с флагом настройки, последним запуском со счётчиками, последним успехом и числом записей на проверку
@@ -5173,6 +5635,167 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/admin/labor-market/settings:
+    get:
+      tags: [Administration]
+      summary: Подключение источника «Рынок труда»
+      operationId: getLaborMarketSettings
+      description: >
+        Только ADMIN. Действующий адрес источника: сохранённый на экране, а если его нет — из конфигурации развёртывания
+        (LABOR_MARKET_BASE_URL). Токен никогда не возвращается: только откуда он взят и когда его сменили на экране.
+      responses:
+        '200':
+          description: Действующие настройки без значения токена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaborMarketSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Administration]
+      summary: Сохранить подключение источника «Рынок труда»
+      operationId: updateLaborMarketSettings
+      description: >
+        Только ADMIN. Адрес — https:// без логина, параметров и якоря (адрес из конфигурации развёртывания принимается как
+        есть); пустой адрес отключает источник; пустой токен оставляет прежний, новый шифруется AES-256-GCM ключом
+        SOURCES_SETTINGS_KEY. Изменение пишется в журнал администратора без значения токена.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LaborMarketSettingsUpdate'
+      responses:
+        '200':
+          description: Действующие настройки после сохранения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaborMarketSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Administration]
+      summary: Вернуть подключение источника «Рынок труда» из конфигурации развёртывания
+      operationId: resetLaborMarketSettings
+      description: Только ADMIN. Удаляет сохранённые на экране адрес и токен; снова действуют значения конфигурации развёртывания.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Настройки сброшены
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/labor-market/check:
+    post:
+      tags: [Administration]
+      summary: Проверить связь с источником «Рынок труда»
+      operationId: checkLaborMarketConnection
+      description: >
+        Только ADMIN. Пробный запрос текущего месяца по значениям формы без сохранения и без изменения данных CRM; пустой
+        токен заменяется действующим. Ошибка связи возвращается как ok=false с понятным сообщением, а не как ошибка HTTP.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LaborMarketSettingsUpdate'
+      responses:
+        '200':
+          description: Результат проверки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceConnectionCheck'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/labor-market/mappings:
+    get:
+      tags: [Administration]
+      summary: Сопоставление направлений CRM с направлениями источника «Рынок труда»
+      operationId: listLaborMarketMappings
+      description: >
+        Только ADMIN. ИТ-направления с признаком «Учитывать спрос рынка труда» и их код у источника (подбирается по названию
+        при синхронизации либо задан администратором), последнее число вакансий и список направлений, которые источник
+        передавал в срезах.
+      responses:
+        '200':
+          description: Направления с признаком, направления источника, дата последнего среза и источник данных
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaborMarketMappings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/labor-market/mappings/{directionId}:
+    put:
+      tags: [Administration]
+      summary: Задать направление источника «Рынок труда» для ИТ-направления
+      operationId: updateLaborMarketMapping
+      description: >
+        Только ADMIN. Код должен быть среди направлений, которые источник уже передавал; пустой код снимает сопоставление, и
+        направление снова подбирается по названию при следующей синхронизации. Если сопоставление уже есть, нужна его версия:
+        при расхождении — 409 VERSION_CONFLICT. Отчёт «Востребованность программ» подхватывает изменение сразу.
+      parameters:
+        - name: directionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LaborMarketMappingUpdate'
+      responses:
+        '200':
+          description: Направление с новым сопоставлением
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaborMarketDirection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/sources/{source}/check:
     post:
       tags: [Administration]
@@ -5181,7 +5804,8 @@ paths:
       x-implementation-stage: 8
       description: >
         Только ADMIN. Пробный вызов по значениям формы без сохранения и без изменения данных CRM: для MOODLE —
-        core_course_get_courses_by_field по списку курсов, для WEBSITE — первая страница записей с updated_since = сейчас.
+        core_course_get_courses_by_field по списку курсов, для WEBSITE — первая страница записей с updated_since = сейчас,
+        для CUSTOMER_CRM — первая страница организаций с updated_since = сейчас.
         Пустой токен в форме заменяется действующим. Ошибка связи возвращается как ok=false с понятным сообщением,
         а не как ошибка HTTP.
       parameters:
@@ -5242,7 +5866,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           description: >
-            SOURCE_NOT_CONFIGURED, если SITE_BASE_URL пуст, либо MOODLE_BASE_URL, MOODLE_TOKEN или MOODLE_COURSE_IDS пусты; SYNC_ALREADY_RUNNING
+            SOURCE_NOT_CONFIGURED, если SITE_BASE_URL пуст, либо MOODLE_BASE_URL, MOODLE_TOKEN или MOODLE_COURSE_IDS пусты, либо CRM_BASE_URL пуст; SYNC_ALREADY_RUNNING
           content:
             application/json:
               schema:
@@ -5253,6 +5877,99 @@ paths:
             Retry-After:
               schema:
                 type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-exchange/events:
+    get:
+      tags: [Administration]
+      summary: Очередь событий для CRM заказчика
+      operationId: listCrmExchangeEvents
+      x-implementation-stage: 13
+      description: >
+        Только ADMIN. Счётчики очереди и до 100 последних событий работы с вузом (смена этапа, следующий шаг и срок,
+        ответственный менеджер, переход договора с вузом между статусами) с состоянием QUEUED (в очереди, при ошибке отправки повтор с паузой),
+        SENT (отправлено) или ERROR (ошибка: отклонено CRM заказчика либо исчерпаны попытки). Данных обучающихся в событиях нет.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/CrmEventStatus'
+      responses:
+        '200':
+          description: Счётчики и последние события
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrmEventList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-exchange/events/retry:
+    post:
+      tags: [Administration]
+      summary: Вернуть события с ошибкой в очередь
+      operationId: retryCrmExchangeEvents
+      x-implementation-stage: 13
+      description: >
+        Только ADMIN. Переводит все события со статусом ERROR в QUEUED со сброшенным числом попыток; отправка — при ближайшем
+        запуске обмена. Действие пишется в журнал администратора (CRM_EVENTS_REQUEUED).
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Число событий, возвращённых в очередь
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrmEventsRequeued'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-exchange/preview:
+    post:
+      tags: [Administration]
+      summary: Предпросмотр загрузки из CRM заказчика
+      operationId: previewCrmExchange
+      x-implementation-stage: 13
+      description: >
+        Только ADMIN. Запрашивает у CRM заказчика организации и контакты, изменённые с отметки updated_since, и показывает
+        для каждой записи, что произойдёт при запуске: сопоставление по внешнему ID, ИНН или названию, создание или
+        обновление контакта, неоднозначное совпадение, ошибка в записи. Ничего не сохраняет и не меняет. Без адреса CRM
+        заказчика — 409 SOURCE_NOT_CONFIGURED; CRM не ответила — 502 CRM_EXCHANGE_FAILED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Итоги и записи, требующие внимания
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrmPreview'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: SOURCE_NOT_CONFIGURED — адрес CRM заказчика не задан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '502':
+          description: CRM_EXCHANGE_FAILED — CRM заказчика недоступна или ответила не по контракту
           content:
             application/json:
               schema:
@@ -5307,7 +6024,7 @@ paths:
       operationId: applySourceRecord
       x-implementation-stage: 4
       description: >
-        Только ADMIN. Для записи WEBSITE сохраняет опциональное сопоставление организации (по внешнему ID организации записи либо по её имени, если ID отсутствует) и сопоставление программы (по имени программы). Для записи курса или группы MOODLE со статусом NEEDS_MAPPING обязательны organizationId, programId, runStartsOn и runEndsOn: сопоставление подтверждает учебный запуск [runStartsOn, runEndsOn); запись MOODLE со статусом FAILED без них применяется заново с её сохранённым сопоставлением. Запуск, завершившийся до своего первого наблюдения, получает статус SKIPPED без снимка, завершённый запуск сохраняет своё последнее наблюдение. Группу нельзя сопоставить, если её курс сопоставлен целиком, и наоборот (400). Затем сохранённая запись применяется заново, и повторно применяются до 500 других записей того же источника со статусом NEEDS_MAPPING. Применение записи со статусом APPLIED или SKIPPED ничего не меняет, поэтому повторный запрос безопасен.
+        Только ADMIN. Для записи CUSTOMER_CRM (crm_organization, crm_contact) organizationId сопоставляет организацию CRM заказчика с организацией CRM (внешний ID организации записи; для контакта — внешний ID его организации), contactId выбирает контакт организации для неоднозначного crm_contact. Для записи WEBSITE сохраняет опциональное сопоставление организации (по внешнему ID организации записи либо по её имени, если ID отсутствует) и сопоставление программы (по имени программы). Для записи курса или группы MOODLE со статусом NEEDS_MAPPING обязательны organizationId, programId, runStartsOn и runEndsOn: сопоставление подтверждает учебный запуск [runStartsOn, runEndsOn); запись MOODLE со статусом FAILED без них применяется заново с её сохранённым сопоставлением. Запуск, завершившийся до своего первого наблюдения, получает статус SKIPPED без снимка, завершённый запуск сохраняет своё последнее наблюдение. Группу нельзя сопоставить, если её курс сопоставлен целиком, и наоборот (400). Затем сохранённая запись применяется заново, и повторно применяются до 500 других записей того же источника со статусом NEEDS_MAPPING. Применение записи со статусом APPLIED или SKIPPED ничего не меняет, поэтому повторный запрос безопасен.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -6735,6 +7452,63 @@ components:
         items:
           type: string
           format: uuid
+    AgreementRegistryStatus:
+      name: status
+      in: query
+      required: false
+      description: Статусы договора; несколько значений — любой из них
+      schema:
+        type: array
+        items:
+          $ref: '#/components/schemas/AgreementStatus'
+    AgreementRegistryOrganization:
+      name: organizationId
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+    AgreementRegistryManager:
+      name: managerId
+      in: query
+      required: false
+      description: Ответственный КАМ вуза
+      schema:
+        type: string
+        format: uuid
+    AgreementRegistryExpiresBefore:
+      name: expiresBefore
+      in: query
+      required: false
+      description: Срок действия истекает не позже этой даты
+      schema:
+        type: string
+        format: date
+    AgreementRegistryReviewLonger:
+      name: reviewLongerThanDays
+      in: query
+      required: false
+      description: Только договоры в статусе «На согласовании» дольше этого числа дней (в отчёте по умолчанию 30)
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 3650
+    AgreementPeriodFrom:
+      name: from
+      in: query
+      required: false
+      description: Начало периода (по умолчанию 1 января текущего года, МСК)
+      schema:
+        type: string
+        format: date
+    AgreementPeriodTo:
+      name: to
+      in: query
+      required: false
+      description: Конец периода включительно (по умолчанию сегодня, МСК)
+      schema:
+        type: string
+        format: date
     SigningPlanYear:
       name: year
       in: query
@@ -7669,8 +8443,354 @@ components:
           type: boolean
     AgreementStatus:
       type: string
-      description: DRAFT проект, ACTIVE действует, COMPLETED завершено, TERMINATED расторгнуто
-      enum: [DRAFT, ACTIVE, COMPLETED, TERMINATED]
+      description: >-
+        DRAFT проект, REVIEW на согласовании у вуза, CORRECTION на корректировке, SIGNING на подписании, ACTIVE действует,
+        COMPLETED завершён, TERMINATED расторгнут
+      enum: [DRAFT, REVIEW, CORRECTION, SIGNING, ACTIVE, COMPLETED, TERMINATED]
+    AgreementSupplementStatus:
+      type: string
+      description: DRAFT проект, SIGNED подписано
+      enum: [DRAFT, SIGNED]
+    AgreementStageRole:
+      type: string
+      description: Роль этапа маршрута работы для договора — EXCHANGE обмен документами, CORRECTION корректировка, SIGNING подписание
+      enum: [EXCHANGE, CORRECTION, SIGNING]
+    AgreementTransitionOption:
+      type: object
+      required: [toStatus, title, commentRequired]
+      properties:
+        toStatus:
+          $ref: '#/components/schemas/AgreementStatus'
+        title:
+          type: string
+        commentRequired:
+          type: boolean
+          description: Возврат или расторжение — комментарий обязателен
+    AgreementParty:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    AgreementFile:
+      type: object
+      required: [id, agreementId, supplementId, versionNumber, originalName, mediaType, sizeBytes, status, downloadable, comment,
+                 createdByName, createdAt, interactionTitle]
+      properties:
+        id:
+          type: string
+          format: uuid
+        agreementId:
+          type: string
+          format: uuid
+        supplementId:
+          type: [string, 'null']
+          format: uuid
+        versionNumber:
+          type: integer
+          minimum: 1
+        originalName:
+          type: string
+        mediaType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        status:
+          type: string
+          enum: [QUARANTINE, CLEAN, REJECTED, UNVERIFIABLE]
+        downloadable:
+          type: boolean
+          description: Файл прошёл проверку и доступен для скачивания
+        comment:
+          type: [string, 'null']
+        createdByName:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        interactionTitle:
+          type: [string, 'null']
+          description: Версия взята из документов этой работы
+    AgreementSupplement:
+      type: object
+      required: [id, agreementId, number, concludedOn, subject, status, version, currentFile, files]
+      properties:
+        id:
+          type: string
+          format: uuid
+        agreementId:
+          type: string
+          format: uuid
+        number:
+          type: string
+        concludedOn:
+          type: [string, 'null']
+          format: date
+        subject:
+          type: [string, 'null']
+        status:
+          $ref: '#/components/schemas/AgreementSupplementStatus'
+        version:
+          type: integer
+          minimum: 0
+        currentFile:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementFile'
+            - type: 'null'
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementFile'
+    AgreementSupplementInput:
+      type: object
+      required: [number, status]
+      properties:
+        version:
+          type: [integer, 'null']
+          minimum: 0
+          description: Обязательно при изменении
+        number:
+          type: string
+          minLength: 1
+          maxLength: 100
+        concludedOn:
+          type: [string, 'null']
+          format: date
+        subject:
+          type: [string, 'null']
+          maxLength: 2000
+        status:
+          $ref: '#/components/schemas/AgreementSupplementStatus'
+    AgreementStatusEvent:
+      type: object
+      required: [id, fromStatus, toStatus, comment, actorName, occurredAt, interactionTitle]
+      properties:
+        id:
+          type: string
+          format: uuid
+        fromStatus:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementStatus'
+            - type: 'null'
+        toStatus:
+          $ref: '#/components/schemas/AgreementStatus'
+        comment:
+          type: [string, 'null']
+        actorName:
+          type: [string, 'null']
+        occurredAt:
+          type: string
+          format: date-time
+        interactionTitle:
+          type: [string, 'null']
+          description: Работа, из карточки которой сделан переход
+    AgreementTransitionInput:
+      type: object
+      required: [version, toStatus]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        toStatus:
+          $ref: '#/components/schemas/AgreementStatus'
+        comment:
+          type: [string, 'null']
+          maxLength: 2000
+          description: Обязателен при возврате и расторжении
+        signedOn:
+          type: [string, 'null']
+          format: date
+          description: Дата подписания; нужна для перехода в ACTIVE, если её нет в договоре
+        validUntil:
+          type: [string, 'null']
+          format: date
+        sentOn:
+          type: [string, 'null']
+          format: date
+          description: Дата отправки на согласование; при первом переходе в REVIEW по умолчанию сегодня (МСК)
+        interactionId:
+          type: [string, 'null']
+          format: uuid
+          description: Работа, из карточки которой сделан переход; должна быть связана с договором
+    AgreementSignerContact:
+      type: object
+      required: [id, name, position, signatory]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        position:
+          type: [string, 'null']
+        signatory:
+          type: boolean
+          description: Контакт с ролью «Подписант (ЛПР)»
+    WorkAgreementStage:
+      type: object
+      required: [stageId, name, role]
+      properties:
+        stageId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/AgreementStageRole'
+    WorkAgreements:
+      type: object
+      required: [interactionId, organizationId, signingRuleEnabled, stages, agreements]
+      properties:
+        interactionId:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        signingRuleEnabled:
+          type: boolean
+          description: Этап «Подписание» нельзя завершить без действующего договора с датой подписания
+        stages:
+          type: array
+          description: Этапы маршрута работы, связанные с договором
+          items:
+            $ref: '#/components/schemas/WorkAgreementStage'
+        agreements:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementSummary'
+    AgreementRegistryRow:
+      type: object
+      required: [id, organizationId, organizationName, number, status, statusChangedAt, daysInStatus, sentOn, concludedOn, validUntil,
+                 subject, managerId, managerName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        number:
+          type: string
+        status:
+          $ref: '#/components/schemas/AgreementStatus'
+        statusChangedAt:
+          type: string
+          format: date-time
+        daysInStatus:
+          type: integer
+          minimum: 0
+        sentOn:
+          type: [string, 'null']
+          format: date
+        concludedOn:
+          type: [string, 'null']
+          format: date
+          description: Дата подписания
+        validUntil:
+          type: [string, 'null']
+          format: date
+        subject:
+          type: [string, 'null']
+          description: Направления, программы и продукты через «; »
+        managerId:
+          type: [string, 'null']
+          format: uuid
+        managerName:
+          type: [string, 'null']
+    AgreementPeriodTransition:
+      type: object
+      required: [occurredAt, agreementId, organizationName, number, fromStatus, toStatus, actorName, comment]
+      properties:
+        occurredAt:
+          type: string
+          format: date-time
+        agreementId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        number:
+          type: string
+        fromStatus:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementStatus'
+            - type: 'null'
+        toStatus:
+          $ref: '#/components/schemas/AgreementStatus'
+        actorName:
+          type: [string, 'null']
+        comment:
+          type: [string, 'null']
+    AgreementPeriodTotals:
+      type: object
+      required: [transitions, signed, terminated, averageApprovalDays, approvalSamples, longReview]
+      properties:
+        transitions:
+          type: integer
+          minimum: 0
+        signed:
+          type: integer
+          minimum: 0
+        terminated:
+          type: integer
+          minimum: 0
+        averageApprovalDays:
+          type: [number, 'null']
+          description: Среднее число дней от отправки на согласование до подписания по договорам, подписанным в периоде
+        approvalSamples:
+          type: integer
+          minimum: 0
+          description: Сколько договоров вошло в среднее
+        longReview:
+          type: integer
+          minimum: 0
+    AgreementPeriodReport:
+      type: object
+      required: [generatedAt, from, to, longerThanDays, notes, totals, transitions, signed, terminated, longReview]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        longerThanDays:
+          type: integer
+          minimum: 1
+        notes:
+          type: array
+          items:
+            type: string
+        totals:
+          $ref: '#/components/schemas/AgreementPeriodTotals'
+        transitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementPeriodTransition'
+        signed:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementRegistryRow'
+        terminated:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementRegistryRow'
+        longReview:
+          type: array
+          description: Сейчас на согласовании дольше longerThanDays дней
+          items:
+            $ref: '#/components/schemas/AgreementRegistryRow'
     AgreementPlanKind:
       type: string
       description: SIGNING подписание, RENEWAL продление
@@ -7719,8 +8839,8 @@ components:
           type: boolean
     AgreementSummary:
       type: object
-      required: [id, organizationId, number, concludedOn, validUntil, plannedKind, plannedOn, status, activityCount,
-                 confirmationCount, version]
+      required: [id, organizationId, number, concludedOn, validUntil, sentOn, plannedKind, plannedOn, status, statusChangedAt,
+                 activityCount, confirmationCount, version, transitions]
       properties:
         id:
           type: string
@@ -7745,6 +8865,12 @@ components:
           format: date
         status:
           $ref: '#/components/schemas/AgreementStatus'
+        statusChangedAt:
+          type: string
+          format: date-time
+        sentOn:
+          type: [string, 'null']
+          format: date
         activityCount:
           type: integer
           minimum: 0
@@ -7754,9 +8880,14 @@ components:
         version:
           type: integer
           minimum: 0
+        transitions:
+          type: array
+          description: Доступные переходы статуса
+          items:
+            $ref: '#/components/schemas/AgreementTransitionOption'
     AgreementInput:
       type: object
-      required: [number, status]
+      required: [number]
       properties:
         version:
           type: [integer, 'null']
@@ -7769,20 +8900,66 @@ components:
         concludedOn:
           type: [string, 'null']
           format: date
+          description: Дата подписания; обязательна для действующего договора
         validUntil:
           type: [string, 'null']
           format: date
           description: Последний день срока действия; не раньше concludedOn
+        sentOn:
+          type: [string, 'null']
+          format: date
+          description: Дата отправки на согласование вузу
         parties:
           type: [string, 'null']
           maxLength: 2000
           description: Стороны и подписанты
         status:
-          $ref: '#/components/schemas/AgreementStatus'
+          oneOf:
+            - $ref: '#/components/schemas/AgreementStatus'
+            - type: 'null'
+          description: >-
+            При создании — DRAFT (по умолчанию) или ACTIVE для уже подписанного договора (нужна concludedOn). При изменении —
+            пусто или текущий статус; смена статуса — POST /api/agreements/{id}/transitions
         fileAttachmentId:
           type: [string, 'null']
           format: uuid
-          description: Документ CLEAN из работы той же организации, содержащий подписанное соглашение
+          description: Документ CLEAN из работы той же организации; добавляется новой версией файла договора, если ещё не добавлен
+        universitySignerContactId:
+          type: [string, 'null']
+          format: uuid
+          description: Действующий контакт этого вуза
+        schoolSignerProfileId:
+          type: [string, 'null']
+          format: uuid
+          description: Активный сотрудник команды вуза или «Руководства»
+        interactionIds:
+          type: [array, 'null']
+          maxItems: 100
+          description: Работы этого вуза; при изменении null оставляет прежние связи, список заменяет их
+          items:
+            type: string
+            format: uuid
+        programIds:
+          type: [array, 'null']
+          maxItems: 200
+          description: Предмет — ИТ-программы; при изменении null оставляет прежние
+          items:
+            type: string
+            format: uuid
+        productIds:
+          type: [array, 'null']
+          maxItems: 200
+          description: Предмет — ИТ-продукты; при изменении null оставляет прежние
+          items:
+            type: string
+            format: uuid
+        directionIds:
+          type: [array, 'null']
+          maxItems: 200
+          description: Предмет — ИТ-направления; при изменении null оставляет прежние
+          items:
+            type: string
+            format: uuid
         plannedKind:
           oneOf:
             - $ref: '#/components/schemas/AgreementPlanKind'
@@ -7794,8 +8971,9 @@ components:
           description: Плановая дата подписания или продления; для продления не раньше concludedOn
     Agreement:
       type: object
-      required: [id, organizationId, organizationName, number, concludedOn, validUntil, plannedKind, plannedOn, parties,
-                 status, file, version, createdAt, updatedAt, activities]
+      required: [id, organizationId, organizationName, number, concludedOn, validUntil, sentOn, plannedKind, plannedOn, parties,
+                 status, statusChangedAt, universitySigner, schoolSigner, interactions, programs, products, directions, currentFile,
+                 files, supplements, history, transitions, version, createdAt, updatedAt, activities]
       properties:
         id:
           type: string
@@ -7820,14 +8998,63 @@ components:
         plannedOn:
           type: [string, 'null']
           format: date
+        sentOn:
+          type: [string, 'null']
+          format: date
         parties:
           type: [string, 'null']
         status:
           $ref: '#/components/schemas/AgreementStatus'
-        file:
+        statusChangedAt:
+          type: string
+          format: date-time
+        universitySigner:
           oneOf:
-            - $ref: '#/components/schemas/AgreementLinkedDocument'
+            - $ref: '#/components/schemas/AgreementParty'
             - type: 'null'
+        schoolSigner:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementParty'
+            - type: 'null'
+        interactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementLinkedWork'
+        programs:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementParty'
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementParty'
+        directions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementParty'
+        currentFile:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementFile'
+            - type: 'null'
+          description: Последняя проверенная версия файла договора
+        files:
+          type: array
+          description: Версии файла договора, новые сверху
+          items:
+            $ref: '#/components/schemas/AgreementFile'
+        supplements:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementSupplement'
+        history:
+          type: array
+          description: Переходы статусов, новые сверху
+          items:
+            $ref: '#/components/schemas/AgreementStatusEvent'
+        transitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementTransitionOption'
         version:
           type: integer
           minimum: 0
@@ -7996,7 +9223,7 @@ components:
           type: string
     AgreementOptions:
       type: object
-      required: [interactions, attachments, responsibles]
+      required: [interactions, attachments, responsibles, contacts, schoolSigners, programs, products, directions]
       properties:
         interactions:
           type: array
@@ -8010,6 +9237,28 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AgreementResponsible'
+        contacts:
+          type: array
+          description: Действующие контакты вуза; подписанты (ЛПР) первыми
+          items:
+            $ref: '#/components/schemas/AgreementSignerContact'
+        schoolSigners:
+          type: array
+          description: Активные сотрудники команды вуза и «Руководства»
+          items:
+            $ref: '#/components/schemas/AgreementResponsible'
+        programs:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementParty'
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementParty'
+        directions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementParty'
     AgreementConfirmation:
       type: object
       required: [organizationId, organizationName, agreementId, agreementNumber, activityId, activityTitle, kindId, kindName,
@@ -8231,6 +9480,9 @@ components:
         id:
           type: string
           format: uuid
+        displayName:
+          type: [string, 'null']
+          description: Имя сотрудника из профиля CRM, показывается в меню профиля
         role:
           type: string
           enum: [USER, LEADER, ADMIN, MANAGEMENT, PARTNER]
@@ -8312,6 +9564,7 @@ components:
             - REPORT_CAPACITY_EXCEEDED
             - REPORT_ROW_LIMIT
             - SOURCE_NOT_CONFIGURED
+            - CRM_EXCHANGE_FAILED
             - SYNC_ALREADY_RUNNING
             - SYNC_CAPACITY_EXCEEDED
             - LMS_NOT_MAPPED
@@ -9574,6 +10827,46 @@ components:
           type: boolean
         completed:
           type: boolean
+        agreementStatus:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementStatus'
+            - type: 'null'
+          description: Статус договора с вузом, связанного с работой (последний изменённый, если их несколько)
+        agreementNumber:
+          type: [string, 'null']
+        learning:
+          oneOf:
+            - $ref: '#/components/schemas/WorkLearning'
+            - type: 'null'
+          description: Обучение по данным LMS; null — у работы нет потоков занятий студентов с датами
+    WorkLearning:
+      type: object
+      required: [runs, participants, signals, signalTitles]
+      description: >
+        Последние снимки идущих потоков занятий студентов работы (без учёта периода отчёта) и действующие, не скрытые
+        сигналы LMS. Персональных данных нет.
+      properties:
+        runs:
+          type: integer
+          minimum: 0
+          description: Идущие потоки
+        participants:
+          type: integer
+          minimum: 0
+        active7d:
+          type: [integer, 'null']
+          minimum: 0
+          description: Заходили в курс за 7 дней; null — Moodle не отдал время последнего входа
+        signals:
+          type: integer
+          minimum: 0
+        signalTitles:
+          type: array
+          items:
+            type: string
+        mismatch:
+          type: [string, 'null']
+          description: Сверка этапа с LMS — этап CRM не подтверждён данными идущего потока
     WorkControlManager:
       type: object
       required: [managerId, managerName, totals, works]
@@ -9975,7 +11268,8 @@ components:
           format: date
     ReminderDigest:
       type: object
-      required: [enabled, generatedAt, upcomingDays, overdueTotal, dueTodayTotal, upcomingTotal, overdue, upcoming, expiringLicenses, trainingCycles, licenseExpiresBy]
+      required: [enabled, generatedAt, upcomingDays, overdueTotal, dueTodayTotal, upcomingTotal, overdue, upcoming, expiringLicenses, trainingCycles, licenseExpiresBy,
+        qualificationDue]
       properties:
         enabled:
           type: boolean
@@ -10014,6 +11308,35 @@ components:
         licenseExpiresBy:
           type: integer
           description: Год, до которого включительно лицензия считается истекающей; тот же год принимает отбор licenseExpiresBy списка взаимодействий
+        qualificationDue:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReminderQualification'
+    ReminderQualification:
+      type: object
+      required: [interactionId, organizationId, title, organizationName, stageName, trainedOn, dueOn]
+      description: >
+        Активная работа, у которой с последней записи «Обучение преподавателей» прошло не меньше
+        app.work.qualification-after-months месяцев, а этап app.work.qualification-stage-name ещё впереди и не отмечен.
+      properties:
+        interactionId:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        organizationName:
+          type: string
+        stageName:
+          type: string
+        trainedOn:
+          type: string
+          format: date
+        dueOn:
+          type: string
+          format: date
     LmsSignals:
       type: object
       required: [calculatedAt, items]
@@ -10028,19 +11351,24 @@ components:
     LmsSignal:
       type: object
       required: [id, type, title, message, interactionId, interactionTitle, organizationId, organizationName, currentStageName,
-        mappingId, courseName, runStartsOn, runEndsOn, participants, observedAt, dismissed]
+        mappingId, courseName, runStartsOn, runEndsOn, participants, observedAt, dismissed, recordedAsRisk]
       properties:
         id:
           type: string
           description: Работа, поток и вид сигнала
         type:
           type: string
-          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION]
+          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION, LOW_ACTIVITY, NOT_STARTED, DROPOUT, TEACHER_INACTIVE, NO_ACTIVITY]
           description: >
             STUDENTS_APPEARED — в идущем потоке есть обучающиеся, а текущий этап маршрута раньше этапа «Занятия»;
             NO_STUDENTS — поток идёт дольше app.lms-signals.no-students-after-days дней, обучающихся 0;
             LOW_COMPLETION — поток закрыт или до его конца не больше app.lms-signals.completion-window-days дней,
-            отслеживание завершения включено, доля завершивших ниже app.lms-signals.low-completion-percent
+            отслеживание завершения включено, доля завершивших ниже app.lms-signals.low-completion-percent.
+            Сигналы активности (поток идёт не меньше app.lms-signals.activity-grace-days дней, Moodle отдал время последнего
+            входа в курс): NOT_STARTED — ни разу не заходили больше not-started-percent % обучающихся; NO_ACTIVITY — за 7 дней
+            не заходили ни обучающиеся, ни преподаватели; LOW_ACTIVITY — за 7 дней заходили меньше low-activity-percent %;
+            DROPOUT — заходили раньше, но не заходят больше inactive-after-days дней, больше dropout-percent %;
+            TEACHER_INACTIVE — у потока есть преподаватели с ролью в курсе, ни один не заходил 14 дней
         title:
           type: string
         message:
@@ -10095,6 +11423,10 @@ components:
           description: Почему кнопки перехода нет
         dismissed:
           type: boolean
+          description: Скрыт до изменения данных (для сигналов активности — до конца недели наблюдения)
+        recordedAsRisk:
+          type: boolean
+          description: Скрыт записью в реестр проблем и рисков
     LmsSignalAction:
       type: object
       required: [stageId, stageName, commentRequired]
@@ -10112,7 +11444,21 @@ components:
       properties:
         type:
           type: string
-          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION]
+          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION, LOW_ACTIVITY, NOT_STARTED, DROPOUT, TEACHER_INACTIVE, NO_ACTIVITY]
+        mappingId:
+          type: string
+          format: uuid
+    LmsSignalRisk:
+      type: object
+      required: [version, type, mappingId]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+          description: Версия работы, как в «Добавить проблему или риск»
+        type:
+          type: string
+          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION, LOW_ACTIVITY, NOT_STARTED, DROPOUT, TEACHER_INACTIVE, NO_ACTIVITY]
         mappingId:
           type: string
           format: uuid
@@ -10789,6 +12135,14 @@ components:
           format: date-time
           description: >-
             Когда роль последний раз подтверждена Keycloak (вход с ролью realm в токене, назначение роли из CRM или перенос ролей); null — роль ещё хранится только в CRM и не перенесена в Keycloak
+        roleReconcileRequired:
+          type: boolean
+          description: >-
+            Роль или обязательный второй фактор в Keycloak могут отличаться от сохранённых в CRM (сбой при смене роли); пока признак стоит, вход не применяет роль из Keycloak, а синхронизация учётной записи записывает в Keycloak роль из CRM
+        lastLoginAt:
+          type: [string, 'null']
+          format: date-time
+          description: Последний успешный вход в CRM; null — сотрудник ещё не входил после обновления
     KeycloakRoleMigration:
       type: object
       required: [assigned, kept, failed]
@@ -11137,7 +12491,7 @@ components:
       enum: [ORGANIZATION, TEAM, DIRECTION, PROGRAM, VENDOR, PRODUCT, AGREEMENT, VENDOR_CONTACT]
     AdminCatalogEntry:
       type: object
-      required: [id, name, parentId, parentName, archived, version]
+      required: [id, name, parentId, parentName, archived, version, laborMarket]
       properties:
         id:
           type: string
@@ -11154,6 +12508,9 @@ components:
         version:
           type: integer
           minimum: 0
+        laborMarket:
+          type: [boolean, 'null']
+          description: Признак «Учитывать спрос рынка труда» у ИТ-направления; для остальных справочников null
     PageAdminCatalogEntry:
       allOf:
         - $ref: '#/components/schemas/PageMeta'
@@ -11177,6 +12534,9 @@ components:
           description: Направление программы или вендор продукта; только при создании
         archived:
           type: [boolean, 'null']
+        laborMarket:
+          type: [boolean, 'null']
+          description: Признак «Учитывать спрос рынка труда»; только у ИТ-направления, у остальных справочников — 400
         version:
           type: [integer, 'null']
           minimum: 0
@@ -11327,7 +12687,7 @@ components:
       type: string
       enum: [AGREEMENT, DIRECTION_PROGRAM, VENDOR_CONTACTS]
       description: >-
-        AGREEMENT загружает десять полей каталога ТЗ; DIRECTION_PROGRAM загружает направления и программы по устойчивым ключам; VENDOR_CONTACTS загружает поставщиков, продукты и контакты поставщиков в формате файла поставщиков организатора. Правила сопоставления описаны в docs/import.md.
+        AGREEMENT загружает десять полей каталога ТЗ; DIRECTION_PROGRAM загружает направления и программы по устойчивым ключам; VENDOR_CONTACTS загружает поставщиков, продукты и контакты поставщиков в формате файла поставщиков организатора.
     CatalogImportRowTarget:
       type: object
       description: >-
@@ -11582,8 +12942,12 @@ components:
         до момента формирования отчёта; колонки по договору показывают само значение для одного продукта и пары
         «продукт: значение» для нескольких. EVENTS допускает EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE,
         FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND допускает DIRECTION, PROGRAM,
-        APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, PARALLEL_RUNS; заголовки колонок
-        DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков. PAID_ORDERS считает
+        APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, PARALLEL_RUNS, MARKET_VACANCIES,
+        MARKET_TREND; заголовки колонок DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков.
+        MARKET_VACANCIES — число открытых вакансий по ИТ-направлению программы в последнем месячном срезе периода, MARKET_TREND —
+        изменение этого числа в процентах от последнего среза до начала периода (если его нет — от первого среза периода) до
+        последнего среза периода; оба показателя считаются только для направлений с признаком «Учитывать спрос рынка труда»,
+        у остальных значение «не применяется», при отсутствии срезов — null («нет данных»); в общий показатель не входят. PAID_ORDERS считает
         различные номера оплаченных заказов, а PAID_STREAMS — различные пары «курс и поток» применённых записей
         paid_order сервисной организации «Открытый набор (физлица)», видимой каждому USER и LEADER; период отчёта к
         ним не применяется, поскольку сайт не передаёт дату оплаты. SNAPSHOT допускает ORGANIZATION, INTERACTION,
@@ -11593,15 +12957,18 @@ components:
         ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS,
         PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS. MANAGER_WORK допускает MANAGER, ORGANIZATION, PRODUCTS,
         PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS, NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS,
-        TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM, RISK.
+        LMS_LEARNING, LMS_CHECK, TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM,
+        RISK; LMS_LEARNING и LMS_CHECK — текущие данные LMS по идущим потокам и сверка этапа с ними.
       enum: [ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK,
              MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, EVENT_AT, EVENT_TYPE, FROM_STAGE, COMMENT, AUTHOR,
-             APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, PARALLEL_RUNS, VENDORS, CONTRACT_NUMBER,
+             APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, PARALLEL_RUNS, MARKET_VACANCIES,
+             MARKET_TREND, VENDORS, CONTRACT_NUMBER,
              LICENSE_SIGNED, LICENSE_EXPIRY_YEAR,
              TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON, TEAM, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS,
              AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME,
              VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, ACTIVITY_STATUS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS,
-             STAGE_AT_START, STAGE_AT_END, STAGE_POSITION, TRANSITIONS, PERIOD_COMMENTS, DUE_STATE, OVERDUE_DAYS]
+             STAGE_AT_START, STAGE_AT_END, STAGE_POSITION, TRANSITIONS, PERIOD_COMMENTS, DUE_STATE, OVERDUE_DAYS,
+             LMS_LEARNING, LMS_CHECK]
     ReportFilters:
       type: object
       description: >
@@ -11869,7 +13236,7 @@ components:
         items:
           type: array
           description: >
-            Объекты строк с ключами по id столбца; даты — строки ISO 8601, показатели DEMAND и счётчики DURATION — целые числа, дни DURATION — числа с плавающей точкой, отсутствующие значения — null
+            Объекты строк с ключами по id столбца; даты — строки ISO 8601, показатели DEMAND и счётчики DURATION — целые числа (у колонок рынка труда у направлений без признака — строка «не применяется»), дни DURATION — числа с плавающей точкой, отсутствующие значения — null
           items:
             type: object
             additionalProperties:
@@ -11884,6 +13251,15 @@ components:
         total:
           type: integer
           minimum: 0
+          description: Число строк отчёта; итоги по менеджерам отчёта MANAGER_WORK в него не входят
+        groupTotals:
+          type: array
+          description: >
+            Итоги по менеджерам отчёта MANAGER_WORK (по одному объекту на менеджера, те же ключи, что у items); не входят в items и total и возвращаются на каждой странице целиком. Для других видов отчётов пусто или отсутствует
+          items:
+            type: object
+            additionalProperties:
+              type: [string, number, 'null']
     StatisticsGroupBy:
       type: string
       description: DEMAND суммирует заявки и принимает ORGANIZATION, DIRECTION, PROGRAM, MANAGER и MONTH (месяц подачи)
@@ -11927,6 +13303,9 @@ components:
         unspecified:
           type: boolean
           description: Строки без значения seriesBy («Не указано»), всегда последняя серия
+        others:
+          type: boolean
+          description: Серия «Остальные (N)» — сумма серий сверх пяти крупнейших; стоит перед «Не указано»
         counts:
           type: array
           description: По одному счётчику на элемент результата, в том же порядке
@@ -12004,13 +13383,13 @@ components:
             - type: 'null'
         series:
           type: array
-          description: Пусто без seriesBy; упорядочено по убыванию суммы, «Не указано» — последней
+          description: Пусто без seriesBy; пять крупнейших серий по убыванию суммы, затем «Остальные (N)» (если серий больше пяти), «Не указано» — последней
           items:
             $ref: '#/components/schemas/StatisticsSeries'
         maxChartSeries:
           type: integer
           minimum: 1
-          description: Наибольшее число линий, которое может вместить линейный график PNG/PDF; задание с большим числом линий завершается ошибкой REPORT_CHART_LIMIT
+          description: Наибольшее число линий графика PNG/PDF (пять крупнейших, «Остальные» и «Не указано»); сервер сворачивает лишние линии в «Остальные», поэтому предел не превышается
     SavedReportPeriod:
       type: string
       description: >
@@ -12076,7 +13455,7 @@ components:
           type: boolean
     SourceCode:
       type: string
-      enum: [WEBSITE, MOODLE]
+      enum: [WEBSITE, MOODLE, LABOR_MARKET, CUSTOMER_CRM]
     SyncRun:
       type: object
       required: [id, source, status, fetchedCount, createdCount, updatedCount, skippedCount, needsMappingCount, failedCount,
@@ -12211,7 +13590,7 @@ components:
     SourceSettings:
       type: object
       required: [moodleBaseUrl, moodleCourseIds, moodleStudentRoles, moodleTeacherRoles, moodleToken, websiteBaseUrl,
-                 websiteToken, syncCron, saved, updatedAt, updatedByName, encryptionAvailable]
+                 websiteToken, syncCron, saved, updatedAt, updatedByName, encryptionAvailable, crmBaseUrl, crmToken]
       properties:
         moodleBaseUrl:
           type: [string, 'null']
@@ -12248,6 +13627,116 @@ components:
         encryptionAvailable:
           type: boolean
           description: Задан ключ SOURCES_SETTINGS_KEY, и токены можно сохранять на экране
+        crmBaseUrl:
+          type: [string, 'null']
+          description: Адрес API CRM заказчика
+        crmToken:
+          $ref: '#/components/schemas/SourceTokenState'
+    LaborMarketSettings:
+      type: object
+      required: [baseUrl, token, saved, updatedAt, updatedByName, encryptionAvailable]
+      properties:
+        baseUrl:
+          type: [string, 'null']
+        token:
+          $ref: '#/components/schemas/SourceTokenState'
+        saved:
+          type: boolean
+          description: true — действуют значения, сохранённые на экране; false — значения конфигурации развёртывания
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+        updatedByName:
+          type: [string, 'null']
+        encryptionAvailable:
+          type: boolean
+          description: Задан ключ SOURCES_SETTINGS_KEY, и токен можно сохранять на экране
+    LaborMarketSettingsUpdate:
+      type: object
+      properties:
+        baseUrl:
+          type: [string, 'null']
+          maxLength: 500
+          description: Пустое значение отключает источник
+        token:
+          type: [string, 'null']
+          maxLength: 500
+          description: Новый токен; пустое значение оставляет прежний
+    LaborMarketDirection:
+      type: object
+      required: [directionId, directionName, externalCode, externalName, origin, version, latestVacancies, latestMonth,
+                 updatedAt, updatedByName]
+      properties:
+        directionId:
+          type: string
+          format: uuid
+        directionName:
+          type: string
+        externalCode:
+          type: [string, 'null']
+          description: Код направления у источника; null — не сопоставлено
+        externalName:
+          type: [string, 'null']
+          description: Название направления у источника
+        origin:
+          type: [string, 'null']
+          enum: [AUTO, MANUAL, null]
+          description: AUTO — подобрано по названию, MANUAL — задано администратором
+        version:
+          type: [integer, 'null']
+          minimum: 0
+          description: Версия сопоставления; null, если сопоставления нет
+        latestVacancies:
+          type: [integer, 'null']
+          minimum: 0
+          description: Открытых вакансий в последнем месячном срезе
+        latestMonth:
+          type: [string, 'null']
+          format: date
+          description: Первый день месяца последнего среза
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+        updatedByName:
+          type: [string, 'null']
+    LaborMarketSourceDirection:
+      type: object
+      required: [code, name]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+    LaborMarketMappings:
+      type: object
+      required: [directions, sourceDirections, asOf, dataSource]
+      properties:
+        directions:
+          type: array
+          items:
+            $ref: '#/components/schemas/LaborMarketDirection'
+        sourceDirections:
+          type: array
+          items:
+            $ref: '#/components/schemas/LaborMarketSourceDirection'
+        asOf:
+          type: [string, 'null']
+          format: date
+          description: Дата последнего среза
+        dataSource:
+          type: [string, 'null']
+          description: Источник данных последнего среза
+    LaborMarketMappingUpdate:
+      type: object
+      properties:
+        externalCode:
+          type: [string, 'null']
+          maxLength: 100
+          description: Код направления у источника; пустое значение снимает сопоставление
+        version:
+          type: [integer, 'null']
+          minimum: 0
+          description: Версия действующего сопоставления; обязательна, если оно есть
     SourceSettingsUpdate:
       type: object
       properties:
@@ -12283,6 +13772,13 @@ components:
           type: [string, 'null']
           maxLength: 500
           description: Новый токен; пустое значение оставляет прежний
+        crmBaseUrl:
+          type: [string, 'null']
+          maxLength: 500
+        crmToken:
+          type: [string, 'null']
+          maxLength: 500
+          description: Новый токен; пустое значение оставляет прежний
         syncCron:
           type: [string, 'null']
           description: Пустое значение выключает плановую синхронизацию
@@ -12311,7 +13807,7 @@ components:
         recordType:
           type: string
           description: >
-            partnership_request или learning_application в предложенном контракте сайта; paid_order для оплаченных заказов в формате организатора (загрузка файла или массив с сайта); moodle_course или moodle_group (externalId вида courseId или courseId:groupId) для Moodle
+            crm_organization или crm_contact для организаций и контактов из CRM заказчика (externalId — внешний ID в CRM заказчика); partnership_request или learning_application в предложенном контракте сайта; paid_order для оплаченных заказов в формате организатора (загрузка файла или массив с сайта); moodle_course или moodle_group (externalId вида courseId или courseId:groupId) для Moodle
         externalId:
           type: string
         externalUpdatedAt:
@@ -12347,9 +13843,26 @@ components:
         updatedAt:
           type: string
           format: date-time
+        contactName:
+          type: [string, 'null']
+          description: ФИО контакта для crm_contact
+        candidates:
+          type: array
+          description: Подходящие организации (для crm_organization) или контакты организации (для crm_contact), если совпадений несколько
+          items:
+            $ref: '#/components/schemas/SourceMappingOption'
+        suggestedRunKind:
+          description: Для записей Moodle — вид потока, подсказанный названием курса (TEACHERS, если в названии есть метка курсов преподавателей «ППС»); иначе null. Если runKind при сопоставлении не передан, берётся этот вид
+          oneOf:
+            - $ref: '#/components/schemas/RunKind'
+            - type: 'null'
     SourceRecordApply:
       type: object
       properties:
+        contactId:
+          type: [string, 'null']
+          format: uuid
+          description: Контакт организации, с которым совпадает crm_contact; только для записи CUSTOMER_CRM
         organizationId:
           type: [string, 'null']
           format: uuid
@@ -12446,6 +13959,38 @@ components:
           type: string
           format: date-time
           description: Наблюдение, последним изменившее счётчики
+        activity:
+          oneOf:
+            - $ref: '#/components/schemas/LearningActivity'
+            - type: 'null'
+          description: >
+            Последний вход в курс на момент последнего наблюдения; null — Moodle не отдал время входа. Меняется каждый день,
+            поэтому не входит в changedAt и не пишет событие «Данные LMS»
+    LearningActivity:
+      type: object
+      required: [active7d, active30d, neverAccessed, inactive, teachersActive7d, teachersActive14d]
+      description: Только числа по потоку, без идентификаторов и имён
+      properties:
+        active7d:
+          type: integer
+          minimum: 0
+          description: Обучающиеся, заходившие в курс за 7 дней
+        active30d:
+          type: integer
+          minimum: 0
+        neverAccessed:
+          type: integer
+          minimum: 0
+        inactive:
+          type: integer
+          minimum: 0
+          description: Заходили раньше, но не заходят больше app.lms-signals.inactive-after-days дней
+        teachersActive7d:
+          type: integer
+          minimum: 0
+        teachersActive14d:
+          type: integer
+          minimum: 0
     SourceState:
       type: object
       required: [configured, stale]
@@ -12631,6 +14176,10 @@ components:
         mode:
           type: string
           enum: [PENDING, ALL]
+        format:
+          type: string
+          enum: [XLSX, MOODLE_CSV]
+          description: По умолчанию XLSX по шаблону организатора; MOODLE_CSV — CSV штатной загрузки пользователей Moodle
     TeacherRosterMarked:
       type: object
       required: [marked, roster]
@@ -12916,6 +14465,131 @@ components:
           oneOf:
             - $ref: '#/components/schemas/RunKind'
             - type: 'null'
+    CrmEventStatus:
+      type: string
+      enum: [QUEUED, SENT, ERROR]
+    CrmEventKind:
+      type: string
+      enum: [STAGE_CHANGED, NEXT_STEP_CHANGED, MANAGER_CHANGED, AGREEMENT_STATUS]
+    CrmEventView:
+      type: object
+      required: [id, kind, status, occurredAt, description, attempts]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/CrmEventKind'
+        status:
+          $ref: '#/components/schemas/CrmEventStatus'
+        occurredAt:
+          type: string
+          format: date-time
+        organizationName:
+          type: [string, 'null']
+        workTitle:
+          type: [string, 'null']
+        description:
+          type: string
+          description: Что изменилось, одной строкой
+        attempts:
+          type: integer
+          minimum: 0
+        nextAttemptAt:
+          type: [string, 'null']
+          format: date-time
+          description: Когда будет следующая попытка отправки; только для событий в очереди
+        lastError:
+          type: [string, 'null']
+        sentAt:
+          type: [string, 'null']
+          format: date-time
+    CrmEventCounts:
+      type: object
+      required: [queued, sent, error]
+      properties:
+        queued:
+          type: integer
+          format: int64
+        sent:
+          type: integer
+          format: int64
+        error:
+          type: integer
+          format: int64
+    CrmEventList:
+      type: object
+      required: [counts, items]
+      properties:
+        counts:
+          $ref: '#/components/schemas/CrmEventCounts'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CrmEventView'
+    CrmEventsRequeued:
+      type: object
+      required: [requeued]
+      properties:
+        requeued:
+          type: integer
+          minimum: 0
+    CrmPreviewOutcome:
+      type: string
+      enum: [FOUND, NOT_FOUND, CREATE, UPDATE, AMBIGUOUS, ORGANIZATION_UNRESOLVED, UNCHANGED, RESTRICTED, INVALID]
+      description: >
+        FOUND — организация найдена в CRM; NOT_FOUND — организации нет в CRM; CREATE и UPDATE — контакт будет создан или
+        дополнен; AMBIGUOUS — совпадений несколько; ORGANIZATION_UNRESOLVED — организация контакта ещё не сопоставлена;
+        UNCHANGED — запись уже загружена; RESTRICTED — обработка данных контакта ограничена; INVALID — запись не по контракту
+    CrmPreviewItem:
+      type: object
+      required: [outcome, note]
+      properties:
+        recordType:
+          type: [string, 'null']
+          description: crm_organization или crm_contact; null, если элемент ответа не является объектом
+        externalId:
+          type: [string, 'null']
+        name:
+          type: [string, 'null']
+        outcome:
+          $ref: '#/components/schemas/CrmPreviewOutcome'
+        note:
+          type: string
+    CrmPreviewCount:
+      type: object
+      required: [outcome, count]
+      properties:
+        outcome:
+          $ref: '#/components/schemas/CrmPreviewOutcome'
+        count:
+          type: integer
+          minimum: 0
+    CrmPreview:
+      type: object
+      required: [organizations, contacts, counts, items, truncated]
+      properties:
+        updatedSince:
+          type: [string, 'null']
+          format: date-time
+          description: Отметка, с которой запрашиваются изменения; null — первая загрузка
+        organizations:
+          type: integer
+          minimum: 0
+        contacts:
+          type: integer
+          minimum: 0
+        counts:
+          type: array
+          items:
+            $ref: '#/components/schemas/CrmPreviewCount'
+        items:
+          type: array
+          description: До 100 записей, сначала требующие внимания
+          items:
+            $ref: '#/components/schemas/CrmPreviewItem'
+        truncated:
+          type: boolean
     SourceMappingOption:
       type: object
       required: [id, name]
@@ -12946,7 +14620,7 @@ components:
           format: date-time
     AuditCategory:
       type: string
-      enum: [PROFILE, ASSIGNMENT, ORGANIZATION, TEAM, SYNC, DOWNLOAD, PERSONAL_DATA, RETENTION, ACCOUNT, LEARNER]
+      enum: [PROFILE, ASSIGNMENT, ORGANIZATION, TEAM, SYNC, DOWNLOAD, PERSONAL_DATA, RETENTION, ACCOUNT, LOGIN, LEARNER]
     AuditEntry:
       type: object
       required: [id, occurredAt, category, action, actionLabel, actorProfileId, actorDisplayName, objectType, objectId,
@@ -12969,7 +14643,8 @@ components:
                  CONTACT_RESTRICTED, CONTACT_RESTRICTION_LIFTED, SUBJECT_ANONYMIZED, RETENTION_APPLIED,
                  ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_SYNC_FAILED, ACCOUNT_CREATED,
                  ACCOUNT_PASSWORD_RESET, ACCOUNT_SESSIONS_ENDED, ACCOUNT_EMAIL_CHANGED, ACCOUNT_SECOND_FACTOR_RESET,
-                 ACCOUNT_ROLES_MIGRATED,
+                 ACCOUNT_ROLES_MIGRATED, ACCOUNT_ROLE_RECONCILED, LOGIN_SUCCEEDED, LOGIN_DENIED, LOGOUT, PROFILES_EXPORTED,
+                 CRM_EVENTS_REQUEUED,
                  LEARNER_RESTRICTED, LEARNER_RESTRICTION_LIFTED, PAID_ORDERS_UPLOADED, LEARNERS_SYNCED,
                  LEARNER_LIST_VIEWED, LEARNER_SEARCHED, LEARNER_VIEWED, LEARNER_FIELDS_REVEALED, LEARNER_CHANGED,
                  LEARNER_ENROLMENTS_MOVED, LEARNER_TEMPLATE_PREVIEWED, LEARNER_TEMPLATE_IMPORTED, LMS_ROSTER_EXPORTED,

@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiClient, type SigningPlan, type SigningPlanQuery, type SigningPlanTotals } from '../../shared/api/client'
+import { apiClient, type Me, type SigningPlan, type SigningPlanQuery, type SigningPlanTotals } from '../../shared/api/client'
 import { formatMoscowDateTime, todayInMoscow } from '../../shared/format/datetime'
 import { saveFile } from '../admin/saveFile'
 import { type AccessHandlers, formatDate, handledAccessError } from '../work/workShared'
+import { reportMeta } from './ReportCatalog'
+import { ReportSegments } from './ReportControls'
 import { ErrorNotice } from './ReportErrorNotice'
-import { currentPeriod, periodTitle, planKindLabels, planSourceLabels, planStateLabels, quarterLabel, stateCounts, yearOptions } from './signingPlan'
+import { ExportMenu } from './ReportExportMenu'
+import { ReportHeader } from './ReportHeader'
+import { pageHints } from './reportHints'
+import { currentPeriod, periodTitle, planKindLabels, planSourceLabels, planStateLabels, stateCounts, yearOptions } from './signingPlan'
 import './reports.css'
 
 type State =
@@ -44,7 +49,7 @@ const TotalsTable = ({ title, nameTitle, totals, withTeam }: { title: string; na
   </div>
 )
 
-export const SigningPlanReport = ({ onSessionExpired, onProfileUnavailable }: AccessHandlers) => {
+export const SigningPlanReport = ({ role, onSessionExpired, onProfileUnavailable }: AccessHandlers & { role: Me['role'] }) => {
   const today = todayInMoscow()
   const initial = currentPeriod(today)
   const [year, setYear] = useState(initial.year)
@@ -94,28 +99,39 @@ export const SigningPlanReport = ({ onSessionExpired, onProfileUnavailable }: Ac
   const counts = state.kind === 'ready' ? stateCounts(state.result.rows) : null
   const signing = state.kind === 'ready' ? state.result.rows.filter((row) => row.kind === 'SIGNING').length : 0
 
+  const meta = reportMeta(role, 'signing-plan')
+  const ready = state.kind === 'ready' && download.format === null
+
   return (
-    <section className="reports__statistics signing-plan" aria-labelledby="signing-plan-title" aria-busy={state.kind === 'loading'}>
-      <h3 id="signing-plan-title">План подписаний и продлений</h3>
-      <p className="reports__hint">
-        Соглашения вузов вашей области, у которых подписание или продление запланировано на выбранный период. Плановую дату
-        указывают в карточке вуза, в блоке «Соглашения»; действующее соглашение без плановой даты попадает сюда продлением
-        на дату окончания срока действия.
-      </p>
-      <form className="reports__order" onSubmit={(event) => event.preventDefault()}>
-        <label>
+    <section className="reports report-page signing-plan" aria-labelledby="report-page-title" aria-busy={state.kind === 'loading'}>
+      <ReportHeader
+        id="report-page-title"
+        group={meta.group}
+        title={meta.title}
+        hint={`${pageHints['signing-plan']} Данные: ${meta.data}.`}
+        actions={(
+          <ExportMenu
+            disabled={!ready}
+            items={[{ label: 'XLSX (Excel)', onSelect: () => void save('XLSX') }, { label: 'PDF', onSelect: () => void save('PDF') }]}
+          />
+        )}
+      />
+      <form className="reports__order report-toolbar__row" onSubmit={(event) => event.preventDefault()}>
+        <label className="report-field">
           Год
           <select value={year} onChange={(event) => setYear(Number(event.target.value))}>
             {yearOptions(initial.year).map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
         </label>
-        <label>
-          Период
-          <select value={scope} onChange={(event) => setScope(event.target.value)}>
-            {[1, 2, 3, 4].map((quarter) => <option key={quarter} value={quarter}>{quarterLabel(quarter)}</option>)}
-            <option value="YEAR">Весь год</option>
-          </select>
-        </label>
+        <ReportSegments
+          label="Период"
+          value={scope}
+          onChange={setScope}
+          options={[
+            ...[1, 2, 3, 4].map((quarter) => ({ value: String(quarter), label: `${['I', 'II', 'III', 'IV'][quarter - 1]} кв.` })),
+            { value: 'YEAR', label: 'Год' }
+          ]}
+        />
       </form>
       {state.kind === 'loading' && <p role="status">Собираем план подписаний и продлений…</p>}
       {state.kind === 'failed' && (
@@ -142,7 +158,7 @@ export const SigningPlanReport = ({ onSessionExpired, onProfileUnavailable }: Ac
                     <tr>
                       <th scope="col">Вуз</th>
                       <th scope="col">КАМ</th>
-                      <th scope="col">Соглашение</th>
+                      <th scope="col">Договор</th>
                       <th scope="col">Вид</th>
                       <th scope="col">Плановая дата</th>
                       <th scope="col">Статус</th>
@@ -172,14 +188,9 @@ export const SigningPlanReport = ({ onSessionExpired, onProfileUnavailable }: Ac
           <ul className="reports__notes">
             {state.result.notes.map((note) => <li key={note}>{note}</li>)}
           </ul>
-          <p className="reports__actions">
+          <p className="reports__footer">
             <span>Сформировано: {formatMoscowDateTime(state.result.generatedAt)}</span>
-            <button type="button" className="button--secondary" disabled={download.format !== null} onClick={() => void save('XLSX')}>
-              {download.format === 'XLSX' ? 'Готовим XLSX…' : 'Скачать XLSX'}
-            </button>
-            <button type="button" className="button--secondary" disabled={download.format !== null} onClick={() => void save('PDF')}>
-              {download.format === 'PDF' ? 'Готовим PDF…' : 'Скачать PDF'}
-            </button>
+            {download.format !== null && <span role="status">Готовим {download.format}…</span>}
           </p>
           {download.error !== null && <ErrorNotice error={download.error} message="Не удалось скачать файл плана." />}
         </>

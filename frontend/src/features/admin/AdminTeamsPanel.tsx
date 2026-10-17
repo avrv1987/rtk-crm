@@ -1,16 +1,28 @@
-import { useState, type FormEvent } from 'react'
-import { ApiError, apiClient, createIdempotencyKey, type AdminTeam, type Team } from '../../shared/api/client'
+import { Fragment, useState, type FormEvent } from 'react'
+import { apiClient, createIdempotencyKey, type AdminTeam } from '../../shared/api/client'
+import { ActionMenu, type ActionMenuItem } from '../../shared/ui/ActionMenu'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
-import { commandErrorMessage, handledSessionError, isVersionConflict, type SessionHandlers } from './adminShared'
+import { EmptyState } from '../../shared/ui/EmptyState'
+import { HintButton } from '../../shared/ui/HintButton'
+import { Segmented } from '../../shared/ui/Segmented'
+import { Toast } from '../../shared/ui/Toast'
+import { CardDialog } from '../interactions/cardUi'
+import { CommandError, LoadFailure } from './AdminErrors'
+import { handledSessionError, type SessionHandlers } from './adminShared'
+import { filterTeams, teamArchivable, type TeamStateFilter } from './teamList'
+import { useAdminTeams } from './useAdminTeams'
+import './adminUi.css'
 
-export type TeamsState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; teams: AdminTeam[] }
-  | { kind: 'failed'; requestId?: string }
+type NameDialog = {
+  team: AdminTeam | null
+  name: string
+  saving: boolean
+  error?: unknown
+  idempotencyKey: string | null
+}
 
 type ArchiveCommand = {
   team: AdminTeam
-  confirming: boolean
   saving: boolean
   error?: unknown
   idempotencyKey: string | null
@@ -18,244 +30,254 @@ type ArchiveCommand = {
 
 const namesOrNone = (names: string[], none: string) => (names.length === 0 ? none : names.join(', '))
 
-const archivable = (team: AdminTeam) => (
-  team.organizationCount === 0 && team.leaderNames.length + team.managerNames.length + team.otherProfileCount === 0
-)
+const stateOptions: { value: TeamStateFilter; label: string }[] = [
+  { value: 'ACTIVE', label: 'Действующие' },
+  { value: 'ARCHIVED', label: 'Архив' },
+  { value: 'ALL', label: 'Все' }
+]
 
-type AdminTeamsPanelProps = SessionHandlers & {
-  teamsState: TeamsState
-  onReload: () => void
-  onTeamsChanged: () => void
-}
+const archiveBlockedHint = 'Сначала перенесите организации и сотрудников, включая заблокированных, в другую команду'
 
-type TeamCommand = {
-  name: string
-  saving: boolean
-  error?: unknown
-  idempotencyKey: string | null
-}
-
-type RenameCommand = TeamCommand & {
-  team: Team
-}
-
-const emptyCommand: TeamCommand = { name: '', saving: false, idempotencyKey: null }
-
-export const AdminTeamsPanel = ({
-  teamsState,
-  onReload,
-  onTeamsChanged,
-  onSessionExpired,
-  onProfileUnavailable
-}: AdminTeamsPanelProps) => {
-  const [create, setCreate] = useState<TeamCommand>(emptyCommand)
-  const [rename, setRename] = useState<RenameCommand | null>(null)
-  const [archive, setArchive] = useState<ArchiveCommand | null>(null)
+export const AdminTeamsPanel = ({ onSessionExpired, onProfileUnavailable }: SessionHandlers) => {
   const handlers = { onSessionExpired, onProfileUnavailable }
+  const teamsData = useAdminTeams(handlers)
+  const [search, setSearch] = useState('')
+  const [stateFilter, setStateFilter] = useState<TeamStateFilter>('ACTIVE')
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [nameDialog, setNameDialog] = useState<NameDialog | null>(null)
+  const [archive, setArchive] = useState<ArchiveCommand | null>(null)
+  const [archiveError, setArchiveError] = useState<{ teamId: string; error: unknown } | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  const closeNameDialog = () => setNameDialog(null)
+
+  const submitName = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (nameDialog === null || nameDialog.saving || nameDialog.name.trim().length === 0) {
+      return
+    }
+    const name = nameDialog.name.trim()
+    const idempotencyKey = nameDialog.idempotencyKey ?? createIdempotencyKey()
+    setNameDialog({ ...nameDialog, saving: true, error: undefined, idempotencyKey })
+    try {
+      if (nameDialog.team === null) {
+        await apiClient.createTeam({ name }, idempotencyKey)
+        setToast(`Команда «${name}» создана.`)
+      } else {
+        await apiClient.renameTeam(nameDialog.team.id, { name, version: nameDialog.team.version }, idempotencyKey)
+        setToast(`Команда переименована: «${name}».`)
+      }
+      setNameDialog(null)
+      void teamsData.reload()
+    } catch (error) {
+      if (!handledSessionError(error, handlers)) {
+        setNameDialog((current) => (current === null ? current : { ...current, saving: false, error }))
+      }
+    }
+  }
 
   const submitArchive = async () => {
     if (archive === null || archive.saving) {
       return
     }
     const idempotencyKey = archive.idempotencyKey ?? createIdempotencyKey()
-    setArchive({ ...archive, confirming: false, saving: true, error: undefined, idempotencyKey })
+    const command = { ...archive, saving: true, idempotencyKey }
+    setArchive(command)
     try {
       await apiClient.changeTeamArchived(
-        archive.team.id,
-        { archived: !archive.team.archived, version: archive.team.version },
+        command.team.id,
+        { archived: !command.team.archived, version: command.team.version },
         idempotencyKey
       )
       setArchive(null)
-      setCreate((current) => (current.error === undefined ? current : { ...current, error: undefined }))
-      onTeamsChanged()
+      setArchiveError(null)
+      setToast(command.team.archived ? `Команда «${command.team.name}» восстановлена.` : `Команда «${command.team.name}» в архиве.`)
+      void teamsData.reload()
     } catch (error) {
-      if (handledSessionError(error, handlers)) {
-        return
+      if (!handledSessionError(error, handlers)) {
+        setArchive(null)
+        setArchiveError({ teamId: command.team.id, error })
       }
-      setArchive((current) => (current === null ? current : { ...current, saving: false, error }))
     }
   }
 
-  const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (create.saving || create.name.trim().length === 0) {
-      return
-    }
-    const idempotencyKey = create.idempotencyKey ?? createIdempotencyKey()
-    setCreate({ ...create, saving: true, error: undefined, idempotencyKey })
-    try {
-      await apiClient.createTeam({ name: create.name.trim() }, idempotencyKey)
-      setCreate(emptyCommand)
-      onTeamsChanged()
-    } catch (error) {
-      if (handledSessionError(error, handlers)) {
-        return
+  const rowMenu = (team: AdminTeam): ActionMenuItem[] => [
+    ...(team.archived ? [] : [{
+      label: 'Переименовать',
+      onSelect: () => setNameDialog({ team, name: team.name, saving: false, idempotencyKey: null })
+    }]),
+    {
+      label: team.archived ? 'Восстановить' : 'Архивировать',
+      onSelect: () => {
+        if (!team.archived && !teamArchivable(team)) {
+          setToast(archiveBlockedHint)
+          return
+        }
+        setArchiveError(null)
+        setArchive({ team, saving: false, idempotencyKey: null })
       }
-      setCreate((current) => ({ ...current, saving: false, error }))
     }
-  }
+  ]
 
-  const submitRename = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (rename === null || rename.saving || rename.name.trim().length === 0) {
-      return
-    }
-    const idempotencyKey = rename.idempotencyKey ?? createIdempotencyKey()
-    setRename({ ...rename, saving: true, error: undefined, idempotencyKey })
-    try {
-      await apiClient.renameTeam(rename.team.id, { name: rename.name.trim(), version: rename.team.version }, idempotencyKey)
-      setRename(null)
-      setCreate((current) => (current.error === undefined ? current : { ...current, error: undefined }))
-      onTeamsChanged()
-    } catch (error) {
-      if (handledSessionError(error, handlers)) {
-        return
-      }
-      setRename((current) => (current === null ? current : { ...current, saving: false, error }))
-    }
-  }
-
-  const renderError = (error: unknown, onConflict: () => void) => (
-    <div className="interaction-command-error" role="alert">
-      <p>{commandErrorMessage(error)}</p>
-      {error instanceof ApiError && <p className="request-id">Request ID: {error.requestId}</p>}
-      {isVersionConflict(error) && <button type="button" onClick={onConflict}>Обновить список</button>}
-    </div>
-  )
+  const state = teamsData.state
+  const visible = state.kind === 'ready' ? filterTeams(state.teams, search, stateFilter) : []
+  const dialogTitle = nameDialog?.team === null ? 'Новая команда' : `Переименовать команду «${nameDialog?.team.name ?? ''}»`
 
   return (
-    <section className="admin-profiles" aria-labelledby="admin-teams-title" aria-busy={teamsState.kind === 'loading'}>
-      <div className="admin-profiles__header">
-        <div>
-          <p className="eyebrow">Администрирование</p>
-          <h2 id="admin-teams-title">Команды</h2>
-        </div>
-        {teamsState.kind === 'ready' && <p className="admin-profiles__total">Всего: {teamsState.teams.length}</p>}
-      </div>
-      <p className="admin-profiles__intro">
-        Команда объединяет руководителя, КАМ и организации. Руководитель видит все организации своей команды, КАМ — только закреплённые за ним.
-        Архивировать можно команду без организаций и сотрудников, включая заблокированных: она уйдёт из списков выбора, история сохранится.
-      </p>
-
-      <form className="admin-team-form" onSubmit={(event) => void submitCreate(event)}>
-        <label>
-          Название новой команды
-          <input
-            value={create.name}
-            maxLength={160}
-            disabled={create.saving}
-            onChange={(event) => setCreate({ name: event.target.value, saving: false, idempotencyKey: null })}
-          />
-        </label>
-        <button type="submit" disabled={create.saving || create.name.trim().length === 0}>
-          {create.saving ? 'Создаём…' : 'Создать команду'}
+    <section className="admin-page" aria-labelledby="admin-teams-title" aria-busy={state.kind === 'loading'}>
+      <div className="page-title">
+        <h2 id="admin-teams-title">Команды</h2>
+        <HintButton label="О разделе «Команды»">
+          Команда объединяет руководителя, КАМ и организации. Руководитель видит все организации своей команды, КАМ — только закреплённые за ним.
+          Архивировать можно команду без организаций и сотрудников, включая заблокированных: она уйдёт из списков выбора, история сохранится.
+        </HintButton>
+        {state.kind === 'ready' && <span className="page-title__count">Всего: {state.teams.length}</span>}
+        <span className="page-title__spacer" />
+        <button type="button" onClick={() => setNameDialog({ team: null, name: '', saving: false, idempotencyKey: null })}>
+          Создать команду
         </button>
-      </form>
-      {create.error !== undefined && renderError(create.error, onReload)}
+      </div>
 
-      {teamsState.kind === 'loading' && <p className="organizations-message" role="status">Загружаем команды…</p>}
-      {teamsState.kind === 'failed' && (
-        <div className="organizations-message organizations-message--error" role="alert">
-          <p>Не удалось загрузить команды. Повторите попытку.</p>
-          {teamsState.requestId && <p className="request-id">Request ID: {teamsState.requestId}</p>}
-          <button type="button" onClick={onReload}>Повторить</button>
+      <div className="admin-toolbar">
+        <Segmented label="Состояние команд" value={stateFilter} options={stateOptions} onChange={setStateFilter} />
+        <div className="admin-toolbar__search">
+          <input
+            type="search"
+            value={search}
+            maxLength={160}
+            placeholder="Поиск по названию"
+            aria-label="Поиск по названию"
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </div>
+      </div>
+
+      {archiveError !== null && <CommandError error={archiveError.error} onConflict={() => {
+        setArchiveError(null)
+        void teamsData.reload()
+      }} />}
+      {state.kind === 'loading' && <p className="organizations-message" role="status">Загружаем команды…</p>}
+      {state.kind === 'failed' && (
+        <LoadFailure text="Не удалось загрузить команды. Повторите попытку." requestId={state.requestId} onRetry={() => void teamsData.reload()} />
+      )}
+      {state.kind === 'ready' && visible.length === 0 && (
+        <EmptyState
+          text={state.teams.length === 0 ? 'Команд пока нет.' : 'По выбранным условиям команд нет.'}
+          action={state.teams.length === 0
+            ? <button type="button" className="button--secondary" onClick={() => setNameDialog({ team: null, name: '', saving: false, idempotencyKey: null })}>Создать команду</button>
+            : undefined}
+        />
+      )}
+      {state.kind === 'ready' && visible.length > 0 && (
+        <div className="admin-table-wrap">
+          <table className="admin-table" aria-label="Список команд">
+            <thead>
+              <tr>
+                <th scope="col">Команда</th>
+                <th scope="col">Руководитель</th>
+                <th scope="col">КАМ</th>
+                <th scope="col">Организаций</th>
+                <th scope="col"><span className="admin-visually-hidden">Действия</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((team) => {
+                const open = expanded === team.id
+                return (
+                  <Fragment key={team.id}>
+                    <tr>
+                      <td className="admin-table__cell-main">
+                        <button
+                          type="button"
+                          className="admin-table__toggle"
+                          aria-expanded={open}
+                          onClick={() => setExpanded(open ? null : team.id)}
+                        >
+                          {team.name}
+                        </button>
+                        {team.archived && <span className="admin-chip admin-chip--danger"> В архиве</span>}
+                      </td>
+                      <td data-label="Руководитель">{namesOrNone(team.leaderNames, 'Не назначен')}</td>
+                      <td data-label="КАМ">{team.managerNames.length}</td>
+                      <td data-label="Организаций">{team.organizationCount}</td>
+                      <td className="admin-table__actions">
+                        <ActionMenu label={`Действия: команда ${team.name}`} items={rowMenu(team)} />
+                      </td>
+                    </tr>
+                    {open && (
+                      <tr className="admin-table__detail">
+                        <td colSpan={5}>
+                          <dl className="admin-profiles__fields" aria-label={`Состав команды ${team.name}`}>
+                            <div>
+                              <dt>Руководитель</dt>
+                              <dd>{namesOrNone(team.leaderNames, 'Не назначен')}</dd>
+                            </div>
+                            <div>
+                              <dt>КАМ</dt>
+                              <dd>{namesOrNone(team.managerNames, 'Нет')}</dd>
+                            </div>
+                            <div>
+                              <dt>Организаций</dt>
+                              <dd>{team.organizationCount}</dd>
+                            </div>
+                            {team.otherProfileCount > 0 && (
+                              <div>
+                                <dt>Вне состава</dt>
+                                <dd>{team.otherProfileCount} (заблокированные или администраторы)</dd>
+                              </div>
+                            )}
+                          </dl>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
-      {teamsState.kind === 'ready' && teamsState.teams.length === 0 && (
-        <p className="organizations-message">Команд пока нет.</p>
-      )}
-      {teamsState.kind === 'ready' && teamsState.teams.length > 0 && (
-        <ul className="admin-profiles__list" aria-label="Список команд">
-          {teamsState.teams.map((team) => (
-            <li key={team.id} className="admin-profiles__item">
-              <div className="admin-profiles__identity">
-                {rename?.team.id === team.id ? (
-                  <form className="admin-team-form" onSubmit={(event) => void submitRename(event)}>
-                    <label>
-                      Новое название команды «{team.name}»
-                      <input
-                        value={rename.name}
-                        maxLength={160}
-                        disabled={rename.saving}
-                        onChange={(event) => setRename({ team, name: event.target.value, saving: false, idempotencyKey: null })}
-                      />
-                    </label>
-                    <div className="admin-profiles__confirmation-actions">
-                      <button type="submit" disabled={rename.saving || rename.name.trim().length === 0 || rename.name.trim() === team.name}>
-                        {rename.saving ? 'Сохраняем…' : 'Сохранить'}
-                      </button>
-                      <button type="button" className="admin-profiles__cancel" disabled={rename.saving} onClick={() => setRename(null)}>
-                        Отмена
-                      </button>
-                    </div>
-                    {rename.error !== undefined && renderError(rename.error, () => {
-                      setRename(null)
-                      onReload()
-                    })}
-                  </form>
-                ) : (
-                  <h3>
-                    {team.name}
-                    {team.archived && <span className="admin-profiles__status admin-profiles__status--blocked">В архиве</span>}
-                  </h3>
-                )}
-                <dl className="admin-profiles__fields" aria-label={`Состав команды ${team.name}`}>
-                  <div>
-                    <dt>Руководитель</dt>
-                    <dd>{namesOrNone(team.leaderNames, 'Не назначен')}</dd>
-                  </div>
-                  <div>
-                    <dt>КАМ</dt>
-                    <dd>{namesOrNone(team.managerNames, 'Нет')}</dd>
-                  </div>
-                  <div>
-                    <dt>Организаций</dt>
-                    <dd>{team.organizationCount}</dd>
-                  </div>
-                  {team.otherProfileCount > 0 && (
-                    <div>
-                      <dt>Вне состава</dt>
-                      <dd>{team.otherProfileCount} (заблокированные или администраторы)</dd>
-                    </div>
-                  )}
-                </dl>
-                {archive?.team.id === team.id && archive.error !== undefined && renderError(archive.error, () => {
-                  setArchive(null)
-                  onReload()
-                })}
-              </div>
-              {rename?.team.id !== team.id && (
-                <div className="admin-profiles__actions">
-                  {!team.archived && (
-                    <button
-                      type="button"
-                      className="admin-profiles__cancel"
-                      onClick={() => setRename({ team, name: team.name, saving: false, idempotencyKey: null })}
-                    >
-                      Переименовать
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="admin-profiles__cancel"
-                    disabled={archive?.saving === true || (!team.archived && !archivable(team))}
-                    title={!team.archived && !archivable(team)
-                      ? 'Сначала перенесите организации и сотрудников, включая заблокированных, в другую команду'
-                      : undefined}
-                    onClick={() => setArchive({ team, confirming: true, saving: false, idempotencyKey: null })}
-                  >
-                    {archive?.team.id === team.id && archive.saving
-                      ? 'Сохраняем…'
-                      : team.archived ? 'Восстановить' : 'Архивировать'}
-                  </button>
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+
+      <CardDialog open={nameDialog !== null} title={dialogTitle} onClose={closeNameDialog}>
+        {nameDialog !== null && (
+          <form className="admin-form" onSubmit={(event) => void submitName(event)}>
+            <label>
+              {nameDialog.team === null ? 'Название новой команды' : `Новое название команды «${nameDialog.team.name}»`}
+              <input
+                value={nameDialog.name}
+                maxLength={160}
+                autoFocus
+                disabled={nameDialog.saving}
+                onChange={(event) => setNameDialog({ ...nameDialog, name: event.target.value, saving: false, error: undefined, idempotencyKey: null })}
+              />
+            </label>
+            {nameDialog.error !== undefined && (
+              <CommandError error={nameDialog.error} onConflict={() => {
+                closeNameDialog()
+                void teamsData.reload()
+              }} />
+            )}
+            <div className="admin-form__actions">
+              <button type="button" className="button--secondary" disabled={nameDialog.saving} onClick={closeNameDialog}>Отмена</button>
+              <button
+                type="submit"
+                disabled={
+                  nameDialog.saving
+                  || nameDialog.name.trim().length === 0
+                  || nameDialog.name.trim() === nameDialog.team?.name
+                }
+              >
+                {nameDialog.saving
+                  ? (nameDialog.team === null ? 'Создаём…' : 'Сохраняем…')
+                  : (nameDialog.team === null ? 'Создать команду' : 'Сохранить')}
+              </button>
+            </div>
+          </form>
+        )}
+      </CardDialog>
+
       <ConfirmDialog
-        open={archive?.confirming === true}
+        open={archive !== null}
         title={archive === null ? '' : archive.team.archived ? `Восстановить команду «${archive.team.name}»?` : `Архивировать команду «${archive.team.name}»?`}
         description={archive?.team.archived === true
           ? 'Команда снова появится в списках выбора профилей и организаций.'
@@ -264,6 +286,7 @@ export const AdminTeamsPanel = ({
         onConfirm={() => void submitArchive()}
         onCancel={() => setArchive(null)}
       />
+      <Toast message={toast} onClose={() => setToast(null)} />
     </section>
   )
 }

@@ -33,7 +33,7 @@ export const kindTitles: Record<StatisticsResult['kind'], string> = {
   DEMAND: 'Востребованность программ',
   SNAPSHOT: 'Состояние портфеля на дату',
   DURATION: 'Длительность этапов и цикла',
-  AGREEMENTS: 'Реализация соглашений с вузами',
+  AGREEMENTS: 'Реализация договоров с вузами',
   MANAGER_WORK: 'Работа менеджеров за период'
 }
 
@@ -44,7 +44,7 @@ export const countTitles: Record<StatisticsResult['kind'], string> = {
   SNAPSHOT: 'Число взаимодействий',
   DURATION: 'Число групп',
   AGREEMENTS: 'Число мероприятий',
-  MANAGER_WORK: 'Число работ'
+  MANAGER_WORK: 'Число взаимодействий'
 }
 
 export const monthTitles: Record<StatisticsResult['kind'], string> = {
@@ -101,6 +101,7 @@ const labelLines = (label: string) => {
 
 const captionLines = (result: StatisticsResult) => [
   `Показатель: ${countTitles[result.kind].toLowerCase()} в группе; всего в выборке: ${result.total}; шкала начинается с нуля.`,
+  ...(result.groupBy === 'STAGE' ? ['Этапы идут в порядке маршрута; этапы без взаимодействий показаны нулём.'] : []),
   ...(result.groupBy === 'PRODUCT'
     ? ['Строка с несколькими ИТ-продуктами учтена в каждом из них, поэтому сумма столбцов может быть больше итога.']
     : []),

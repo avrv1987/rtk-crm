@@ -15,6 +15,8 @@ final class WorkflowGraph {
     private WorkflowGraph() {
     }
 
+    // Пересборка переходов после удаления или вставки этапа в карточке: граф должен остаться связным и
+    // не потерять правило обязательного комментария.
     static List<InteractionStageTransition> rebuild(
             List<InteractionStage> stages,
             List<InteractionStageTransition> transitions,
@@ -26,6 +28,8 @@ final class WorkflowGraph {
         }
         Map<Edge, Boolean> edges = new LinkedHashMap<>();
         for (InteractionStageTransition transition : transitions) {
+            // Дубликаты рёбер склеиваются по правилу «комментарий нужен, только если нужен на всех склеиваемых путях»
+            // (см. merge): обходной путь не должен ужесточать уже существующий прямой переход.
             merge(edges, Edge.of(transition), transition.commentRequired());
         }
         if (removedStageId != null) {
@@ -38,6 +42,8 @@ final class WorkflowGraph {
         Map<UUID, Integer> positions = positions(ordered);
         List<InteractionStageTransition> result = new ArrayList<>();
         edges.forEach((edge, commentRequired) -> {
+            // Итоговый фильтр отбрасывает рёбра к этапам вне списка и рёбра, которые после правки стали пропуском
+            // без комментария: результат всегда проходит validate.
             InteractionStageTransition transition =
                     new InteractionStageTransition(edge.fromStageId(), edge.toStageId(), commentRequired);
             if (positions.containsKey(edge.fromStageId())
@@ -49,6 +55,8 @@ final class WorkflowGraph {
         return List.copyOf(result);
     }
 
+    // Три инварианта графа: переход только между соседями или с обязательным комментарием (пропуск вперёд и
+    // возврат через этап), у каждого этапа кроме последнего есть выход, каждый этап достижим из начального.
     static void validate(
             List<InteractionStage> stages,
             List<InteractionStageTransition> transitions,
@@ -79,6 +87,7 @@ final class WorkflowGraph {
             }
             outgoing.computeIfAbsent(transition.fromStageId(), ignored -> new ArrayList<>()).add(transition.toStageId());
         }
+        // У последнего этапа выхода нет по определению: из него процесс завершается.
         for (InteractionStage stage : ordered.subList(0, ordered.size() - 1)) {
             if (!outgoing.containsKey(stage.id())) {
                 throw new InteractionValidationException(
@@ -87,6 +96,7 @@ final class WorkflowGraph {
                 );
             }
         }
+        // Обход в ширину от начального этапа нужен, чтобы найти этапы, в которые нельзя попасть ни по одному переходу.
         Set<UUID> reachable = new HashSet<>();
         ArrayDeque<UUID> pending = new ArrayDeque<>();
         pending.add(ordered.getFirst().id());
@@ -107,6 +117,8 @@ final class WorkflowGraph {
         }
     }
 
+    // Удаляемый этап «стягивается»: каждый путь «A → удаляемый → B» заменяется прямым A → B, комментарий на нём
+    // обязателен, если он был обязателен на любом из двух прежних переходов.
     private static Map<Edge, Boolean> withoutStage(Map<Edge, Boolean> edges, UUID stageId) {
         Map<Edge, Boolean> result = new LinkedHashMap<>();
         Map<UUID, Boolean> incoming = new LinkedHashMap<>();
@@ -136,6 +148,8 @@ final class WorkflowGraph {
         Map<UUID, Integer> positions = positions(ordered);
         int index = positions.get(stageId);
         InteractionStage stage = ordered.get(index);
+        // Новый этап вставляется после anchor. Соседи left/right нужны, чтобы перенести признак комментария с
+        // прежнего перехода «через» место вставки; у последнего этапа справа соседа нет, поэтому берётся пара слева.
         UUID anchor = ordered.get(index - 1).id();
         UUID next = index + 1 < ordered.size() ? ordered.get(index + 1).id() : null;
         UUID left = next != null ? anchor : index > 1 ? ordered.get(index - 2).id() : null;
@@ -144,6 +158,8 @@ final class WorkflowGraph {
         Boolean backward = left == null ? null : edges.get(new Edge(right, left));
         Map<Edge, Boolean> result = new LinkedHashMap<>();
         edges.forEach((edge, commentRequired) -> {
+            // Рёбра, прошедшие «над» местом вставки: для обязательного этапа их нельзя оставить (иначе его можно
+            // обойти), поэтому они перенаправляются в него; для необязательного остаются пропуском с обязательным комментарием.
             boolean crossesForward = positions.get(edge.fromStageId()) < index && positions.get(edge.toStageId()) > index;
             if (!crossesForward) {
                 merge(result, edge, commentRequired);
@@ -168,11 +184,13 @@ final class WorkflowGraph {
     }
 
     private static void merge(Map<Edge, Boolean> edges, Edge edge, boolean commentRequired) {
+        // Логическое «И»: ребро свободно от комментария, если свободен хотя бы один из слитых путей.
         edges.merge(edge, commentRequired, (current, added) -> current && added);
     }
 
     private static boolean allowed(InteractionStageTransition transition, Map<UUID, Integer> positions) {
         return transition.commentRequired()
+                // Шаг на соседний этап вперёд или назад допустим без комментария, любой другой прыжок — только с ним.
                 || Math.abs(positions.get(transition.fromStageId()) - positions.get(transition.toStageId())) == 1;
     }
 

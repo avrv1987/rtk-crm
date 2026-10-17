@@ -9,7 +9,9 @@ import ru.rtk.crm.enrolment.LearnerIntake;
 
 enum SourceCode {
     WEBSITE("Сайт ИТ Школы (Laravel)"),
-    MOODLE("LMS Moodle");
+    MOODLE("LMS Moodle"),
+    LABOR_MARKET("Рынок труда"),
+    CUSTOMER_CRM("CRM заказчика");
 
     private final String title;
 
@@ -111,7 +113,10 @@ record SourceRecordView(
         UUID organizationId,
         UUID programId,
         UUID interactionId,
-        OffsetDateTime updatedAt
+        OffsetDateTime updatedAt,
+        String contactName,
+        List<SourceMappingOption> candidates,
+        RunKind suggestedRunKind
 ) {
 }
 
@@ -120,10 +125,15 @@ record SourceRecordApplyRequest(
         UUID programId,
         LocalDate runStartsOn,
         LocalDate runEndsOn,
-        RunKind runKind
+        RunKind runKind,
+        UUID contactId
 ) {
     SourceRecordApplyRequest(UUID organizationId, UUID programId, LocalDate runStartsOn, LocalDate runEndsOn) {
-        this(organizationId, programId, runStartsOn, runEndsOn, null);
+        this(organizationId, programId, runStartsOn, runEndsOn, null, null);
+    }
+
+    SourceRecordApplyRequest(UUID organizationId, UUID programId, LocalDate runStartsOn, LocalDate runEndsOn, RunKind runKind) {
+        this(organizationId, programId, runStartsOn, runEndsOn, runKind, null);
     }
 }
 

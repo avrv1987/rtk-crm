@@ -1,10 +1,8 @@
 .vendor-contacts {
   display: grid;
   gap: var(--space-3);
-  margin-top: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  min-width: 0;
+  text-align: left;
 }
 
 .vendor-contacts__header {
@@ -12,7 +10,6 @@
   flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
-  justify-content: space-between;
 }
 
 .vendor-contacts__header h4 {
@@ -27,8 +24,13 @@
   padding: 0;
 }
 
-.vendor-contacts fieldset label {
-  display: flex;
-  gap: var(--space-2);
-  align-items: center;
+.vendor-contacts fieldset legend {
+  padding: 0;
+  color: var(--color-text-label);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+}
+
+.vendor-contacts .admin-table {
+  background: var(--color-surface);
 }

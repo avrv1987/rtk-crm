@@ -41,6 +41,8 @@ record SiteRecord(
     static final String WITHDRAWN = "withdrawn";
     static final int MAX_APPLICATIONS_COUNT = 100_000;
 
+    // Ошибки полей не прерывают разбор: запись получает текст problem и статус «ошибка», остальные записи ответа
+    // применяются.
     static SiteRecord parse(JsonNode item) {
         List<String> problems = new ArrayList<>();
         if (item == null || !item.isObject()) {
@@ -51,6 +53,8 @@ record SiteRecord(
         JsonNode contact = item.path("contact");
         String type = text(item, "type", 64, problems);
         ObjectNode stored = item.deepCopy();
+        // Заявка на обучение — только счётчик спроса: контакт в хранимое тело не копируется, чтобы не накапливать
+        // персональные данные.
         if (LEARNING_APPLICATION.equals(type)) {
             stored.remove("contact");
         }
@@ -77,6 +81,7 @@ record SiteRecord(
         );
     }
 
+    // У оплаты нет версии: updatedAt — время получения, а повтор определяется по payloadHash.
     static SiteRecord paidOrder(String orderNumber, String course, int streamNo, String payloadHash, OffsetDateTime receivedAt) {
         ObjectNode item = JsonNodeFactory.instance.objectNode()
                 .put("externalId", orderNumber)
@@ -100,6 +105,7 @@ record SiteRecord(
         return programName == null ? null : "name:" + normalized(programName);
     }
 
+    // Ключ организации — внешний ID, а без него нормализованное название; префиксы id: и name: не дают им совпасть.
     String organizationKey() {
         if (organizationExternalId != null) {
             return "id:" + organizationExternalId;
@@ -107,10 +113,12 @@ record SiteRecord(
         return organizationName == null ? null : "name:" + normalized(organizationName);
     }
 
+    // Без идентификатора, типа и времени изменения запись не сохранить: по ним определяется версия.
     boolean storable() {
         return externalId != null && type != null && updatedAt != null;
     }
 
+    // Дата подачи — createdAt, а если сайт её не прислал, то updatedAt.
     OffsetDateTime submittedAt() {
         return createdAt == null ? updatedAt : createdAt;
     }
@@ -132,6 +140,7 @@ record SiteRecord(
         if (value.isMissingNode() || value.isNull()) {
             return null;
         }
+        // Числовой идентификатор принимается как строка: источник может прислать externalId числом.
         if (!value.isTextual() && !value.isIntegralNumber()) {
             problems.add("поле " + field + " должно быть строкой");
             return null;
@@ -144,6 +153,7 @@ record SiteRecord(
         return text.isEmpty() ? null : text;
     }
 
+    // Смещение обязательно: без часового пояса момент нельзя однозначно сопоставить версии.
     private static OffsetDateTime dateTime(JsonNode node, String field, List<String> problems) {
         String value = text(node, field, 64, problems);
         if (value == null) {
@@ -169,6 +179,7 @@ record SiteRecord(
         return value.intValue();
     }
 
+    // Верхний предел отсекает явную ошибку в данных: одна запись не должна искажать спрос.
     private static Integer applicationsCount(JsonNode item, List<String> problems) {
         JsonNode value = item.path("applicationsCount");
         if (value.isMissingNode() || value.isNull()) {

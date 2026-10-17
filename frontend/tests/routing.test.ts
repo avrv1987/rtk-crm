@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { isSameRouteClick } from '../src/app/routing.ts'
+import { isSameRouteClick, isSameSectionClick } from '../src/app/routing.ts'
 
 test('повторный клик по ссылке на уже открытый адрес считается навигацией на тот же маршрут', () => {
   assert.equal(isSameRouteClick('#/work', '#/work'), true)
@@ -16,4 +16,12 @@ test('внешние и не-хэш ссылки игнорируются', () =
   assert.equal(isSameRouteClick(null, '#/work'), false)
   assert.equal(isSameRouteClick('https://example.com/#/work', '#/work'), false)
   assert.equal(isSameRouteClick('mailto:a@example.test', ''), false)
+})
+
+test('пункт меню своего раздела возвращает к его началу', () => {
+  assert.equal(isSameSectionClick('#/organizations', '#/organizations/a1/b2'), true)
+  assert.equal(isSameSectionClick('#/organizations', '#/organizations?status=ACTIVE'), true)
+  assert.equal(isSameSectionClick('#/reports', '#/reports/portfolio'), true)
+  assert.equal(isSameSectionClick('#/reports', '#/organizations'), false)
+  assert.equal(isSameSectionClick(null, '#/reports'), false)
 })

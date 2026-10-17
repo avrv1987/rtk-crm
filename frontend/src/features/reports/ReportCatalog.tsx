@@ -10,6 +10,7 @@ export type ReportView =
   | 'demand'
   | 'agreements'
   | 'signing-plan'
+  | 'agreements-period'
   | 'statistics'
   | 'learning-dynamics'
   | 'kam-review'
@@ -29,9 +30,9 @@ export const viewKind = (view: ReportView): ReportKind | null => (
   (Object.keys(kindViews) as ReportKind[]).find((kind) => kindViews[kind] === view) ?? null
 )
 
-type CatalogGroup = 'Контроль' | 'Соглашения' | 'Обучение' | 'Служебные'
+type CatalogGroup = 'Контроль' | 'Договоры' | 'Обучение' | 'Служебные'
 
-const catalogGroups: readonly CatalogGroup[] = ['Контроль', 'Соглашения', 'Обучение', 'Служебные']
+const catalogGroups: readonly CatalogGroup[] = ['Контроль', 'Договоры', 'Обучение', 'Служебные']
 
 type CatalogCard = {
   group: CatalogGroup
@@ -46,24 +47,24 @@ export const reportCatalog = (role: Me['role']): CatalogCard[] => [
     group: 'Контроль',
     view: 'manager-work',
     title: 'Работа менеджеров за период',
-    purpose: 'Какой менеджер с каким вузом работал, на каком этапе работа была в начале и в конце периода, сколько было переходов, комментариев и просрочек.',
+    purpose: 'Какой менеджер с каким вузом работал, на каком этапе взаимодействие было в начале и в конце периода, сколько было переходов, комментариев и просрочек.',
     data: 'Менеджеры, вузы, продукты, этапы на начало и конец периода, шаги и сроки'
   },
   {
     group: 'Контроль',
     view: 'portfolio',
     title: 'Портфель взаимодействий',
-    purpose: 'Все работы с вузами сейчас: на каком этапе, кто ведёт, какой следующий шаг и где есть риск.',
-    data: 'Работы, этапы, ответственные, отметки, договоры и лицензии'
+    purpose: 'Все взаимодействия с действующими вузами сейчас: на каком этапе, кто ведёт, какой следующий шаг и где есть риск.',
+    data: 'Взаимодействия, этапы, ответственные, отметки, договоры и лицензии'
   },
   {
     group: 'Контроль',
     view: 'events',
     title: 'События за период',
     purpose: role === 'USER'
-      ? 'Что происходило в работах: переходы, комментарии, изменения этапов и планов.'
-      : 'Что происходило в работах: переходы, комментарии, изменения планов, назначения и смены КАМ.',
-    data: 'История работ с датой, автором и ответственным на момент события'
+      ? 'Что происходило во взаимодействиях: переходы, комментарии, изменения этапов и планов.'
+      : 'Что происходило во взаимодействиях: переходы, комментарии, изменения планов, назначения и смены КАМ.',
+    data: 'История взаимодействий с датой, автором и ответственным на момент события'
   },
   {
     group: 'Контроль',
@@ -76,7 +77,7 @@ export const reportCatalog = (role: Me['role']): CatalogCard[] => [
     group: 'Контроль',
     view: 'duration',
     title: 'Длительность этапов и цикла',
-    purpose: 'Сколько дней работы проводят на каждом этапе и во всём цикле — чтобы найти, где они застревают.',
+    purpose: 'Сколько дней взаимодействия проводят на каждом этапе и во всём цикле — чтобы найти, где они застревают.',
     data: 'Средние и максимальные сроки по командам, программам и этапам'
   },
   {
@@ -84,23 +85,32 @@ export const reportCatalog = (role: Me['role']): CatalogCard[] => [
     view: 'demand',
     title: 'Востребованность программ',
     purpose: getModules().enrolment
-      ? 'Какие ИТ-программы нужны вузам: заявки, оплаты и обучение по каждой программе.'
-      : 'Какие ИТ-программы нужны вузам: заявки и обучение по каждой программе.',
-    data: getModules().enrolment ? 'Заявки и оплаты с сайта, потоки и обучающиеся из Moodle' : 'Заявки с сайта, потоки и обучающиеся из Moodle'
+      ? 'Какие ИТ-программы нужны вузам: заявки, оплаты и обучение по каждой программе; для отмеченных направлений рядом показан спрос рынка труда.'
+      : 'Какие ИТ-программы нужны вузам: заявки и обучение по каждой программе; для отмеченных направлений рядом показан спрос рынка труда.',
+    data: getModules().enrolment
+      ? 'Заявки и оплаты с сайта, потоки и обучающиеся из Moodle, вакансии рынка труда'
+      : 'Заявки с сайта, потоки и обучающиеся из Moodle, вакансии рынка труда'
   },
   {
-    group: 'Соглашения',
+    group: 'Договоры',
     view: 'agreements',
-    title: 'Реализация соглашений',
-    purpose: 'План и факт мероприятий по соглашениям с вузами за период.',
-    data: 'Мероприятия, объёмы, сроки, связанные работы и подтверждения'
+    title: 'Реализация договоров',
+    purpose: 'План и факт мероприятий по договорам с вузами за период.',
+    data: 'Мероприятия, объёмы, сроки, связанные взаимодействия и подтверждения'
   },
   {
-    group: 'Соглашения',
+    group: 'Договоры',
     view: 'signing-plan',
-    title: 'План подписаний и продлений',
-    purpose: 'Какие соглашения вузов будут подписаны и продлены в квартале или году: по вузам, КАМ и командам, с отметкой «просрочено».',
-    data: 'Плановые даты и сроки действия соглашений'
+    title: 'План подписаний и продлений договоров',
+    purpose: 'Какие договоры вузов будут подписаны и продлены в квартале или году: по вузам, КАМ и командам, с отметкой «просрочено».',
+    data: 'Плановые даты и сроки действия договоров'
+  },
+  {
+    group: 'Договоры',
+    view: 'agreements-period',
+    title: 'Договоры за период',
+    purpose: 'Сколько договоров подписано и расторгнуто, какие переходы статусов были, сколько в среднем длится согласование и что застряло на согласовании.',
+    data: 'История статусов договоров, даты отправки и подписания'
   },
   {
     group: 'Служебные',
@@ -121,13 +131,13 @@ export const reportCatalog = (role: Me['role']): CatalogCard[] => [
     view: 'kam-review' as const,
     title: 'Разбор КАМ',
     purpose: 'События, открытые шаги и риски одного КАМ за период на одной странице — для регулярного разбора.',
-    data: 'События, активные работы и их отметки'
+    data: 'События, активные взаимодействия и их отметки'
   }]),
   {
-    group: 'Соглашения',
+    group: 'Договоры',
     view: 'confirmations',
-    title: 'Подтверждения по соглашениям',
-    purpose: 'Документы, подтверждающие мероприятия соглашений: найти и скачать одним архивом.',
+    title: 'Подтверждения по договорам',
+    purpose: 'Документы, подтверждающие мероприятия договоров: найти и скачать одним архивом.',
     data: 'Проверенные файлы по вузу, виду мероприятия и периоду'
   }
 ]
@@ -136,19 +146,25 @@ export const catalogTitle = (role: Me['role'], view: ReportView) => (
   reportCatalog(role).find((card) => card.view === view)?.title ?? ''
 )
 
+export type ReportMeta = { title: string; group: string; data: string }
+
+export const reportMeta = (role: Me['role'], view: ReportView): ReportMeta => {
+  const card = reportCatalog(role).find((item) => item.view === view)
+  return { title: card?.title ?? '', group: card?.group ?? 'Служебные', data: card?.data ?? '' }
+}
+
+// В каталоге у отчёта одна строка «для чего»; строка «какие данные» ушла в «?» на странице отчёта.
 export const ReportCatalog = ({ role }: { role: Me['role'] }) => (
-  <section className="report-catalog" aria-labelledby="report-catalog-title">
-    <h2 id="report-catalog-title" className="reports__section-title">Выберите отчёт</h2>
+  <section className="report-catalog" aria-label="Все отчёты">
     {catalogGroups.map((group) => (
       <section key={group} className="report-catalog__group" aria-labelledby={`report-group-${group}`}>
         <h3 id={`report-group-${group}`} className="report-catalog__group-title">{group}</h3>
-        <ul className="report-catalog__grid">
+        <ul className="report-catalog__list">
           {reportCatalog(role).filter((card) => card.group === group).map((card) => (
             <li key={card.view}>
               <a className="report-card" href={`#/reports/${card.view}`}>
                 <span className="report-card__title">{card.title}</span>
                 <span className="report-card__purpose">{card.purpose}</span>
-                <span className="report-card__data">{card.data}</span>
               </a>
             </li>
           ))}

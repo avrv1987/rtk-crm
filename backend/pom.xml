@@ -124,6 +124,8 @@
           <environmentVariables>
             <APP_ATTACHMENTS_STORAGE_ROOT>${project.build.directory}/test-storage/files</APP_ATTACHMENTS_STORAGE_ROOT>
             <APP_REPORTS_STORAGE_ROOT>${project.build.directory}/test-storage/reports</APP_REPORTS_STORAGE_ROOT>
+            <MODULE_ENROLMENT_ENABLED>false</MODULE_ENROLMENT_ENABLED>
+            <MODULE_PARTNER_ENABLED>false</MODULE_PARTNER_ENABLED>
           </environmentVariables>
         </configuration>
       </plugin>

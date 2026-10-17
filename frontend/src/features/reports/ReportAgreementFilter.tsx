@@ -1,6 +1,7 @@
 import { useId } from 'react'
 import { transferKindLabels, transferKinds, type ProductTransferKind } from '../documents/documentsApi'
-import { Chip, type FilterOption, type SelectedValue } from './ReportControls'
+import type { FilterOption, SelectedValue } from './ReportControls'
+import { FilterGroup } from './reportFilterUi'
 import { defaultAgreementSelection, type AgreementSelection } from './reportAgreement'
 
 type ReportAgreementFilterProps = {
@@ -59,73 +60,69 @@ export const ReportAgreementFilter = ({ value, vendors, onChange }: ReportAgreem
   }
 
   return (
-    <Chip
-      label="Договор и лицензия"
-      value={count === 0 ? 'все' : `условий ${count}`}
-      active={count > 0}
-      onClear={() => onChange(defaultAgreementSelection())}
-    >
-      {() => (
-        <div className="report-agreement">
-          <p className="report-popover__note">Все условия относятся к одному и тому же продукту взаимодействия.</p>
-          <div className="report-agreement__field">
-            <label htmlFor={signedId}>Подписание лицензии</label>
-            <select
-              id={signedId}
-              value={value.licenseSigned}
-              onChange={(event) => onChange({ ...value, licenseSigned: event.target.value as AgreementSelection['licenseSigned'] })}
-            >
-              <option value="">Все</option>
-              <option value="true">Лицензия подписана</option>
-              <option value="false">Не подписана или не указано</option>
-            </select>
-          </div>
-          <div className="report-agreement__field">
-            <label htmlFor={expiresId}>Лицензия истекает до (год, включительно)</label>
-            <input
-              id={expiresId}
-              type="number"
-              inputMode="numeric"
-              min={2000}
-              max={2100}
-              placeholder="Например, 2026"
-              value={value.licenseExpiresBy}
-              onChange={(event) => onChange({ ...value, licenseExpiresBy: event.target.value.slice(0, 4) })}
-            />
-          </div>
-          <fieldset className="report-agreement__group">
-            <legend>Не передано</legend>
-            {transferKinds.map((kind) => (
-              <label key={kind} className="report-chip__option">
-                <input
-                  type="checkbox"
-                  checked={value.notTransferred.includes(kind)}
-                  onChange={(event) => toggleTransfer(kind, event.target.checked)}
-                />
-                <span>{transferKindLabels[kind]}</span>
-              </label>
-            ))}
-          </fieldset>
-          <fieldset className="report-agreement__group">
-            <legend>Вендор</legend>
-            {vendors.length === 0 && <p className="report-popover__note">Нет доступных значений.</p>}
-            <ul className="report-chip__options">
-              {vendors.map((vendor) => (
-                <li key={vendor.id}>
-                  <label className="report-chip__option">
-                    <input
-                      type="checkbox"
-                      checked={value.vendorIds.includes(vendor.id)}
-                      onChange={(event) => toggleVendor(vendor.id, event.target.checked)}
-                    />
-                    <span>{vendor.label}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          </fieldset>
+    <FilterGroup label="Договор и лицензия" summary={count === 0 ? 'все' : `условий ${count}`} active={count > 0}>
+      <div className="report-agreement">
+        <p className="report-filter-group__note">Все условия относятся к одному и тому же продукту взаимодействия.</p>
+        <div className="report-agreement__field">
+          <label htmlFor={signedId}>Подписание лицензии</label>
+          <select
+            id={signedId}
+            value={value.licenseSigned}
+            onChange={(event) => onChange({ ...value, licenseSigned: event.target.value as AgreementSelection['licenseSigned'] })}
+          >
+            <option value="">Все</option>
+            <option value="true">Лицензия подписана</option>
+            <option value="false">Не подписана или не указано</option>
+          </select>
         </div>
-      )}
-    </Chip>
+        <div className="report-agreement__field">
+          <label htmlFor={expiresId}>Лицензия истекает до (год, включительно)</label>
+          <input
+            id={expiresId}
+            type="number"
+            inputMode="numeric"
+            min={2000}
+            max={2100}
+            placeholder="Например, 2026"
+            value={value.licenseExpiresBy}
+            onChange={(event) => onChange({ ...value, licenseExpiresBy: event.target.value.slice(0, 4) })}
+          />
+        </div>
+        <fieldset className="report-agreement__group">
+          <legend>Не передано</legend>
+          {transferKinds.map((kind) => (
+            <label key={kind} className="report-filter-group__option">
+              <input
+                type="checkbox"
+                checked={value.notTransferred.includes(kind)}
+                onChange={(event) => toggleTransfer(kind, event.target.checked)}
+              />
+              <span>{transferKindLabels[kind]}</span>
+            </label>
+          ))}
+        </fieldset>
+        <fieldset className="report-agreement__group">
+          <legend>Вендор</legend>
+          {vendors.length === 0 && <p className="report-filter-group__note">Нет доступных значений.</p>}
+          <ul className="report-filter-group__options">
+            {vendors.map((vendor) => (
+              <li key={vendor.id}>
+                <label className="report-filter-group__option">
+                  <input
+                    type="checkbox"
+                    checked={value.vendorIds.includes(vendor.id)}
+                    onChange={(event) => toggleVendor(vendor.id, event.target.checked)}
+                  />
+                  <span>{vendor.label}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </fieldset>
+        <button type="button" className="button--secondary report-filter-group__clear" disabled={count === 0} onClick={() => onChange(defaultAgreementSelection())}>
+          Снять выбор
+        </button>
+      </div>
+    </FilterGroup>
   )
 }

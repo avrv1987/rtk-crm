@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
 import { apiClient, type Me, type Organization } from '../../shared/api/client'
+import { ActionMenu } from '../../shared/ui/ActionMenu'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
+import { HintButton } from '../../shared/ui/HintButton'
+import { CardDialog, CardSection } from '../interactions/cardUi'
 import {
   activityStatusLabels,
   agreementStatusLabels,
@@ -14,18 +17,25 @@ import {
   type Agreement,
   type AgreementActivity,
   type AgreementActivityInput,
-  type AgreementInput,
   type AgreementOptions,
   type AgreementStatus,
   type AgreementSummary
 } from './agreementsApi'
-import { planKindLabels, planKinds, type PlanKind } from '../reports/signingPlan'
+import { agreementStatuses, daysInStatus, inputFromAgreement } from './agreementModel'
+import { planKindLabels } from '../reports/signingPlan'
+import { daysLabel } from '../work/workShared'
+import { AgreementFiles } from './AgreementFiles'
+import { AgreementForm } from './AgreementForm'
+import { AgreementSupplements } from './AgreementSupplements'
+import { AgreementTransitions } from './AgreementTransitions'
 import { CommandError, useAccessErrorHandler, useCommandKey } from './agreementUi'
 import './agreements.css'
 
 type AgreementsPanelProps = {
   organizationId: Organization['id']
   role: Me['role']
+  initialAgreementId?: string
+  onChanged?: () => void
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
@@ -40,7 +50,6 @@ type Catalogs = {
   kinds: ActivityKind[]
 }
 
-const agreementStatuses: readonly AgreementStatus[] = ['DRAFT', 'ACTIVE', 'COMPLETED', 'TERMINATED']
 const activityStatuses: readonly ActivityStatus[] = ['PLANNED', 'IN_PROGRESS', 'DONE', 'CANCELLED']
 
 const agreementTitle = (agreement: { number: string; concludedOn?: string | null }) => (
@@ -62,18 +71,21 @@ const volumeAndPeriod = (
 
 const orNull = (value: string) => (value.trim() === '' ? null : value.trim())
 const numberOrNull = (value: string) => (value.trim() === '' ? null : Number(value))
+const names = (items: { name: string }[]) => items.map((item) => item.name).join('; ')
 
-export const AgreementsPanel = ({ organizationId, role, onSessionExpired, onProfileUnavailable }: AgreementsPanelProps) => {
+export const AgreementsPanel = ({ organizationId, role, initialAgreementId, onChanged, onSessionExpired, onProfileUnavailable }: AgreementsPanelProps) => {
   const handleAccessError = useAccessErrorHandler(onSessionExpired, onProfileUnavailable)
   const [list, setList] = useState<Load<AgreementSummary[]>>({ kind: 'loading' })
   const [catalogs, setCatalogs] = useState<Load<Catalogs> | null>(null)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(initialAgreementId ?? null)
   const [creating, setCreating] = useState(false)
+  const [statusFilter, setStatusFilter] = useState<AgreementStatus | ''>('')
   const canEdit = role === 'USER' || role === 'LEADER'
   const titleId = useId()
+  const now = Date.now()
 
   const loadList = useCallback(async () => {
-    setList({ kind: 'loading' })
+    setList((current) => (current.kind === 'ready' ? current : { kind: 'loading' }))
     try {
       setList({ kind: 'ready', value: await agreementsApi.list(organizationId) })
     } catch (error) {
@@ -105,128 +117,149 @@ export const AgreementsPanel = ({ organizationId, role, onSessionExpired, onProf
     }
   }, [catalogs, creating, loadCatalogs, selectedId])
 
+  useEffect(() => {
+    if (initialAgreementId !== undefined && list.kind === 'ready') {
+      window.requestAnimationFrame(() => document.getElementById(`agreement-${initialAgreementId}`)?.scrollIntoView({ block: 'start' }))
+    }
+  }, [initialAgreementId, list.kind])
+
   const saved = (agreement: Agreement) => {
     setCreating(false)
     setSelectedId(agreement.id)
     void loadList()
+    onChanged?.()
   }
 
+  const visible = list.kind === 'ready'
+    ? list.value.filter((agreement) => statusFilter === '' || agreement.status === statusFilter)
+    : []
+
   return (
-    <section className="agreements" aria-labelledby={titleId}>
+    <section className={`agreements${selectedId === null ? '' : ' agreements--has-selection'}`} aria-labelledby={titleId}>
       <div className="agreements__header">
-        <h4 id={titleId}>Соглашения</h4>
-        {canEdit && !creating && (
-          <button type="button" className="button--secondary" onClick={() => { setCreating(true); setSelectedId(null); void loadCatalogs() }}>
-            Добавить соглашение
+        <h4 id={titleId}>Договоры с вузом</h4>
+        <HintButton label="Как устроены договоры">
+          Договор с вузом проходит согласование, корректировку и подписание; каждая смена статуса и каждая версия файла сохраняются
+          в истории. К плану мероприятий привязываются взаимодействия вуза и подтверждающие документы; итоги — в отчёте «Реализация договоров».
+        </HintButton>
+        {list.kind === 'ready' && list.value.length > 0 && (
+          <label className="agreements__filter">
+            <span className="visually-hidden">Статус договора</span>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as AgreementStatus | '')}>
+              <option value="">Все статусы</option>
+              {agreementStatuses.map((status) => <option key={status} value={status}>{agreementStatusLabels[status]}</option>)}
+            </select>
+          </label>
+        )}
+        {canEdit && (
+          <button type="button" className="button--secondary agreements__add" onClick={() => { setCreating(true); void loadCatalogs() }}>
+            Добавить договор
           </button>
         )}
       </div>
-      <p className="agreements__hint">
-        Соглашение о сотрудничестве с планом мероприятий. К мероприятиям привязываются работы вуза и подтверждающие документы из них; итоги собираются в отчёте «Реализация соглашений».
-      </p>
-      {list.kind === 'loading' && <p role="status">Загружаем соглашения…</p>}
+      {list.kind === 'loading' && <p role="status">Загружаем договоры…</p>}
       {list.kind === 'failed' && (
-        <CommandError error={list.error} fallback="Не удалось загрузить соглашения." onRetry={() => void loadList()} />
+        <CommandError error={list.error} fallback="Не удалось загрузить договоры." onRetry={() => void loadList()} />
       )}
-      {list.kind === 'ready' && list.value.length === 0 && !creating && <p>Соглашений пока нет.</p>}
-      {list.kind === 'ready' && list.value.length > 0 && (
-        <ul className="agreements__list">
-          {list.value.map((agreement) => (
-            <li key={agreement.id}>
-              <button
-                type="button"
-                className={`agreements__item${agreement.id === selectedId ? ' agreements__item--selected' : ''}`}
-                aria-expanded={agreement.id === selectedId}
-                onClick={() => { setSelectedId(agreement.id === selectedId ? null : agreement.id); setCreating(false) }}
-              >
-                <span className="agreements__item-title">{agreementTitle(agreement)}</span>
-                <span className={`agreements__status agreements__status--${agreement.status.toLowerCase()}`}>
-                  {agreementStatusLabels[agreement.status]}
-                </span>
-                <span className="agreements__item-meta">
-                  {agreement.validUntil ? `до ${formatDate(agreement.validUntil)} · ` : ''}
-                  {agreement.plannedKind && agreement.plannedOn
-                    ? `план: ${planKindLabels[agreement.plannedKind].toLowerCase()} ${formatDate(agreement.plannedOn)} · `
-                    : ''}
-                  мероприятий: {agreement.activityCount} · подтверждений: {agreement.confirmationCount}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {catalogs?.kind === 'loading' && (creating || selectedId !== null) && <p role="status">Загружаем справочники…</p>}
-      {catalogs?.kind === 'failed' && (
-        <CommandError error={catalogs.error} fallback="Не удалось загрузить справочники." onRetry={() => void loadCatalogs()} />
-      )}
-      {creating && catalogs?.kind === 'ready' && (
-        <AgreementForm
-          organizationId={organizationId}
-          options={catalogs.value.options}
-          onSaved={saved}
-          onCancel={() => setCreating(false)}
-          handleAccessError={handleAccessError}
-        />
-      )}
-      {selectedId !== null && catalogs?.kind === 'ready' && (
-        <AgreementDetail
-          key={selectedId}
-          agreementId={selectedId}
-          organizationId={organizationId}
-          catalogs={catalogs.value}
-          canEdit={canEdit}
-          onChanged={() => void loadList()}
-          onRefreshCatalogs={() => void loadCatalogs()}
-          handleAccessError={handleAccessError}
-        />
-      )}
+      {list.kind === 'ready' && list.value.length === 0 && <p>Договоров пока нет.</p>}
+      {list.kind === 'ready' && list.value.length > 0 && visible.length === 0 && <p>Договоров с таким статусом нет.</p>}
+      <div className="agreements__layout">
+        {visible.length > 0 && (
+          <ul className="agreements__list">
+            {visible.map((agreement) => (
+              <li key={agreement.id} id={`agreement-${agreement.id}`}>
+                <button
+                  type="button"
+                  className={`agreements__item${agreement.id === selectedId ? ' agreements__item--selected' : ''}`}
+                  aria-expanded={agreement.id === selectedId}
+                  onClick={() => setSelectedId(agreement.id === selectedId ? null : agreement.id)}
+                >
+                  <span className="agreements__item-title">{agreementTitle(agreement)}</span>
+                  <span className={`agreements__status agreements__status--${agreement.status.toLowerCase()}`}>
+                    {agreementStatusLabels[agreement.status]}
+                  </span>
+                  <span className="agreements__item-meta">
+                    {`${daysLabel(daysInStatus(agreement.statusChangedAt, now))} в статусе · `}
+                    {agreement.validUntil ? `до ${formatDate(agreement.validUntil)} · ` : ''}
+                    {agreement.plannedKind && agreement.plannedOn
+                      ? `план: ${planKindLabels[agreement.plannedKind].toLowerCase()} ${formatDate(agreement.plannedOn)} · `
+                      : ''}
+                    мероприятий: {agreement.activityCount} · подтверждений: {agreement.confirmationCount}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {selectedId !== null && (
+          <div className="agreements__detail">
+            <button type="button" className="button--secondary agreements__back" onClick={() => setSelectedId(null)}>← Все договоры</button>
+            {catalogs?.kind === 'loading' && <p role="status">Загружаем справочники…</p>}
+            {catalogs?.kind === 'failed' && (
+              <CommandError error={catalogs.error} fallback="Не удалось загрузить справочники." onRetry={() => void loadCatalogs()} />
+            )}
+            {catalogs?.kind === 'ready' && (
+              <AgreementDetail
+                key={selectedId}
+                agreementId={selectedId}
+                organizationId={organizationId}
+                catalogs={catalogs.value}
+                canEdit={canEdit}
+                onChanged={() => { void loadList(); onChanged?.() }}
+                onRefreshCatalogs={() => void loadCatalogs()}
+                handleAccessError={handleAccessError}
+              />
+            )}
+          </div>
+        )}
+      </div>
+      <CardDialog open={creating} title="Новый договор с вузом" onClose={() => setCreating(false)}>
+        {catalogs?.kind === 'loading' && <p role="status">Загружаем справочники…</p>}
+        {catalogs?.kind === 'failed' && (
+          <CommandError error={catalogs.error} fallback="Не удалось загрузить справочники." onRetry={() => void loadCatalogs()} />
+        )}
+        {catalogs?.kind === 'ready' && (
+          <AgreementForm
+            organizationId={organizationId}
+            options={catalogs.value.options}
+            onSaved={saved}
+            onCancel={() => setCreating(false)}
+            handleAccessError={handleAccessError}
+          />
+        )}
+      </CardDialog>
     </section>
   )
 }
 
-type AgreementFormProps = {
-  organizationId: string
-  agreement?: Agreement
+type AttachFromWorkProps = {
+  agreement: Agreement
   options: AgreementOptions
   onSaved: (agreement: Agreement) => void
-  onCancel: () => void
   handleAccessError: (error: unknown) => boolean
 }
 
-const AgreementForm = ({ organizationId, agreement, options, onSaved, onCancel, handleAccessError }: AgreementFormProps) => {
-  const [number, setNumber] = useState(agreement?.number ?? '')
-  const [concludedOn, setConcludedOn] = useState(agreement?.concludedOn ?? '')
-  const [validUntil, setValidUntil] = useState(agreement?.validUntil ?? '')
-  const [plannedKind, setPlannedKind] = useState<PlanKind | ''>(agreement?.plannedKind ?? '')
-  const [plannedOn, setPlannedOn] = useState(agreement?.plannedOn ?? '')
-  const [parties, setParties] = useState(agreement?.parties ?? '')
-  const [status, setStatus] = useState<AgreementStatus>(agreement?.status ?? 'ACTIVE')
-  const [fileId, setFileId] = useState(agreement?.file?.id ?? '')
+const AttachFromWork = ({ agreement, options, onSaved, handleAccessError }: AttachFromWorkProps) => {
+  const [open, setOpen] = useState(false)
+  const [fileId, setFileId] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const commandKey = useCommandKey()
 
+  if (!open) {
+    return <button type="button" className="button--secondary" onClick={() => setOpen(true)}>Из документов взаимодействий</button>
+  }
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const payload: AgreementInput = {
-      version: agreement?.version ?? null,
-      number: number.trim(),
-      concludedOn: orNull(concludedOn),
-      validUntil: orNull(validUntil),
-      parties: orNull(parties),
-      status,
-      fileAttachmentId: orNull(fileId),
-      plannedKind: plannedKind === '' ? null : plannedKind,
-      plannedOn: plannedKind === '' ? null : orNull(plannedOn)
-    }
+    const payload = { ...inputFromAgreement(agreement), fileAttachmentId: fileId }
     setSaving(true)
     setError(null)
     try {
-      const key = commandKey.keyFor(payload)
-      const result = agreement === undefined
-        ? await agreementsApi.create(organizationId, payload, key)
-        : await agreementsApi.update(agreement.id, payload, key)
+      const result = await agreementsApi.update(agreement.id, payload, commandKey.keyFor(payload))
       commandKey.settle()
+      setOpen(false)
+      setFileId('')
       onSaved(result)
     } catch (caught) {
       commandKey.settle(caught)
@@ -239,77 +272,21 @@ const AgreementForm = ({ organizationId, agreement, options, onSaved, onCancel, 
   }
 
   return (
-    <form className="agreement-form" onSubmit={(event) => void submit(event)} aria-label={agreement ? 'Реквизиты соглашения' : 'Новое соглашение'}>
-      <div className="agreement-form__grid">
-        <label>
-          <span>Номер соглашения<span className="required-mark" aria-hidden="true"> *</span></span>
-          <input value={number} required maxLength={100} onChange={(event) => setNumber(event.target.value)} />
-        </label>
-        <label>
-          Статус
-          <select value={status} onChange={(event) => setStatus(event.target.value as AgreementStatus)}>
-            {agreementStatuses.map((item) => <option key={item} value={item}>{agreementStatusLabels[item]}</option>)}
-          </select>
-        </label>
-        <label>
-          Дата заключения
-          <input type="date" value={concludedOn} max={validUntil || undefined} onChange={(event) => setConcludedOn(event.target.value)} />
-        </label>
-        <label>
-          Действует до
-          <input type="date" value={validUntil} min={concludedOn || undefined} onChange={(event) => setValidUntil(event.target.value)} />
-        </label>
-        <label>
-          План
-          <select
-            value={plannedKind}
-            onChange={(event) => {
-              const next = event.target.value as PlanKind | ''
-              setPlannedKind(next)
-              if (next === '') {
-                setPlannedOn('')
-              } else if (next === 'RENEWAL' && plannedOn === '' && validUntil !== '') {
-                setPlannedOn(validUntil)
-              }
-            }}
-          >
-            <option value="">Не запланировано</option>
-            {planKinds.map((item) => <option key={item} value={item}>{planKindLabels[item]}</option>)}
-          </select>
-        </label>
-        <label>
-          {plannedKind === 'RENEWAL' ? 'Плановая дата продления' : 'Плановая дата подписания'}
-          <input
-            type="date"
-            value={plannedOn}
-            required={plannedKind !== ''}
-            disabled={plannedKind === ''}
-            min={plannedKind === 'RENEWAL' ? concludedOn || undefined : undefined}
-            onChange={(event) => setPlannedOn(event.target.value)}
-          />
-          {plannedKind === 'RENEWAL' && validUntil !== '' && (
-            <span className="agreement-form__hint">{`Соглашение действует до ${formatDate(validUntil)}; продление планируют от этой даты.`}</span>
-          )}
-        </label>
-        <label className="agreement-form__wide">
-          Стороны и подписанты
-          <textarea value={parties} maxLength={2000} rows={2} onChange={(event) => setParties(event.target.value)} />
-        </label>
-        <label className="agreement-form__wide">
-          Файл соглашения
-          <select value={fileId} onChange={(event) => setFileId(event.target.value)}>
-            <option value="">Не выбран</option>
-            {options.attachments.map((item) => (
-              <option key={item.id} value={item.id}>{item.originalName} — {item.interactionTitle}, {item.stageName}</option>
-            ))}
-          </select>
-          <span className="agreement-form__hint">Подписанный файл загружают в работу вуза на нужном этапе; здесь выбирается уже проверенный документ.</span>
-        </label>
-      </div>
-      {error !== null && <CommandError error={error} fallback="Соглашение не сохранено." />}
+    <form className="agreement-form agreement-form--inline" onSubmit={(event) => void submit(event)} aria-label="Версия из документов взаимодействий">
+      <label>
+        Проверенный документ из взаимодействий вуза
+        <select value={fileId} required onChange={(event) => setFileId(event.target.value)}>
+          <option value="">Выберите документ</option>
+          {options.attachments.map((item) => (
+            <option key={item.id} value={item.id}>{item.originalName} — {item.interactionTitle}, {item.stageName}</option>
+          ))}
+        </select>
+      </label>
+      {options.attachments.length === 0 && <p className="agreement-form__hint">Проверенных документов во взаимодействиях вуза пока нет.</p>}
+      {error !== null && <CommandError error={error} fallback="Версия не добавлена." />}
       <div className="agreement-form__actions">
-        <button type="submit" disabled={saving}>{saving ? 'Сохраняем…' : 'Сохранить соглашение'}</button>
-        <button type="button" className="button--secondary" onClick={onCancel} disabled={saving}>Отмена</button>
+        <button type="submit" disabled={saving || fileId === ''}>{saving ? 'Добавляем…' : 'Добавить версию'}</button>
+        <button type="button" className="button--secondary" disabled={saving} onClick={() => setOpen(false)}>Отмена</button>
       </div>
     </form>
   )
@@ -414,157 +391,225 @@ const AgreementDetail = ({
   }
 
   if (state.kind === 'loading') {
-    return <p role="status">Загружаем соглашение…</p>
+    return <p role="status">Загружаем договор…</p>
   }
   if (state.kind === 'failed') {
-    return <CommandError error={state.error} fallback="Не удалось открыть соглашение." onRetry={() => void load()} />
+    return <CommandError error={state.error} fallback="Не удалось открыть договор." onRetry={() => void load()} />
   }
   const agreement = state.value
   const confirmationCount = agreement.activities.reduce((sum, activity) => sum + activity.attachments.length, 0)
+  const subject = [names(agreement.directions), names(agreement.programs), names(agreement.products)].filter((part) => part !== '').join('; ')
+  const changed = (updated: Agreement) => {
+    setState({ kind: 'ready', value: updated })
+    onChanged()
+  }
 
   return (
-    <article className="agreement-detail" aria-label={`Соглашение ${agreementTitle(agreement)}`}>
+    <article className="agreement-detail" aria-label={`Договор ${agreementTitle(agreement)}`}>
       <div className="agreement-detail__header">
-        <h5>Соглашение {agreementTitle(agreement)}</h5>
-        <span className={`agreements__status agreements__status--${agreement.status.toLowerCase()}`}>
-          {agreementStatusLabels[agreement.status]}
+        <h5>Договор {agreementTitle(agreement)}</h5>
+        <span className="agreement-detail__status">
+          <span className={`agreements__status agreements__status--${agreement.status.toLowerCase()}`}>
+            {agreementStatusLabels[agreement.status]}
+          </span>
+          <span className="agreement-activity__document-meta">
+            {`${daysLabel(daysInStatus(agreement.statusChangedAt, Date.now()))} в статусе, с ${formatInstant(agreement.statusChangedAt)}`}
+          </span>
         </span>
+        <ActionMenu
+          label={`Ещё действия с договором ${agreementTitle(agreement)}`}
+          items={[
+            ...(canEdit ? [{ label: 'Изменить реквизиты…', onSelect: () => { onRefreshCatalogs(); setEditingAgreement(true) } }] : []),
+            ...(confirmationCount > 0 ? [{ label: `Скачать подтверждения архивом (${confirmationCount})`, onSelect: () => void downloadArchive(agreement) }] : [])
+          ]}
+        />
       </div>
-      {editingAgreement ? (
+      {canEdit && (
+        <AgreementTransitions agreement={agreement} onDone={changed} handleAccessError={handleAccessError} />
+      )}
+      {archiving && <p role="status">Готовим архив подтверждений…</p>}
+      <CardDialog open={editingAgreement} title="Реквизиты договора" onClose={() => setEditingAgreement(false)}>
         <AgreementForm
           organizationId={organizationId}
           agreement={agreement}
           options={catalogs.options}
-          onSaved={(updated) => { setEditingAgreement(false); setState({ kind: 'ready', value: updated }); onChanged() }}
+          onSaved={(updated) => { setEditingAgreement(false); changed(updated) }}
           onCancel={() => setEditingAgreement(false)}
           handleAccessError={handleAccessError}
         />
-      ) : (
-        <>
-          <dl className="agreement-detail__fields">
-            <div>
-              <dt>Вуз</dt>
-              <dd>{agreement.organizationName}</dd>
-            </div>
-            <div>
-              <dt>Срок действия</dt>
-              <dd>{formatPeriod(agreement.concludedOn, agreement.validUntil)}</dd>
-            </div>
-            <div>
-              <dt>План подписания или продления</dt>
-              <dd>
-                {agreement.plannedKind && agreement.plannedOn
-                  ? `${planKindLabels[agreement.plannedKind]}: ${formatDate(agreement.plannedOn)}`
-                  : 'Не запланировано'}
-              </dd>
-            </div>
-            <div>
-              <dt>Стороны и подписанты</dt>
-              <dd>{agreement.parties ?? 'Не указаны'}</dd>
-            </div>
-            <div>
-              <dt>Файл соглашения</dt>
-              <dd>
-                {agreement.file ? (
-                  <button type="button" className="agreements-link" onClick={() => void downloadDocument(agreement.file!.id, agreement.file!.originalName)}>
-                    {agreement.file.originalName}
-                  </button>
-                ) : 'Не выбран'}
-              </dd>
-            </div>
-          </dl>
-          <div className="agreement-detail__actions">
-            {canEdit && (
-              <button type="button" className="button--secondary" onClick={() => { onRefreshCatalogs(); setEditingAgreement(true) }}>Изменить реквизиты</button>
+      </CardDialog>
+      <dl className="agreement-detail__fields">
+        <div>
+          <dt>Вуз</dt>
+          <dd>{agreement.organizationName}</dd>
+        </div>
+        <div>
+          <dt>Дата подписания</dt>
+          <dd>{agreement.concludedOn ? formatDate(agreement.concludedOn) : 'Не подписан'}</dd>
+        </div>
+        <div>
+          <dt>Действует до</dt>
+          <dd>{agreement.validUntil ? formatDate(agreement.validUntil) : 'Не указано'}</dd>
+        </div>
+        <div>
+          <dt>Отправлен на согласование</dt>
+          <dd>{agreement.sentOn ? formatDate(agreement.sentOn) : 'Не отправлялся'}</dd>
+        </div>
+        <div>
+          <dt>Подписант вуза</dt>
+          <dd>{agreement.universitySigner?.name ?? 'Не выбран'}</dd>
+        </div>
+        <div>
+          <dt>Подписант школы</dt>
+          <dd>{agreement.schoolSigner?.name ?? 'Не выбран'}</dd>
+        </div>
+        <div>
+          <dt>Стороны</dt>
+          <dd>{agreement.parties ?? 'Не указаны'}</dd>
+        </div>
+        <div>
+          <dt>План подписания или продления</dt>
+          <dd>
+            {agreement.plannedKind && agreement.plannedOn
+              ? `${planKindLabels[agreement.plannedKind]}: ${formatDate(agreement.plannedOn)}`
+              : 'Не запланировано'}
+          </dd>
+        </div>
+        <div className="agreement-detail__wide">
+          <dt>Предмет договора</dt>
+          <dd>{subject === '' ? 'Не указан' : subject}</dd>
+        </div>
+        <div className="agreement-detail__wide">
+          <dt>Связанные взаимодействия</dt>
+          <dd>
+            {agreement.interactions.length === 0 ? 'Не связаны' : (
+              <ul className="agreement-detail__works">
+                {agreement.interactions.map((item) => (
+                  <li key={item.id}><a href={`#/organizations/${agreement.organizationId}/${item.id}`}>{item.title}</a></li>
+                ))}
+              </ul>
             )}
-            <button type="button" className="button--secondary" disabled={archiving || confirmationCount === 0} onClick={() => void downloadArchive(agreement)}>
-              {archiving ? 'Готовим архив…' : `Скачать подтверждения архивом (${confirmationCount})`}
-            </button>
-          </div>
-        </>
-      )}
+          </dd>
+        </div>
+      </dl>
+
+      <AgreementFiles
+        title="Файл договора"
+        agreementId={agreement.id}
+        currentFile={agreement.currentFile ?? null}
+        files={agreement.files}
+        canEdit={canEdit}
+        onUploaded={() => void load()}
+        handleAccessError={handleAccessError}
+      >
+        <AttachFromWork agreement={agreement} options={catalogs.options} onSaved={changed} handleAccessError={handleAccessError} />
+      </AgreementFiles>
+
+      <CardSection title="Дополнительные соглашения" count={agreement.supplements.length}>
+        <AgreementSupplements
+          agreementId={agreement.id}
+          supplements={agreement.supplements}
+          canEdit={canEdit}
+          onChanged={() => void load()}
+          handleAccessError={handleAccessError}
+        />
+      </CardSection>
+
+      <CardSection title="История статусов" count={agreement.history.length}>
+        {agreement.history.length === 0 ? <p>Переходов пока не было.</p> : (
+          <ol className="agreement-history">
+            {agreement.history.map((event) => (
+              <li key={event.id}>
+                <span className="agreement-history__move">
+                  {event.fromStatus ? `${agreementStatusLabels[event.fromStatus]} → ` : ''}{agreementStatusLabels[event.toStatus]}
+                </span>
+                <span className="agreement-activity__document-meta">
+                  {[formatInstant(event.occurredAt), event.actorName, event.interactionTitle ? `из взаимодействия «${event.interactionTitle}»` : null]
+                    .filter((part) => part !== null && part !== '').join(' · ')}
+                </span>
+                {event.comment && <span className="agreement-files__comment">{event.comment}</span>}
+              </li>
+            ))}
+          </ol>
+        )}
+      </CardSection>
 
       <section className="agreement-plan" aria-label="План мероприятий">
         <div className="agreement-plan__header">
           <h6>План мероприятий</h6>
           {canEdit && editor === null && (
-            <button type="button" onClick={() => openEditor({ mode: 'create' })}>Добавить мероприятие</button>
+            <button type="button" className="button--secondary" onClick={() => openEditor({ mode: 'create' })}>Добавить мероприятие</button>
           )}
         </div>
         {actionError !== null && <CommandError error={actionError} fallback="Действие не выполнено." />}
-        {editor?.mode === 'create' && (
-          <ActivityForm
-            agreementId={agreement.id}
-            catalogs={catalogs}
-            onSaved={() => { setEditor(null); refresh() }}
-            onCancel={() => setEditor(null)}
-            handleAccessError={handleAccessError}
-          />
-        )}
+        <CardDialog
+          open={editor !== null}
+          title={editor?.mode === 'edit' ? 'Изменить мероприятие' : 'Новое мероприятие'}
+          onClose={() => setEditor(null)}
+        >
+          {editor !== null && (
+            <ActivityForm
+              key={editor.mode === 'edit' ? editor.activity.id : 'create'}
+              agreementId={agreement.id}
+              activity={editor.mode === 'edit' ? editor.activity : undefined}
+              catalogs={catalogs}
+              onSaved={() => { setEditor(null); refresh() }}
+              onCancel={() => setEditor(null)}
+              handleAccessError={handleAccessError}
+            />
+          )}
+        </CardDialog>
         {agreement.activities.length === 0 && editor === null && <p>Мероприятий пока нет.</p>}
         <ul className="agreement-plan__list">
           {agreement.activities.map((activity) => (
             <li key={activity.id} className="agreement-activity">
-              {editor?.mode === 'edit' && editor.activity.id === activity.id ? (
-                <ActivityForm
-                  agreementId={agreement.id}
-                  activity={activity}
-                  catalogs={catalogs}
-                  onSaved={() => { setEditor(null); refresh() }}
-                  onCancel={() => setEditor(null)}
-                  handleAccessError={handleAccessError}
-                />
-              ) : (
-                <>
-                  <div className="agreement-activity__header">
-                    <span className="agreement-activity__kind">{activity.kindName}</span>
-                    <span className={`agreement-activity__status agreement-activity__status--${activity.status.toLowerCase()}`}>
-                      {activityStatusLabels[activity.status]}
-                    </span>
-                  </div>
-                  <p className="agreement-activity__title">{activity.title}</p>
-                  <dl className="agreement-activity__facts">
-                    <div>
-                      <dt>План</dt>
-                      <dd>{volumeAndPeriod(activity.plannedVolume, activity.unit, activity.plannedStart, activity.plannedEnd)}</dd>
-                    </div>
-                    <div>
-                      <dt>Факт</dt>
-                      <dd>{volumeAndPeriod(activity.actualVolume, activity.unit, activity.actualStart, activity.actualEnd)}</dd>
-                    </div>
-                    <div>
-                      <dt>Ответственный</dt>
-                      <dd>{activity.responsibleName ?? 'Не назначен'}</dd>
-                    </div>
-                    <div>
-                      <dt>Работы</dt>
-                      <dd>{activity.interactions.length === 0 ? 'Не связаны' : activity.interactions.map((item) => item.title).join('; ')}</dd>
-                    </div>
-                  </dl>
-                  <div className="agreement-activity__documents">
-                    <span>Подтверждения:</span>
-                    {activity.attachments.length === 0 ? (
-                      <span className="agreement-activity__missing">нет</span>
-                    ) : (
-                      <ul>
-                        {activity.attachments.map((item) => (
-                          <li key={item.id}>
-                            <button type="button" className="agreements-link" onClick={() => void downloadDocument(item.id, item.originalName)}>
-                              {item.originalName}
-                            </button>
-                            <span className="agreement-activity__document-meta"> {formatInstant(item.createdAt)}, {item.stageName}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  {canEdit && editor === null && (
-                    <div className="agreement-activity__actions">
-                      <button type="button" className="button--secondary" onClick={() => openEditor({ mode: 'edit', activity })}>Изменить</button>
-                      <button type="button" className="button--danger" onClick={() => setDeleting(activity)}>Удалить</button>
-                    </div>
-                  )}
-                </>
+              <div className="agreement-activity__header">
+                <span className="agreement-activity__kind">{activity.kindName}</span>
+                <span className={`agreement-activity__status agreement-activity__status--${activity.status.toLowerCase()}`}>
+                  {activityStatusLabels[activity.status]}
+                </span>
+              </div>
+              <p className="agreement-activity__title">{activity.title}</p>
+              <dl className="agreement-activity__facts">
+                <div>
+                  <dt>План</dt>
+                  <dd>{volumeAndPeriod(activity.plannedVolume, activity.unit, activity.plannedStart, activity.plannedEnd)}</dd>
+                </div>
+                <div>
+                  <dt>Факт</dt>
+                  <dd>{volumeAndPeriod(activity.actualVolume, activity.unit, activity.actualStart, activity.actualEnd)}</dd>
+                </div>
+                <div>
+                  <dt>Ответственный</dt>
+                  <dd>{activity.responsibleName ?? 'Не назначен'}</dd>
+                </div>
+                <div>
+                  <dt>Взаимодействия</dt>
+                  <dd>{activity.interactions.length === 0 ? 'Не связаны' : activity.interactions.map((item) => item.title).join('; ')}</dd>
+                </div>
+              </dl>
+              <div className="agreement-activity__documents">
+                <span>Подтверждения:</span>
+                {activity.attachments.length === 0 ? (
+                  <span className="agreement-activity__missing">нет</span>
+                ) : (
+                  <ul>
+                    {activity.attachments.map((item) => (
+                      <li key={item.id}>
+                        <button type="button" className="agreements-link" onClick={() => void downloadDocument(item.id, item.originalName)}>
+                          {item.originalName}
+                        </button>
+                        <span className="agreement-activity__document-meta"> {formatInstant(item.createdAt)}, {item.stageName}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              {canEdit && editor === null && (
+                <div className="agreement-activity__actions">
+                  <button type="button" className="button--secondary" onClick={() => openEditor({ mode: 'edit', activity })}>Изменить</button>
+                  <button type="button" className="button--danger" onClick={() => setDeleting(activity)}>Удалить</button>
+                </div>
               )}
             </li>
           ))}
@@ -573,7 +618,7 @@ const AgreementDetail = ({
       <ConfirmDialog
         open={deleting !== null}
         title="Удалить мероприятие?"
-        description={`«${deleting?.title ?? ''}» будет удалено из плана вместе со связями. Сами документы останутся в работах вуза.`}
+        description={`«${deleting?.title ?? ''}» будет удалено из плана вместе со связями. Сами документы останутся во взаимодействиях вуза.`}
         confirmLabel="Удалить"
         onConfirm={() => void confirmDelete()}
         onCancel={() => setDeleting(null)}
@@ -710,8 +755,8 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
         </label>
       </div>
       <fieldset className="agreement-form__choices">
-        <legend>Связанные работы вуза</legend>
-        {catalogs.options.interactions.length === 0 && <p>У вуза пока нет работ.</p>}
+        <legend>Связанные взаимодействия вуза</legend>
+        {catalogs.options.interactions.length === 0 && <p>У вуза пока нет взаимодействий.</p>}
         <ul>
           {catalogs.options.interactions.map((item) => (
             <li key={item.id}>
@@ -730,9 +775,9 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
       <fieldset className="agreement-form__choices" aria-describedby={`${formId}-documents`}>
         <legend>Подтверждающие документы</legend>
         <p id={`${formId}-documents`} className="agreement-form__hint">
-          Документы загружаются в работу вуза на нужном этапе и после проверки выбираются здесь. Списки обучившихся с ФИО не прикладывайте без решения оператора персональных данных: число обученных указывается объёмом.
+          Документы загружаются во взаимодействие с вузом на нужном этапе и после проверки выбираются здесь. Списки обучившихся с ФИО не прикладывайте без решения оператора персональных данных: число обученных указывается объёмом.
         </p>
-        {catalogs.options.attachments.length === 0 && <p>Проверенных документов в работах вуза пока нет.</p>}
+        {catalogs.options.attachments.length === 0 && <p>Проверенных документов во взаимодействиях вуза пока нет.</p>}
         <ul>
           {catalogs.options.attachments.map((item) => (
             <li key={item.id}>

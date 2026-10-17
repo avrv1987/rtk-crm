@@ -155,8 +155,8 @@ export const TeacherRoster = ({
     })
   }
 
-  const download = (roster: Roster) => void run(`file:${roster.id}`, async () => {
-    const file = await apiClient.exportTeacherRoster(roster.id, { mode: modes[roster.id] ?? 'PENDING' })
+  const download = (roster: Roster, format: 'XLSX' | 'MOODLE_CSV') => void run(`file:${format}:${roster.id}`, async () => {
+    const file = await apiClient.exportTeacherRoster(roster.id, { mode: modes[roster.id] ?? 'PENDING', format })
     saveFile(file.blob, file.fileName)
     setNotice(`Файл «${file.fileName}» скачан: преподавателей ${file.rows}${file.skipped > 0 ? `, не готовы и не вошли ${file.skipped}` : ''}. Передайте его LMS-команде и отметьте передачу.`)
     const rosters = await apiClient.listTeacherRosters(interaction.id)
@@ -338,11 +338,24 @@ export const TeacherRoster = ({
                   </label>
                 </fieldset>
                 <div className="source-form__actions">
-                  <button type="button" disabled={busy(`file:${roster.id}`)} onClick={() => download(roster)}>
-                    {busy(`file:${roster.id}`) ? 'Готовим файл…' : 'Скачать файл для LMS'}
+                  <button type="button" disabled={busy(`file:XLSX:${roster.id}`)} onClick={() => download(roster, 'XLSX')}>
+                    {busy(`file:XLSX:${roster.id}`) ? 'Готовим файл…' : 'Скачать файл для LMS'}
+                  </button>
+                  <button
+                    type="button"
+                    className="button--secondary"
+                    disabled={busy(`file:MOODLE_CSV:${roster.id}`)}
+                    onClick={() => download(roster, 'MOODLE_CSV')}
+                  >
+                    {busy(`file:MOODLE_CSV:${roster.id}`) ? 'Готовим файл…' : 'Скачать CSV для загрузки в Moodle'}
                   </button>
                 </div>
-                {failure(`file:${roster.id}`, 'Файл не сформирован.')}
+                <p className="data-sources__hint">
+                  CSV читает штатная загрузка пользователей Moodle: сразу записывает преподавателей на курс и в группу из списка.
+                  Курс Moodle ищет по краткому имени, группу — по названию, поэтому укажите их в списке так, как они записаны в LMS.
+                </p>
+                {failure(`file:XLSX:${roster.id}`, 'Файл не сформирован.')}
+                {failure(`file:MOODLE_CSV:${roster.id}`, 'Файл не сформирован.')}
               </div>
             )}
             {roster.exports.length > 0 && (

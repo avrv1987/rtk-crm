@@ -37,16 +37,32 @@ export const useCommandKey = () => {
 
 const fieldLabels: Record<string, string> = {
   number: 'Номер',
-  validUntil: 'Срок действия',
+  validUntil: 'Действует до',
+  concludedOn: 'Дата подписания',
+  signedOn: 'Дата подписания',
+  sentOn: 'Отправлен на согласование',
+  status: 'Статус',
+  toStatus: 'Новый статус',
+  comment: 'Комментарий',
+  agreement: 'Договор',
+  universitySignerContactId: 'Подписант вуза',
+  schoolSignerProfileId: 'Подписант школы',
+  interactionId: 'Взаимодействие',
+  programIds: 'Программы',
+  productIds: 'Продукты',
+  directionIds: 'Направления',
+  subject: 'Предмет',
+  file: 'Файл',
+  supplementId: 'Допсоглашение',
   plannedKind: 'Вид плана',
   plannedOn: 'Плановая дата',
-  fileAttachmentId: 'Файл соглашения',
+  fileAttachmentId: 'Документ из взаимодействия',
   kindId: 'Вид мероприятия',
   title: 'Мероприятие',
   plannedEnd: 'Плановое окончание',
   actualEnd: 'Фактическое окончание',
   responsibleProfileId: 'Ответственный',
-  interactionIds: 'Работы',
+  interactionIds: 'Взаимодействия',
   attachmentIds: 'Подтверждения',
   name: 'Название',
   to: 'Период',
@@ -60,7 +76,7 @@ export const errorMessage = (error: unknown, fallback: string) => {
   if (error.code === 'VERSION_CONFLICT') {
     return `${error.message}. Обновите данные и повторите изменение.`
   }
-  if (error.code === 'NOT_FOUND' || error.code === 'FORBIDDEN' || error.code === 'CONFIRMATION_LIMIT') {
+  if (error.code === 'NOT_FOUND' || error.code === 'FORBIDDEN' || error.code === 'CONFIRMATION_LIMIT' || error.code === 'PAYLOAD_TOO_LARGE') {
     return error.message
   }
   if (error.code === 'VALIDATION_ERROR') {

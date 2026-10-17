@@ -7,9 +7,14 @@ import {
   type ReportManagerOption
 } from '../../shared/api/client'
 import { todayInMoscow } from '../../shared/format/datetime'
+import { ActionMenu } from '../../shared/ui/ActionMenu'
+import { FilterButton, FilterPanel } from '../../shared/ui/FilterPanel'
+import { HintButton } from '../../shared/ui/HintButton'
 import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { terms } from '../../shared/ui/terms'
 import { saveFile } from '../admin/saveFile'
+import { FilterChips, type ActiveChip } from '../control/FilterFields'
 import { daysLabel, formatDate, handledAccessError, requestIdOf } from '../work/workShared'
 import {
   calendarDaysBetween,
@@ -71,6 +76,7 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
   const [listState, setListState] = useState<ListState>({ kind: 'loading' })
   const [options, setOptions] = useState<Options>({ organizations: [], managers: [] })
   const [download, setDownload] = useState<DownloadState>({ kind: 'idle' })
+  const [panelOpen, setPanelOpen] = useState(false)
   const requestVersion = useRef(0)
   const handlers = { onSessionExpired, onProfileUnavailable }
 
@@ -126,16 +132,48 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
     ? options.managers.map((manager) => ({ id: manager.id, label: manager.id === profile.id ? `${manager.displayName} (я)` : manager.displayName }))
     : [{ id: profile.id, label: 'Я' }, ...options.managers.map((manager) => ({ id: manager.id, label: manager.displayName }))]
   const filtered = issueQueryFromFilters({ ...filters, page: 0 }).length > 0
+  const chips: ActiveChip[] = [
+    filters.kind !== '' && { key: 'kind', label: `Вид: ${kindFilterLabels[filters.kind].toLowerCase()}`, onRemove: () => change({ kind: '' }) },
+    filters.riskLevel !== '' && { key: 'level', label: `Уровень риска: ${issueLevelLabels[filters.riskLevel]}`, onRemove: () => change({ riskLevel: '' }) },
+    filters.responsible !== '' && {
+      key: 'responsible',
+      label: `Кто решает: ${responsibles.find((option) => option.id === filters.responsible)?.label ?? 'выбранный ранее сотрудник'}`,
+      onRemove: () => change({ responsible: '' })
+    },
+    filters.organizationId !== '' && {
+      key: 'organization',
+      label: `Вуз: ${options.organizations.find((item) => item.id === filters.organizationId)?.name ?? 'выбранный ранее вуз'}`,
+      onRemove: () => change({ organizationId: '' })
+    },
+    filters.status !== 'OPEN' && { key: 'status', label: `Статус: ${issueStatusLabels[filters.status].toLowerCase()}`, onRemove: () => change({ status: 'OPEN' }) },
+    filters.overdue && { key: 'overdue', label: 'Только с прошедшим сроком', onRemove: () => change({ overdue: false }) }
+  ].filter((chip): chip is ActiveChip => chip !== false)
 
   return (
     <section className="issues-page" aria-labelledby="issues-results-title">
-      <p className="work__intro">
-        {profile.role === 'USER' && 'Проблемы и риски по вашим работам и работам, где вы заместитель.'}
-        {profile.role === 'LEADER' && 'Проблемы и риски по работам команды.'}
-        {profile.role === 'MANAGEMENT' && 'Проблемы и риски по работам всех команд, только просмотр.'}
-      </p>
+      <div className="control-toolbar">
+        <HintButton label="Что на этом экране">
+          {profile.role === 'USER' && 'Проблемы и риски по вашим взаимодействиям и тем, где вы заместитель. '}
+          {profile.role === 'LEADER' && 'Проблемы и риски по взаимодействиям команды. '}
+          {profile.role === 'MANAGEMENT' && 'Проблемы и риски по взаимодействиям всех команд, только просмотр. '}
+          Строка открывает карточку взаимодействия сразу с окном «Проблемы и риски».
+        </HintButton>
+        <FilterButton count={chips.length} onClick={() => setPanelOpen(true)} />
+        <ActionMenu
+          label={terms.moreActions}
+          items={[{
+            label: download.kind === 'saving' ? 'Готовим файл…' : `${terms.export} XLSX`,
+            onSelect: () => {
+              if (download.kind !== 'saving' && listState.kind === 'ready' && listState.total > 0) {
+                void saveXlsx()
+              }
+            }
+          }]}
+        />
+      </div>
+      <FilterChips chips={chips} onReset={() => setFilters(emptyIssueFilters)} />
 
-      <form className="work-filters" aria-label="Отбор проблем и рисков" onSubmit={(event) => event.preventDefault()}>
+      <FilterPanel open={panelOpen} onClose={() => setPanelOpen(false)} onReset={() => setFilters(emptyIssueFilters)}>
         <label>
           Вид
           <select
@@ -161,7 +199,7 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
           </select>
         </label>
         <label>
-          Ответственный
+          Кто решает
           <select value={filters.responsible} onChange={(event) => change({ responsible: event.target.value })}>
             <option value="">Все</option>
             {filters.responsible.length > 0 && !responsibles.some((option) => option.id === filters.responsible) && (
@@ -195,12 +233,7 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
           <input type="checkbox" checked={filters.overdue} onChange={(event) => change({ overdue: event.target.checked })} />
           Только с прошедшим сроком
         </label>
-        {filtered && (
-          <button type="button" className="button--secondary work-filters__reset" onClick={() => setFilters(emptyIssueFilters)}>
-            Сбросить фильтры
-          </button>
-        )}
-      </form>
+      </FilterPanel>
 
       <div className="issues-page__header">
         <h2 id="issues-results-title">Записи</h2>
@@ -208,22 +241,15 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
           {listState.kind === 'ready' && (listState.refreshing ? 'Обновляем…' : `Найдено: ${listState.total}`)}
           {listState.kind === 'loading' && 'Загружаем…'}
         </p>
-        <button
-          type="button"
-          className="button--secondary"
-          disabled={download.kind === 'saving' || listState.kind !== 'ready' || listState.total === 0}
-          onClick={() => void saveXlsx()}
-        >
-          {download.kind === 'saving' ? 'Готовим файл…' : 'Скачать XLSX'}
-        </button>
       </div>
 
       {download.kind === 'failed' && (
         <div className="notice notice--error" role="alert">
-          <p>Не удалось скачать файл. Сузьте отбор или повторите попытку.</p>
+          <p>Не удалось выгрузить файл. Сузьте фильтры или повторите попытку.</p>
           <SupportDetails requestId={requestIdOf(download.error)} />
         </div>
       )}
+      {download.kind === 'saving' && <p className="work__total" role="status">Готовим файл XLSX…</p>}
 
       {listState.kind === 'failed' && (
         <div className="notice notice--error" role="alert">
@@ -234,8 +260,8 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
       )}
 
       {listState.kind === 'ready' && listState.items.length === 0 && (
-        <div className="notice">
-          <p>{filtered ? 'По выбранным условиям записей нет.' : 'Открытых проблем и рисков нет.'}</p>
+        <div className="empty-state">
+          <p>{filtered ? 'По выбранным фильтрам записей нет.' : 'Открытых проблем и рисков нет.'}</p>
         </div>
       )}
 
@@ -244,12 +270,12 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
           <table className="work-control__table work-control__table--cards" aria-labelledby="issues-results-title" aria-busy={listState.refreshing}>
             <thead>
               <tr>
-                <th scope="col">Работа</th>
+                <th scope="col">Взаимодействие</th>
                 <th scope="col">Вуз</th>
-                <th scope="col">КАМ</th>
+                <th scope="col">КАМ вуза</th>
                 <th scope="col">Вид</th>
                 <th scope="col">Описание</th>
-                <th scope="col">Ответственный</th>
+                <th scope="col">Кто решает</th>
                 <th scope="col">Срок</th>
                 <th scope="col">Возраст</th>
               </tr>
@@ -257,17 +283,19 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
             <tbody>
               {listState.items.map((issue) => (
                 <tr key={issue.id}>
-                  <td data-label="Работа">
+                  <td data-label="Взаимодействие">
                     <a href={issuesHref(issue.organizationId, issue.interactionId)}>{issue.interactionTitle}</a>
                   </td>
-                  <td data-label="Вуз">{issue.organizationName}</td>
-                  <td data-label="КАМ">{issue.ownerManagerName ?? 'Требует назначения'}</td>
+                  <td data-label="Вуз"><a href={`#/organizations/${issue.organizationId}`}>{issue.organizationName}</a></td>
+                  <td data-label="КАМ вуза">{issue.ownerManagerName ?? 'Требует назначения'}</td>
                   <td data-label="Вид">
                     {issueTitle(issue)}
                     {issue.status === 'RESOLVED' && <span className="work-control__hint">решена</span>}
                   </td>
-                  <td data-label="Описание" className="issues-page__description">{issue.description}</td>
-                  <td data-label="Ответственный">{issue.responsibleName}</td>
+                  <td data-label="Описание" className="issues-page__description">
+                    <a className="issues-page__open" href={issuesHref(issue.organizationId, issue.interactionId)}>{issue.description}</a>
+                  </td>
+                  <td data-label="Кто решает">{issue.responsibleName}</td>
                   <td data-label="Срок" className={`issues-page__due${isIssueOverdue(issue, today) ? ' issues-page__overdue' : ''}`}>
                     {issue.dueOn === null ? 'не указан' : formatDate(issue.dueOn)}
                     {isIssueOverdue(issue, today) && <span className="work-control__hint">срок прошёл</span>}

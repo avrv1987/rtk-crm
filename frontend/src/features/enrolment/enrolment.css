@@ -375,3 +375,43 @@
 .catalog-import__table-scroll table[aria-label="Потоки зачисления"] td button {
   white-space: nowrap;
 }
+
+.enrolment__back {
+  display: inline-block;
+  margin-bottom: var(--space-3);
+  font-weight: 600;
+}
+
+.enrolment__upload-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.enrolment__expand {
+  min-height: 28px;
+  min-width: 28px;
+  margin-right: var(--space-2);
+  border: 0;
+  padding: 0;
+  color: var(--color-action);
+  background: none;
+}
+
+.enrolment__details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+}
+
+.enrolment__details dt {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.enrolment__details dd {
+  margin: 0;
+  font-weight: 600;
+}

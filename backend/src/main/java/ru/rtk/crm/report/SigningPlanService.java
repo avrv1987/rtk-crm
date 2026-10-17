@@ -23,7 +23,6 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.CrmProfile;
-import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
 import ru.rtk.crm.agreement.AgreementModels.PlanKind;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.interaction.InteractionValidationException;
@@ -39,7 +38,7 @@ public class SigningPlanService {
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     private static final String NO_MANAGER = "Без ответственного КАМ";
-    private static final List<String> COLUMNS = List.of("Вуз", "Команда", "КАМ", "Соглашение", "Вид", "Плановая дата", "Основание даты",
+    private static final List<String> COLUMNS = List.of("Вуз", "Команда", "КАМ", "Договор", "Вид", "Плановая дата", "Основание даты",
             "Статус");
     private static final int[] WIDTHS = {30, 16, 20, 14, 12, 12, 22, 12};
     private static final List<String> TOTAL_COLUMNS = List.of("Название", "Команда", "Подписаний", "Продлений", "Выполнено",
@@ -145,8 +144,11 @@ public class SigningPlanService {
         boolean explicit = candidate.plannedOn() != null;
         PlanKind kind = explicit ? candidate.plannedKind() : PlanKind.RENEWAL;
         LocalDate plannedOn = explicit ? candidate.plannedOn() : candidate.validUntil();
+        // План выполнен, если подписание: договор подписан; если продление: срок действия стал позже базы, записанной
+        // при установке плана (planned_base_until). Без явного плана строка строится по сроку действия и
+        // «выполненной» не помечается.
         boolean done = explicit && (kind == PlanKind.SIGNING
-                ? candidate.status() != AgreementStatus.DRAFT
+                ? candidate.status().signed()
                 : candidate.validUntil() != null
                         && (candidate.plannedBaseUntil() == null || candidate.validUntil().isAfter(candidate.plannedBaseUntil())));
         State state = done ? State.DONE : plannedOn.isBefore(today) ? State.OVERDUE : State.UPCOMING;
@@ -184,7 +186,7 @@ public class SigningPlanService {
     private static List<String> rowValues(SigningPlan.Row row) {
         return List.of(row.organizationName(), row.teamName(), row.managerName() == null ? NO_MANAGER : row.managerName(),
                 row.agreementNumber(), row.kind().title(), DATE.format(row.plannedOn()),
-                row.source() == Source.PLAN ? "задана в плане" : "срок действия соглашения", row.state().title());
+                row.source() == Source.PLAN ? "задана в плане" : "срок действия договора", row.state().title());
     }
 
     private static List<String> totalValues(Totals totals) {
@@ -242,11 +244,11 @@ public class SigningPlanService {
         return List.of(
                 "Сформирован: " + ReportColumn.DATE_TIME.format(generatedAt.atZoneSameInstant(ReportRequest.ZONE))
                         + " (часовой пояс " + ReportRequest.ZONE.getId() + ")",
-                "Период: " + DATE.format(from) + " – " + DATE.format(to) + "; вузы вашей области доступа, расторгнутые соглашения"
+                "Период: " + DATE.format(from) + " – " + DATE.format(to) + "; вузы вашей области доступа, расторгнутые договоры"
                         + " и архивные вузы не учитываются",
-                "Подписание — соглашение в статусе «Проект» с плановой датой подписания; «выполнено», когда статус сменился."
-                        + " Продление — плановая дата продления действующего соглашения; «выполнено», когда срок действия"
-                        + " сдвинут позже прежнего. Действующее соглашение без плановой даты попадает в отчёт продлением"
+                "Подписание — ещё не подписанный договор с плановой датой подписания; «выполнено», когда договор подписан."
+                        + " Продление — плановая дата продления действующего договора; «выполнено», когда срок действия"
+                        + " сдвинут позже прежнего. Действующий договор без плановой даты попадает в отчёт продлением"
                         + " на дату окончания срока действия",
                 "Просрочено — плановая дата раньше сегодняшней (МСК), а подписание или продление не отмечено"
         );

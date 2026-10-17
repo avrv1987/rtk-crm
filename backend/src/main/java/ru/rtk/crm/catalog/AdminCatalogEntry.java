@@ -8,6 +8,10 @@ public record AdminCatalogEntry(
         UUID parentId,
         String parentName,
         boolean archived,
-        int version
+        int version,
+        Boolean laborMarket
 ) {
+    public AdminCatalogEntry(UUID id, String name, UUID parentId, String parentName, boolean archived, int version) {
+        this(id, name, parentId, parentName, archived, version, null);
+    }
 }

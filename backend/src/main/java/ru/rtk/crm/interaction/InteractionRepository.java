@@ -387,6 +387,7 @@ public class InteractionRepository {
         }
     }
 
+    // Этап «защищён», если на него ссылается событие (сам этап, «откуда» или «куда») или файл.
     public Set<UUID> findProtectedStageIds(UUID interactionId) {
         return new HashSet<>(jdbcClient.sql("""
                 SELECT stage_id
@@ -420,6 +421,9 @@ public class InteractionRepository {
                 .param("interactionId", interactionId)
                 .update();
 
+        // Порядок записи важен: сначала удаляются лишние этапы, затем порядок всех этапов сдвигается далеко в
+        // сторону (+10000), а новые вставляются с запасом (+20000) и лишь затем получают итоговые номера.
+        // Так уникальность порядка этапов не нарушается на промежуточных шагах при перестановке.
         Set<UUID> updatedIds = stages.stream().map(InteractionStage::id).collect(java.util.stream.Collectors.toSet());
         for (InteractionStage previousStage : previousStages) {
             if (!updatedIds.contains(previousStage.id())) {
@@ -727,6 +731,8 @@ public class InteractionRepository {
                 .update() == 1;
     }
 
+    // Поднимает версию карточки без других изменений: любое событие истории должно менять версию, чтобы
+    // параллельный клиент со старым состоянием получил 409.
     public boolean touchVersion(UUID interactionId, int expectedVersion, OffsetDateTime updatedAt) {
         return jdbcClient.sql("""
                 UPDATE interactions

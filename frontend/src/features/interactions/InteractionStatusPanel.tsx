@@ -1,5 +1,6 @@
 import { type FormEvent, useRef, useState } from 'react'
 import { ApiError, apiClient, createIdempotencyKey, type Interaction } from '../../shared/api/client'
+import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { recordOf, textOf, useFormDraft } from './formDraft'
 import { useUnsavedDraft } from './unsavedDrafts'
@@ -38,21 +39,21 @@ const parseDraft = (value: unknown): StatusDraft | null => {
 }
 
 const actionLabels: Record<WorkStatus, string> = {
-  ACTIVE: 'Возобновить работу',
-  PAUSED: 'Приостановить работу',
-  COMPLETED: 'Завершить работу'
+  ACTIVE: 'Возобновить взаимодействие',
+  PAUSED: 'Приостановить взаимодействие',
+  COMPLETED: 'Завершить взаимодействие'
 }
 
 const reasonLabels: Record<WorkStatus, string> = {
   ACTIVE: 'Комментарий к возобновлению',
   PAUSED: 'Причина приостановки',
-  COMPLETED: 'Итог работы'
+  COMPLETED: 'Итог взаимодействия'
 }
 
 const reasonHints: Record<WorkStatus, string> = {
-  ACTIVE: 'Необязательно. Работа вернётся в «Мою работу».',
-  PAUSED: 'Обязательно. Работа уйдёт из «Моей работы» по умолчанию, но останется в карточке вуза, истории и отчётах.',
-  COMPLETED: 'Обязательно. Работа уйдёт из «Моей работы» по умолчанию, но останется в карточке вуза, истории и отчётах.'
+  ACTIVE: 'Необязательно. Взаимодействие вернётся в «Мою работу».',
+  PAUSED: 'Обязательно. Взаимодействие уйдёт из «Моей работы» по умолчанию, но останется в карточке вуза, истории и отчётах.',
+  COMPLETED: 'Обязательно. Взаимодействие уйдёт из «Моей работы» по умолчанию, но останется в карточке вуза, истории и отчётах.'
 }
 
 export const InteractionStatusPanel = ({
@@ -65,12 +66,13 @@ export const InteractionStatusPanel = ({
 }: InteractionStatusPanelProps) => {
   const [draft, setDraft] = useFormDraft(profileId, `card:${interaction.id}:status`, parseDraft)
   const [state, setState] = useState<CommandState>({ kind: 'idle' })
+  const [confirmComplete, setConfirmComplete] = useState(false)
   const commandKey = useRef<string | null>(null)
   const current = interaction.marks
   const stale = draft !== null && draft.base !== current.status
   useUnsavedDraft(
     `card:${interaction.id}:status`,
-    `статус работы в карточке «${interaction.title}»`,
+    `статус взаимодействия в карточке «${interaction.title}»`,
     draft !== null && draft.reason.trim().length > 0
   )
 
@@ -102,8 +104,16 @@ export const InteractionStatusPanel = ({
     setDraft(null)
   }
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (draft?.status === 'COMPLETED') {
+      setConfirmComplete(true)
+      return
+    }
+    void send()
+  }
+
+  const send = async () => {
     if (draft === null || stale) {
       return
     }
@@ -130,7 +140,7 @@ export const InteractionStatusPanel = ({
 
   return (
     <section className="interaction-plan-form work-status" aria-labelledby={`work-status-${interaction.id}`}>
-      <h6 id={`work-status-${interaction.id}`}>Статус работы</h6>
+      <h6 id={`work-status-${interaction.id}`} className="visually-hidden">Статус взаимодействия</h6>
       <p className="work-status__current">
         <span className={`status status--${current.status === 'ACTIVE' ? 'planned' : 'missing'}`}>{workStatusLabels[current.status]}</span>
         {current.statusReason && <span>{current.status === 'COMPLETED' ? 'Итог' : current.status === 'PAUSED' ? 'Причина' : 'Комментарий'}: {current.statusReason}</span>}
@@ -144,15 +154,15 @@ export const InteractionStatusPanel = ({
           ))}
         </div>
       ) : (
-        <form className="work-status__form" onSubmit={(event) => void submit(event)}>
+        <form className="work-status__form" onSubmit={submit}>
           {stale && (
             <div className="interaction-catalog-message interaction-catalog-message--error draft-conflict" role="alert">
               {draft.status === current.status ? (
-                <p>Пока черновик ждал сохранения, работу уже перевели в статус «{workStatusLabels[current.status]}». Черновик можно отменить.</p>
+                <p>Пока черновик ждал сохранения, взаимодействие уже перевели в статус «{workStatusLabels[current.status]}». Черновик можно отменить.</p>
               ) : (
                 <>
                   <p>
-                    Пока черновик ждал сохранения, статус работы изменился: был «{workStatusLabels[draft.base]}», сейчас
+                    Пока черновик ждал сохранения, статус взаимодействия изменился: был «{workStatusLabels[draft.base]}», сейчас
                     {' '}«{workStatusLabels[current.status]}». Проверьте, нужно ли по-прежнему «{actionLabels[draft.status]}».
                   </p>
                   <button type="button" onClick={acceptCurrentStatus}>Продолжить с текущим статусом</button>
@@ -174,10 +184,21 @@ export const InteractionStatusPanel = ({
             <button type="submit" disabled={state.kind === 'saving' || stale || (reasonRequired && draft.reason.trim().length === 0)}>
               {state.kind === 'saving' ? 'Сохраняем…' : actionLabels[draft.status]}
             </button>
-            <button type="button" className="button--secondary" disabled={state.kind === 'saving'} onClick={cancel}>Отменить</button>
+            <button type="button" className="button--secondary" disabled={state.kind === 'saving'} onClick={cancel}>Отмена</button>
           </div>
         </form>
       )}
+      <ConfirmDialog
+        open={confirmComplete}
+        title="Завершить взаимодействие?"
+        description="Взаимодействие уйдёт из «Моей работы» по умолчанию, но останется в карточке вуза, истории и отчётах. Вернуть его можно кнопкой «Возобновить»."
+        confirmLabel="Завершить"
+        onCancel={() => setConfirmComplete(false)}
+        onConfirm={() => {
+          setConfirmComplete(false)
+          void send()
+        }}
+      />
       {state.kind === 'failed' && (
         <div className="interaction-command-error" role="alert">
           <p>{commandFailureMessage(state.error)}</p>

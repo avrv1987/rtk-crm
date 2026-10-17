@@ -241,7 +241,7 @@ const pressKey = async (page, key, code, keyCode) => {
 }
 
 const closeReminderDigest = async (page) => {
-  await page.waitFor(() => page.evaluate("Boolean(document.querySelector('.reminder-center__counter')) && !document.querySelector('.reminder-center__counter').textContent.includes('…')"), 'Reminder counter did not load')
+  await page.waitFor(() => page.evaluate("document.querySelector('.reminder-center__open')?.dataset.overdue !== undefined"), 'Reminder counter did not load')
   assert(await page.evaluate("document.querySelector('.reminder-center__panel')?.hidden === true"), 'Reminder panel opened by itself and covers the screen')
 }
 
@@ -713,7 +713,7 @@ try {
   result.teamTransfer = { before: leaderBefore.status, after: leaderAfter.status, returned: leaderReturned.status }
 
   phase = 'viewports'
-  const cardReady = "(document.querySelector('#work-card-tab-learning[aria-selected=false]')?.click(), true) && document.body.innerText.includes('Обучение (LMS)') && document.body.innerText.includes('Демо: Java-разработчик') && document.body.innerText.includes('Поток обучения') && Boolean([...document.querySelectorAll('button')].find((button) => button.textContent.includes('Обновить данные источников')))"
+  const cardReady = "(document.querySelector('#work-card-tab-learning[aria-selected=false]')?.click(), true) && document.body.innerText.includes('Данные LMS') && document.body.innerText.includes('Демо: Java-разработчик') && document.body.innerText.includes('Поток обучения') && Boolean([...document.querySelectorAll('button')].find((button) => button.textContent.includes('Обновить данные источников')))"
   await call('Page.navigate', { url: origin + '/#/organizations/' + universityA.id + '/' + demoInteraction.id }, kamA.sessionId)
   await kamA.waitFor(() => kamA.evaluate(cardReady), 'LMS block is not shown in the card')
   await kamA.evaluate("[...document.querySelectorAll('button')].find((button) => button.textContent.includes('Обновить данные источников')).click()")
@@ -726,7 +726,7 @@ try {
   await call('Page.reload', {}, unprofiled.sessionId)
   result.viewports = {
     kamCard: await captureViewports(kamA, 'kam-a-card', cardReady, outputDirectory, '.interaction-learning'),
-    leaderWork: await captureViewports(leader, 'leader-work', "Boolean(document.querySelector('.work-item')) && document.body.innerText.includes('Моя работа')", outputDirectory),
+    leaderWork: await captureViewports(leader, 'leader-work', "Boolean(document.querySelector('.work-row')) && document.body.innerText.includes('Все взаимодействия')", outputDirectory),
     adminSources: await captureViewports(admin, 'admin-sources', "document.body.innerText.includes('Источники данных') && document.body.innerText.includes('LMS Moodle')", outputDirectory, '.data-sources'),
     pending: await captureViewports(unprofiled, 'unprofiled', "document.body.innerText.includes('Профиль ожидает активации администратором')", outputDirectory)
   }
@@ -749,8 +749,9 @@ try {
   await closeReminderDigest(leader)
   await leader.evaluate("document.querySelector('.work-filters input[type=search]').focus()")
   await call('Input.insertText', { text: 'ПРОСРОЧЕНО ' + nonce.toUpperCase() }, leader.sessionId)
-  await leader.evaluate("document.querySelector('.work-filters__more').open = true")
-  await leader.evaluate("[...document.querySelectorAll('.work-filters input[type=radio]')].find((input) => input.value === 'OVERDUE').focus()")
+  await leader.evaluate("document.querySelector('.work-filters .filter-button').click()")
+  await leader.waitFor(() => leader.evaluate("Boolean(document.querySelector('.filter-panel[open]'))"), 'Filter panel did not open at 360 px')
+  await leader.evaluate("[...document.querySelectorAll('.filter-panel[open] input[type=radio]')].find((input) => input.value === 'OVERDUE').focus()")
   await pressKey(leader, ' ', 'Space', 32)
   await leader.waitFor(
     () => leader.evaluate(`(() => {
@@ -761,10 +762,11 @@ try {
   )
   const leaderOverflow = await leader.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth')
   await setViewport(admin, narrow)
+  await call('Page.navigate', { url: origin + '/#/admin/sources?tab=moodle' }, admin.sessionId)
   await call('Page.reload', {}, admin.sessionId)
-  await admin.waitFor(() => admin.evaluate("document.body.innerText.includes('LMS Moodle') && [...document.querySelectorAll('.data-sources__item button')].length === 2"), 'Sources are not shown at 360 px')
+  await admin.waitFor(() => admin.evaluate("document.body.innerText.includes('LMS Moodle') && [...document.querySelectorAll('[role=tabpanel] button')].some((button) => button.textContent.includes('Запустить синхронизацию'))"), 'Sources are not shown at 360 px')
   const lastMoodleRun = (await api(admin, 'GET', '/api/admin/sources')).body.find((item) => item.source === 'MOODLE').lastRun.id
-  await admin.evaluate("[...document.querySelectorAll('.data-sources__item')].find((item) => item.textContent.includes('LMS Moodle')).querySelector('button').focus()")
+  await admin.evaluate("[...document.querySelectorAll('[role=tabpanel] button')].find((button) => button.textContent.includes('Запустить синхронизацию')).focus()")
   await pressKey(admin, 'Enter', 'Enter', 13)
   await admin.waitFor(async () => {
     const run = (await api(admin, 'GET', '/api/admin/sources')).body.find((item) => item.source === 'MOODLE').lastRun

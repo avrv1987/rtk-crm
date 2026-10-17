@@ -10,8 +10,19 @@ import {
   type WorkflowTemplateVersion,
   type WorkflowTransitionInput
 } from '../../shared/api/client'
+import { ActionMenu } from '../../shared/ui/ActionMenu'
+import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
+import { EmptyState } from '../../shared/ui/EmptyState'
+import { HintButton } from '../../shared/ui/HintButton'
+import { Pagination } from '../../shared/ui/Pagination'
+import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { Toast } from '../../shared/ui/Toast'
+import { CardDialog } from '../interactions/cardUi'
 import { WorkflowTemplateVersions } from './WorkflowTemplateVersions'
+import { canEditTemplate, isEffectiveDefault, templateRowActions, templateScopeLabel, type RowMenuKey } from './workflowTemplateRows'
 import { parseRouteFile } from './workflowVersions'
+import './adminUi.css'
+import './workflowVersions.css'
 
 type WorkflowTemplatesPanelProps = {
   role: Me['role']
@@ -206,31 +217,13 @@ const commandMessage = (error: unknown) => {
   return 'Не удалось связаться с сервисом. Черновик сохранён; повторите попытку позже.'
 }
 
-const StructuredApiError = ({ error }: { error: unknown }) => {
-  if (!(error instanceof ApiError)) {
-    return null
-  }
-  return (
-    <div className="structured-api-error">
-      <p>Код: {error.code}</p>
-    </div>
-  )
-}
-
-const templateScopeLabel = (template: WorkflowTemplate, teamDefaultTemplateId: string | null) => {
-  if (template.id === teamDefaultTemplateId) {
-    return 'Шаблон команды по умолчанию: новые работы команды создаются по нему'
-  }
-  if (template.defaultTemplate) {
-    return teamDefaultTemplateId === null ? 'Шаблон по умолчанию' : 'Общий шаблон по умолчанию (команда использует свой)'
-  }
-  return template.teamId === null ? 'Общий шаблон' : 'Шаблон команды'
-}
+const errorCode = (error: unknown) => (error instanceof ApiError ? error.code : undefined)
 
 export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavailable }: WorkflowTemplatesPanelProps) => {
   const canManageTemplates = role === 'LEADER' || role === 'ADMIN'
   const [templatesState, setTemplatesState] = useState<TemplatesState>({ kind: 'loading' })
   const [pageIndex, setPageIndex] = useState(0)
+  const [editorOpen, setEditorOpen] = useState(false)
   const [editingTemplate, setEditingTemplate] = useState<WorkflowTemplate | null>(null)
   const [draft, setDraft] = useState<TemplateDraft>(emptyDraft)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
@@ -239,7 +232,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
   const [historyTemplate, setHistoryTemplate] = useState<WorkflowTemplate | null>(null)
   const [importNotice, setImportNotice] = useState<{ text: string; error: boolean } | null>(null)
   const [defaultState, setDefaultState] = useState<{ templateId: string; saving: boolean; error?: unknown; key: string } | null>(null)
-  const [defaultMessage, setDefaultMessage] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
   const listRequestVersion = useRef(0)
   const saveKey = useRef<string | null>(null)
   const importInput = useRef<HTMLInputElement>(null)
@@ -293,20 +286,19 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
   }
 
   const makeDefault = async (template: WorkflowTemplate) => {
-    if (defaultState?.saving === true) {
+    if (defaultState?.saving === true || commandState.kind === 'saving') {
       return
     }
     const key = defaultState?.templateId === template.id ? defaultState.key : createIdempotencyKey()
     setDefaultState({ templateId: template.id, saving: true, key })
-    setDefaultMessage(null)
     try {
       await apiClient.makeWorkflowTemplateDefault(template.id, template.version, key)
       setDefaultState(null)
-      setDefaultMessage(role === 'ADMIN'
-        ? `«${template.name}» — общий шаблон по умолчанию для новых работ.`
+      setToast(role === 'ADMIN'
+        ? `«${template.name}» — общий шаблон по умолчанию для новых взаимодействий.`
         : template.teamId === null
-          ? 'Новые работы команды снова создаются по общему шаблону по умолчанию.'
-          : `«${template.name}» — шаблон команды по умолчанию для новых работ.`)
+          ? 'Новые взаимодействия команды снова создаются по общему шаблону по умолчанию.'
+          : `«${template.name}» — шаблон команды по умолчанию для новых взаимодействий.`)
       await loadTemplates(pageIndex)
     } catch (error) {
       if (isUnauthenticated(error)) {
@@ -321,21 +313,32 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     }
   }
 
-  const canEditTemplate = (template: WorkflowTemplate) => (
-    role === 'ADMIN' ? template.teamId === null : template.teamId !== null
-  )
-
-  const versionToDraft = (template: WorkflowTemplate, version: WorkflowTemplateVersion) => {
+  const openEditor = (template: WorkflowTemplate | null, next: TemplateDraft) => {
     saveKey.current = null
+    setEditingTemplate(template)
     setPendingDelete(null)
     setCommandState({ kind: 'idle' })
+    setStageNotice(null)
     setImportNotice(null)
-    if (canEditTemplate(template)) {
-      setEditingTemplate(template)
-      setDraft({ ...draftFromTemplate(version), name: template.name, comment: `Возврат к версии ${version.number}` })
+    setDraft(next)
+    setEditorOpen(true)
+  }
+
+  const closeEditor = () => {
+    if (commandState.kind === 'saving') {
+      return
+    }
+    setEditorOpen(false)
+    setEditingTemplate(null)
+    setCommandState({ kind: 'idle' })
+  }
+
+  const versionToDraft = (template: WorkflowTemplate, version: WorkflowTemplateVersion) => {
+    setHistoryTemplate(null)
+    if (canEditTemplate(role, template)) {
+      openEditor(template, { ...draftFromTemplate(version), name: template.name, comment: `Возврат к версии ${version.number}` })
     } else {
-      setEditingTemplate(null)
-      setDraft({ ...draftFromTemplate(version), name: `${template.name} — копия команды` })
+      openEditor(null, { ...draftFromTemplate(version), name: `${template.name} — копия команды` })
     }
   }
 
@@ -371,30 +374,13 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     })
   }
 
-  const beginCreate = () => {
-    saveKey.current = null
-    setEditingTemplate(null)
-    setPendingDelete(null)
-    setCommandState({ kind: 'idle' })
-    setImportNotice(null)
-    setDraft(emptyDraft())
-  }
+  const beginCreate = () => openEditor(null, emptyDraft())
 
-  const beginCopy = (template: WorkflowTemplate) => {
-    saveKey.current = null
-    setEditingTemplate(null)
-    setPendingDelete(null)
-    setCommandState({ kind: 'idle' })
-    setDraft({ ...draftFromTemplate(template), name: `${template.name} — копия команды` })
-  }
+  const beginCopy = (template: WorkflowTemplate) => (
+    openEditor(null, { ...draftFromTemplate(template), name: `${template.name} — копия команды` })
+  )
 
-  const beginEdit = (template: WorkflowTemplate) => {
-    saveKey.current = null
-    setEditingTemplate(template)
-    setPendingDelete(null)
-    setCommandState({ kind: 'idle' })
-    setDraft(draftFromTemplate(template))
-  }
+  const beginEdit = (template: WorkflowTemplate) => openEditor(template, draftFromTemplate(template))
 
   const replaceTemplate = (template: WorkflowTemplate) => {
     setTemplatesState((current) => {
@@ -458,10 +444,11 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
         ? await apiClient.createWorkflowTemplate(payload, idempotencyKey)
         : await apiClient.updateWorkflowTemplate(editingTemplate.id, { ...payload, version: editingTemplate.version }, idempotencyKey)
       saveKey.current = null
-      setEditingTemplate(template)
-      setDraft(draftFromTemplate(template))
-      setCommandState({ kind: 'idle' })
       replaceTemplate(template)
+      setCommandState({ kind: 'idle' })
+      setEditorOpen(false)
+      setEditingTemplate(null)
+      setToast(action === 'create' ? `Шаблон «${template.name}» создан.` : `Шаблон «${template.name}» сохранён.`)
     } catch (error) {
       if (isUnauthenticated(error)) {
         onSessionExpired()
@@ -498,12 +485,9 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
             }
           : current
       ))
-      if (editingTemplate?.id === pendingDelete.template.id) {
-        beginCreate()
-      } else {
-        setPendingDelete(null)
-        setCommandState({ kind: 'idle' })
-      }
+      setToast(`Шаблон «${pendingDelete.template.name}» удалён.`)
+      setPendingDelete(null)
+      setCommandState({ kind: 'idle' })
     } catch (error) {
       if (isUnauthenticated(error)) {
         onSessionExpired()
@@ -606,40 +590,68 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     }))
   }
 
+  const runMenuAction = (key: RowMenuKey, template: WorkflowTemplate) => {
+    if (key === 'history') {
+      setHistoryTemplate(template)
+    } else if (key === 'default') {
+      void makeDefault(template)
+    } else if (commandState.kind !== 'saving') {
+      setPendingDelete({ template, idempotencyKey: null })
+      setCommandState({ kind: 'idle' })
+    }
+  }
+
   if (!canManageTemplates) {
     return null
   }
 
+  const saving = commandState.kind === 'saving'
   const problem = draftProblem(draft)
-  const draftValid = problem === null
   const teamDefaultTemplateId = templatesState.kind === 'ready' ? templatesState.page.teamDefaultTemplateId : null
-  const defaultActionLabel = (template: WorkflowTemplate) => {
-    if (role === 'ADMIN') {
-      return template.defaultTemplate || template.teamId !== null ? null : 'Сделать шаблоном по умолчанию'
-    }
-    if (template.teamId === null) {
-      return template.defaultTemplate && teamDefaultTemplateId !== null ? 'Вернуть общий шаблон по умолчанию' : null
-    }
-    return template.id === teamDefaultTemplateId ? null : 'Сделать шаблоном команды по умолчанию'
-  }
   const commandError = commandState.kind === 'failed' ? commandState.error : undefined
   const hasConflict = commandError instanceof ApiError && commandError.status === 409
+  const deleteFailed = commandState.kind === 'failed' && commandState.action === 'delete'
+  const editorFailed = commandState.kind === 'failed' && commandState.action !== 'delete'
 
   return (
-    <section className="workflow-templates" aria-labelledby="workflow-templates-title" aria-busy={templatesState.kind === 'loading'}>
-      <div className="workflow-templates__header">
-        <div>
-          <p className="eyebrow">Процессы</p>
-          <h2 id="workflow-templates-title">Шаблоны этапов</h2>
-        </div>
-        {templatesState.kind === 'ready' && <p className="workflow-templates__total">Всего: {templatesState.page.total}</p>}
+    <section className="admin-page" aria-labelledby="workflow-templates-title" aria-busy={templatesState.kind === 'loading'}>
+      <div className="page-title">
+        <h2 id="workflow-templates-title">Шаблоны этапов</h2>
+        <HintButton label="О разделе">
+          {role === 'LEADER'
+            ? 'Доступны шаблоны вашей команды и базовый шаблон, который можно только скопировать в шаблон команды. Шаблон команды по умолчанию подставляется в новые взаимодействия команды, если КАМ не выбрал другой.'
+            : 'Доступны общие шаблоны. Шаблон по умолчанию подставляется в новые взаимодействия всех команд, у которых нет своего шаблона по умолчанию.'}
+        </HintButton>
+        {templatesState.kind === 'ready' && <span className="page-title__count">Всего: {templatesState.page.total}</span>}
+        <span className="page-title__spacer" />
+        <button type="button" disabled={saving} onClick={beginCreate}>Новый шаблон</button>
       </div>
-      <p className="workflow-templates__intro">
-        {role === 'LEADER'
-          ? 'Доступны шаблоны вашей команды и базовый шаблон, который можно только скопировать в шаблон команды. Шаблон команды по умолчанию подставляется в новые работы команды, если КАМ не выбрал другой.'
-          : 'Доступны общие шаблоны. Шаблон по умолчанию подставляется в новые работы всех команд, у которых нет своего шаблона по умолчанию.'}
-      </p>
-      {defaultMessage !== null && <p className="notice" role="status">{defaultMessage}</p>}
+
+      {defaultState?.saving === true && <p className="admin-form__hint" role="status">Сохраняем…</p>}
+      {defaultState?.error !== undefined && (
+        <div className="interaction-command-error" role="alert">
+          <p>{commandMessage(defaultState.error)}</p>
+          <SupportDetails
+            requestId={defaultState.error instanceof ApiError ? defaultState.error.requestId : undefined}
+            code={errorCode(defaultState.error)}
+          />
+        </div>
+      )}
+      {deleteFailed && (
+        <div className="interaction-command-error" role="alert">
+          <p>{commandMessage(commandState.error)}</p>
+          <SupportDetails
+            requestId={requestIdOf(commandState.error)}
+            code={errorCode(commandState.error)}
+          />
+          <div className="admin-form__actions">
+            <button type="button" className="button--secondary" onClick={() => setPendingDelete(null)}>Отмена</button>
+            {hasConflict
+              ? <button type="button" onClick={() => void refreshAfterConflict()}>Обновить список</button>
+              : <button type="button" className="button--secondary" onClick={() => void confirmDelete()}>Повторить удаление</button>}
+          </div>
+        </div>
+      )}
 
       {templatesState.kind === 'loading' && (
         <p className="organizations-message" role="status">Загружаем шаблоны этапов…</p>
@@ -647,90 +659,77 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
       {templatesState.kind === 'failed' && (
         <div className="organizations-message organizations-message--error" role="alert">
           <p>Не удалось загрузить управляемые шаблоны этапов.</p>
-          {templatesState.requestId && <p className="request-id">Request ID: {templatesState.requestId}</p>}
-          <button type="button" onClick={() => void loadTemplates(pageIndex)}>Повторить</button>
+          <SupportDetails requestId={templatesState.requestId} />
+          <button type="button" className="button--secondary" onClick={() => void loadTemplates(pageIndex)}>Повторить</button>
         </div>
       )}
       {templatesState.kind === 'ready' && (
         <>
           {templatesState.page.items.length === 0 ? (
-            <p className="organizations-message">В доступной области шаблонов пока нет.</p>
+            <EmptyState
+              text="В доступной области шаблонов пока нет."
+              action={<button type="button" className="button--secondary" onClick={beginCreate}>Новый шаблон</button>}
+            />
           ) : (
-            <ul className="workflow-templates__list" aria-label="Шаблоны этапов">
-              {templatesState.page.items.map((template) => (
-                <li key={template.id} className="workflow-templates__item">
-                  <div>
-                    <strong>{template.name}</strong>
-                    <p>{templateScopeLabel(template, teamDefaultTemplateId)}; этапов: {template.stages.length}; переходов: {template.transitions.length}; версия маршрута: {template.routeVersion}</p>
-                    {defaultState?.templateId === template.id && defaultState.error !== undefined && (
-                      <div className="interaction-command-error" role="alert">
-                        <p>{commandMessage(defaultState.error)}</p>
-                        {defaultState.error instanceof ApiError && <p className="request-id">Request ID: {defaultState.error.requestId}</p>}
-                      </div>
-                    )}
-                  </div>
-                  <div className="workflow-templates__actions">
-                    <button type="button" className="button--secondary" onClick={() => setHistoryTemplate(template)}>
-                      История версий
-                    </button>
-                    {defaultActionLabel(template) !== null && (
-                      <button
-                        type="button"
-                        className="button--secondary"
-                        disabled={defaultState?.saving === true || commandState.kind === 'saving'}
-                        onClick={() => void makeDefault(template)}
-                      >
-                        {defaultState?.templateId === template.id && defaultState.saving ? 'Сохраняем…' : defaultActionLabel(template)}
-                      </button>
-                    )}
-                    {role === 'LEADER' && template.teamId === null ? (
-                      <button type="button" disabled={commandState.kind === 'saving'} onClick={() => beginCopy(template)}>
-                        Создать на основе базового
-                      </button>
-                    ) : (
-                      <button type="button" disabled={commandState.kind === 'saving'} onClick={() => beginEdit(template)}>Редактировать</button>
-                    )}
-                    {role === 'LEADER' && template.teamId === null ? (
-                      <p className="workflow-templates__delete-reason">Базовый шаблон меняет администратор.</p>
-                    ) : template.defaultTemplate ? (
-                      <p className="workflow-templates__delete-reason">Шаблон по умолчанию удалять нельзя.</p>
-                    ) : (
-                      <button
-                        type="button"
-                        className="workflow-templates__delete"
-                        disabled={commandState.kind === 'saving'}
-                        onClick={() => {
-                          setPendingDelete({ template, idempotencyKey: null })
-                          setCommandState({ kind: 'idle' })
-                        }}
-                      >
-                        Удалить
-                      </button>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <div className="admin-table-wrap">
+              <table className="admin-table" aria-label="Шаблоны этапов">
+                <thead>
+                  <tr>
+                    <th scope="col">Название</th>
+                    <th scope="col">Этапов</th>
+                    <th scope="col">Переходов</th>
+                    <th scope="col">Версия</th>
+                    <th scope="col"><span className="wt-hidden">Действия</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {templatesState.page.items.map((template) => {
+                    const row = templateRowActions(role, template, teamDefaultTemplateId)
+                    return (
+                      <tr key={template.id}>
+                        <td className="admin-table__cell-main">
+                          <span className="admin-table__main">{template.name}</span>
+                          {' '}
+                          {isEffectiveDefault(template, teamDefaultTemplateId) && <span className="admin-chip admin-chip--ok">По умолчанию</span>}
+                          <span className="admin-table__sub">{templateScopeLabel(template, teamDefaultTemplateId)}</span>
+                        </td>
+                        <td data-label="Этапов">{template.stages.length}</td>
+                        <td data-label="Переходов">{template.transitions.length}</td>
+                        <td data-label="Версия">{template.routeVersion}</td>
+                        <td className="admin-table__actions">
+                          <button
+                            type="button"
+                            className="button--secondary admin-table__action"
+                            disabled={saving}
+                            onClick={() => (row.primary === 'copy' ? beginCopy(template) : beginEdit(template))}
+                          >
+                            {row.primaryLabel}
+                          </button>
+                          <ActionMenu
+                            label={`Действия: ${template.name}`}
+                            header={row.note === null ? undefined : <span className="wt-note">{row.note}</span>}
+                            items={row.menu.map((entry) => ({
+                              label: entry.label,
+                              danger: entry.danger,
+                              onSelect: () => runMenuAction(entry.key, template)
+                            }))}
+                          />
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
-          {templatesState.page.total > templatesState.page.size && (
-            <nav className="workflow-templates__pagination" aria-label="Страницы шаблонов этапов">
-              <button
-                type="button"
-                disabled={templatesState.page.page === 0 || commandState.kind === 'saving'}
-                onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
-              >
-                Предыдущая
-              </button>
-              <p>Страница {templatesState.page.page + 1} из {Math.ceil(templatesState.page.total / templatesState.page.size)}</p>
-              <button
-                type="button"
-                disabled={(templatesState.page.page + 1) * templatesState.page.size >= templatesState.page.total || commandState.kind === 'saving'}
-                onClick={() => setPageIndex((current) => current + 1)}
-              >
-                Следующая
-              </button>
-            </nav>
-          )}
+          <Pagination
+            label="Страницы шаблонов этапов"
+            page={templatesState.page.page}
+            size={templatesState.page.size}
+            total={templatesState.page.total}
+            disabled={saving}
+            onChange={setPageIndex}
+          />
         </>
       )}
 
@@ -739,173 +738,156 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
           key={historyTemplate.id}
           template={historyTemplate}
           role={role}
-          canEdit={canEditTemplate(historyTemplate)}
+          canEdit={canEditTemplate(role, historyTemplate)}
           onUseVersion={(version) => versionToDraft(historyTemplate, version)}
           onClose={() => setHistoryTemplate(null)}
+          onNotify={setToast}
           onSessionExpired={onSessionExpired}
           onProfileUnavailable={onProfileUnavailable}
         />
       )}
 
-      <form className="workflow-template-editor" onSubmit={(event) => void submit(event)}>
-        <div className="workflow-template-editor__header">
-          <h3>{editingTemplate === null ? 'Новый шаблон' : `Редактирование: ${editingTemplate.name}`}</h3>
-          <button type="button" disabled={commandState.kind === 'saving'} onClick={beginCreate}>Новый шаблон</button>
-        </div>
-        <div className="workflow-template-editor__import">
-          <button type="button" className="button--secondary" disabled={commandState.kind === 'saving'} onClick={() => importInput.current?.click()}>
-            Загрузить этапы из файла
-          </button>
-          <input
-            ref={importInput}
-            type="file"
-            accept="application/json,.json"
-            hidden
-            onChange={(event) => {
-              void importFile(event.target.files?.[0])
-              event.target.value = ''
-            }}
-          />
+      <CardDialog
+        open={editorOpen}
+        title={editingTemplate === null ? 'Новый шаблон' : `Редактирование: ${editingTemplate.name}`}
+        onClose={closeEditor}
+      >
+        <form className="admin-form wt-editor" onSubmit={(event) => void submit(event)}>
+          <div className="wt-editor__import">
+            <button type="button" className="button--secondary" disabled={saving} onClick={() => importInput.current?.click()}>
+              Загрузить этапы из файла
+            </button>
+            <input
+              ref={importInput}
+              type="file"
+              accept="application/json,.json"
+              hidden
+              onChange={(event) => {
+                void importFile(event.target.files?.[0])
+                event.target.value = ''
+              }}
+            />
+          </div>
           {importNotice !== null && (
-            <p className={importNotice.error ? 'workflow-template-editor__validation' : 'notice'} role="status">{importNotice.text}</p>
+            <p className={importNotice.error ? 'notice notice--error' : 'notice'} role="status">{importNotice.text}</p>
           )}
-        </div>
-        <label>
-          Название шаблона *
-          <input
-            value={draft.name}
-            maxLength={200}
-            required
-            onChange={(event) => updateDraft((current) => ({ ...current, name: event.target.value }))}
-          />
-        </label>
-        <section className="workflow-template-editor__section" aria-labelledby="workflow-template-stages-title">
-          <div className="workflow-template-editor__section-header">
-            <h4 id="workflow-template-stages-title">Этапы</h4>
-            <button type="button" disabled={commandState.kind === 'saving'} onClick={addStage}>Добавить этап</button>
-          </div>
-          <ol className="workflow-template-editor__stages">
-            {draft.stages.map((stage, index) => (
-              <li key={index}>
-                <span>{index + 1}</span>
-                <label>
-                  Название *
-                  <input
-                    value={stage.name}
-                    maxLength={200}
-                    required
-                    onChange={(event) => updateStage(index, { name: event.target.value })}
-                  />
-                </label>
-                <label className="workflow-template-editor__checkbox">
-                  <input
-                    type="checkbox"
-                    checked={stage.optional}
-                    onChange={(event) => updateStage(index, { optional: event.target.checked })}
-                  />
-                  Необязательный
-                </label>
-                <div className="workflow-template-editor__stage-actions">
-                  <button type="button" disabled={index === 0 || commandState.kind === 'saving'} onClick={() => moveStage(index, index - 1)}>Выше</button>
-                  <button type="button" disabled={index === draft.stages.length - 1 || commandState.kind === 'saving'} onClick={() => moveStage(index, index + 1)}>Ниже</button>
-                  <button type="button" className="workflow-templates__delete" disabled={draft.stages.length <= 1 || commandState.kind === 'saving'} onClick={() => removeStage(index)}>Удалить</button>
-                </div>
-              </li>
-            ))}
-          </ol>
-          {stageNotice !== null && <p className="notice" role="status">{stageNotice}</p>}
-        </section>
-        <section className="workflow-template-editor__section" aria-labelledby="workflow-template-transitions-title">
-          <div className="workflow-template-editor__section-header">
-            <h4 id="workflow-template-transitions-title">Явные переходы</h4>
-            <button type="button" disabled={draft.stages.length < 2 || commandState.kind === 'saving'} onClick={addTransition}>Добавить переход</button>
-          </div>
-          {draft.transitions.length === 0 && <p>Переходы отсутствуют.</p>}
-          <ol className="workflow-template-editor__transitions">
-            {draft.transitions.map((transition, index) => (
-              <li key={index}>
-                <label>
-                  Из этапа
-                  <select value={transition.fromOrder} onChange={(event) => updateTransition(index, { fromOrder: Number(event.target.value) })}>
-                    {draft.stages.map((stage, order) => <option key={order} value={order}>{order + 1}. {stage.name || 'Без названия'}</option>)}
-                  </select>
-                </label>
-                <label>
-                  В этап
-                  <select value={transition.toOrder} onChange={(event) => updateTransition(index, { toOrder: Number(event.target.value) })}>
-                    {draft.stages.map((stage, order) => <option key={order} value={order}>{order + 1}. {stage.name || 'Без названия'}</option>)}
-                  </select>
-                </label>
-                <label className="workflow-template-editor__checkbox">
-                  <input
-                    type="checkbox"
-                    checked={transition.commentRequired}
-                    onChange={(event) => updateTransition(index, { commentRequired: event.target.checked })}
-                  />
-                  Нужен комментарий
-                </label>
-                <button type="button" className="workflow-templates__delete" disabled={commandState.kind === 'saving'} onClick={() => removeTransition(index)}>Удалить</button>
-              </li>
-            ))}
-          </ol>
-        </section>
-        <label>
-          Что изменилось (видно в истории версий)
-          <input
-            value={draft.comment}
-            maxLength={1000}
-            onChange={(event) => updateDraft((current) => ({ ...current, comment: event.target.value }))}
-          />
-        </label>
-        {problem !== null && (
-          <p className="workflow-template-editor__validation" role="status">{problem}</p>
-        )}
-        <button type="submit" disabled={commandState.kind === 'saving' || !draftValid}>
-          {commandState.kind === 'saving' && commandState.action !== 'delete'
-            ? 'Сохраняем…'
-            : editingTemplate === null ? 'Создать шаблон' : 'Сохранить шаблон'}
-        </button>
-        {commandState.kind === 'failed' && commandState.action !== 'delete' && (
-          <div className="interaction-command-error" role="alert">
-            <p>{commandMessage(commandState.error)}</p>
-            <StructuredApiError error={commandState.error} />
-            {commandState.error instanceof ApiError && <p className="request-id">Request ID: {commandState.error.requestId}</p>}
-            {hasConflict && <button type="button" onClick={() => void refreshAfterConflict()}>Обновить список</button>}
-          </div>
-        )}
-      </form>
-
-      {pendingDelete !== null && (
-        <section className="workflow-template-delete-confirmation" role="alertdialog" aria-labelledby="workflow-template-delete-title">
-          <h3 id="workflow-template-delete-title">Удалить шаблон «{pendingDelete.template.name}»?</h3>
-          <p>Новые взаимодействия больше не смогут выбрать этот шаблон.</p>
-          {commandState.kind === 'failed' && commandState.action === 'delete' && (
+          <label>
+            Название шаблона *
+            <input
+              value={draft.name}
+              maxLength={200}
+              required
+              onChange={(event) => updateDraft((current) => ({ ...current, name: event.target.value }))}
+            />
+          </label>
+          <section className="wt-editor__section" aria-labelledby="workflow-template-stages-title">
+            <div className="wt-editor__section-header">
+              <h3 id="workflow-template-stages-title">Этапы</h3>
+              <button type="button" className="button--secondary" disabled={saving} onClick={addStage}>Добавить этап</button>
+            </div>
+            <ol className="wt-editor__rows wt-editor__stages">
+              {draft.stages.map((stage, index) => (
+                <li key={index}>
+                  <span className="wt-editor__number">{index + 1}</span>
+                  <label>
+                    Название *
+                    <input
+                      value={stage.name}
+                      maxLength={200}
+                      required
+                      onChange={(event) => updateStage(index, { name: event.target.value })}
+                    />
+                  </label>
+                  <label className="admin-form__check">
+                    <input
+                      type="checkbox"
+                      checked={stage.optional}
+                      onChange={(event) => updateStage(index, { optional: event.target.checked })}
+                    />
+                    Необязательный
+                  </label>
+                  <div className="wt-editor__row-actions">
+                    <button type="button" className="button--secondary" aria-label={`Выше: этап ${index + 1}`} disabled={index === 0 || saving} onClick={() => moveStage(index, index - 1)}>Выше</button>
+                    <button type="button" className="button--secondary" aria-label={`Ниже: этап ${index + 1}`} disabled={index === draft.stages.length - 1 || saving} onClick={() => moveStage(index, index + 1)}>Ниже</button>
+                    <button type="button" className="button--secondary" aria-label={`Удалить этап ${index + 1}`} disabled={draft.stages.length <= 1 || saving} onClick={() => removeStage(index)}>Удалить</button>
+                  </div>
+                </li>
+              ))}
+            </ol>
+            {stageNotice !== null && <p className="notice" role="status">{stageNotice}</p>}
+          </section>
+          <section className="wt-editor__section" aria-labelledby="workflow-template-transitions-title">
+            <div className="wt-editor__section-header">
+              <h3 id="workflow-template-transitions-title">Явные переходы</h3>
+              <button type="button" className="button--secondary" disabled={draft.stages.length < 2 || saving} onClick={addTransition}>Добавить переход</button>
+            </div>
+            {draft.transitions.length === 0 && <p className="admin-form__hint">Переходы отсутствуют.</p>}
+            <ol className="wt-editor__rows wt-editor__transitions">
+              {draft.transitions.map((transition, index) => (
+                <li key={index}>
+                  <label>
+                    Из этапа
+                    <select value={transition.fromOrder} onChange={(event) => updateTransition(index, { fromOrder: Number(event.target.value) })}>
+                      {draft.stages.map((stage, order) => <option key={order} value={order}>{order + 1}. {stage.name || 'Без названия'}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    В этап
+                    <select value={transition.toOrder} onChange={(event) => updateTransition(index, { toOrder: Number(event.target.value) })}>
+                      {draft.stages.map((stage, order) => <option key={order} value={order}>{order + 1}. {stage.name || 'Без названия'}</option>)}
+                    </select>
+                  </label>
+                  <label className="admin-form__check">
+                    <input
+                      type="checkbox"
+                      checked={transition.commentRequired}
+                      onChange={(event) => updateTransition(index, { commentRequired: event.target.checked })}
+                    />
+                    Нужен комментарий
+                  </label>
+                  <div className="wt-editor__row-actions">
+                    <button type="button" className="button--secondary" aria-label={`Удалить переход ${index + 1}`} disabled={saving} onClick={() => removeTransition(index)}>Удалить</button>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+          <label>
+            Что изменилось (видно в истории версий)
+            <input
+              value={draft.comment}
+              maxLength={1000}
+              onChange={(event) => updateDraft((current) => ({ ...current, comment: event.target.value }))}
+            />
+          </label>
+          {problem !== null && <p className="admin-form__hint" role="status">{problem}</p>}
+          {editorFailed && (
             <div className="interaction-command-error" role="alert">
               <p>{commandMessage(commandState.error)}</p>
-              <StructuredApiError error={commandState.error} />
-              {commandState.error instanceof ApiError && <p className="request-id">Request ID: {commandState.error.requestId}</p>}
+              <SupportDetails requestId={requestIdOf(commandState.error)} code={errorCode(commandState.error)} />
+              {hasConflict && <button type="button" className="button--secondary" onClick={() => void refreshAfterConflict()}>Обновить список</button>}
             </div>
           )}
-          <div className="workflow-template-delete-confirmation__actions">
-            {!hasConflict && (
-              <button type="button" className="workflow-templates__delete" disabled={commandState.kind === 'saving'} onClick={() => void confirmDelete()}>
-                {commandState.kind === 'saving' ? 'Удаляем…' : 'Подтвердить удаление'}
-              </button>
-            )}
-            {hasConflict && <button type="button" onClick={() => void refreshAfterConflict()}>Обновить список</button>}
-            <button
-              type="button"
-              disabled={commandState.kind === 'saving'}
-              onClick={() => {
-                setPendingDelete(null)
-                setCommandState({ kind: 'idle' })
-              }}
-            >
-              Отмена
+          <div className="admin-form__actions wt-editor__actions">
+            <button type="button" className="button--secondary" disabled={saving} onClick={closeEditor}>Отмена</button>
+            <button type="submit" disabled={saving || problem !== null}>
+              {commandState.kind === 'saving' && commandState.action !== 'delete'
+                ? 'Сохраняем…'
+                : editingTemplate === null ? 'Создать шаблон' : 'Сохранить шаблон'}
             </button>
           </div>
-        </section>
-      )}
+        </form>
+      </CardDialog>
+
+      <ConfirmDialog
+        open={pendingDelete !== null && commandState.kind === 'idle'}
+        title={`Удалить шаблон «${pendingDelete?.template.name ?? ''}»?`}
+        description="Новые взаимодействия больше не смогут выбрать этот шаблон."
+        confirmLabel="Подтвердить удаление"
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setPendingDelete(null)}
+      />
+      <Toast message={toast} onClose={() => setToast(null)} />
     </section>
   )
 }

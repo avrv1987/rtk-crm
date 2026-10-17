@@ -8,6 +8,8 @@ import {
   type ReportRequest,
   type SavedReport
 } from '../../shared/api/client'
+import { todayInMoscow } from '../../shared/format/datetime'
+import { Toast } from '../../shared/ui/Toast'
 import { AgreementConfirmationsPanel } from '../agreements/AgreementConfirmationsPanel'
 import { listReportVendors } from '../documents/documentsApi'
 import { loadReportSelection, saveReportSelection } from '../interactions/drafts'
@@ -15,25 +17,32 @@ import { organizationTypeLabels } from '../organizations/OrganizationForm'
 import { KamReviewPanel } from './KamReviewPanel'
 import { LearningDynamicsReport } from './LearningDynamics'
 import { SigningPlanReport } from './SigningPlanReport'
-import { ReportBuilder, type FilterOptions, type OptionsState, type OrderTarget } from './ReportBuilder'
-import { catalogTitle, kindViews, ReportCatalog, viewKind, type ReportView } from './ReportCatalog'
-import { InfoTip, type FilterOption } from './ReportControls'
+import { AgreementPeriodReport } from './AgreementPeriodReport'
+import { CardTabPanel, CardTabs } from '../interactions/cardUi'
+import { ReportBuilder, type OrderTarget } from './ReportBuilder'
+import { kindViews, ReportCatalog, viewKind, type ReportView } from './ReportCatalog'
+import type { FilterOption } from './ReportControls'
+import type { FilterOptions, OptionsState } from './ReportFilters'
 import { isFinished, ReportJobs, type DownloadState, type JobsState } from './ReportJobs'
+import { homeTabFromQuery, homeTabHash, jobsLinkHash } from './reportsRoute'
+import { periodOnKindChange } from './reportPeriods'
 import { applyDefinition, chartKinds, groupingsFor, normalizeSelection, type ReportSelection } from './reportSelection'
 import { SavedReportsList, useSavedReports } from './SavedReports'
 import './reports.css'
+import './reportsLayout.css'
 
 type ReportsScreenProps = {
   profileId: string
   role: Me['role']
   view: string | undefined
+  query?: string
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
 
 const reportViews: readonly ReportView[] = [
   'manager-work', 'portfolio', 'events', 'snapshot', 'duration', 'demand', 'agreements', 'statistics', 'learning-dynamics', 'kam-review',
-  'confirmations', 'signing-plan'
+  'confirmations', 'signing-plan', 'agreements-period'
 ]
 
 const pollIntervalMs = 1000
@@ -72,17 +81,7 @@ const withKnownFilters = (selection: ReportSelection, options: FilterOptions): R
   agreement: { ...selection.agreement, vendorIds: known(selection.agreement.vendorIds, options.vendors) }
 })
 
-const PageHeader = ({ title, children }: { title: string; children: ReactNode }) => (
-  <>
-    <p className="report-builder__back"><a href="#/reports">← Все отчёты</a></p>
-    <div className="report-builder__header">
-      <h2 id="report-page-title" className="reports__section-title">{title}</h2>
-      <InfoTip label={title}>{children}</InfoTip>
-    </div>
-  </>
-)
-
-export const ReportsScreen = ({ profileId, role, view, onSessionExpired, onProfileUnavailable }: ReportsScreenProps) => {
+export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, onProfileUnavailable }: ReportsScreenProps) => {
   const found = reportViews.find((item) => item === view) ?? null
   const current = found === 'kam-review' && role === 'USER' ? null : found
   const [selection, setSelection] = useState<ReportSelection>(() => normalizeSelection(loadReportSelection(profileId)))
@@ -91,7 +90,7 @@ export const ReportsScreen = ({ profileId, role, view, onSessionExpired, onProfi
   const [pollError, setPollError] = useState<unknown>(null)
   const [ordering, setOrdering] = useState(false)
   const [orderError, setOrderError] = useState<{ target: OrderTarget; error: unknown } | null>(null)
-  const [orderNotice, setOrderNotice] = useState('')
+  const [toast, setToast] = useState<ReactNode | null>(null)
   const [chartJobId, setChartJobId] = useState<string | null>(null)
   const [downloadState, setDownloadState] = useState<DownloadState>({ kind: 'idle' })
   const [currentReportId, setCurrentReportId] = useState<string | null>(null)
@@ -180,7 +179,6 @@ export const ReportsScreen = ({ profileId, role, view, onSessionExpired, onProfi
   useEffect(() => {
     if (current === null) {
       setCurrentReportId(null)
-      setOrderNotice('')
     }
   }, [current])
 
@@ -194,6 +192,7 @@ export const ReportsScreen = ({ profileId, role, view, onSessionExpired, onProfi
     const kind = routeKind ?? 'PORTFOLIO'
     setSelection((currentSelection) => ({
       ...currentSelection,
+      ...periodOnKindChange(currentSelection, currentSelection.kind, kind, todayInMoscow()),
       kind,
       groupBy: groupingsFor(kind).includes(currentSelection.groupBy) ? currentSelection.groupBy : 'PROGRAM'
     }))
@@ -269,7 +268,6 @@ export const ReportsScreen = ({ profileId, role, view, onSessionExpired, onProfi
     orderKey.current = { payload: serialized, key }
     setOrdering(true)
     setOrderError(null)
-    setOrderNotice('')
     setPollError(null)
     try {
       const created = await apiClient.createReportJob(payload, key)
@@ -278,7 +276,7 @@ export const ReportsScreen = ({ profileId, role, view, onSessionExpired, onProfi
         autoDownloadIds.current.add(created.jobId)
         setChartJobId(created.jobId)
       } else {
-        setOrderNotice(`Файл ${payload.format} заказан: он появится в «Моих выгрузках» ниже, когда будет готов.`)
+        setToast(<>Файл {payload.format} заказан, он появится в выгрузках, когда будет готов. <a href={jobsLinkHash}>Открыть выгрузки</a></>)
       }
       void refreshJobs([created.jobId])
     } catch (error) {
@@ -301,103 +299,104 @@ export const ReportsScreen = ({ profileId, role, view, onSessionExpired, onProfi
     window.location.hash = `#/reports/${kindViews[restored.kind]}`
   }
 
-  const jobs = (
-    <ReportJobs
-      jobsState={jobsState}
-      pollError={pollError}
-      downloadState={downloadState}
-      onReload={() => void loadJobs()}
-      onDownload={(job) => void downloadJob(job)}
-    />
-  )
+  useEffect(() => {
+    if (saved.notice !== '') {
+      setToast(saved.notice)
+    }
+  }, [saved.notice])
 
-  if (current === 'learning-dynamics') {
-    return (
-      <section className="reports report-page" aria-labelledby="report-page-title">
-        <PageHeader title={catalogTitle(role, current)}>
-          Обучающиеся и завершившие по месяцам по истории наблюдений Moodle: линии по вузам или по ИТ-программам,
-          таблица строк «месяц × вуз × программа», выгрузка XLSX и PDF.
-        </PageHeader>
-        <LearningDynamicsReport onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
-      </section>
-    )
-  }
+  // Блока выгрузок под отчётом больше нет, поэтому сбой опроса готовности файла сообщаем всплывающим сообщением.
+  useEffect(() => {
+    if (pollError !== null) {
+      setToast(<>Не удалось узнать, готов ли файл. <a href={jobsLinkHash}>Открыть выгрузки</a></>)
+    }
+  }, [pollError])
 
-  if (current === 'signing-plan') {
-    return (
-      <section className="reports report-page" aria-labelledby="report-page-title">
-        <PageHeader title={catalogTitle(role, current)}>
-          Плановые подписания и продления соглашений за квартал или год: строки по вузам, итоги по КАМ и командам,
-          статус «выполнено», «просрочено» или «впереди», выгрузка XLSX и PDF. «Руководство» видит все команды только для чтения.
-        </PageHeader>
-        <SigningPlanReport onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
-      </section>
-    )
-  }
+  const accessHandlers = { onSessionExpired, onProfileUnavailable }
 
-  if (current === 'kam-review') {
+  const content = (() => {
+    if (current === 'learning-dynamics') {
+      return <LearningDynamicsReport role={role} {...accessHandlers} />
+    }
+    if (current === 'signing-plan') {
+      return <SigningPlanReport role={role} {...accessHandlers} />
+    }
+    if (current === 'agreements-period') {
+      return <AgreementPeriodReport role={role} {...accessHandlers} />
+    }
+    if (current === 'kam-review') {
+      return <KamReviewPanel role={role} {...accessHandlers} />
+    }
+    if (current === 'confirmations') {
+      return <AgreementConfirmationsPanel role={role} {...accessHandlers} />
+    }
+    if (current !== null) {
+      const chartJob = chartJobId === null || jobsState.kind !== 'ready'
+        ? undefined
+        : jobsState.jobs.find((job) => job.id === chartJobId)
+      return (
+        <div className="reports">
+          {synced && (
+            <ReportBuilder
+              key={current}
+              role={role}
+              selection={selection}
+              setSelection={setSelection}
+              statisticsMode={current === 'statistics'}
+              optionsState={optionsState}
+              onReloadOptions={() => void loadOptions()}
+              onAccessError={handleAccessError}
+              onOrder={(payload, target) => void orderJob(payload, target)}
+              ordering={ordering}
+              orderError={orderError}
+              chartJob={chartJob}
+              saved={saved}
+              currentReport={saved.reports.find((report) => report.id === currentReportId)}
+              onSaved={(report) => setCurrentReportId(report.id)}
+              autoRun={autoRun}
+              onAutoRunDone={() => setAutoRun(false)}
+            />
+          )}
+        </div>
+      )
+    }
+    const tab = homeTabFromQuery(query)
     return (
-      <section className="reports report-page" aria-labelledby="report-page-title">
-        <PageHeader title={catalogTitle(role, current)}>
-          События за период, открытые шаги и отмеченные риски одного КАМ на одной странице — для регулярного разбора с
-          руководителем. Показаны первые 200 событий и работ; полный список — в отчётах «События за период» и «Портфель».
-        </PageHeader>
-        <KamReviewPanel onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
-      </section>
-    )
-  }
-
-  if (current === 'confirmations') {
-    return (
-      <section className="reports report-page" aria-labelledby="report-page-title">
-        <PageHeader title={catalogTitle(role, current)}>
-          Документы, привязанные к мероприятиям соглашений: отбор по вузу, виду мероприятия и периоду мероприятия
-          (фактические сроки, иначе плановые, иначе срок соглашения). Архив содержит проверенные файлы по папкам видов
-          мероприятий и опись.
-        </PageHeader>
-        <AgreementConfirmationsPanel onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
-      </section>
-    )
-  }
-
-  if (current !== null) {
-    const chartJob = chartJobId === null || jobsState.kind !== 'ready'
-      ? undefined
-      : jobsState.jobs.find((job) => job.id === chartJobId)
-    return (
-      <div className="reports">
-        {synced && (
-          <ReportBuilder
-            key={current}
-            role={role}
-            selection={selection}
-            setSelection={setSelection}
-            statisticsMode={current === 'statistics'}
-            optionsState={optionsState}
-            onReloadOptions={() => void loadOptions()}
-            onAccessError={handleAccessError}
-            onOrder={(payload, target) => void orderJob(payload, target)}
-            ordering={ordering}
-            orderError={orderError}
-            orderNotice={orderNotice}
-            chartJob={chartJob}
-            saved={saved}
-            currentReport={saved.reports.find((report) => report.id === currentReportId)}
-            onSaved={(report) => setCurrentReportId(report.id)}
-            autoRun={autoRun}
-            onAutoRunDone={() => setAutoRun(false)}
-            jobs={jobs}
-          />
-        )}
+      <div className="reports report-home">
+        <CardTabs
+          label="Разделы отчётов"
+          idPrefix="reports-home"
+          tabs={[
+            { id: 'catalog', label: 'Все отчёты' },
+            { id: 'saved', label: 'Сохранённые', count: saved.listState.kind === 'ready' ? saved.reports.length : undefined },
+            { id: 'jobs', label: 'Выгрузки', count: jobsState.kind === 'ready' ? jobsState.jobs.length : undefined }
+          ]}
+          active={tab}
+          onChange={(next) => {
+            window.location.hash = homeTabHash(next)
+          }}
+        />
+        <CardTabPanel idPrefix="reports-home" active={tab}>
+          {tab === 'catalog' && <ReportCatalog role={role} />}
+          {tab === 'saved' && <SavedReportsList saved={saved} onOpen={openSavedReport} />}
+          {tab === 'jobs' && (
+            <ReportJobs
+              jobsState={jobsState}
+              pollError={pollError}
+              downloadState={downloadState}
+              onReload={() => void loadJobs()}
+              onDownload={(job) => void downloadJob(job)}
+            />
+          )}
+        </CardTabPanel>
       </div>
     )
-  }
+  })()
 
   return (
-    <div className="reports report-home">
-      <SavedReportsList saved={saved} onOpen={openSavedReport} />
-      <ReportCatalog role={role} />
-      {jobs}
-    </div>
+    <>
+      {content}
+      <Toast message={toast} onClose={() => setToast(null)} />
+    </>
   )
 }

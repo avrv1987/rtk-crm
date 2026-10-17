@@ -52,14 +52,14 @@ public class SourceMappingService {
                 throw new InteractionValidationException("organizationId", "Выберите существующую организацию CRM");
             }
             updateReference(mapping, request.organizationId(), null, profile, now);
-            syncService.reresolveWebsiteLinked("organization_id", mapping.organizationId(),
+            syncService.reresolveLinked(mapping.source(), "organization_id", mapping.organizationId(),
                     item -> mapping.externalKey().equals(item.organizationKey()), profile.id());
         } else {
             if (request.programId() == null || !repository.activeProgramExists(request.programId())) {
                 throw new InteractionValidationException("programId", "Выберите активную программу CRM");
             }
             updateReference(mapping, null, request.programId(), profile, now);
-            syncService.reresolveWebsiteLinked("program_id", mapping.programId(),
+            syncService.reresolveLinked(mapping.source(), "program_id", mapping.programId(),
                     item -> mapping.externalKey().equals(SiteRecord.programKey(item.programName())), profile.id());
         }
         return view(mappingId);
@@ -77,10 +77,10 @@ public class SourceMappingService {
         }
         repository.deleteMapping(mappingId);
         if (mapping.kind().equals("ORGANIZATION")) {
-            syncService.reresolveWebsiteLinked("organization_id", mapping.organizationId(),
+            syncService.reresolveLinked(mapping.source(), "organization_id", mapping.organizationId(),
                     item -> mapping.externalKey().equals(item.organizationKey()), profile.id());
         } else {
-            syncService.reresolveWebsiteLinked("program_id", mapping.programId(),
+            syncService.reresolveLinked(mapping.source(), "program_id", mapping.programId(),
                     item -> mapping.externalKey().equals(SiteRecord.programKey(item.programName())), profile.id());
         }
     }

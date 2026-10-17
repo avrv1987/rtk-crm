@@ -3,6 +3,7 @@ package ru.rtk.crm.teacherroster;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.text.Collator;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -29,6 +30,7 @@ import ru.rtk.crm.catalog.PersonalDataStatus;
 import ru.rtk.crm.enrolment.LmsRosterWorkbookWriter;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.teacherroster.TeacherRosterModels.FileFormat;
 import ru.rtk.crm.teacherroster.TeacherRosterModels.FileMode;
 import ru.rtk.crm.teacherroster.TeacherRosterModels.MemberStatus;
 import ru.rtk.crm.teacherroster.TeacherRosterModels.TeacherRoster;
@@ -48,6 +50,7 @@ public class TeacherRosterService {
     static final String OBJECT_TYPE = "INTERACTION";
     static final int MAX_NAME_LENGTH = 300;
     static final int MAX_MEMBERS = 500;
+    static final String MOODLE_CSV_HEADER = "username,firstname,lastname,email,course1,group1,role1";
 
     private static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
     private static final Collator RUSSIAN = Collator.getInstance(Locale.forLanguageTag("ru-RU"));
@@ -86,8 +89,8 @@ public class TeacherRosterService {
         String group = optionalName(request.lmsGroup(), "lmsGroup");
         if (repository.rosterExists(interactionId, course, group)) {
             throw new InteractionValidationException("lmsCourse", group == null
-                    ? "Список для курса «" + course + "» без группы уже есть в этой работе"
-                    : "Список для курса «" + course + "» и группы «" + group + "» уже есть в этой работе");
+                    ? "Список для курса «" + course + "» без группы уже есть в этом взаимодействии"
+                    : "Список для курса «" + course + "» и группы «" + group + "» уже есть в этом взаимодействии");
         }
         UUID id = UUID.randomUUID();
         repository.insertRoster(id, visible.work(), course, group, profile.id(), OffsetDateTime.now());
@@ -108,7 +111,7 @@ public class TeacherRosterService {
     public TeacherRoster addMember(CrmProfile profile, UUID rosterId, UUID contactId) {
         RosterRow roster = requireEditableRoster(profile, rosterId);
         TeacherRosterRepository.ContactRow contact = repository.findContact(roster.organizationId(), contactId)
-                .orElseThrow(() -> new InteractionValidationException("contactId", "Контакт не относится к вузу этой работы"));
+                .orElseThrow(() -> new InteractionValidationException("contactId", "Контакт не относится к вузу этого взаимодействия"));
         if (contact.personalDataStatus() != PersonalDataStatus.ACTIVE) {
             throw new InteractionValidationException("contactId",
                     "Обработка данных контакта ограничена или контакт обезличен; выберите другой контакт");
@@ -148,7 +151,8 @@ public class TeacherRosterService {
             throw new InteractionValidationException("mode", emptyMessage(request.mode(), scope));
         }
         UUID exportId = UUID.randomUUID();
-        byte[] content = workbook(rows);
+        FileFormat format = request.format() == null ? FileFormat.XLSX : request.format();
+        byte[] content = format == FileFormat.MOODLE_CSV ? moodleCsv(roster, rows) : workbook(rows);
         OffsetDateTime now = OffsetDateTime.now();
         repository.insertExport(exportId, roster.id(), rows.size(), profile.id(), now);
         repository.markExported(roster.id(), rows.stream().filter(member -> !member.transferred())
@@ -157,9 +161,10 @@ public class TeacherRosterService {
         WorkRow work = repository.findWork(roster.interactionId()).orElseThrow(InteractionNotFoundException::new);
         auditJournalRepository.record(AuditAction.TEACHER_ROSTER_EXPORTED, profile.id(), OBJECT_TYPE, work.id(), work.title(),
                 target(roster) + "; строк: " + rows.size() + "; не готовы и не выгружены: " + skipped + "; выгрузка: " + exportId
-                        + "; режим: " + (request.mode() == FileMode.ALL ? "все преподаватели списка" : "только не переданные"),
+                        + "; режим: " + (request.mode() == FileMode.ALL ? "все преподаватели списка" : "только не переданные")
+                        + "; формат: " + (format == FileFormat.MOODLE_CSV ? "CSV для загрузки пользователей Moodle" : "XLSX шаблона организатора"),
                 requestId);
-        return new TeacherRosterFile(exportId, fileName(roster), rows.size(), skipped, content);
+        return new TeacherRosterFile(exportId, fileName(roster, format), format, rows.size(), skipped, content);
     }
 
     @Transactional
@@ -175,9 +180,10 @@ public class TeacherRosterService {
         return new TeacherRosterMarked(marked, roster(roster.id()));
     }
 
-    static String fileName(RosterRow roster) {
+    static String fileName(RosterRow roster, FileFormat format) {
         String group = roster.lmsGroup() == null ? "" : "_" + safe(roster.lmsGroup());
-        return "LMS_преподаватели_" + safe(roster.lmsCourse()) + group + "_" + LocalDate.now(ZONE) + ".xlsx";
+        return "LMS_преподаватели_" + safe(roster.lmsCourse()) + group + "_" + LocalDate.now(ZONE)
+                + (format == FileFormat.MOODLE_CSV ? "_moodle.csv" : ".xlsx");
     }
 
     static List<String> problems(MemberRow member, NameParts name, Set<String> repeatedEmails) {
@@ -287,6 +293,29 @@ public class TeacherRosterService {
             throw new UncheckedIOException("Teacher roster workbook cannot be written", exception);
         }
         return output.toByteArray();
+    }
+
+    /**
+     * CSV штатной загрузки пользователей Moodle (tool_uploaduser): латинские имена полей, логин — почта в нижнем регистре.
+     * Курс и группа берутся из списка как есть: Moodle ищет курс по краткому имени, группу — по названию. Первый символ
+     * ячейки со знаком формулы экранируется, чтобы файл можно было открыть в Excel без исполнения формул.
+     */
+    private static byte[] moodleCsv(RosterRow roster, List<TeacherRosterMember> rows) {
+        StringBuilder csv = new StringBuilder("\uFEFF").append(MOODLE_CSV_HEADER).append("\r\n");
+        for (TeacherRosterMember member : rows) {
+            String email = member.email().strip();
+            csv.append(String.join(",", cell(email.toLowerCase(Locale.ROOT)), cell(member.firstName()), cell(member.lastName()),
+                    cell(email), cell(roster.lmsCourse()), cell(roster.lmsGroup()), cell("student"))).append("\r\n");
+        }
+        return csv.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static String cell(String value) {
+        String text = value == null ? "" : value;
+        if (!text.isEmpty() && "=+-@\t\r".indexOf(text.charAt(0)) >= 0) {
+            text = "'" + text;
+        }
+        return "\"" + text.replace("\"", "\"\"") + "\"";
     }
 
     private VisibleWork requireVisibleWork(CrmProfile profile, UUID interactionId) {
