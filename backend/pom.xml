@@ -117,6 +117,16 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
       </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <environmentVariables>
+            <APP_ATTACHMENTS_STORAGE_ROOT>${project.build.directory}/test-storage/files</APP_ATTACHMENTS_STORAGE_ROOT>
+            <APP_REPORTS_STORAGE_ROOT>${project.build.directory}/test-storage/reports</APP_REPORTS_STORAGE_ROOT>
+          </environmentVariables>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 </project>
