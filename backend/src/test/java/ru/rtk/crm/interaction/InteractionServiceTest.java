@@ -86,6 +86,9 @@ import ru.rtk.crm.catalog.OrganizationRepository;
         InteractionService.class,
         InteractionIssueRepository.class,
         InteractionIssueService.class,
+        WorkflowTemplateService.class,
+        WorkflowRolloutRepository.class,
+        WorkflowRolloutService.class,
         InteractionServiceTest.JsonConfiguration.class
 })
 class InteractionServiceTest {
@@ -137,6 +140,12 @@ class InteractionServiceTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private WorkflowTemplateService workflowTemplateService;
+
+    @Autowired
+    private WorkflowRolloutService workflowRolloutService;
+
     @BeforeEach
     void setUp() {
         createSchema();
@@ -155,6 +164,7 @@ class InteractionServiceTest {
         jdbcTemplate.update("DELETE FROM interactions");
         jdbcTemplate.update("DELETE FROM workflow_template_transitions");
         jdbcTemplate.update("DELETE FROM workflow_template_stages");
+        jdbcTemplate.update("DELETE FROM workflow_template_versions");
         jdbcTemplate.update("DELETE FROM workflow_templates");
         jdbcTemplate.update("DELETE FROM contact_events");
         jdbcTemplate.update("DELETE FROM contacts");
@@ -2798,6 +2808,221 @@ class InteractionServiceTest {
         return InteractionFilter.from(null, null, null, null, status, null, null, responsible, minDaysOnStage);
     }
 
+    @Test
+    void templateVersionsRollOutToRunningWorksWithMappingHistoryRollbackAndRoles() {
+        CrmProfile management = new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0);
+        CrmProfile admin = new CrmProfile(UUID.randomUUID(), UserRole.ADMIN, null, 0);
+        WorkflowTemplate v1 = workflowTemplateService.create(
+                leaderA,
+                new WorkflowTemplateRequest(
+                        "Маршрут команды",
+                        List.of(
+                                new WorkflowStageInput("Старт", 0, false, null),
+                                new WorkflowStageInput("Проверка", 1, false, null),
+                                new WorkflowStageInput("Финиш", 2, false, null)
+                        ),
+                        List.of(new WorkflowTransitionInput(0, 1, false), new WorkflowTransitionInput(1, 2, false)),
+                        null,
+                        "Первая версия"
+                ),
+                "route-v1"
+        );
+        UUID start = v1.stages().get(0).id();
+        UUID check = v1.stages().get(1).id();
+        UUID finish = v1.stages().get(2).id();
+        assertThat(v1.routeVersion()).isEqualTo(1);
+        Interaction plain = createRouteWork("Работа без изменений", v1.id(), "route-work-1");
+        Interaction movedStart = createRouteWork("Работа на проверке", v1.id(), "route-work-2");
+        Interaction editedStart = createRouteWork("Работа со своими этапами", v1.id(), "route-work-3");
+        Interaction moved = interactionService.transition(
+                profileA, movedStart.id(), new InteractionTransitionRequest(0, movedStart.stages().get(1).id(), null), "route-move"
+        );
+        Interaction edited = interactionService.stageEdits(
+                profileA,
+                editedStart.id(),
+                new InteractionStageEditRequest(0, List.of(new InteractionStageEditOperation(
+                        InteractionStageEditOperation.Type.RENAME, editedStart.stages().get(2).id(), null, "Финиш вуза", null
+                ))),
+                "route-edit"
+        );
+        assertThat(moved.route()).isEqualTo(new InteractionRoute(v1.id(), "Маршрут команды", 1, 1));
+
+        WorkflowTemplate v2 = workflowTemplateService.update(
+                leaderA,
+                v1.id(),
+                new WorkflowTemplateRequest(
+                        null,
+                        List.of(
+                                new WorkflowStageInput("Старт", 0, false, start),
+                                new WorkflowStageInput("Согласование", 1, false, check),
+                                new WorkflowStageInput("Подписание", 2, true, null),
+                                new WorkflowStageInput("Финиш", 3, false, finish)
+                        ),
+                        List.of(
+                                new WorkflowTransitionInput(0, 1, false),
+                                new WorkflowTransitionInput(1, 2, false),
+                                new WorkflowTransitionInput(2, 3, false),
+                                new WorkflowTransitionInput(1, 3, true)
+                        ),
+                        v1.version(),
+                        "Добавили подписание"
+                ),
+                "route-v2"
+        );
+        assertThat(v2.routeVersion()).isEqualTo(2);
+        assertThat(v2.stages()).extracting(WorkflowTemplateStage::id).contains(start, check, finish);
+        assertThat(workflowRolloutService.versions(leaderA, v1.id())).satisfies(versions -> {
+            assertThat(versions).extracting(WorkflowTemplateVersion::number).containsExactly(2, 1);
+            assertThat(versions.getFirst().comment()).isEqualTo("Добавили подписание");
+            assertThat(versions.getFirst().authorName()).isEqualTo("Вера Ковалёва");
+            assertThat(versions.get(1).works()).isEqualTo(3L);
+        });
+        assertThat(workflowRolloutService.versions(admin, defaultTemplateId()))
+                .allSatisfy(version -> assertThat(version.works()).isNull());
+        assertThatThrownBy(() -> workflowRolloutService.versions(leaderB, v1.id()))
+                .isInstanceOf(WorkflowTemplateNotFoundException.class);
+        assertThatThrownBy(() -> workflowRolloutService.versions(management, v1.id()))
+                .isInstanceOf(WorkflowTemplateNotFoundException.class);
+        for (CrmProfile denied : List.of(profileA, management, admin)) {
+            assertThatThrownBy(() -> workflowRolloutService.preview(denied, v1.id(), 2, null))
+                    .isInstanceOf(WorkflowTemplateAccessDeniedException.class);
+        }
+        assertThatThrownBy(() -> workflowRolloutService.preview(leaderB, v1.id(), 2, null))
+                .isInstanceOf(WorkflowTemplateNotFoundException.class);
+
+        WorkflowRolloutPreview preview = workflowRolloutService.preview(leaderA, v1.id(), 2, null);
+        assertThat(preview.sources()).singleElement().satisfies(source -> {
+            assertThat(source.version()).isEqualTo(1);
+            assertThat(source.works()).isEqualTo(3);
+            assertThat(source.stages()).extracting(WorkflowRolloutPreview.StageMatch::match).containsExactly(
+                    WorkflowStageMatch.SAME, WorkflowStageMatch.RENAMED, WorkflowStageMatch.SAME
+            );
+            assertThat(source.stages()).extracting(WorkflowRolloutPreview.StageMatch::works).containsExactly(2, 1, 0);
+        });
+        Map<String, WorkflowRolloutPreview.Work> works = preview.works().stream()
+                .collect(Collectors.toMap(WorkflowRolloutPreview.Work::title, Function.identity()));
+        assertThat(works.get("Работа на проверке").targetStageName()).isEqualTo("Согласование");
+        assertThat(works.get("Работа со своими этапами").edited()).isTrue();
+        assertThat(works.get("Работа без изменений").edited()).isFalse();
+
+        WorkflowRolloutRequest rollout = new WorkflowRolloutRequest(null, List.of(
+                new WorkflowRolloutWorkInput(plain.id(), plain.version()),
+                new WorkflowRolloutWorkInput(moved.id(), moved.version())
+        ), false);
+        assertThatThrownBy(() -> workflowRolloutService.apply(profileA, v1.id(), 2, rollout, "rollout-user"))
+                .isInstanceOf(WorkflowTemplateAccessDeniedException.class);
+        assertThat(workflowRolloutService.apply(leaderA, v1.id(), 2, rollout, "rollout-v2"))
+                .isEqualTo(new WorkflowRolloutResult(2, 2));
+        assertThat(workflowRolloutService.apply(leaderA, v1.id(), 2, rollout, "rollout-v2"))
+                .isEqualTo(new WorkflowRolloutResult(2, 2));
+        assertThatThrownBy(() -> workflowRolloutService.apply(
+                leaderA, v1.id(), 2, new WorkflowRolloutRequest(null, rollout.works(), true), "rollout-v2"
+        )).isInstanceOfSatisfying(InteractionConflictException.class, exception ->
+                assertThat(exception.code()).isEqualTo("IDEMPOTENCY_CONFLICT"));
+        Interaction movedV2 = interactionService.get(profileA, moved.id());
+        assertThat(movedV2.route().version()).isEqualTo(2);
+        assertThat(movedV2.currentStageName()).isEqualTo("Согласование");
+        assertThat(movedV2.currentStageId()).isEqualTo(moved.currentStageId());
+        assertThat(movedV2.stages()).extracting(InteractionStage::name)
+                .containsExactly("Старт", "Согласование", "Подписание", "Финиш");
+        assertThat(interactionService.events(profileA, moved.id()).getLast()).satisfies(event -> {
+            assertThat(event.type()).isEqualTo(InteractionEventType.STAGES_EDITED);
+            assertThat(event.actorProfileId()).isEqualTo(LEADER_A);
+            assertThat(event.comment()).startsWith("Маршрут обновлён до версии 2 шаблона «Маршрут команды» (была версия 1)")
+                    .contains("текущий этап «Проверка» → «Согласование»", "добавлен этап «Подписание»");
+        });
+
+        Interaction editedWork = edited;
+        assertThatThrownBy(() -> workflowRolloutService.apply(leaderA, v1.id(), 2, new WorkflowRolloutRequest(
+                null, List.of(new WorkflowRolloutWorkInput(editedWork.id(), editedWork.version())), false
+        ), "rollout-edited")).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("replaceLocalChanges"));
+        assertThatThrownBy(() -> workflowRolloutService.apply(leaderA, v1.id(), 2, new WorkflowRolloutRequest(
+                null, List.of(new WorkflowRolloutWorkInput(editedWork.id(), 0)), true
+        ), "rollout-stale")).isInstanceOfSatisfying(InteractionConflictException.class, exception ->
+                assertThat(exception.code()).isEqualTo("VERSION_CONFLICT"));
+        workflowRolloutService.apply(leaderA, v1.id(), 2, new WorkflowRolloutRequest(
+                null, List.of(new WorkflowRolloutWorkInput(editedWork.id(), editedWork.version())), true
+        ), "rollout-edited-confirmed");
+        assertThat(interactionService.get(profileA, editedWork.id()).stages()).extracting(InteractionStage::name)
+                .containsExactly("Старт", "Согласование", "Подписание", "Финиш");
+
+        WorkflowTemplate v3 = workflowTemplateService.update(
+                leaderA,
+                v1.id(),
+                new WorkflowTemplateRequest(
+                        null,
+                        List.of(
+                                new WorkflowStageInput("Старт", 0, false, start),
+                                new WorkflowStageInput("Подписание", 1, true, v2.stages().get(2).id()),
+                                new WorkflowStageInput("Финиш", 2, false, finish)
+                        ),
+                        List.of(new WorkflowTransitionInput(0, 1, false), new WorkflowTransitionInput(1, 2, false)),
+                        v2.version(),
+                        null
+                ),
+                "route-v3"
+        );
+        WorkflowRolloutPreview removal = workflowRolloutService.preview(leaderA, v1.id(), 3, null);
+        assertThat(removal.works()).filteredOn(work -> work.id().equals(moved.id())).singleElement().satisfies(work -> {
+            assertThat(work.currentStageRemoved()).isTrue();
+            assertThat(work.targetStageName()).isEqualTo("Подписание");
+        });
+        WorkflowRolloutRequest toStart = new WorkflowRolloutRequest(
+                List.of(new WorkflowStageMapInput(check, start)),
+                List.of(new WorkflowRolloutWorkInput(movedV2.id(), movedV2.version())),
+                false
+        );
+        assertThat(workflowRolloutService.preview(leaderA, v1.id(), 3, toStart).works())
+                .filteredOn(work -> work.id().equals(moved.id()))
+                .extracting(WorkflowRolloutPreview.Work::targetStageName)
+                .containsExactly("Старт");
+        workflowRolloutService.apply(leaderA, v3.id(), 3, toStart, "rollout-v3");
+        Interaction movedV3 = interactionService.get(profileA, moved.id());
+        assertThat(movedV3.currentStageName()).isEqualTo("Старт");
+        assertThat(movedV3.stages()).extracting(InteractionStage::name).containsExactly("Старт", "Подписание", "Финиш");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM interaction_events e
+                WHERE e.interaction_id = ? AND NOT EXISTS (
+                    SELECT 1 FROM interaction_stages s WHERE s.id = e.stage_id AND s.interaction_id = e.interaction_id
+                )
+                """, Long.class, moved.id())).isZero();
+        assertThat(interactionService.events(profileA, moved.id()))
+                .extracting(InteractionEvent::toStageNameSnapshot)
+                .contains("Проверка");
+
+        workflowRolloutService.apply(leaderA, v1.id(), 2, new WorkflowRolloutRequest(
+                null, List.of(new WorkflowRolloutWorkInput(movedV3.id(), movedV3.version())), false
+        ), "rollback-v2");
+        Interaction rolledBack = interactionService.get(profileA, moved.id());
+        assertThat(rolledBack.route().version()).isEqualTo(2);
+        assertThat(rolledBack.stages()).extracting(InteractionStage::name)
+                .containsExactly("Старт", "Согласование", "Подписание", "Финиш");
+        assertThat(interactionService.events(profileA, moved.id()).getLast().comment())
+                .startsWith("Маршрут возвращён к версии 2");
+
+        Interaction foreign = interactionService.create(
+                profileB,
+                new InteractionCreateRequest(ORGANIZATION_B, "Чужая работа", null, null, List.of()),
+                "route-foreign"
+        );
+        assertThatThrownBy(() -> workflowRolloutService.apply(leaderA, v1.id(), 3, new WorkflowRolloutRequest(
+                null, List.of(new WorkflowRolloutWorkInput(foreign.id(), foreign.version())), false
+        ), "rollout-foreign")).isInstanceOf(InteractionNotFoundException.class);
+    }
+
+    private Interaction createRouteWork(String title, UUID templateId, String key) {
+        return interactionService.create(
+                profileA,
+                new InteractionCreateRequest(ORGANIZATION_A, title, null, null, List.of(), null, List.of(), null, templateId),
+                key
+        );
+    }
+
+    private UUID defaultTemplateId() {
+        return jdbcTemplate.queryForObject("SELECT id FROM workflow_templates WHERE default_template = TRUE", UUID.class);
+    }
+
     private List<UUID> ids(CrmProfile profile, InteractionFilter filter) {
         return interactionService.list(profile, filter, InteractionQuery.from(0, 25, "nextActionAt,asc"))
                 .items()
@@ -2890,7 +3115,7 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -3003,7 +3228,7 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500),
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
@@ -3042,12 +3267,19 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_stages (
+                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
                     stage_order INTEGER NOT NULL,
                     name VARCHAR(200) NOT NULL,
                     optional BOOLEAN NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS workflow_template_versions (
+                    template_id UUID NOT NULL, version_number INTEGER NOT NULL, name VARCHAR(200) NOT NULL,
+                    content TEXT NOT NULL, change_comment VARCHAR(1000), created_by UUID,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, PRIMARY KEY (template_id, version_number)
                 )
                 """);
         jdbcTemplate.execute("""

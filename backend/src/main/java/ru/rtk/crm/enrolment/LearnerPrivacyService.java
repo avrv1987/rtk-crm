@@ -100,6 +100,9 @@ public class LearnerPrivacyService {
     }
 
     public int anonymizeExpired(Period term, LocalDate today) {
+        if (!cipher.enabled()) {
+            return 0;
+        }
         Set<UUID> expiredStreams = enrolmentRepository.findStreamEndDates().entrySet().stream()
                 .filter(stream -> stream.getValue().plus(term).isBefore(today))
                 .map(Map.Entry::getKey)

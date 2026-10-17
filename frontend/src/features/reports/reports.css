@@ -1333,3 +1333,15 @@
     flex: 1 1 100%;
   }
 }
+
+.report-catalog__group {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.report-catalog__group-title {
+  margin: 0;
+  color: var(--color-text-label);
+  font-size: var(--font-size-lg);
+}

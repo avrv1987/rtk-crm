@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="758" height="1017" viewBox="0 0 758 1017" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif">
+<title>Последовательность: переход этапа</title>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="24.0" y="31.0" font-size="15" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="24.0" dy="0">Последовательность: переход этапа</tspan></text>
+<text x="24.0" y="49.0" font-size="11" text-anchor="start" fill="#616e7c"><tspan x="24.0" dy="0">Одна транзакция; проверки прав и версии выполняются на сервере.</tspan></text>
+<g stroke="#1f2933" stroke-width="1.3" fill="none"><circle cx="114.4" cy="76.0" r="6" fill="#ffffff"/><line x1="114.4" y1="82.0" x2="114.4" y2="94.0"/><line x1="106.4" y1="86.0" x2="122.4" y2="86.0"/></g>
+<rect x="60.0" y="96.0" width="108.7" height="53.0" rx="3" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="114.4" y="112.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="114.4" dy="0">КАМ или</tspan><tspan x="114.4" dy="15">руководитель</tspan><tspan x="114.4" dy="15">(SPA)</tspan></text>
+<rect x="201.0" y="88.0" width="171.8" height="61.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="286.9" y="123.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="286.9" dy="0">InteractionsApiController</tspan></text>
+<rect x="396.8" y="88.0" width="131.0" height="61.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="462.3" y="123.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="462.3" dy="0">InteractionService</tspan></text>
+<rect x="609.8" y="88.0" width="95.5" height="61.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="657.6" y="123.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="657.6" dy="0">PostgreSQL</tspan></text>
+<rect x="14.0" y="357.0" width="729.6" height="64.0" rx="2" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<path d="M14.0,357.0 h28.2 v10 l-6,7 h-22.2 z" fill="#dbe7f3" stroke="#8a96a3" stroke-width="1"/>
+<text x="20.0" y="369.0" font-size="10" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="20.0" dy="0">alt</tspan></text>
+<rect x="47.2" y="359.0" width="161.0" height="16.0" fill="#ffffff"/>
+<text x="50.2" y="370.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="50.2" dy="0">[карточка вне области данных]</tspan></text>
+<rect x="14.0" y="567.0" width="729.6" height="120.0" rx="2" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<path d="M14.0,567.0 h28.2 v10 l-6,7 h-22.2 z" fill="#dbe7f3" stroke="#8a96a3" stroke-width="1"/>
+<text x="20.0" y="579.0" font-size="10" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="20.0" dy="0">alt</tspan></text>
+<rect x="47.2" y="569.0" width="125.3" height="16.0" fill="#ffffff"/>
+<text x="50.2" y="580.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="50.2" dy="0">[ключ уже использован]</tspan></text>
+<polyline points="114.4,149.0 114.4,1007.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="286.9,149.0 286.9,1007.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="462.3,149.0 462.3,1007.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="657.6,149.0 657.6,1007.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="114.4,241.0 286.9,241.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="276.9,245.5 286.9,241.0 276.9,236.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="123.4" y="169.0" width="154.6" height="73.0" fill="#ffffff"/>
+<text x="200.6" y="181.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="200.6" dy="0">POST</tspan><tspan x="200.6" dy="14">/api/interactions/{id}/transitio</tspan><tspan x="200.6" dy="14">ns: toStageId, comment,</tspan><tspan x="200.6" dy="14">version; Idempotency-Key,</tspan><tspan x="200.6" dy="14">X-CSRF-TOKEN</tspan></text>
+<polyline points="286.9,285.0 462.3,285.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="452.3,289.5 462.3,285.0 452.3,280.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="311.4" y="255.0" width="126.5" height="31.0" fill="#ffffff"/>
+<text x="374.6" y="267.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="374.6" dy="0">transition(профиль, id,</tspan><tspan x="374.6" dy="14">запрос, ключ)</tspan></text>
+<polyline points="462.3,343.0 657.6,343.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="647.6,347.5 657.6,343.0 647.6,338.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="494.8" y="299.0" width="130.3" height="45.0" fill="#ffffff"/>
+<text x="560.0" y="311.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="560.0" dy="0">карточка в области</tspan><tspan x="560.0" dy="14">данных пользователя,</tspan><tspan x="560.0" dy="14">блокировка строки</tspan></text>
+<polyline points="462.3,403.0 114.4,403.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="124.4,398.5 114.4,403.0 124.4,407.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="236.8" y="387.0" width="103.0" height="17.0" fill="#ffffff"/>
+<text x="288.3" y="399.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="288.3" dy="0">404 NOT_FOUND</tspan></text>
+<polyline points="462.3,433.0 490.3,433.0 490.3,475.0 464.3,475.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="474.3,470.5 464.3,475.0 474.3,479.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="495.3" y="431.0" width="146.7" height="45.0" fill="#ffffff"/>
+<text x="498.3" y="443.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="498.3" dy="0">requireCardEditor:</tspan><tspan x="498.3" dy="14">изменяют только USER и</tspan><tspan x="498.3" dy="14">LEADER</tspan></text>
+<polyline points="462.3,553.0 657.6,553.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="647.6,557.5 657.6,553.0 647.6,548.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="482.4" y="495.0" width="155.2" height="59.0" fill="#ffffff"/>
+<text x="560.0" y="507.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="560.0" dy="0">резерв Idempotency-Key и</tspan><tspan x="560.0" dy="14">отпечатка тела в</tspan><tspan x="560.0" dy="14">command_idempotency_rec</tspan><tspan x="560.0" dy="14">ords</tspan></text>
+<polyline points="462.3,669.0 114.4,669.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="124.4,664.5 114.4,669.0 124.4,673.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="212.4" y="597.0" width="151.9" height="73.0" fill="#ffffff"/>
+<text x="288.3" y="609.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="288.3" dy="0">то же тело — прежний</tspan><tspan x="288.3" dy="14">результат; другое тело —</tspan><tspan x="288.3" dy="14">409</tspan><tspan x="288.3" dy="14">IDEMPOTENCY_CONFLIC</tspan><tspan x="288.3" dy="14">T</tspan></text>
+<polyline points="462.3,699.0 490.3,699.0 490.3,741.0 464.3,741.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="474.3,736.5 464.3,741.0 474.3,745.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="495.3" y="697.0" width="148.6" height="45.0" fill="#ffffff"/>
+<text x="498.3" y="709.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="498.3" dy="0">версия совпадает, иначе</tspan><tspan x="498.3" dy="14">409 VERSION_CONFLICT</tspan><tspan x="498.3" dy="14">с currentVersion</tspan></text>
+<polyline points="462.3,761.0 490.3,761.0 490.3,831.0 464.3,831.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="474.3,826.5 464.3,831.0 474.3,835.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="495.3" y="759.0" width="151.3" height="73.0" fill="#ffffff"/>
+<text x="498.3" y="771.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="498.3" dy="0">переход есть в</tspan><tspan x="498.3" dy="14">interaction_stage_transition</tspan><tspan x="498.3" dy="14">s; при comment_required</tspan><tspan x="498.3" dy="14">без комментария — 400</tspan><tspan x="498.3" dy="14">VALIDATION_ERROR</tspan></text>
+<polyline points="462.3,909.0 657.6,909.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="647.6,913.5 657.6,909.0 647.6,904.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="486.9" y="851.0" width="146.0" height="59.0" fill="#ffffff"/>
+<text x="560.0" y="863.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="560.0" dy="0">current_stage_id и version</tspan><tspan x="560.0" dy="14">+ 1; событие</tspan><tspan x="560.0" dy="14">TRANSITIONED в</tspan><tspan x="560.0" dy="14">interaction_events</tspan></text>
+<polyline points="462.3,953.0 286.9,953.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="296.9,948.5 286.9,953.0 296.9,957.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="296.7" y="923.0" width="155.8" height="31.0" fill="#ffffff"/>
+<text x="374.6" y="935.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="374.6" dy="0">карточка с новым этапом и</tspan><tspan x="374.6" dy="14">допустимыми переходами</tspan></text>
+<polyline points="286.9,983.0 114.4,983.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="124.4,978.5 114.4,983.0 124.4,987.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="177.5" y="967.0" width="46.3" height="17.0" fill="#ffffff"/>
+<text x="200.6" y="979.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="200.6" dy="0">200 OK</tspan></text>
+</svg>

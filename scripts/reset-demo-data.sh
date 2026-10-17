@@ -42,6 +42,6 @@ if [[ $(env_value MOODLE_BASE_URL) == http://moodle:8080 ]]; then
     done
 fi
 
-compose "${moodle_files[@]}" --profile demo-bootstrap run --rm -e APP_DEMOBOOTSTRAP_RESET=true backend-bootstrap
+compose "${moodle_files[@]}" --profile demo run --rm -T -e APP_DEMOBOOTSTRAP_RESET=true backend-bootstrap
 compose exec -T backend sh -c 'find "$APP_ATTACHMENTS_STORAGE_ROOT" "${APP_REPORTS_STORAGE_ROOT:-/var/lib/rtk-crm/reports}" -mindepth 1 -delete'
 printf 'Demo data reset completed: CRM data, attachments and report files match a fresh bootstrap; Keycloak accounts and passwords were not changed\n'

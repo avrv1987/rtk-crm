@@ -58,7 +58,7 @@ public class RetentionService {
         try {
             LOGGER.info("Retention applied: {}", apply(null, null).summary());
             LearnerPrivacyService.Counters learners = learnerPrivacyService.counters();
-            if (learners.nearLimit()) {
+            if (learners.moduleEnabled() && learners.nearLimit()) {
                 LOGGER.warn("Learner profiles stored: {}; the fourth protection level requires fewer than {} subjects",
                         learners.profiles(), learners.profilesLimit());
             }

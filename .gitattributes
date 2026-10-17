@@ -15,3 +15,4 @@ Dockerfile text eol=lf
 *.jar binary
 *.xls binary
 *.xlsx binary
+scripts/public-allowlist.txt text eol=lf

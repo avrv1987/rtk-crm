@@ -24,6 +24,7 @@ import ru.rtk.crm.access.CurrentProfileService;
 import ru.rtk.crm.audit.AuditAction;
 import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.module.ModuleProperties;
 import ru.rtk.crm.security.RequestId;
 
 @RestController
@@ -36,14 +37,18 @@ public class AttachmentsApiController {
     private final AttachmentService attachmentService;
     private final AuditJournalRepository auditJournalRepository;
 
+    private final ModuleProperties modules;
+
     public AttachmentsApiController(
             CurrentProfileService currentProfileService,
             AttachmentService attachmentService,
-            AuditJournalRepository auditJournalRepository
+            AuditJournalRepository auditJournalRepository,
+            ModuleProperties modules
     ) {
         this.currentProfileService = currentProfileService;
         this.attachmentService = attachmentService;
         this.auditJournalRepository = auditJournalRepository;
+        this.modules = modules;
     }
 
     @GetMapping("/{id}")
@@ -57,6 +62,9 @@ public class AttachmentsApiController {
             @PathVariable String id,
             @RequestBody AttachmentKindUpdateRequest request
     ) {
+        if (Boolean.TRUE.equals(request.partnerVisible()) && !modules.partnerEnabled()) {
+            throw new InteractionValidationException("partnerVisible", "Кабинет вуза не подключён");
+        }
         return attachmentService.updateKind(currentProfileService.requireActiveProfile(user), parseRequiredUuid(id), request);
     }
 

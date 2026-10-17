@@ -3,6 +3,7 @@ import { ApiError, apiClient, type Me } from '../shared/api/client'
 import { AdminCatalogsPanel } from '../features/admin/AdminCatalogsPanel'
 import { AdminSectionNav, resolveAdminSection } from '../features/admin/AdminSectionNav'
 import { ActivityKindsPanel } from '../features/agreements/ActivityKindsPanel'
+import { ControlScreen } from '../features/control/ControlScreen'
 import { CatalogImportPanel } from '../features/admin/CatalogImportPanel'
 import { AdminProfilesScreen } from '../features/admin/AdminProfilesScreen'
 import { SourcesPanel } from '../features/admin/SourcesPanel'
@@ -10,7 +11,8 @@ import { AuditJournalPanel } from '../features/admin/AuditJournalPanel'
 import { EnrolmentScreen } from '../features/enrolment/EnrolmentScreen'
 import { PersonalDataPanel } from '../features/admin/PersonalDataPanel'
 import { RetentionPanel } from '../features/admin/RetentionPanel'
-import { ActivationRequest, PasswordLink } from '../features/session/ActivationRequest'
+import { ActivationRequest, PasswordLink, keycloakLogoutUrl } from '../features/session/ActivationRequest'
+import { announceSession, watchSessionElsewhere } from '../features/session/sessionSync'
 import { PendingSourceRecords } from '../features/sources/PendingSourceRecords'
 import { SourceAlerts } from '../features/sources/SourceAlerts'
 import { WorkflowTemplatesPanel } from '../features/admin/WorkflowTemplatesPanel'
@@ -33,19 +35,20 @@ import { ReportsScreen } from '../features/reports/ReportsScreen'
 import { ProfileSummary, SessionScreen } from '../features/session/SessionScreen'
 import { ReminderCenter } from '../features/work/ReminderCenter'
 import { WorkScreen } from '../features/work/WorkScreen'
+import { getModules, sectionAvailable, setModules, type Modules } from '../shared/modules'
 import { SupportDetails } from '../shared/ui/SupportDetails'
 
 type SessionState =
   | { kind: 'loading' }
   | { kind: 'anonymous' }
   | { kind: 'profile'; profile: Me }
-  | { kind: 'forbidden'; requestId: string; pending: boolean }
+  | { kind: 'forbidden'; requestId: string; pending: boolean; partnerOff?: boolean }
   | { kind: 'failed' }
-  | { kind: 'logoutFailed' }
 
-type Section = 'work' | 'issues' | 'organizations' | 'reports' | 'admin' | 'enrolment' | 'partner' | 'help'
+type Section = 'control' | 'work' | 'issues' | 'organizations' | 'reports' | 'admin' | 'enrolment' | 'partner' | 'help'
 
 const sectionTitles: Record<Section, string> = {
+  control: 'Контроль',
   work: 'Моя работа',
   issues: 'Проблемы и риски',
   organizations: 'Вузы',
@@ -60,15 +63,18 @@ const sectionTitle = (section: Section, profile: Me): string => (
   section === 'work' && profile.role === 'MANAGEMENT' ? 'Сводка по всем командам' : sectionTitles[section]
 )
 
-const sectionsFor = (profile: Me): Section[] => {
+const sectionsFor = (profile: Me, modules: Modules): Section[] => {
   if (profile.role === 'ADMIN') {
     return ['admin', 'help']
   }
   if (profile.role === 'PARTNER') {
-    return ['partner', 'help']
+    return ['partner', 'help'].filter((item) => sectionAvailable(item, modules)) as Section[]
   }
   const sections: Section[] = ['work', 'issues', 'organizations', 'reports']
-  if (profile.enrolmentOperator) {
+  if (profile.role === 'LEADER' || profile.role === 'MANAGEMENT') {
+    sections.unshift('control')
+  }
+  if (sectionAvailable('enrolment', modules) && profile.enrolmentOperator) {
     sections.push('enrolment')
   }
   if (profile.role === 'LEADER') {
@@ -91,10 +97,15 @@ export const App = () => {
   const [routePulse, setRoutePulse] = useState(0)
   const activeProfileId = useRef<string | null>(null)
   const route = parseRoute(hash)
+  const watchedProfileId = state.kind === 'profile' ? state.profile.id : null
 
   useEffect(() => {
     void loadSession()
   }, [])
+
+  useEffect(() => (
+    watchedProfileId === null ? undefined : watchSessionElsewhere(watchedProfileId, () => window.location.assign('/'))
+  ), [watchedProfileId])
 
   useEffect(() => {
     if (state.kind === 'anonymous') {
@@ -121,9 +132,11 @@ export const App = () => {
 
   const loadSession = async () => {
     try {
+      setModules((await apiClient.config()).modules)
       const profile = await apiClient.me()
       await apiClient.refreshCsrf()
       rememberActiveProfile(profile.id)
+      announceSession(profile.id)
       activeProfileId.current = profile.id
       const returnRoute = takeReturnRoute()
       if (returnRoute !== null && returnRoute !== window.location.hash) {
@@ -133,6 +146,11 @@ export const App = () => {
     } catch (error) {
       if (error instanceof ApiError && error.code === 'UNAUTHENTICATED') {
         setState({ kind: 'anonymous' })
+        return
+      }
+      if (error instanceof ApiError && error.code === 'PARTNER_MODULE_DISABLED') {
+        clearRememberedProfileDrafts()
+        setState({ kind: 'forbidden', requestId: error.requestId, pending: false, partnerOff: true })
         return
       }
       if (error instanceof ApiError && (error.code === 'CRM_PROFILE_REQUIRED' || error.code === 'CRM_PROFILE_PENDING')) {
@@ -150,12 +168,13 @@ export const App = () => {
       const { logoutUrl } = await apiClient.logout()
       window.location.assign(logoutUrl)
     } catch {
-      setState({ kind: 'logoutFailed' })
+      window.location.assign(keycloakLogoutUrl())
     } finally {
       if (profileId !== null) {
         clearDraftsForProfile(profileId)
       }
       forgetActiveProfile()
+      announceSession(null)
     }
   }
 
@@ -203,11 +222,13 @@ export const App = () => {
   }
   if (state.kind === 'forbidden') {
     return (
-      <SessionScreen title={state.pending ? 'Профиль ожидает активации администратором' : 'Профиль CRM недоступен'}>
+      <SessionScreen title={state.partnerOff ? 'Кабинет вуза не подключён' : state.pending ? 'Профиль ожидает активации администратором' : 'Профиль CRM недоступен'}>
         <p>
-          {state.pending
-            ? 'Учётная запись подтверждена, профиль CRM создан. Администратор назначит роль и команду, после этого откроется доступ к данным.'
-            : 'Учётная запись успешно подтверждена, но активный профиль CRM отсутствует или заблокирован. Обратитесь к администратору CRM.'}
+          {state.partnerOff
+            ? 'В этой установке CRM кабинет вуза выключен. Обратитесь к вашему менеджеру в ИТ Школе РТК.'
+            : state.pending
+              ? 'Учётная запись подтверждена, профиль CRM создан. Администратор назначит роль и команду, после этого откроется доступ к данным.'
+              : 'Учётная запись успешно подтверждена, но активный профиль CRM отсутствует или заблокирован. Обратитесь к администратору CRM.'}
         </p>
         {state.pending && <ActivationRequest onSessionExpired={handleSessionExpired} />}
         <SupportDetails requestId={state.requestId} />
@@ -216,23 +237,19 @@ export const App = () => {
       </SessionScreen>
     )
   }
-  if (state.kind === 'logoutFailed') {
-    return (
-      <SessionScreen title="Выход не завершён">
-        <p>Сервер не подтвердил выход. Черновики на этом устройстве удалены.</p>
-        <button type="button" onClick={() => void logout()}>Повторить выход</button>
-      </SessionScreen>
-    )
-  }
   if (state.kind === 'failed') {
     return (
       <SessionScreen title="Не удалось проверить сессию">
-        <p>Сервис не ответил. Повторите попытку позже; несохранённые черновики на этом устройстве остаются.</p>
-        <button type="button" onClick={() => void loadSession()}>Повторить</button>
+        <p>CRM сейчас не отвечает или вход устарел. Войдите заново. Если не получится, повторите через несколько минут.</p>
+        <p>Несохранённые черновики на этом устройстве останутся.</p>
+        <div className="session-help">
+          <button type="button" onClick={() => apiClient.login()}>Войти заново</button>
+          <button type="button" className="button--secondary" onClick={() => void loadSession()}>Повторить</button>
+        </div>
       </SessionScreen>
     )
   }
-  const sections = sectionsFor(state.profile)
+  const sections = sectionsFor(state.profile, getModules())
   const section = sections.find((item) => item === route.section) ?? sections[0]
   const adminNavRole = state.profile.role === 'LEADER' ? 'LEADER' : 'ADMIN'
   const adminSection = resolveAdminSection(route.organizationId, adminNavRole)
@@ -270,6 +287,13 @@ export const App = () => {
           {section === 'admin' && (
             <>
               <AdminSectionNav active={adminSection} role={adminNavRole} />
+              {state.profile.role === 'ADMIN' && adminSection === 'profiles' && (
+                <div className="notice admin-role-notice" role="note">
+                  <p><strong>Администратор управляет доступом и настройками и не видит работу с вузами.</strong></p>
+                  <p>Чтобы посмотреть работу с вузами, войдите руководителем команды или менеджером.</p>
+                  <button type="button" className="button--secondary" onClick={() => void logout()}>Выйти</button>
+                </div>
+              )}
               {state.profile.role === 'ADMIN' && (
                 <SourceAlerts
                   onSessionExpired={handleSessionExpired}
@@ -330,6 +354,15 @@ export const App = () => {
                 />
               )}
             </>
+          )}
+          {section === 'control' && (
+            <ControlScreen
+              role={state.profile.role}
+              initialQuery={route.query}
+              refreshSignal={routePulse}
+              onSessionExpired={handleSessionExpired}
+              onProfileUnavailable={handleProfileUnavailable}
+            />
           )}
           {section === 'work' && (
             <WorkScreen

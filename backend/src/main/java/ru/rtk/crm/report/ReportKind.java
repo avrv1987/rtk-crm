@@ -54,6 +54,13 @@ import static ru.rtk.crm.report.ReportColumn.VENDORS;
 import static ru.rtk.crm.report.ReportColumn.TEAM;
 import static ru.rtk.crm.report.ReportColumn.VOLUME_UNIT;
 import static ru.rtk.crm.report.ReportColumn.WORKS;
+import static ru.rtk.crm.report.ReportColumn.DUE_STATE;
+import static ru.rtk.crm.report.ReportColumn.OVERDUE_DAYS;
+import static ru.rtk.crm.report.ReportColumn.PERIOD_COMMENTS;
+import static ru.rtk.crm.report.ReportColumn.STAGE_AT_END;
+import static ru.rtk.crm.report.ReportColumn.STAGE_AT_START;
+import static ru.rtk.crm.report.ReportColumn.STAGE_POSITION;
+import static ru.rtk.crm.report.ReportColumn.TRANSITIONS;
 
 import java.util.List;
 import java.util.stream.Stream;
@@ -101,6 +108,15 @@ public enum ReportKind {
             "Число групп",
             List.of(TEAM, PROGRAM, STAGE, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS),
             List.of()
+    ),
+    MANAGER_WORK(
+            "Работа менеджеров за период",
+            "менеджеры",
+            "работы",
+            "Число работ",
+            List.of(MANAGER, ORGANIZATION, PRODUCTS, PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS,
+                    NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS),
+            List.of(TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM, RISK)
     ),
     AGREEMENTS(
             "Реализация соглашений с вузами",

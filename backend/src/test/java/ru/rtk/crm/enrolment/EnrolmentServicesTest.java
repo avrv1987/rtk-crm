@@ -43,6 +43,8 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.unit.DataSize;
+import ru.rtk.crm.module.ModuleDisabledException;
+import ru.rtk.crm.module.ModuleProperties;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserProfileRepository;
 import ru.rtk.crm.access.UserRole;
@@ -602,11 +604,11 @@ class EnrolmentServicesTest {
         }
         assertThatThrownBy(() -> learners.card(ADMIN, boris.id().toString(), "rq")).isInstanceOf(EnrolmentAccessDeniedException.class);
         assertThatThrownBy(() -> questionnaires.preview(ADMIN, stream, template(), "rq")).isInstanceOf(EnrolmentAccessDeniedException.class);
-        EnrolmentAccess moduleOff = new EnrolmentAccess(new EnrolmentProperties(false, null, null, null), userProfileRepository);
+        EnrolmentAccess moduleOff = new EnrolmentAccess(new ModuleProperties(new ModuleProperties.Toggle(false), null), userProfileRepository);
         EnrolmentStreamService offStreams = new EnrolmentStreamService(moduleOff, enrolmentRepository, learnerService,
                 learnerPrivacyService, retentionProperties, auditJournalRepository, commands);
-        assertThatThrownBy(() -> offStreams.streams(OPERATOR)).isInstanceOf(EnrolmentDisabledException.class);
-        assertThatThrownBy(() -> offStreams.learners(OPERATOR, "not-an-id", "rq")).isInstanceOf(EnrolmentDisabledException.class);
+        assertThatThrownBy(() -> offStreams.streams(OPERATOR)).isInstanceOf(ModuleDisabledException.class);
+        assertThatThrownBy(() -> offStreams.learners(OPERATOR, "not-an-id", "rq")).isInstanceOf(ModuleDisabledException.class);
         assertThat(journal("LEARNER_VIEWED")).isEmpty();
 
         learners.reveal(OPERATOR, boris.id().toString(), new LearnerReveal(Set.of(LearnerFieldGroup.MAIN)), "rq-reveal");
@@ -779,7 +781,7 @@ class EnrolmentServicesTest {
     private void createSchema() {
         List<String> statements = new ArrayList<>(List.of(
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, 
                     id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL,
                     active BOOLEAN NOT NULL, enrolment_operator BOOLEAN NOT NULL DEFAULT FALSE
                 )
@@ -824,12 +826,17 @@ class EnrolmentServicesTest {
     static class Configuration {
         @Bean
         EnrolmentProperties enrolmentProperties() {
-            return new EnrolmentProperties(true, "v1", Map.of("v1", KEY), FINGERPRINT_KEY);
+            return new EnrolmentProperties("v1", Map.of("v1", KEY), FINGERPRINT_KEY);
         }
 
         @Bean
-        LearnerDataCipher learnerDataCipher(EnrolmentProperties properties) {
-            return new LearnerDataCipher(properties);
+        ModuleProperties moduleProperties() {
+            return new ModuleProperties(new ModuleProperties.Toggle(true), null);
+        }
+
+        @Bean
+        LearnerDataCipher learnerDataCipher(EnrolmentProperties properties, ModuleProperties modules) {
+            return new LearnerDataCipher(properties, modules);
         }
 
         @Bean

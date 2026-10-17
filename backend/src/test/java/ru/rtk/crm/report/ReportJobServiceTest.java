@@ -45,6 +45,7 @@ import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.module.ModuleProperties;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
@@ -280,7 +281,7 @@ class ReportJobServiceTest {
 
     @Test
     void accessChangedBeforeBuildFailsTheJobWithoutAFile() {
-        ReportRequest request = request(ReportFormat.PDF).normalized();
+        ReportRequest request = request(ReportFormat.PDF).normalized(true);
         UUID jobId = UUID.randomUUID();
         reportJobRepository.insert(jobId, MANAGER_A_PROFILE, "key-3", "0".repeat(64), write(request), request,
                 OffsetDateTime.now());
@@ -332,7 +333,7 @@ class ReportJobServiceTest {
 
     @Test
     void unfinishedJobsFromPreviousProcessFailAfterRestart() {
-        ReportRequest request = request(ReportFormat.XLSX).normalized();
+        ReportRequest request = request(ReportFormat.XLSX).normalized(true);
         UUID pending = UUID.randomUUID();
         UUID running = UUID.randomUUID();
         UUID current = UUID.randomUUID();
@@ -402,6 +403,11 @@ class ReportJobServiceTest {
 
     @TestConfiguration
     static class JobConfiguration {
+        @Bean
+        ModuleProperties moduleProperties() {
+            return new ModuleProperties(new ModuleProperties.Toggle(true), null);
+        }
+
         @Bean
         ReportProperties reportProperties() throws IOException {
             Path root = Files.createTempDirectory("report-jobs-test");

@@ -331,7 +331,7 @@ class TeacherRosterServiceTest {
                 """);
         jdbc.execute("CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL)");
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, 
                     id UUID PRIMARY KEY,
                     display_name VARCHAR(200) NOT NULL,
                     role VARCHAR(16) NOT NULL,
@@ -400,7 +400,7 @@ class TeacherRosterServiceTest {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interactions (
+                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, 
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
                     title VARCHAR(200) NOT NULL

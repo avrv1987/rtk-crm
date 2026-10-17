@@ -407,3 +407,9 @@
     min-width: min(320px, calc(100vw - 96px));
   }
 }
+
+.notice.admin-role-notice {
+  border-left-color: var(--color-action);
+  background: var(--color-surface-accent);
+  margin-bottom: var(--space-4);
+}

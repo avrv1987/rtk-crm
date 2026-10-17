@@ -1,3 +1,4 @@
+import { getModules } from '../../shared/modules'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ApiError,
@@ -168,7 +169,7 @@ export const AuditJournalPanel = ({ onSessionExpired, onProfileUnavailable }: Se
             onChange={(event) => setDraft({ ...draft, category: event.target.value as Filters['category'] })}
           >
             <option value="">Все события</option>
-            {(Object.keys(categoryLabels) as AuditCategory[]).map((category) => (
+            {(Object.keys(categoryLabels) as AuditCategory[]).filter((category) => category !== 'LEARNER' || getModules().enrolment).map((category) => (
               <option key={category} value={category}>{categoryLabels[category]}</option>
             ))}
           </select>

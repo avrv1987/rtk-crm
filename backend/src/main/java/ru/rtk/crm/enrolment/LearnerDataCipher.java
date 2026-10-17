@@ -19,6 +19,7 @@ import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 import org.springframework.stereotype.Component;
+import ru.rtk.crm.module.ModuleProperties;
 
 @Component
 public class LearnerDataCipher {
@@ -34,8 +35,8 @@ public class LearnerDataCipher {
     private final String activeVersion;
     private final SecretKey fingerprintKey;
 
-    public LearnerDataCipher(EnrolmentProperties properties) {
-        if (properties.enabled()) {
+    public LearnerDataCipher(EnrolmentProperties properties, ModuleProperties modules) {
+        if (modules.enrolmentEnabled()) {
             keys = encryptionKeys(properties);
             activeVersion = activeVersion(properties, keys);
             fingerprintKey = fingerprintKey(properties, keys);
@@ -179,7 +180,7 @@ public class LearnerDataCipher {
 
     private void requireEnabled() {
         if (activeVersion == null) {
-            throw new IllegalStateException("Модуль «Слушатели» выключен: шифрование недоступно (app.enrolment.enabled=false)");
+            throw new IllegalStateException("Модуль «Слушатели» выключен: шифрование недоступно (app.modules.enrolment.enabled=false)");
         }
     }
 

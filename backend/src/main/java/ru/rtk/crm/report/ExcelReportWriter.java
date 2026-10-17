@@ -99,7 +99,7 @@ public class ExcelReportWriter {
             cell.setCellStyle(styles.body);
             return;
         }
-        String text = value == null ? column.emptyText() : value.toString();
+        String text = value == null ? column.emptyText(row) : value.toString();
         text(cell, text, isFormulaLike(text) ? styles.quoted : styles.body);
     }
 

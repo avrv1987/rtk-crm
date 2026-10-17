@@ -407,6 +407,28 @@ class WorkControlTest {
     }
 
     @Test
+    void workOfArchivedOrganizationsIsNotCountedLikeTheOrganizationsThemselves() {
+        OffsetDateTime now = OffsetDateTime.now();
+        insertInteraction(UNIVERSITY_A, "Работа активного вуза", "Позвонить", now.minusDays(1), now.minusDays(2), "ACTIVE");
+        UUID archived = UUID.randomUUID();
+        insertOrganization(archived, "Архивный вуз КАМ А", TEAM_A, KAM_A, "ARCHIVED");
+        insertInteraction(archived, "Работа архивного вуза", "Позвонить", now.minusDays(1), now.minusDays(2), "ACTIVE");
+
+        WorkModels.TeamIndicators indicators = workService.teamIndicators(leaderA, null);
+        WorkModels.TeamsSummary summary = workService.teamsSummary(management, null);
+
+        assertThat(indicators.managers()).filteredOn(row -> KAM_A.equals(row.managerId()))
+                .singleElement()
+                .satisfies(row -> {
+                    assertThat(row.organizations()).isEqualTo(1);
+                    assertThat(row.interactions()).isEqualTo(1);
+                });
+        assertThat(summary.teams()).filteredOn(team -> TEAM_A.equals(team.teamId()))
+                .singleElement()
+                .satisfies(team -> assertThat(team.interactions()).isEqualTo(1));
+    }
+
+    @Test
     void managementSeesReadOnlySummaryOfAllTeams() {
         OffsetDateTime now = OffsetDateTime.now();
         insertInteraction(UNIVERSITY_A, "Работа А", "Позвонить", now.minusDays(1), now.minusDays(40), "ACTIVE");
@@ -696,7 +718,7 @@ class WorkControlTest {
         List.of(
                 "CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL)",
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL, access_revision INTEGER NOT NULL DEFAULT 0,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -752,7 +774,7 @@ class WorkControlTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL,
                     current_stage_id UUID NOT NULL, next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL, work_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE'

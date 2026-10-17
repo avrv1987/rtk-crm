@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -116,14 +117,17 @@ public class WorkflowTemplateService {
         String name = requiredText(request == null ? null : request.name(), "name", 200);
         NormalizedWorkflow workflow = normalizeWorkflow(
                 request == null ? null : request.stages(),
-                request == null ? null : request.transitions()
+                request == null ? null : request.transitions(),
+                Set.of()
         );
+        String comment = optionalText(request.comment(), "comment", 1000);
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
         CreateTemplateCommand command = new CreateTemplateCommand(
                 teamId,
                 name,
                 request.stages(),
-                request.transitions()
+                request.transitions(),
+                comment
         );
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
@@ -141,6 +145,15 @@ public class WorkflowTemplateService {
 
         UUID templateId = UUID.randomUUID();
         workflowTemplateRepository.insert(templateId, teamId, name, workflow.stages(), workflow.transitions(), now);
+        workflowTemplateRepository.insertVersion(
+                templateId,
+                1,
+                name,
+                new WorkflowRoute(workflow.stages(), workflow.transitions()).write(objectMapper),
+                comment,
+                profile.id(),
+                now
+        );
         WorkflowTemplate result = workflowTemplateRepository.findById(templateId)
                 .map(workflowTemplateRepository::toTemplate)
                 .orElseThrow(WorkflowTemplateNotFoundException::new);
@@ -160,14 +173,20 @@ public class WorkflowTemplateService {
         String name = request == null || request.name() == null
                 ? current.name()
                 : requiredText(request.name(), "name", 200);
-        NormalizedWorkflow workflow = validateUpdateWorkflow(request);
+        List<WorkflowTemplateStage> currentStages = workflowTemplateRepository.findStages(templateId);
+        NormalizedWorkflow workflow = validateUpdateWorkflow(
+                request,
+                currentStages.stream().map(WorkflowTemplateStage::id).collect(Collectors.toSet())
+        );
+        String comment = optionalText(request.comment(), "comment", 1000);
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
         UpdateTemplateCommand command = new UpdateTemplateCommand(
                 templateId,
                 expectedVersion,
                 name,
                 request.stages(),
-                request.transitions()
+                request.transitions(),
+                comment
         );
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
@@ -191,9 +210,22 @@ public class WorkflowTemplateService {
                     .orElseThrow(WorkflowTemplateNotFoundException::new);
             throw InteractionConflictException.workflowTemplateVersion(version);
         }
+        WorkflowRoute route;
         if (workflow != null) {
             workflowTemplateRepository.replaceWorkflow(templateId, workflow.stages(), workflow.transitions());
+            route = new WorkflowRoute(workflow.stages(), workflow.transitions());
+        } else {
+            route = new WorkflowRoute(currentStages, workflowTemplateRepository.findTransitions(templateId));
         }
+        workflowTemplateRepository.insertVersion(
+                templateId,
+                workflowTemplateRepository.findLatestVersionNumber(templateId) + 1,
+                name,
+                route.write(objectMapper),
+                comment,
+                profile.id(),
+                now
+        );
         WorkflowTemplate result = workflowTemplateRepository.findById(templateId)
                 .map(workflowTemplateRepository::toTemplate)
                 .orElseThrow(WorkflowTemplateNotFoundException::new);
@@ -276,7 +308,7 @@ public class WorkflowTemplateService {
         throw new WorkflowTemplateAccessDeniedException();
     }
 
-    private NormalizedWorkflow validateUpdateWorkflow(WorkflowTemplateRequest request) {
+    private NormalizedWorkflow validateUpdateWorkflow(WorkflowTemplateRequest request, Set<UUID> reusableStageIds) {
         if (request == null) {
             throw new InteractionValidationException("body", "Не переданы данные запроса");
         }
@@ -289,12 +321,13 @@ public class WorkflowTemplateService {
             }
             return null;
         }
-        return normalizeWorkflow(request.stages(), request.transitions());
+        return normalizeWorkflow(request.stages(), request.transitions(), reusableStageIds);
     }
 
     private NormalizedWorkflow normalizeWorkflow(
             List<WorkflowStageInput> requestedStages,
-            List<WorkflowTransitionInput> requestedTransitions
+            List<WorkflowTransitionInput> requestedTransitions,
+            Set<UUID> reusableStageIds
     ) {
         if (requestedStages == null || requestedStages.isEmpty() || requestedStages.size() > 100) {
             throw new InteractionValidationException("stages", "Укажите от 1 до 100 этапов");
@@ -309,6 +342,7 @@ public class WorkflowTemplateService {
             }
         }
         List<WorkflowTemplateStage> stages = new ArrayList<>();
+        Set<UUID> keptStageIds = new HashSet<>();
         for (int order = 0; order < requestedStages.size(); order++) {
             WorkflowStageInput stage = stagesByOrder.get(order);
             if (stage == null) {
@@ -317,8 +351,12 @@ public class WorkflowTemplateService {
             if (stage.optional() == null) {
                 throw new InteractionValidationException("stages", "Укажите для каждого этапа, обязателен ли он");
             }
+            boolean kept = stage.id() != null && reusableStageIds.contains(stage.id());
+            if (kept && !keptStageIds.add(stage.id())) {
+                throw new InteractionValidationException("stages", "Этапы не должны повторяться");
+            }
             stages.add(new WorkflowTemplateStage(
-                    UUID.randomUUID(),
+                    kept ? stage.id() : UUID.randomUUID(),
                     requiredText(stage.name(), "stages", 200),
                     order,
                     stage.optional()
@@ -440,6 +478,17 @@ public class WorkflowTemplateService {
         return value;
     }
 
+    private String optionalText(String value, String field, int maxLength) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.trim();
+        if (normalized.length() > maxLength) {
+            throw new InteractionValidationException(field, "Слишком длинное значение");
+        }
+        return normalized;
+    }
+
     private String requiredText(String value, String field, int maxLength) {
         if (value == null || value.isBlank()) {
             throw new InteractionValidationException(field, "Заполните значение");
@@ -464,7 +513,8 @@ public class WorkflowTemplateService {
             UUID teamId,
             String name,
             List<WorkflowStageInput> stages,
-            List<WorkflowTransitionInput> transitions
+            List<WorkflowTransitionInput> transitions,
+            String comment
     ) {
     }
 
@@ -473,7 +523,8 @@ public class WorkflowTemplateService {
             int version,
             String name,
             List<WorkflowStageInput> stages,
-            List<WorkflowTransitionInput> transitions
+            List<WorkflowTransitionInput> transitions,
+            String comment
     ) {
     }
 

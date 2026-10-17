@@ -3,10 +3,13 @@ package ru.rtk.crm.access;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.AdminCrmProfileRepository.ProfileState;
@@ -23,6 +26,8 @@ import ru.rtk.crm.interaction.InteractionValidationException;
 @Service
 public class AdminCrmProfileService {
     private static final int DISPLAY_NAME_LIMIT = 200;
+    private static final String KEYCLOAK_ACTOR = "Keycloak";
+    private static final Logger LOGGER = LoggerFactory.getLogger(AdminCrmProfileService.class);
 
     private final AdminCrmProfileRepository adminCrmProfileRepository;
     private final AdminTeamRepository adminTeamRepository;
@@ -151,7 +156,11 @@ public class AdminCrmProfileService {
         if (removesAdministrator && activeAdministrators.stream().noneMatch(id -> !id.equals(profileId))) {
             throw InteractionConflictException.lastActiveAdministrator();
         }
-        boolean accessChanged = previous.role() != next.role()
+        boolean roleChanged = previous.role() != next.role();
+        if (roleChanged) {
+            keycloakAccountClient.setCrmRole(subject(profileId), next.role());
+        }
+        boolean accessChanged = roleChanged
                 || !Objects.equals(previous.teamId(), next.teamId())
                 || previous.active() != next.active()
                 || previous.enrolmentOperator() != next.enrolmentOperator();
@@ -160,6 +169,9 @@ public class AdminCrmProfileService {
                     .map(AdminCrmProfile::version)
                     .orElseThrow(AdminCrmProfileNotFoundException::new);
             throw InteractionConflictException.crmProfileVersion(currentVersion);
+        }
+        if (roleChanged) {
+            adminCrmProfileRepository.markRoleSynced(profileId, now);
         }
 
         String actorDisplayName = adminCrmProfileRepository.findDisplayName(actor.id())
@@ -172,13 +184,10 @@ public class AdminCrmProfileService {
                     : next.role() != previous.role()
                             ? OrganizationAssignmentReason.PROFILE_ROLE_CHANGED
                             : OrganizationAssignmentReason.PROFILE_TEAM_CHANGED;
-            unassignOwnedOrganizations(target, actor, actorDisplayName, commandId, auditRequestId, reason, now);
+            unassignOwnedOrganizations(target, actor.id(), actorDisplayName, commandId, auditRequestId, reason, now);
         }
         if (previous.privileged() != next.privileged() && keycloakAccountClient.configured()) {
-            keycloakAccountClient.setPrivileged(
-                    accountSyncRepository.findAccount(profileId).orElseThrow(AdminCrmProfileNotFoundException::new).subject(),
-                    next.privileged()
-            );
+            keycloakAccountClient.setPrivileged(subject(profileId), next.privileged());
         }
         AdminCrmProfile updated = adminCrmProfileRepository.findById(profileId)
                 .orElseThrow(AdminCrmProfileNotFoundException::new);
@@ -197,9 +206,78 @@ public class AdminCrmProfileService {
         return store(commandId, updated);
     }
 
+    @Transactional
+    public void applyKeycloakRole(String issuer, String subject, Set<UserRole> keycloakRoles, String requestId) {
+        UUID profileId = adminCrmProfileRepository.findIdByIdentity(issuer, subject).orElse(null);
+        if (profileId == null) {
+            return;
+        }
+        AdminCrmProfile target = adminCrmProfileRepository.findByIdForUpdate(profileId)
+                .orElseThrow(AdminCrmProfileNotFoundException::new);
+        OffsetDateTime now = OffsetDateTime.now();
+        if (target.role() == UserRole.PARTNER) {
+            if (keycloakRoles.contains(UserRole.PARTNER)) {
+                adminCrmProfileRepository.markRoleSynced(profileId, now);
+            }
+            return;
+        }
+        UserRole role = UserRole.employeeRole(keycloakRoles).orElse(null);
+        if (role == null) {
+            return;
+        }
+        if (role == target.role()) {
+            adminCrmProfileRepository.markRoleSynced(profileId, now);
+            return;
+        }
+        ProfileState previous = ProfileState.of(target);
+        boolean teamRole = role == UserRole.USER || role == UserRole.LEADER;
+        ProfileState next = new ProfileState(
+                previous.displayName(),
+                role,
+                previous.teamId(),
+                previous.active() && (!teamRole || previous.teamId() != null),
+                teamRole && previous.enrolmentOperator()
+        );
+        String auditRequestId = AdminAuthorization.requiredRequestId(requestId);
+        UUID commandId = UUID.randomUUID();
+        commandIdempotencyRepository.reserve(
+                commandId,
+                profileId,
+                CommandOperation.APPLY_KEYCLOAK_ROLE,
+                "keycloak-role-" + commandId,
+                CommandFingerprint.of(objectMapper, next),
+                now
+        );
+        if (!adminCrmProfileRepository.applyKeycloakRole(profileId, target.version(), next, now)) {
+            throw new IllegalStateException("CRM profile changed while the Keycloak role was being applied");
+        }
+        if (!(next.active() && teamRole)) {
+            unassignOwnedOrganizations(
+                    target, profileId, KEYCLOAK_ACTOR, commandId, auditRequestId, OrganizationAssignmentReason.PROFILE_ROLE_CHANGED, now
+            );
+        }
+        if (previous.privileged() != next.privileged() && keycloakAccountClient.configured()) {
+            try {
+                keycloakAccountClient.setPrivileged(subject, next.privileged());
+            } catch (AccountSyncException exception) {
+                LOGGER.warn("Second factor requirement of CRM profile {} is not updated: {}", profileId, exception.getMessage());
+            }
+        }
+        AdminCrmProfile updated = adminCrmProfileRepository.findById(profileId)
+                .orElseThrow(AdminCrmProfileNotFoundException::new);
+        adminCrmProfileRepository.insertEvent(
+                UUID.randomUUID(), profileId, commandId, profileId, KEYCLOAK_ACTOR, previous, next, auditRequestId, updated.version(), now
+        );
+        store(commandId, updated);
+    }
+
+    private String subject(UUID profileId) {
+        return accountSyncRepository.findAccount(profileId).orElseThrow(AdminCrmProfileNotFoundException::new).subject();
+    }
+
     private void unassignOwnedOrganizations(
             AdminCrmProfile target,
-            CrmProfile actor,
+            UUID actorProfileId,
             String actorDisplayName,
             UUID rootCommandId,
             String requestId,
@@ -223,7 +301,7 @@ public class AdminCrmProfileService {
                     target.displayName(),
                     null,
                     null,
-                    actor.id(),
+                    actorProfileId,
                     actorDisplayName,
                     requestId,
                     reason,

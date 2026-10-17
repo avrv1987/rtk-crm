@@ -8,6 +8,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +40,10 @@ public class KeycloakAccountClient {
     private static final Outcome ACCOUNT_LOGOUT = new Outcome(
             "Keycloak недоступен; сеансы не завершены, повторите позже",
             "; сеансы не завершены"
+    );
+    private static final Outcome ROLE_CHANGE = new Outcome(
+            "Keycloak недоступен; роль не изменена, повторите позже",
+            "; роль не изменена"
     );
     private static final String UPDATE_PASSWORD = "UPDATE_PASSWORD";
     private static final String PRIVILEGED_ROLE = "crm-privileged";
@@ -141,7 +146,7 @@ public class KeycloakAccountClient {
         requireConfiguration(ACCOUNT_CHANGE);
         String token = accessToken(ACCOUNT_CHANGE);
         String mappings = userPath(userId) + "/role-mappings/realm";
-        for (JsonNode role : readArray(token, privileged ? mappings + "/available" : mappings, "чтение ролей учётной записи")) {
+        for (JsonNode role : readArray(token, privileged ? mappings + "/available" : mappings, "чтение ролей учётной записи", ACCOUNT_CHANGE)) {
             if (PRIVILEGED_ROLE.equals(role.path("name").asText())) {
                 String body = json(List.of(role));
                 requireSuccess(send(HttpRequest.newBuilder(uri(mappings))
@@ -159,7 +164,7 @@ public class KeycloakAccountClient {
         requireConfiguration(ACCOUNT_CHANGE);
         String token = accessToken(ACCOUNT_CHANGE);
         int removed = 0;
-        for (JsonNode credential : readArray(token, userPath(userId) + "/credentials", "чтение способов входа")) {
+        for (JsonNode credential : readArray(token, userPath(userId) + "/credentials", "чтение способов входа", ACCOUNT_CHANGE)) {
             if (OTP_CREDENTIAL.equals(credential.path("type").asText())) {
                 requireSuccess(send(HttpRequest.newBuilder(uri(userPath(userId) + "/credentials/" + encode(credential.path("id").asText())))
                         .header("Authorization", "Bearer " + token)
@@ -170,20 +175,70 @@ public class KeycloakAccountClient {
         return removed;
     }
 
-    private JsonNode readArray(String token, String path, String operation) {
+    public void setCrmRole(String userId, UserRole role) {
+        changeCrmRole(userId, role, true);
+    }
+
+    public boolean addCrmRoleIfNone(String userId, UserRole role) {
+        return changeCrmRole(userId, role, false);
+    }
+
+    private boolean changeCrmRole(String userId, UserRole role, boolean replace) {
+        requireConfiguration(ROLE_CHANGE);
+        String token = accessToken(ROLE_CHANGE);
+        String mappings = userPath(userId) + "/role-mappings/realm";
+        List<JsonNode> other = new ArrayList<>();
+        boolean assigned = false;
+        for (JsonNode mapped : readArray(token, mappings, "чтение ролей учётной записи", ROLE_CHANGE)) {
+            String name = mapped.path("name").asText();
+            if (name.equals(role.keycloakRole())) {
+                assigned = true;
+            } else if (!UserRole.fromKeycloakRoles(List.of(name)).isEmpty()) {
+                other.add(mapped);
+            }
+        }
+        if (!replace && (assigned || !other.isEmpty())) {
+            return false;
+        }
+        if (!assigned) {
+            JsonNode available = null;
+            for (JsonNode candidate : readArray(token, mappings + "/available", "чтение ролей realm", ROLE_CHANGE)) {
+                if (role.keycloakRole().equals(candidate.path("name").asText())) {
+                    available = candidate;
+                }
+            }
+            if (available == null) {
+                throw new AccountSyncException("В Keycloak нет роли realm " + role.keycloakRole() + ROLE_CHANGE.rejectedSuffix());
+            }
+            changeRealmRoles(token, mappings, "POST", List.of(available), "назначение роли " + role.keycloakRole());
+        }
+        if (!other.isEmpty()) {
+            changeRealmRoles(token, mappings, "DELETE", other, "снятие прежней роли");
+        }
+        return !assigned;
+    }
+
+    private void changeRealmRoles(String token, String mappings, String method, List<JsonNode> roles, String operation) {
+        requireSuccess(send(HttpRequest.newBuilder(uri(mappings))
+                .header("Authorization", "Bearer " + token)
+                .header("Content-Type", "application/json")
+                .method(method, HttpRequest.BodyPublishers.ofString(json(roles))), ROLE_CHANGE), operation, ROLE_CHANGE);
+    }
+
+    private JsonNode readArray(String token, String path, String operation, Outcome outcome) {
         HttpResponse<String> response = send(HttpRequest.newBuilder(uri(path))
                 .header("Authorization", "Bearer " + token)
-                .GET(), ACCOUNT_CHANGE);
-        requireSuccess(response, operation, ACCOUNT_CHANGE);
+                .GET(), outcome);
+        requireSuccess(response, operation, outcome);
         try {
             JsonNode items = objectMapper.readTree(response.body());
             if (items.isArray()) {
                 return items;
             }
         } catch (IOException exception) {
-            throw new AccountSyncException("Keycloak вернул ответ не в формате JSON" + ACCOUNT_CHANGE.rejectedSuffix(), exception);
+            throw new AccountSyncException("Keycloak вернул ответ не в формате JSON" + outcome.rejectedSuffix(), exception);
         }
-        throw new AccountSyncException("Keycloak вернул ответ не в формате списка" + ACCOUNT_CHANGE.rejectedSuffix());
+        throw new AccountSyncException("Keycloak вернул ответ не в формате списка" + outcome.rejectedSuffix());
     }
 
     private String createUser(

@@ -32,7 +32,7 @@ type ReportsScreenProps = {
 }
 
 const reportViews: readonly ReportView[] = [
-  'portfolio', 'events', 'snapshot', 'duration', 'demand', 'agreements', 'statistics', 'learning-dynamics', 'kam-review',
+  'manager-work', 'portfolio', 'events', 'snapshot', 'duration', 'demand', 'agreements', 'statistics', 'learning-dynamics', 'kam-review',
   'confirmations', 'signing-plan'
 ]
 

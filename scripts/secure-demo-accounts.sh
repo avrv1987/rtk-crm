@@ -20,7 +20,7 @@ fi
 [[ -f $env_file ]] || fail "$env_file not found"
 env_file=$(cd "$(dirname "$env_file")" && pwd)/$(basename "$env_file")
 
-demo_accounts=(kam-a kam-b kam-c kam-d leader leader-b admin management enrol partner unprofiled unprofiled-2)
+demo_accounts=(kam-a kam-b kam-c kam-d kam-e kam-f kam-g kam-h leader leader-b leader-c admin management enrol partner unprofiled unprofiled-2)
 declare -A keep=()
 for account in "$@"; do
     [[ " ${demo_accounts[*]} " == *" $account "* ]] || fail "$account is not a demo account (${demo_accounts[*]})"

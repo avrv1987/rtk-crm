@@ -1,4 +1,6 @@
 package ru.rtk.crm.interaction;
 
-public record WorkflowStageInput(String name, Integer order, Boolean optional) {
+import java.util.UUID;
+
+public record WorkflowStageInput(String name, Integer order, Boolean optional, UUID id) {
 }

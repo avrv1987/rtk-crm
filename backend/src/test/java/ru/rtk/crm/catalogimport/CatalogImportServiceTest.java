@@ -847,7 +847,7 @@ class CatalogImportServiceTest {
                 CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL, default_workflow_template_id UUID)
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, login VARCHAR(200), idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     activation_requested_at TIMESTAMP WITH TIME ZONE, anonymized_at TIMESTAMP WITH TIME ZONE, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL, access_revision INTEGER NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -930,7 +930,7 @@ class CatalogImportServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500),
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL,
                     current_stage_id UUID NOT NULL, next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE,
@@ -948,7 +948,7 @@ class CatalogImportServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_stages (
+                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL,
                     name VARCHAR(200) NOT NULL, optional BOOLEAN NOT NULL
                 )
@@ -963,6 +963,13 @@ class CatalogImportServiceTest {
                 CREATE TABLE IF NOT EXISTS interaction_contacts (
                     interaction_id UUID NOT NULL, organization_id UUID NOT NULL, contact_id UUID NOT NULL,
                     PRIMARY KEY (interaction_id, contact_id)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS workflow_template_versions (
+                    template_id UUID NOT NULL, version_number INTEGER NOT NULL, name VARCHAR(200) NOT NULL,
+                    content TEXT NOT NULL, change_comment VARCHAR(1000), created_by UUID,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, PRIMARY KEY (template_id, version_number)
                 )
                 """,
                 """

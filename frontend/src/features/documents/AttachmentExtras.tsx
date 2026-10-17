@@ -1,3 +1,4 @@
+import { getModules } from '../../shared/modules'
 import { type FormEvent, useRef, useState } from 'react'
 import {
   ApiError,
@@ -156,7 +157,7 @@ export const AttachmentExtras = ({
             <strong>{attachmentKindLabels[attachment.kind]}</strong>
           )}
         </label>
-        {canEdit ? (
+        {!getModules().partner ? null : canEdit ? (
           <label className="document-extras__partner">
             <input
               type="checkbox"

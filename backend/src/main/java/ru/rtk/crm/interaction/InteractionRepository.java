@@ -266,6 +266,46 @@ public class InteractionRepository {
         }
     }
 
+    public void updateRoute(UUID interactionId, UUID templateId, int workflowVersion, Map<UUID, UUID> templateStageIds) {
+        jdbcClient.sql("""
+                UPDATE interactions
+                SET workflow_template_id = :templateId, workflow_version = :workflowVersion
+                WHERE id = :interactionId
+                """)
+                .param("interactionId", interactionId)
+                .param("templateId", templateId)
+                .param("workflowVersion", workflowVersion)
+                .update();
+        templateStageIds.forEach((stageId, templateStageId) -> jdbcClient.sql("""
+                        UPDATE interaction_stages
+                        SET template_stage_id = :templateStageId
+                        WHERE id = :stageId AND interaction_id = :interactionId
+                        """)
+                .param("interactionId", interactionId)
+                .param("stageId", stageId)
+                .param("templateStageId", templateStageId)
+                .update());
+    }
+
+    public Optional<InteractionRoute> findRoute(UUID interactionId) {
+        return jdbcClient.sql("""
+                SELECT t.id, t.name, i.workflow_version,
+                       (SELECT MAX(v.version_number) FROM workflow_template_versions v WHERE v.template_id = t.id)
+                           AS latest_version
+                FROM interactions i
+                JOIN workflow_templates t ON t.id = i.workflow_template_id
+                WHERE i.id = :interactionId AND i.workflow_version IS NOT NULL
+                """)
+                .param("interactionId", interactionId)
+                .query((resultSet, rowNumber) -> new InteractionRoute(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getString("name"),
+                        resultSet.getInt("workflow_version"),
+                        resultSet.getInt("latest_version")
+                ))
+                .optional();
+    }
+
     public void insertContacts(UUID interactionId, UUID organizationId, List<UUID> contactIds) {
         for (UUID contactId : contactIds) {
             jdbcClient.sql("""

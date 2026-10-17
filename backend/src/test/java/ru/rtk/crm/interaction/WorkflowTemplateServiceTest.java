@@ -62,6 +62,7 @@ class WorkflowTemplateServiceTest {
         createSchema();
         jdbcTemplate.update("DELETE FROM workflow_template_transitions");
         jdbcTemplate.update("DELETE FROM workflow_template_stages");
+        jdbcTemplate.update("DELETE FROM workflow_template_versions");
         jdbcTemplate.update("DELETE FROM workflow_templates");
         jdbcTemplate.update("DELETE FROM command_idempotency_records");
         jdbcTemplate.update("DELETE FROM organizations");
@@ -82,10 +83,11 @@ class WorkflowTemplateServiceTest {
                 new WorkflowTemplateRequest(
                         "Висячее ребро",
                         List.of(
-                                new WorkflowStageInput("Старт", 0, false),
-                                new WorkflowStageInput("Финиш", 1, false)
+                                new WorkflowStageInput("Старт", 0, false, null),
+                                new WorkflowStageInput("Финиш", 1, false, null)
                         ),
                         List.of(new WorkflowTransitionInput(0, 2, false)),
+                        null,
                         null
                 ),
                 "template-dangling"
@@ -97,13 +99,14 @@ class WorkflowTemplateServiceTest {
                 new WorkflowTemplateRequest(
                         "Дублирующее ребро",
                         List.of(
-                                new WorkflowStageInput("Старт", 0, false),
-                                new WorkflowStageInput("Финиш", 1, false)
+                                new WorkflowStageInput("Старт", 0, false, null),
+                                new WorkflowStageInput("Финиш", 1, false, null)
                         ),
                         List.of(
                                 new WorkflowTransitionInput(0, 1, false),
                                 new WorkflowTransitionInput(0, 1, false)
                         ),
+                        null,
                         null
                 ),
                 "template-duplicate"
@@ -150,11 +153,12 @@ class WorkflowTemplateServiceTest {
                 new WorkflowTemplateRequest(
                         "Неполная замена",
                         List.of(
-                                new WorkflowStageInput("Старт", 0, false),
-                                new WorkflowStageInput("Финиш", 1, false)
+                                new WorkflowStageInput("Старт", 0, false, null),
+                                new WorkflowStageInput("Финиш", 1, false, null)
                         ),
                         null,
-                        created.version()
+                        created.version(),
+                        null
                 ),
                 "template-update-invalid"
         )).isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
@@ -164,15 +168,16 @@ class WorkflowTemplateServiceTest {
         WorkflowTemplateRequest updateRequest = new WorkflowTemplateRequest(
                 "Переименованный процесс",
                 List.of(
-                        new WorkflowStageInput("Старт", 0, false),
-                        new WorkflowStageInput("Проверка", 1, true),
-                        new WorkflowStageInput("Финиш", 2, false)
+                        new WorkflowStageInput("Старт", 0, false, null),
+                        new WorkflowStageInput("Проверка", 1, true, null),
+                        new WorkflowStageInput("Финиш", 2, false, null)
                 ),
                 List.of(
                         new WorkflowTransitionInput(0, 1, false),
                         new WorkflowTransitionInput(1, 2, true)
                 ),
-                created.version()
+                created.version(),
+                null
         );
         WorkflowTemplate updated = workflowTemplateService.update(
                 leaderA,
@@ -222,9 +227,9 @@ class WorkflowTemplateServiceTest {
     @Test
     void rejectsUncommentedSkipsReturnsAndDeadEndStages() {
         List<WorkflowStageInput> stages = List.of(
-                new WorkflowStageInput("Старт", 0, false),
-                new WorkflowStageInput("Обязательная проверка", 1, false),
-                new WorkflowStageInput("Финиш", 2, false)
+                new WorkflowStageInput("Старт", 0, false, null),
+                new WorkflowStageInput("Обязательная проверка", 1, false, null),
+                new WorkflowStageInput("Финиш", 2, false, null)
         );
 
         assertThatThrownBy(() -> workflowTemplateService.create(
@@ -233,7 +238,7 @@ class WorkflowTemplateServiceTest {
                         new WorkflowTransitionInput(0, 1, false),
                         new WorkflowTransitionInput(1, 2, false),
                         new WorkflowTransitionInput(0, 2, false)
-                ), null),
+                ), null, null),
                 "template-skip-without-comment"
         )).isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
             assertThat(exception.field()).isEqualTo("transitions");
@@ -245,7 +250,7 @@ class WorkflowTemplateServiceTest {
                         new WorkflowTransitionInput(0, 1, false),
                         new WorkflowTransitionInput(1, 2, false),
                         new WorkflowTransitionInput(2, 0, false)
-                ), null),
+                ), null, null),
                 "template-return-without-comment"
         )).isInstanceOf(InteractionValidationException.class);
         assertThatThrownBy(() -> workflowTemplateService.create(
@@ -253,7 +258,7 @@ class WorkflowTemplateServiceTest {
                 new WorkflowTemplateRequest("Тупиковый этап", stages, List.of(
                         new WorkflowTransitionInput(0, 1, false),
                         new WorkflowTransitionInput(0, 2, true)
-                ), null),
+                ), null, null),
                 "template-dead-end"
         )).isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
             assertThat(exception).hasMessageContaining("исходящий переход");
@@ -266,7 +271,7 @@ class WorkflowTemplateServiceTest {
                         new WorkflowTransitionInput(1, 2, false),
                         new WorkflowTransitionInput(0, 2, true),
                         new WorkflowTransitionInput(2, 0, true)
-                ), null),
+                ), null, null),
                 "template-commented-skip"
         );
         assertThat(commentedSkip.transitions()).hasSize(4);
@@ -304,7 +309,7 @@ class WorkflowTemplateServiceTest {
         assertThatThrownBy(() -> workflowTemplateService.update(
                 leaderA,
                 global.id(),
-                new WorkflowTemplateRequest("Захват базового", null, null, 0),
+                new WorkflowTemplateRequest("Захват базового", null, null, 0, null),
                 "leader-update-default"
         )).isInstanceOf(WorkflowTemplateAccessDeniedException.class);
         assertThatThrownBy(() -> workflowTemplateService.delete(leaderA, global.id(), 0, "leader-delete-default"))
@@ -315,10 +320,11 @@ class WorkflowTemplateServiceTest {
                 new WorkflowTemplateRequest(
                         "Базовый процесс (копия команды)",
                         List.of(
-                                new WorkflowStageInput("Старт", 0, false),
-                                new WorkflowStageInput("Финиш", 1, false)
+                                new WorkflowStageInput("Старт", 0, false, null),
+                                new WorkflowStageInput("Финиш", 1, false, null)
                         ),
                         List.of(new WorkflowTransitionInput(0, 1, false)),
+                        null,
                         null
                 ),
                 "leader-copy-default"
@@ -391,10 +397,11 @@ class WorkflowTemplateServiceTest {
         return new WorkflowTemplateRequest(
                 name,
                 List.of(
-                        new WorkflowStageInput("Старт", 0, false),
-                        new WorkflowStageInput("Финиш", 1, false)
+                        new WorkflowStageInput("Старт", 0, false, null),
+                        new WorkflowStageInput("Финиш", 1, false, null)
                 ),
                 transitions,
+                null,
                 null
         );
     }
@@ -407,6 +414,13 @@ class WorkflowTemplateServiceTest {
                 )
                 """);
         jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS organizations (id UUID PRIMARY KEY, team_id UUID NOT NULL)");
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS workflow_template_versions (
+                    template_id UUID NOT NULL, version_number INTEGER NOT NULL, name VARCHAR(200) NOT NULL,
+                    content TEXT NOT NULL, change_comment VARCHAR(1000), created_by UUID,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, PRIMARY KEY (template_id, version_number)
+                )
+                """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS workflow_templates (
                     id UUID PRIMARY KEY,

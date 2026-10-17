@@ -45,14 +45,19 @@ try {
             'MOODLE_EDGE_HOST=lms.example.test'
         ) | Set-Content -LiteralPath $tmpEnv -Encoding utf8
 
-        Invoke-Step 'docker compose config (compose.yaml)' {
-            & docker compose --env-file $tmpEnv config --quiet
+        Invoke-Step 'docker compose config (compose.yaml, profiles security and demo)' {
+            & docker compose --env-file $tmpEnv --profile security --profile demo config --quiet
         }
-        Invoke-Step 'docker compose config (compose.yaml + compose.prod.yaml)' {
-            & docker compose --env-file $tmpEnv -f compose.yaml -f compose.prod.yaml config --quiet
+        Invoke-Step 'docker compose config (compose.yaml + compose.prod.yaml, profiles security and demo)' {
+            & docker compose --env-file $tmpEnv -f compose.yaml -f compose.prod.yaml --profile security --profile demo config --quiet
         }
-        Invoke-Step 'docker compose config (compose.yaml + compose.edge.yaml)' {
-            & docker compose --env-file $tmpEnv -f compose.yaml -f compose.edge.yaml config --quiet
+        Invoke-Step 'docker compose config (compose.yaml + compose.edge.yaml, profiles security and demo)' {
+            & docker compose --env-file $tmpEnv -f compose.yaml -f compose.edge.yaml --profile security --profile demo config --quiet
+        }
+        Write-Output 'release-gate: docker compose services without profiles: core only'
+        $core = (& docker compose --env-file $tmpEnv config --services | Sort-Object) -join ' '
+        if ($core -ne 'backend keycloak postgres web') {
+            throw "unexpected core services: $core"
         }
     }
     finally {

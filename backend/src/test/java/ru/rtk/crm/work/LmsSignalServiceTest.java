@@ -298,7 +298,7 @@ class LmsSignalServiceTest {
     private void createSchema() {
         List.of(
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, 
                     id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL
                 )
@@ -325,13 +325,13 @@ class LmsSignalServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (
+                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL,
                     current_stage_id UUID NOT NULL, program_id UUID, work_status VARCHAR(16) NOT NULL
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_stages (
+                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL, name VARCHAR(200) NOT NULL
                 )
                 """,

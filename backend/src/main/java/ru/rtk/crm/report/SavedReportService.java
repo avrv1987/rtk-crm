@@ -183,7 +183,7 @@ public class SavedReportService {
                 null,
                 null
         );
-        definition.normalized();
+        definition.normalized(true);
         return definition;
     }
 

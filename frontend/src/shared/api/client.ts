@@ -1,6 +1,7 @@
 import type { components, operations } from './openapi'
 
 export type Me = components['schemas']['Me']
+export type Config = components['schemas']['Config']
 export type CsrfToken = components['schemas']['CsrfToken']
 export type LogoutResult = components['schemas']['LogoutResult']
 export type ApiErrorPayload = components['schemas']['ApiError']
@@ -98,6 +99,25 @@ export type ManagerIndicators = components['schemas']['ManagerIndicators']
 export type TeamsSummary = components['schemas']['TeamsSummary']
 export type TeamSummary = components['schemas']['TeamSummary']
 export type LearningTrend = components['schemas']['LearningTrend']
+export type WorkControl = components['schemas']['WorkControl']
+export type WorkControlTeam = components['schemas']['WorkControlTeam']
+export type WorkControlManager = components['schemas']['WorkControlManager']
+export type WorkControlItem = components['schemas']['WorkControlItem']
+export type WorkControlTotals = components['schemas']['WorkControlTotals']
+export type ManagerWorkDue = components['schemas']['ManagerWorkDue']
+export type ManagerWorkChange = components['schemas']['ManagerWorkChange']
+
+export type WorkControlQuery = {
+  organizationId: string[]
+  directionId: string[]
+  programId: string[]
+  productId: string[]
+  managerId: string[]
+  stage: string[]
+  from: string
+  to: string
+  change: ManagerWorkChange | ''
+}
 export type LearningTrendItem = components['schemas']['LearningTrendItem']
 export type LearningDynamics = components['schemas']['LearningDynamics']
 export type LearningDynamicsQuery = {
@@ -137,6 +157,11 @@ export type WorkflowTemplateCreate = components['schemas']['WorkflowTemplateCrea
 export type WorkflowTemplateUpdate = components['schemas']['WorkflowTemplateUpdate']
 export type PageWorkflowTemplate = components['schemas']['PageWorkflowTemplate']
 export type WorkflowTemplateListParams = NonNullable<operations['listAvailableWorkflowTemplates']['parameters']['query']>
+export type WorkflowTemplateVersion = components['schemas']['WorkflowTemplateVersion']
+export type WorkflowRolloutRequest = components['schemas']['WorkflowRolloutRequest']
+export type WorkflowRolloutPreview = components['schemas']['WorkflowRolloutPreview']
+export type WorkflowRolloutResult = components['schemas']['WorkflowRolloutResult']
+export type WorkflowStageMatch = components['schemas']['WorkflowStageMatch']
 export type ReportKind = components['schemas']['ReportKind']
 export type ReportFormat = components['schemas']['ReportFormat']
 export type ReportColumn = components['schemas']['ReportColumn']
@@ -156,6 +181,7 @@ export type SavedReport = components['schemas']['SavedReport']
 export type SavedReportRequest = components['schemas']['SavedReportRequest']
 export type CrmProfile = components['schemas']['CrmProfile']
 export type PageCrmProfile = components['schemas']['PageCrmProfile']
+export type KeycloakRoleMigration = components['schemas']['KeycloakRoleMigration']
 export type CrmProfileListParams = NonNullable<operations['listCrmProfiles']['parameters']['query']>
 export type CrmProfileUpdate = components['schemas']['CrmProfileUpdate']
 export type NewEmployee = components['schemas']['NewEmployee']
@@ -368,6 +394,10 @@ export class ApiError extends Error {
   }
 }
 
+export const isAccessDenied = (error: unknown): boolean => (
+  error instanceof ApiError && (error.status === 401 || error.status === 403)
+)
+
 const parseJson = (text: string): unknown => {
   try {
     return JSON.parse(text)
@@ -389,6 +419,10 @@ export class ApiClient {
 
   async me(): Promise<Me> {
     return this.request<Me>('/api/me')
+  }
+
+  async config(): Promise<Config> {
+    return this.request<Config>('/api/config')
   }
 
   async refreshCsrf(): Promise<CsrfToken> {
@@ -672,9 +706,8 @@ export class ApiClient {
     if (this.csrf === null) {
       await this.refreshCsrf()
     }
-    const response = await fetch(`/api/enrolment/streams/${encodeURIComponent(id)}/lms-roster`, {
+    const response = await this.fetchApi(`/api/enrolment/streams/${encodeURIComponent(id)}/lms-roster`, {
       method: 'POST',
-      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/json',
@@ -964,6 +997,10 @@ export class ApiClient {
     return this.post<CrmProfile>(`/api/admin/crm-profiles/${encodeURIComponent(id)}/account-sync`)
   }
 
+  async migrateCrmRolesToKeycloak(): Promise<KeycloakRoleMigration> {
+    return this.post<KeycloakRoleMigration>('/api/admin/crm-profiles/keycloak-roles')
+  }
+
   async createEmployeeAccount(payload: NewEmployee, idempotencyKey: string): Promise<AccountCredentials> {
     return this.command<AccountCredentials>('/api/admin/crm-profiles', payload, idempotencyKey)
   }
@@ -1006,9 +1043,8 @@ export class ApiClient {
     if (this.csrf === null) {
       await this.refreshCsrf()
     }
-    const response = await fetch(`/api/admin/personal-data/export?format=${format}`, {
+    const response = await this.fetchApi(`/api/admin/personal-data/export?format=${format}`, {
       method: 'POST',
-      credentials: 'include',
       headers: {
         Accept: 'application/octet-stream',
         'Content-Type': 'application/json',
@@ -1328,6 +1364,41 @@ export class ApiClient {
     return this.request<PageCatalogChangeEvent>(`/api/admin/catalog-events${suffix}`)
   }
 
+  async listWorkflowTemplateVersions(id: WorkflowTemplate['id']): Promise<WorkflowTemplateVersion[]> {
+    return this.request<WorkflowTemplateVersion[]>(`/api/workflow-templates/${encodeURIComponent(id)}/versions`)
+  }
+
+  async previewWorkflowRollout(
+    id: WorkflowTemplate['id'],
+    version: number,
+    payload: WorkflowRolloutRequest
+  ): Promise<WorkflowRolloutPreview> {
+    if (this.csrf === null) {
+      await this.refreshCsrf()
+    }
+    return this.request<WorkflowRolloutPreview>(
+      `/api/admin/workflow-templates/${encodeURIComponent(id)}/versions/${version}/rollout-preview`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', [this.csrf!.headerName]: this.csrf!.token },
+        body: JSON.stringify(payload)
+      }
+    )
+  }
+
+  async rollOutWorkflowVersion(
+    id: WorkflowTemplate['id'],
+    version: number,
+    payload: WorkflowRolloutRequest,
+    idempotencyKey: string
+  ): Promise<WorkflowRolloutResult> {
+    return this.command<WorkflowRolloutResult>(
+      `/api/admin/workflow-templates/${encodeURIComponent(id)}/versions/${version}/rollout`,
+      payload,
+      idempotencyKey
+    )
+  }
+
   async makeWorkflowTemplateDefault(id: WorkflowTemplate['id'], version: number, idempotencyKey: string): Promise<WorkflowTemplate> {
     return this.command<WorkflowTemplate>(
       `/api/admin/workflow-templates/${encodeURIComponent(id)}/default`,
@@ -1383,6 +1454,25 @@ export class ApiClient {
   async getTeamsSummary(stuckDays?: number): Promise<TeamsSummary> {
     const suffix = stuckDays === undefined ? '' : `?${new URLSearchParams({ stuckDays: stuckDays.toString() })}`
     return this.request<TeamsSummary>(`/api/work/teams-summary${suffix}`)
+  }
+
+  async getWorkControl(query: WorkControlQuery): Promise<WorkControl> {
+    const params = new URLSearchParams()
+    const lists = {
+      organizationId: query.organizationId,
+      directionId: query.directionId,
+      programId: query.programId,
+      productId: query.productId,
+      managerId: query.managerId,
+      stage: query.stage
+    }
+    Object.entries(lists).forEach(([key, values]) => values.forEach((value) => params.append(key, value)))
+    Object.entries({ from: query.from, to: query.to, change: query.change }).forEach(([key, value]) => {
+      if (value !== '') {
+        params.set(key, value)
+      }
+    })
+    return this.request<WorkControl>(`/api/work/control${params.size === 0 ? '' : `?${params.toString()}`}`)
   }
 
   async getLearningTrend(days?: number): Promise<LearningTrend> {
@@ -1550,9 +1640,8 @@ export class ApiClient {
     if (this.csrf === null) {
       await this.refreshCsrf()
     }
-    const response = await fetch(`/api/teacher-rosters/${encodeURIComponent(rosterId)}/lms-file`, {
+    const response = await this.fetchApi(`/api/teacher-rosters/${encodeURIComponent(rosterId)}/lms-file`, {
       method: 'POST',
-      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/json',
@@ -1690,9 +1779,8 @@ export class ApiClient {
   }
 
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const response = await fetch(path, {
+    const response = await this.fetchApi(path, {
       ...init,
-      credentials: 'include',
       headers: {
         Accept: 'application/json',
         ...init.headers
@@ -1707,6 +1795,23 @@ export class ApiClient {
     const contentType = response.headers.get('content-type') ?? ''
     const body: unknown = contentType.includes('application/json') ? await response.json() : null
     return body as T
+  }
+
+  private async fetchApi(path: string, init: RequestInit): Promise<Response> {
+    const response = await fetch(path, { ...init, credentials: 'include' })
+    const headerName = this.csrf?.headerName
+    if (response.status !== 403 || headerName === undefined || !new Headers(init.headers).has(headerName)) {
+      return response
+    }
+    const body = parseJson(await response.clone().text())
+    if (!isApiErrorPayload(body) || body.code !== 'CSRF_INVALID') {
+      return response
+    }
+    const csrf = await this.refreshCsrf()
+    const headers = new Headers(init.headers)
+    headers.delete(headerName)
+    headers.set(csrf.headerName, csrf.token)
+    return fetch(path, { ...init, headers, credentials: 'include' })
   }
 
   async download(path: string): Promise<Blob> {

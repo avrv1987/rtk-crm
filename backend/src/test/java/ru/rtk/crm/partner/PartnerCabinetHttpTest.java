@@ -27,6 +27,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -50,6 +52,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import ru.rtk.crm.access.AccountSyncException;
 import ru.rtk.crm.access.KeycloakAccountClient;
 import ru.rtk.crm.access.KeycloakAccountConflictException;
+import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.catalog.CatalogArchivedEvent;
 
 @SpringBootTest(properties = {
@@ -60,7 +63,8 @@ import ru.rtk.crm.catalog.CatalogArchivedEvent;
         "app.oidc.issuer-uri=http://crm.test/idp/realms/rtk-crm",
         "app.oidc.public-base-url=http://crm.test",
         "app.oidc.internal-base-url=http://keycloak.test",
-        "app.oidc.client-secret=test-client-secret"
+        "app.oidc.client-secret=test-client-secret",
+        "app.modules.partner.enabled=true"
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("oidc")
@@ -293,6 +297,14 @@ class PartnerCabinetHttpTest {
                 .containsEntry("ISSUER", ISSUER)
                 .containsEntry("SUBJECT", "kc-rector")
                 .containsEntry("PARTNER_ORGANIZATION_ID", ORGANIZATION_A);
+        verify(keycloakAccountClient).setCrmRole("kc-rector", UserRole.PARTNER);
+        mockMvc.perform(get("/api/partner/cabinet").with(oidcLogin().idToken(token -> token.issuer(ISSUER).subject("kc-rector")
+                        .claim("realm_access", Map.of("roles", List.of("crm-partner"))))))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/partner/cabinet").with(oidcLogin().idToken(token -> token.issuer(ISSUER).subject("kc-rector")
+                        .claim("realm_access", Map.of("roles", List.of("crm-admin"))))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CRM_PROFILE_REQUIRED"));
         String accessList = mockMvc.perform(get("/api/organizations/{id}/partner-access", ORGANIZATION_A).with(login(KAM_A)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(2)))
@@ -552,7 +564,7 @@ class PartnerCabinetHttpTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, 
                     id UUID PRIMARY KEY, issuer VARCHAR(512) NOT NULL, subject VARCHAR(512) NOT NULL,
                     display_name VARCHAR(200) NOT NULL, login VARCHAR(200), role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL DEFAULT TRUE, pending_activation BOOLEAN NOT NULL DEFAULT FALSE,
@@ -634,7 +646,7 @@ class PartnerCabinetHttpTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (
+                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL, current_stage_id UUID NOT NULL,
                     next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE, program_id UUID,
                     work_status VARCHAR(16) NOT NULL, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL,
@@ -642,7 +654,7 @@ class PartnerCabinetHttpTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_stages (
+                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL, name VARCHAR(200) NOT NULL
                 )
                 """,

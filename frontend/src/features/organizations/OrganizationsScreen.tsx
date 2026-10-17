@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { getModules } from '../../shared/modules'
 import { ApiError, apiClient, type Me, type Organization, type PageOrganization } from '../../shared/api/client'
 import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
@@ -574,10 +575,10 @@ export const OrganizationsScreen = ({
                     organizationId={detailState.organization.id}
                     profileId={profileId}
                     role={role}
-                    partnerAccess={{
+                    partnerAccess={getModules().partner ? {
                       canManage: role === 'LEADER' || role === 'USER' && detailState.organization.ownerManagerId === profileId,
                       canOpen: detailState.organization.status === 'ACTIVE' && detailState.organization.type !== 'OPEN_ENROLLMENT'
-                    }}
+                    } : undefined}
                     onContactsChanged={() => void refreshOrganization(detailState.organization.id)}
                     onSessionExpired={onSessionExpired}
                     onProfileUnavailable={onProfileUnavailable}

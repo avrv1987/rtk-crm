@@ -1,11 +1,13 @@
 package ru.rtk.crm.access;
 
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import ru.rtk.crm.access.AccountSyncRepository.Account;
+import ru.rtk.crm.access.AccountSyncRepository.RoleAccount;
 import ru.rtk.crm.audit.AuditAction;
 import ru.rtk.crm.audit.AuditJournalRepository;
 
@@ -57,6 +59,34 @@ public class AccountSyncService {
         return adminCrmProfileRepository.findById(profileId).orElseThrow(AdminCrmProfileNotFoundException::new);
     }
 
+    public RoleMigration migrateRoles(CrmProfile actor, String requestId) {
+        AdminAuthorization.requireAdmin(actor);
+        if (!keycloakAccountClient.configured()) {
+            throw new AccountSyncException("Связь с Keycloak не настроена: задайте APP_KEYCLOAK_ACCOUNT_SYNC_CLIENT_SECRET; роли не перенесены");
+        }
+        int assigned = 0;
+        int kept = 0;
+        int failed = 0;
+        for (RoleAccount account : accountSyncRepository.findRolesNotInKeycloak()) {
+            try {
+                if (keycloakAccountClient.addCrmRoleIfNone(account.subject(), account.role())) {
+                    assigned++;
+                } else {
+                    kept++;
+                }
+                adminCrmProfileRepository.markRoleSynced(account.id(), OffsetDateTime.now());
+            } catch (AccountSyncException exception) {
+                LOGGER.warn("Role of CRM profile {} is not moved to Keycloak: {}", account.id(), exception.getMessage());
+                failed++;
+            }
+        }
+        auditJournalRepository.record(
+                AuditAction.ACCOUNT_ROLES_MIGRATED, actor.id(), "PROFILE", null, null,
+                "назначено: " + assigned + "; уже были в Keycloak: " + kept + "; не перенесено: " + failed, requestId
+        );
+        return new RoleMigration(assigned, kept, failed);
+    }
+
     public AdminCrmProfile syncAfterChange(CrmProfile actor, UUID profileId, String requestId) {
         try {
             return sync(actor, profileId, requestId);
@@ -65,5 +95,8 @@ public class AccountSyncService {
                     .orElseThrow(AdminCrmProfileNotFoundException::new)
                     .withAccountSyncError(exception.getMessage());
         }
+    }
+
+    public record RoleMigration(int assigned, int kept, int failed) {
     }
 }

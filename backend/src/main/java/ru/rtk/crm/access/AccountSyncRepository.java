@@ -1,5 +1,6 @@
 package ru.rtk.crm.access;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -39,6 +40,24 @@ public class AccountSyncRepository {
                 .param("profileId", profileId)
                 .param("enabled", enabled)
                 .update() == 1;
+    }
+
+    public List<RoleAccount> findRolesNotInKeycloak() {
+        return jdbcClient.sql("""
+                SELECT id, subject, role
+                FROM crm_user_profiles
+                WHERE role_synced_at IS NULL AND pending_activation = FALSE AND anonymized_at IS NULL
+                ORDER BY id
+                """)
+                .query((resultSet, rowNumber) -> new RoleAccount(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getString("subject"),
+                        UserRole.valueOf(resultSet.getString("role"))
+                ))
+                .list();
+    }
+
+    public record RoleAccount(UUID id, String subject, UserRole role) {
     }
 
     public record Account(String subject, boolean active, boolean pendingActivation, boolean idpEnabled) {

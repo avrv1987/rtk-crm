@@ -81,6 +81,9 @@ if is_blank "${values[DEMO_DATA]-}"; then
     set_value DEMO_DATA true
 fi
 [[ ${values[DEMO_DATA]} == true || ${values[DEMO_DATA]} == false ]] || fail 'DEMO_DATA must be true or false'
+if is_blank "${values[MODULE_ENROLMENT_ENABLED]-}" && ! is_blank "${values[ENROLMENT_ENABLED]-}"; then
+    set_value MODULE_ENROLMENT_ENABLED "${values[ENROLMENT_ENABLED]}"
+fi
 site_fixture_url=http://site-fixture:8080
 
 defaults=(
@@ -108,12 +111,12 @@ secrets=(
     BACKUP_ENCRYPTION_KEY
 )
 if [[ ${values[DEMO_DATA]} == true ]]; then
-    defaults+=(SITE_BASE_URL=$site_fixture_url DEMO_LMS=true ENROLMENT_ENABLED=true)
+    defaults+=(SITE_BASE_URL=$site_fixture_url DEMO_LMS=true MODULE_ENROLMENT_ENABLED=true MODULE_PARTNER_ENABLED=true COMPOSE_PROFILES=security,demo)
     secrets+=(DEMO_USER_PASSWORD SITE_TOKEN)
 else
     [[ ${values[DEMO_LMS]-} != true ]] || fail 'DEMO_LMS=true requires DEMO_DATA=true'
     [[ ${values[SITE_BASE_URL]-} != "$site_fixture_url" ]] || set_value SITE_BASE_URL ''
-    defaults+=(DEMO_LMS=false ENROLMENT_ENABLED=false CRM_ADMIN_USERNAME=admin 'CRM_ADMIN_DISPLAY_NAME=Администратор')
+    defaults+=(DEMO_LMS=false MODULE_ENROLMENT_ENABLED=false MODULE_PARTNER_ENABLED=false COMPOSE_PROFILES=security CRM_ADMIN_USERNAME=admin 'CRM_ADMIN_DISPLAY_NAME=Администратор')
     defaults+=(CRM_ADMIN_EMAIL=admin@rtk-crm.local)
     secrets+=(CRM_ADMIN_PASSWORD)
 fi
@@ -130,6 +133,9 @@ done
 [[ ${values[DEMO_LMS]} == true || ${values[DEMO_LMS]} == false ]] || fail 'DEMO_LMS must be true or false'
 [[ ${values[MFA_REQUIRED_FOR_PRIVILEGED]} == true || ${values[MFA_REQUIRED_FOR_PRIVILEGED]} == false ]] \
     || fail 'MFA_REQUIRED_FOR_PRIVILEGED must be true or false'
+for key in MODULE_ENROLMENT_ENABLED MODULE_PARTNER_ENABLED; do
+    [[ ${values[$key]} == true || ${values[$key]} == false ]] || fail "$key must be true or false"
+done
 write_env_file
 
 moodle_demo_url=http://moodle:8080
@@ -278,10 +284,43 @@ require_second_factor() {
     kcadm add-roles -r rtk-crm --uusername "$1" --rolename "$privileged_role"
 }
 
+crm_roles=(crm-user crm-leader crm-admin crm-management crm-partner)
+roles_mapper_name='crm realm roles'
+
+ensure_crm_roles() {
+    local role
+    for role in "${crm_roles[@]}"; do
+        if ! kcadm get "roles/$role" -r rtk-crm >/dev/null 2>&1; then
+            kcadm create roles -r rtk-crm -s "name=$role" -s 'description=CRM role, see docs/roles.md'
+        fi
+    done
+    if ! kcadm get roles/crm-admin/composites -r rtk-crm --fields name --format csv --noquotes | grep -qx "$privileged_role"; then
+        kcadm add-roles -r rtk-crm --rname crm-admin --rolename "$privileged_role"
+    fi
+}
+
+ensure_roles_mapper() {
+    local mapper mapper_id
+    mapper=$(printf '{"name":"%s","protocol":"openid-connect","protocolMapper":"oidc-usermodel-realm-role-mapper","config":{"claim.name":"realm_access.roles","multivalued":"true","jsonType.label":"String","id.token.claim":"true","access.token.claim":"false","userinfo.token.claim":"false","introspection.token.claim":"false"}}' \
+        "$roles_mapper_name")
+    mapper_id=$(kcadm get "clients/$1/protocol-mappers/models" -r rtk-crm --fields id,name --format csv --noquotes \
+        | awk -F, -v name="$roles_mapper_name" '$2 == name { print $1 } $1 == name { print $2 }')
+    if [[ -z $mapper_id ]]; then
+        printf '%s' "$mapper" | kcadm create "clients/$1/protocol-mappers/models" -r rtk-crm -f -
+    else
+        printf '{"id":"%s",%s' "$mapper_id" "${mapper#\{}" | kcadm update "clients/$1/protocol-mappers/models/$mapper_id" -r rtk-crm -f -
+    fi
+}
+
+assign_crm_role() {
+    kcadm add-roles -r rtk-crm --uusername "$1" --rolename "crm-${2,,}"
+}
+
 compose up -d --wait postgres keycloak
 compose exec -T keycloak bash -c '/opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080 --realm master --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD"' >/dev/null
 kcadm update realms/rtk-crm -f /opt/keycloak/data/import/rtk-crm-realm.json
 configure_privileged_mfa
+ensure_crm_roles
 
 public_origin=${values[PUBLIC_ORIGIN]}
 web_origins=("$public_origin")
@@ -307,6 +346,7 @@ if [[ -z $client_id ]]; then
 fi
 client_id=$(single_id 'CRM OIDC client' "$client_id")
 printf '%s' "$client_definition" | kcadm update "clients/$client_id" -r rtk-crm -f -
+ensure_roles_mapper "$client_id"
 
 sync_client_definition=$(printf '{"clientId":"crm-account-sync","enabled":true,"protocol":"openid-connect","publicClient":false,"standardFlowEnabled":false,"implicitFlowEnabled":false,"directAccessGrantsEnabled":false,"serviceAccountsEnabled":true,"secret":%s}' \
     "$(json_string "${values[CRM_ACCOUNT_SYNC_CLIENT_SECRET]}")")
@@ -330,6 +370,13 @@ demo_identities=(
     'enrol|Оператор зачисления|USER|open-enrolment|operator'
     'partner|Представитель вуза|PARTNER|'
 )
+control_identities=(
+    'kam-e|КАМ Д|USER|team-b'
+    'kam-f|КАМ Е|USER|team-c'
+    'kam-g|КАМ Ж|USER|team-c'
+    'kam-h|КАМ З|USER|team-c'
+    'leader-c|Руководитель В|LEADER|team-c'
+)
 spare_accounts=(
     'unprofiled|Без профиля CRM'
     'unprofiled-2|Без профиля CRM, запасная'
@@ -346,13 +393,14 @@ identity_yaml() {
 }
 
 if [[ ${values[DEMO_DATA]} == true ]]; then
-    for entry in "${demo_identities[@]}" "${spare_accounts[@]}"; do
+    for entry in "${demo_identities[@]}" "${control_identities[@]}" "${spare_accounts[@]}"; do
         IFS='|' read -r username display_name _ <<< "$entry"
         ensure_user "$username" "$display_name"
     done
-    for entry in "${demo_identities[@]}"; do
+    for entry in "${demo_identities[@]}" "${control_identities[@]}"; do
         IFS='|' read -r username _ role _ flag <<< "$entry"
         [[ $role != ADMIN && $flag != operator ]] || require_second_factor "$username"
+        assign_crm_role "$username" "$role"
     done
     {
         cat <<'YAML'
@@ -366,9 +414,11 @@ app:
         name: 'Команда Б'
       - key: 'open-enrolment'
         name: 'Открытый набор'
+      - key: 'team-c'
+        name: 'Команда В'
     identities:
 YAML
-        for entry in "${demo_identities[@]}"; do
+        for entry in "${demo_identities[@]}" "${control_identities[@]}"; do
             IFS='|' read -r username display_name role team flag <<< "$entry"
             identity_yaml "$username" "$display_name" "$role" "$team" "$flag"
         done
@@ -393,6 +443,69 @@ YAML
         type: COLLEGE
         team-key: 'team-b'
         owner-key: 'kam-b'
+      - name: 'Политехнический университет (демо)'
+        type: UNIVERSITY
+        team-key: 'team-a'
+        owner-key: 'kam-a'
+      - name: 'Педагогический университет (демо)'
+        type: UNIVERSITY
+        team-key: 'team-a'
+        owner-key: 'kam-c'
+      - name: 'Колледж информационных технологий (демо)'
+        type: COLLEGE
+        team-key: 'team-a'
+        owner-key: 'kam-c'
+      - name: 'Лицей № 2 (демо)'
+        type: SCHOOL
+        team-key: 'team-a'
+        owner-key: 'kam-d'
+      - name: 'Университет телекоммуникаций (демо)'
+        type: UNIVERSITY
+        team-key: 'team-b'
+        owner-key: 'kam-b'
+      - name: 'Аграрный университет (демо)'
+        type: UNIVERSITY
+        team-key: 'team-b'
+        owner-key: 'kam-e'
+      - name: 'Медицинский университет (демо)'
+        type: UNIVERSITY
+        team-key: 'team-b'
+        owner-key: 'kam-e'
+      - name: 'Колледж связи № 2 (демо)'
+        type: COLLEGE
+        team-key: 'team-b'
+        owner-key: 'kam-e'
+      - name: 'Горный университет (демо)'
+        type: UNIVERSITY
+        team-key: 'team-c'
+        owner-key: 'kam-f'
+      - name: 'Транспортный университет (демо)'
+        type: UNIVERSITY
+        team-key: 'team-c'
+        owner-key: 'kam-f'
+      - name: 'Экономический университет (демо)'
+        type: UNIVERSITY
+        team-key: 'team-c'
+        owner-key: 'kam-g'
+      - name: 'Колледж автоматики (демо)'
+        type: COLLEGE
+        team-key: 'team-c'
+        owner-key: 'kam-g'
+      - name: 'Классический университет (демо)'
+        type: UNIVERSITY
+        team-key: 'team-c'
+        owner-key: 'kam-h'
+      - name: 'Строительный университет (демо)'
+        type: UNIVERSITY
+        team-key: 'team-c'
+        owner-key: 'kam-h'
+      - name: 'Школа № 7 (демо)'
+        type: SCHOOL
+        team-key: 'team-c'
+        owner-key: 'kam-h'
+      - name: 'Институт без ответственного (демо)'
+        type: UNIVERSITY
+        team-key: 'team-c'
 YAML
         if [[ ${values[MOODLE_BASE_URL]-} == "$moodle_demo_url" ]] \
             && ! is_blank "${values[MOODLE_DEMO_JAVA_COURSE]-}" && ! is_blank "${values[MOODLE_DEMO_DATA_GROUP]-}"; then
@@ -437,6 +550,7 @@ YAML
 else
     ensure_administrator
     require_second_factor "${values[CRM_ADMIN_USERNAME]}"
+    assign_crm_role "${values[CRM_ADMIN_USERNAME]}" ADMIN
     {
         printf 'app:\n  demo-bootstrap:\n    demo-data: false\n    identities:\n'
         identity_yaml "${values[CRM_ADMIN_USERNAME]}" "${values[CRM_ADMIN_DISPLAY_NAME]}" ADMIN
@@ -444,7 +558,7 @@ else
 fi
 
 if [[ ${values[SITE_BASE_URL]-} == "$site_fixture_url" ]]; then
-    compose --profile demo-sources up -d --wait site-fixture
+    compose --profile demo up -d --wait site-fixture
 fi
 moodle_files=()
 if [[ ${values[MOODLE_BASE_URL]-} == "$moodle_demo_url" ]]; then
@@ -461,7 +575,7 @@ if [[ ${values[MOODLE_BASE_URL]-} == "$moodle_demo_url" ]]; then
 fi
 compose "${moodle_files[@]}" up -d --wait --build backend clamav web
 compose "${moodle_files[@]}" up -d --wait --force-recreate --no-deps web
-compose "${moodle_files[@]}" --profile demo-bootstrap run --rm --build backend-bootstrap
+compose "${moodle_files[@]}" --profile demo run --rm -T --build backend-bootstrap
 if [[ ${values[MFA_REQUIRED_FOR_PRIVILEGED]} == true ]]; then
     printf 'Second factor (authenticator app) is required at sign-in for administrators and enrolment operators\n'
 else

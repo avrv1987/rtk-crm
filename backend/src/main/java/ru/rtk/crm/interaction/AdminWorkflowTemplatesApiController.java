@@ -24,13 +24,48 @@ import ru.rtk.crm.access.CurrentProfileService;
 public class AdminWorkflowTemplatesApiController {
     private final CurrentProfileService currentProfileService;
     private final WorkflowTemplateService workflowTemplateService;
+    private final WorkflowRolloutService workflowRolloutService;
 
     public AdminWorkflowTemplatesApiController(
             CurrentProfileService currentProfileService,
-            WorkflowTemplateService workflowTemplateService
+            WorkflowTemplateService workflowTemplateService,
+            WorkflowRolloutService workflowRolloutService
     ) {
         this.currentProfileService = currentProfileService;
         this.workflowTemplateService = workflowTemplateService;
+        this.workflowRolloutService = workflowRolloutService;
+    }
+
+    @PostMapping("/{id}/versions/{number}/rollout-preview")
+    public WorkflowRolloutPreview rolloutPreview(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @PathVariable int number,
+            @RequestBody(required = false) WorkflowRolloutRequest request
+    ) {
+        return workflowRolloutService.preview(
+                currentProfileService.requireActiveProfile(user),
+                parseId(id),
+                number,
+                request
+        );
+    }
+
+    @PostMapping("/{id}/versions/{number}/rollout")
+    public WorkflowRolloutResult rollout(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @PathVariable int number,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody WorkflowRolloutRequest request
+    ) {
+        return workflowRolloutService.apply(
+                currentProfileService.requireActiveProfile(user),
+                parseId(id),
+                number,
+                request,
+                idempotencyKey
+        );
     }
 
     @GetMapping
@@ -112,10 +147,6 @@ public class AdminWorkflowTemplatesApiController {
     }
 
     private UUID parseId(String value) {
-        try {
-            return UUID.fromString(value);
-        } catch (IllegalArgumentException exception) {
-            throw new InteractionValidationException("id", "Некорректный идентификатор шаблона");
-        }
+        return WorkflowTemplatesApiController.parseId(value);
     }
 }

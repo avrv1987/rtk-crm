@@ -6,6 +6,7 @@ public record WorkflowTemplateRequest(
         String name,
         List<WorkflowStageInput> stages,
         List<WorkflowTransitionInput> transitions,
-        Integer version
+        Integer version,
+        String comment
 ) {
 }

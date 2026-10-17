@@ -15,5 +15,5 @@ test('клик по ссылке на другой адрес не считае�
 test('внешние и не-хэш ссылки игнорируются', () => {
   assert.equal(isSameRouteClick(null, '#/work'), false)
   assert.equal(isSameRouteClick('https://example.com/#/work', '#/work'), false)
-  assert.equal(isSameRouteClick('mailto:a@b.ru', ''), false)
+  assert.equal(isSameRouteClick('mailto:a@example.test', ''), false)
 })

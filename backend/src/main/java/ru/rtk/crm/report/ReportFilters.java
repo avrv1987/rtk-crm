@@ -27,7 +27,8 @@ public record ReportFilters(
         List<InteractionFlag> flags,
         ReportAgreementFilters agreement,
         List<ReportEventType> eventTypes,
-        Integer minDaysOnStage
+        Integer minDaysOnStage,
+        ManagerWorkChange change
 ) {
     private static final int MAX_DAYS_ON_STAGE = 3650;
     private static final int MAX_IDS = 500;
@@ -49,12 +50,41 @@ public record ReportFilters(
     ) {
         this(organizationIds, directionIds, includeNoDirection, programIds, includeNoProgram, productIds, includeNoProduct,
                 managerIds, includeNoManager, stages, organizationType, List.of(), List.of(), ReportAgreementFilters.none(),
-                List.of(), null);
+                List.of(), null, null);
+    }
+
+    public ReportFilters(
+            List<UUID> organizationIds,
+            List<UUID> directionIds,
+            boolean includeNoDirection,
+            List<UUID> programIds,
+            boolean includeNoProgram,
+            List<UUID> productIds,
+            boolean includeNoProduct,
+            List<UUID> managerIds,
+            boolean includeNoManager,
+            List<String> stages,
+            OrganizationType organizationType,
+            List<InteractionWorkStatus> workStatuses,
+            List<InteractionFlag> flags,
+            ReportAgreementFilters agreement,
+            List<ReportEventType> eventTypes,
+            Integer minDaysOnStage
+    ) {
+        this(organizationIds, directionIds, includeNoDirection, programIds, includeNoProgram, productIds, includeNoProduct,
+                managerIds, includeNoManager, stages, organizationType, workStatuses, flags, agreement, eventTypes, minDaysOnStage,
+                null);
+    }
+
+    public ReportFilters withChange(ManagerWorkChange value) {
+        return new ReportFilters(organizationIds, directionIds, includeNoDirection, programIds, includeNoProgram, productIds,
+                includeNoProduct, managerIds, includeNoManager, stages, organizationType, workStatuses, flags, agreement, eventTypes,
+                minDaysOnStage, value);
     }
 
     public static ReportFilters none() {
         return new ReportFilters(List.of(), List.of(), false, List.of(), false, List.of(), false, List.of(), false,
-                List.of(), null, List.of(), List.of(), ReportAgreementFilters.none(), List.of(), null);
+                List.of(), null, List.of(), List.of(), ReportAgreementFilters.none(), List.of(), null, null);
     }
 
     public ReportFilters normalized() {
@@ -74,7 +104,8 @@ public record ReportFilters(
                 flags == null ? List.of() : List.copyOf(new LinkedHashSet<>(flags)),
                 agreement == null ? ReportAgreementFilters.none() : agreement.normalized(),
                 eventTypeList(),
-                daysOnStage()
+                daysOnStage(),
+                change
         );
     }
 

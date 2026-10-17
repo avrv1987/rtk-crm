@@ -19,6 +19,7 @@ import ru.rtk.crm.access.AccountSyncException;
 import ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException;
 import ru.rtk.crm.access.CrmProfileNotFoundException;
 import ru.rtk.crm.access.CrmProfilePendingException;
+import ru.rtk.crm.access.PartnerModuleDisabledException;
 import ru.rtk.crm.access.KeycloakAccountConflictException;
 import ru.rtk.crm.access.TeamNotFoundException;
 import ru.rtk.crm.access.AdminCrmProfileAccessDeniedException;
@@ -33,7 +34,6 @@ import ru.rtk.crm.catalogimport.CatalogImportAccessDeniedException;
 import ru.rtk.crm.catalogimport.CatalogImportJobNotFoundException;
 import ru.rtk.crm.catalogimport.CatalogImportNotFoundException;
 import ru.rtk.crm.enrolment.EnrolmentAccessDeniedException;
-import ru.rtk.crm.enrolment.EnrolmentDisabledException;
 import ru.rtk.crm.enrolment.EnrolmentNotFoundException;
 import ru.rtk.crm.enrolment.LearnerValidationException;
 import ru.rtk.crm.attachment.AttachmentBindingException;
@@ -49,6 +49,7 @@ import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.interaction.ProductAgreementNotFoundException;
 import ru.rtk.crm.interaction.WorkflowTemplateAccessDeniedException;
 import ru.rtk.crm.interaction.WorkflowTemplateNotFoundException;
+import ru.rtk.crm.module.ModuleDisabledException;
 import ru.rtk.crm.security.RequestId;
 
 @RestControllerAdvice
@@ -57,6 +58,13 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiError> crmProfileNotFound(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiError.of("CRM_PROFILE_REQUIRED", "Нужен активный профиль CRM", RequestId.from(request)));
+    }
+
+    @ExceptionHandler(PartnerModuleDisabledException.class)
+    public ResponseEntity<ApiError> partnerModuleDisabled(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiError.of(
+                "PARTNER_MODULE_DISABLED", "Кабинет вуза в этой поставке CRM не подключён", RequestId.from(request)
+        ));
     }
 
     @ExceptionHandler(CrmProfilePendingException.class)
@@ -177,11 +185,10 @@ public class ApiExceptionHandler {
                 .body(ApiError.of("FORBIDDEN", "Доступ запрещён", RequestId.from(request)));
     }
 
-    @ExceptionHandler(EnrolmentDisabledException.class)
-    public ResponseEntity<ApiError> enrolmentDisabled(HttpServletRequest request) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiError.of(
-                "NOT_FOUND", "Раздел «Зачисление» недоступен: модуль «Слушатели» выключен", RequestId.from(request)
-        ));
+    @ExceptionHandler(ModuleDisabledException.class)
+    public ResponseEntity<ApiError> moduleDisabled(ModuleDisabledException exception, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of("NOT_FOUND", exception.getMessage(), RequestId.from(request)));
     }
 
     @ExceptionHandler(EnrolmentAccessDeniedException.class)

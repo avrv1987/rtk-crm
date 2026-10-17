@@ -156,7 +156,7 @@ class ReportWritersTest {
     @Test
     void demandFileWritesApplicationsAsNumbersAndMissingMoodleValuesAsNoData() throws IOException {
         ReportRequest request = new ReportRequest(ReportKind.DEMAND, null, null, null, null, null, ReportFormat.XLSX, null, null)
-                .normalized();
+                .normalized(true);
         ReportRow row = new ReportRow(null, null, null, null, UUID.randomUUID(), "Программирование", UUID.randomUUID(),
                 "Java-разработчик", List.of(), null, null, null, null, null, null, null, null, null, null, null, null, null,
                 5L, null, null, null, List.of(), null, null, null, 2L, 1L, null);
@@ -213,7 +213,7 @@ class ReportWritersTest {
 
     private static ReportDocument document(List<ReportRow> rows) {
         ReportRequest request = new ReportRequest(ReportKind.EVENTS, null, null, null, null, COLUMNS, ReportFormat.XLSX, null, null)
-                .normalized();
+                .normalized(true);
         return new ReportDocument(
                 request,
                 OffsetDateTime.parse("2026-09-24T12:00:00+03:00"),

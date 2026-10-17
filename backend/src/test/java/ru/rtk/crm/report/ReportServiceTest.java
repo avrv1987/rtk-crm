@@ -46,6 +46,7 @@ import ru.rtk.crm.interaction.InteractionRiskLevel;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.interaction.InteractionWorkStatus;
 import ru.rtk.crm.interaction.ProductTransferKind;
+import ru.rtk.crm.module.ModuleProperties;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
@@ -749,6 +750,11 @@ class ReportServiceTest {
 
     @TestConfiguration
     static class PropertiesConfiguration {
+        @Bean
+        ModuleProperties moduleProperties() {
+            return new ModuleProperties(new ModuleProperties.Toggle(true), null);
+        }
+
         @Bean
         ReportProperties reportProperties() {
             return new ReportProperties(Path.of("target", "test-reports"), 10, 5, 1_000, 1_000);

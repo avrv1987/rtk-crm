@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="742" height="632" viewBox="0 0 742 632" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif">
+<title>ER: Документы и вложения</title>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="24.0" y="31.0" font-size="15" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="24.0" dy="0">ER: Документы и вложения</tspan></text>
+<text x="24.0" y="49.0" font-size="11" text-anchor="start" fill="#616e7c"><tspan x="24.0" dy="0">Колонки: PK, FK, уникальные, перечисления и имена. Связь идёт от колонки внешнего ключа (много) к таблице (один).</tspan><tspan x="24.0" dy="14">Пунктир — таблица, подробно показанная на другой диаграмме.</tspan></text>
+<polyline points="272.9,370.0 253.4,370.0 253.4,120.0 206.9,120.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="263.9,370.0 272.9,365.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="263.9,370.0 272.9,370.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="263.9,370.0 272.9,375.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="212.9,115.0 212.9,125.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="427.2,385.0 473.7,385.0 473.7,333.0 537.9,333.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="436.2,385.0 427.2,380.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="436.2,385.0 427.2,385.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="436.2,385.0 427.2,390.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="531.9,328.0 531.9,338.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="427.2,430.0 482.7,430.0 482.7,120.0 409.4,120.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="436.2,430.0 427.2,425.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="436.2,430.0 427.2,430.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="436.2,430.0 427.2,435.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="415.4,115.0 415.4,125.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="290.7,149.0 226.4,149.0 226.4,112.0 206.9,112.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="281.7,149.0 290.7,144.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="281.7,149.0 290.7,149.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="281.7,149.0 290.7,154.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="212.9,107.0 212.9,117.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="409.4,224.0 446.7,224.0 446.7,112.0 529.2,112.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="418.4,224.0 409.4,219.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="418.4,224.0 409.4,224.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="418.4,224.0 409.4,229.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="523.2,107.0 523.2,117.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="290.7,164.0 235.4,164.0 235.4,333.0 206.9,333.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="281.7,164.0 290.7,159.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="281.7,164.0 290.7,164.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="281.7,164.0 290.7,169.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="212.9,328.0 212.9,338.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="290.7,179.0 244.4,179.0 244.4,494.0 206.9,494.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="281.7,179.0 290.7,174.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="281.7,179.0 290.7,179.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="281.7,179.0 290.7,184.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="212.9,489.0 212.9,499.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="409.4,254.0 455.7,254.0 455.7,112.0 409.4,112.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="418.4,254.0 409.4,249.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="418.4,254.0 409.4,254.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="418.4,254.0 409.4,259.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="415.4,107.0 415.4,117.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="409.4,269.0 464.7,269.0 464.7,120.0 529.2,120.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="418.4,269.0 409.4,264.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="418.4,269.0 409.4,269.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="418.4,269.0 409.4,274.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="523.2,115.0 523.2,125.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="414.0,516.0 491.7,516.0 491.7,333.0 427.2,333.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="423.0,516.0 414.0,511.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="423.0,516.0 414.0,516.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="423.0,516.0 414.0,521.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="433.2,328.0 433.2,338.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="414.0,561.0 500.7,561.0 500.7,128.0 409.4,128.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="423.0,561.0 414.0,556.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="423.0,561.0 414.0,561.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="423.0,561.0 414.0,566.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="415.4,123.0 415.4,133.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="414.0,576.0 509.7,576.0 509.7,128.0 529.2,128.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="423.0,576.0 414.0,571.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="423.0,576.0 414.0,576.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="423.0,576.0 414.0,581.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="523.2,123.0 523.2,133.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<rect x="30.0" y="104.0" width="176.9" height="44.0" rx="0" fill="#f2f4f7" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="118.5" y="121.0" font-size="12" text-anchor="middle" fill="#616e7c" font-weight="bold"><tspan x="118.5" dy="0">interactions</tspan></text>
+<text x="118.5" y="136.0" font-size="10" text-anchor="middle" fill="#616e7c"><tspan x="118.5" dy="0">см. «Взаимодействия и этапы»</tspan></text>
+<rect x="290.7" y="104.0" width="118.7" height="191.0" rx="0" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="290.7" y="104.0" width="118.7" height="22.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="350.1" y="119.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="350.1" dy="0">attachments</tspan></text>
+<text x="295.7" y="138.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="295.7" dy="0">PK</tspan></text>
+<text x="328.7" y="138.0" font-size="11" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="328.7" dy="0">id</tspan></text>
+<text x="295.7" y="153.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="295.7" dy="0">FK</tspan></text>
+<text x="328.7" y="153.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="328.7" dy="0">interaction_id</tspan></text>
+<text x="295.7" y="168.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="295.7" dy="0">FK</tspan></text>
+<text x="328.7" y="168.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="328.7" dy="0">stage_id</tspan></text>
+<text x="295.7" y="183.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="295.7" dy="0">FK</tspan></text>
+<text x="328.7" y="183.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="328.7" dy="0">event_id</tspan></text>
+<text x="295.7" y="198.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="295.7" dy="0">UQ</tspan></text>
+<text x="328.7" y="198.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="328.7" dy="0">storage_key</tspan></text>
+<text x="328.7" y="213.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="328.7" dy="0">status</tspan></text>
+<text x="295.7" y="228.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="295.7" dy="0">FK</tspan></text>
+<text x="328.7" y="228.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="328.7" dy="0">created_by</tspan></text>
+<text x="328.7" y="243.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="328.7" dy="0">kind</tspan></text>
+<text x="295.7" y="258.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="295.7" dy="0">FK</tspan></text>
+<text x="328.7" y="258.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="328.7" dy="0">replaces_id</tspan></text>
+<text x="295.7" y="273.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="295.7" dy="0">FK</tspan></text>
+<text x="328.7" y="273.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="328.7" dy="0">deleted_by</tspan></text>
+<text x="328.7" y="288.0" font-size="10" text-anchor="start" fill="#616e7c"><tspan x="328.7" dy="0">… ещё 9 кол.</tspan></text>
+<rect x="529.2" y="104.0" width="182.4" height="44.0" rx="0" fill="#f2f4f7" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="620.4" y="121.0" font-size="12" text-anchor="middle" fill="#616e7c" font-weight="bold"><tspan x="620.4" dy="0">crm_user_profiles</tspan></text>
+<text x="620.4" y="136.0" font-size="10" text-anchor="middle" fill="#616e7c"><tspan x="620.4" dy="0">см. «Профили, права и журнал»</tspan></text>
+<rect x="30.0" y="325.0" width="176.9" height="44.0" rx="0" fill="#f2f4f7" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="118.5" y="342.0" font-size="12" text-anchor="middle" fill="#616e7c" font-weight="bold"><tspan x="118.5" dy="0">interaction_stages</tspan></text>
+<text x="118.5" y="357.0" font-size="10" text-anchor="middle" fill="#616e7c"><tspan x="118.5" dy="0">см. «Взаимодействия и этапы»</tspan></text>
+<rect x="272.9" y="325.0" width="154.3" height="131.0" rx="0" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="272.9" y="325.0" width="154.3" height="22.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="350.1" y="340.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="350.1" dy="0">product_agreements</tspan></text>
+<text x="277.9" y="359.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="277.9" dy="0">PK</tspan></text>
+<text x="310.9" y="359.0" font-size="11" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="310.9" dy="0">id</tspan></text>
+<text x="277.9" y="374.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="277.9" dy="0">FK</tspan></text>
+<text x="310.9" y="374.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="310.9" dy="0">interaction_id</tspan></text>
+<text x="277.9" y="389.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="277.9" dy="0">FK</tspan></text>
+<text x="310.9" y="389.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="310.9" dy="0">product_id</tspan></text>
+<text x="310.9" y="404.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="310.9" dy="0">contract_number</tspan></text>
+<text x="277.9" y="419.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="277.9" dy="0">UQ</tspan></text>
+<text x="310.9" y="419.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="310.9" dy="0">external_key</tspan></text>
+<text x="277.9" y="434.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="277.9" dy="0">FK</tspan></text>
+<text x="310.9" y="434.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="310.9" dy="0">scan_attachment_id</tspan></text>
+<text x="310.9" y="449.0" font-size="10" text-anchor="start" fill="#616e7c"><tspan x="310.9" dy="0">… ещё 7 кол.</tspan></text>
+<rect x="537.9" y="325.0" width="165.0" height="44.0" rx="0" fill="#f2f4f7" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="620.4" y="342.0" font-size="12" text-anchor="middle" fill="#616e7c" font-weight="bold"><tspan x="620.4" dy="0">products</tspan></text>
+<text x="620.4" y="357.0" font-size="10" text-anchor="middle" fill="#616e7c"><tspan x="620.4" dy="0">см. «Справочники и импорт»</tspan></text>
+<rect x="30.0" y="486.0" width="176.9" height="44.0" rx="0" fill="#f2f4f7" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="118.5" y="503.0" font-size="12" text-anchor="middle" fill="#616e7c" font-weight="bold"><tspan x="118.5" dy="0">interaction_events</tspan></text>
+<text x="118.5" y="518.0" font-size="10" text-anchor="middle" fill="#616e7c"><tspan x="118.5" dy="0">см. «Взаимодействия и этапы»</tspan></text>
+<rect x="286.1" y="486.0" width="127.9" height="116.0" rx="0" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="286.1" y="486.0" width="127.9" height="22.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="350.1" y="501.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="350.1" dy="0">product_transfers</tspan></text>
+<text x="291.1" y="520.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="291.1" dy="0">PK,FK</tspan></text>
+<text x="324.1" y="520.0" font-size="11" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="324.1" dy="0">agreement_id</tspan></text>
+<text x="291.1" y="535.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="291.1" dy="0">PK</tspan></text>
+<text x="324.1" y="535.0" font-size="11" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="324.1" dy="0">kind</tspan></text>
+<text x="324.1" y="550.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="324.1" dy="0">status</tspan></text>
+<text x="291.1" y="565.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="291.1" dy="0">FK</tspan></text>
+<text x="324.1" y="565.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="324.1" dy="0">attachment_id</tspan></text>
+<text x="291.1" y="580.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="291.1" dy="0">FK</tspan></text>
+<text x="324.1" y="580.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="324.1" dy="0">updated_by</tspan></text>
+<text x="324.1" y="595.0" font-size="10" text-anchor="start" fill="#616e7c"><tspan x="324.1" dy="0">… ещё 2 кол.</tspan></text>
+</svg>

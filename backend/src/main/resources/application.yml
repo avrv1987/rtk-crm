@@ -43,6 +43,11 @@ logging:
   pattern:
     correlation: "[%X{requestId:-}] "
 app:
+  modules:
+    enrolment:
+      enabled: ${MODULE_ENROLMENT_ENABLED:false}
+    partner:
+      enabled: ${MODULE_PARTNER_ENABLED:false}
   attachments:
     storage-root: ${APP_ATTACHMENTS_STORAGE_ROOT:/var/lib/rtk-crm/files}
     scanner-host: ${APP_ATTACHMENTS_SCANNER_HOST:localhost}
@@ -110,7 +115,6 @@ app:
     low-completion-percent: 50
     completion-window-days: 7
   enrolment:
-    enabled: ${APP_ENROLMENT_ENABLED:false}
     active-key-version: ${APP_ENROLMENT_ACTIVE_KEY_VERSION:}
     keys:
       v1: ${APP_ENROLMENT_KEYS_V1:}

@@ -39,7 +39,7 @@ if ($values['MOODLE_BASE_URL'] -eq 'http://moodle:8080') {
 
 Push-Location $projectRoot
 try {
-    & docker compose --env-file $envFilePath @moodleFiles --profile demo-bootstrap run --rm -e APP_DEMOBOOTSTRAP_RESET=true backend-bootstrap
+    & docker compose --env-file $envFilePath @moodleFiles --profile demo run --rm -T -e APP_DEMOBOOTSTRAP_RESET=true backend-bootstrap
     if ($LASTEXITCODE -ne 0) {
         throw 'CRM demo data reset failed'
     }

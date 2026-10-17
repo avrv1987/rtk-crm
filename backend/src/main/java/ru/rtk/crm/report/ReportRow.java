@@ -45,9 +45,55 @@ public record ReportRow(
         AgreementLine agreement,
         Long paidOrders,
         Long paidStreams,
-        Long completedBase
+        Long completedBase,
+        ManagerWork managerWork
 ) {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+
+    public boolean managerWorkTotal() {
+        return managerWork != null && interactionId == null;
+    }
+
+    public ReportRow(
+            UUID interactionId,
+            String interactionTitle,
+            UUID organizationId,
+            String organizationName,
+            UUID directionId,
+            String directionName,
+            UUID programId,
+            String programName,
+            List<Product> products,
+            String stageName,
+            UUID managerId,
+            String managerName,
+            OffsetDateTime createdAt,
+            OffsetDateTime lastEventAt,
+            Long daysOnStage,
+            String nextAction,
+            OffsetDateTime nextActionAt,
+            OffsetDateTime eventAt,
+            String eventType,
+            String fromStageName,
+            String comment,
+            String authorName,
+            Long applications,
+            Long participants,
+            Long parallelRuns,
+            InteractionMarks marks,
+            List<Agreement> agreements,
+            StageDuration duration,
+            Long completed,
+            AgreementLine agreement,
+            Long paidOrders,
+            Long paidStreams,
+            Long completedBase
+    ) {
+        this(interactionId, interactionTitle, organizationId, organizationName, directionId, directionName, programId, programName,
+                products, stageName, managerId, managerName, createdAt, lastEventAt, daysOnStage, nextAction, nextActionAt, eventAt,
+                eventType, fromStageName, comment, authorName, applications, participants, parallelRuns, marks, agreements,
+                duration, completed, agreement, paidOrders, paidStreams, completedBase, null);
+    }
 
 
     public static Long percentOf(Long part, Long base) {
@@ -125,7 +171,38 @@ public record ReportRow(
     }
 
     public String teamName() {
+        if (managerWork != null) {
+            return managerWork.teamName();
+        }
         return duration == null ? null : duration.teamName();
+    }
+
+    public String stageAtStart() {
+        return managerWork == null ? null : managerWork.stageAtStart();
+    }
+
+    public String stageAtEnd() {
+        return managerWork == null ? null : managerWork.stageAtEnd();
+    }
+
+    public String stagePosition() {
+        return managerWork == null ? null : managerWork.position();
+    }
+
+    public Long transitions() {
+        return managerWork == null ? null : managerWork.transitions();
+    }
+
+    public String periodComments() {
+        return managerWork == null ? null : managerWork.comments();
+    }
+
+    public String dueState() {
+        return managerWork == null ? null : managerWork.dueState();
+    }
+
+    public Long overdueDays() {
+        return managerWork == null ? null : managerWork.overdueDays();
     }
 
     public Long completedCount() {
@@ -182,11 +259,24 @@ public record ReportRow(
                 agreement,
                 paidOrders,
                 paidStreams,
-                completedBase
+                completedBase,
+                managerWork
         );
     }
 
     public record Product(UUID id, String name) {
+    }
+
+    public record ManagerWork(
+            String teamName,
+            String stageAtStart,
+            String stageAtEnd,
+            String position,
+            Long transitions,
+            String comments,
+            String dueState,
+            Long overdueDays
+    ) {
     }
 
     public record Agreement(

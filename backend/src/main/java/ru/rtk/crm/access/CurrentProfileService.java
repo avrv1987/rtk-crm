@@ -1,5 +1,8 @@
 package ru.rtk.crm.access;
 
+import java.util.Collection;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
@@ -35,10 +38,25 @@ public class CurrentProfileService {
     public CrmProfile requireSessionProfile(OidcUser user) {
         String issuer = user.getIdToken().getIssuer().toString();
         String subject = user.getSubject();
-        return userProfileRepository.findActiveByIdentity(issuer, subject)
+        CrmProfile profile = userProfileRepository.findActiveByIdentity(issuer, subject)
                 .orElseThrow(() -> userProfileRepository.isPendingActivation(issuer, subject)
                         ? new CrmProfilePendingException()
                         : new CrmProfileNotFoundException());
+        Set<UserRole> granted = keycloakRoles(user);
+        boolean roleGranted = profile.role() == UserRole.PARTNER
+                ? granted.contains(UserRole.PARTNER)
+                : UserRole.employeeRole(granted).isPresent();
+        if (!roleGranted && userProfileRepository.isRoleFromKeycloak(profile.id())) {
+            throw new CrmProfileNotFoundException();
+        }
+        return profile;
+    }
+
+    public static Set<UserRole> keycloakRoles(OidcUser user) {
+        Map<String, Object> realmAccess = user.getIdToken().getClaimAsMap("realm_access");
+        return realmAccess != null && realmAccess.get("roles") instanceof Collection<?> names
+                ? UserRole.fromKeycloakRoles(names)
+                : Set.of();
     }
 
     public boolean registerPendingProfile(OidcUser user) {

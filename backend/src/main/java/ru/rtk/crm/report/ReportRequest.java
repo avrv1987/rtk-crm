@@ -33,6 +33,7 @@ public record ReportRequest(
             StatisticsGroupBy.MANAGER,
             StatisticsGroupBy.MONTH
     );
+    private static final Set<ReportColumn> PAYMENT_COLUMNS = EnumSet.of(ReportColumn.PAID_ORDERS, ReportColumn.PAID_STREAMS);
     private static final Set<ReportColumn> DEMAND_SORTS = EnumSet.of(
             ReportColumn.APPLICATIONS,
             ReportColumn.PAID_ORDERS,
@@ -56,16 +57,21 @@ public record ReportRequest(
         this(kind, from, to, periodBasis, filters, columns, format, groupBy, sortBy, null, null, null);
     }
 
-    public ReportRequest normalized() {
+    public ReportRequest normalized(boolean payments) {
         if (kind == null) {
             throw new InteractionValidationException(
-                    "kind", "Укажите вид отчёта: PORTFOLIO, EVENTS, DEMAND, SNAPSHOT, DURATION или AGREEMENTS"
+                    "kind", "Укажите вид отчёта: PORTFOLIO, EVENTS, DEMAND, SNAPSHOT, DURATION, AGREEMENTS или MANAGER_WORK"
             );
         }
         ReportFilters normalizedFilters = filters == null ? ReportFilters.none() : filters.normalized();
         if (kind != ReportKind.EVENTS && !normalizedFilters.eventTypes().isEmpty()) {
             throw new InteractionValidationException(
                     "filters.eventTypes", "Вид события выбирается только в отчёте «События за период»"
+            );
+        }
+        if (kind != ReportKind.MANAGER_WORK && normalizedFilters.change() != null) {
+            throw new InteractionValidationException(
+                    "filters.change", "Отбор по изменениям за период доступен только в отчёте «Работа менеджеров за период»"
             );
         }
         if (kind != ReportKind.PORTFOLIO && normalizedFilters.minDaysOnStage() != null) {
@@ -81,6 +87,9 @@ public record ReportRequest(
         if (kind == ReportKind.AGREEMENTS) {
             requireAgreementSelection(normalizedFilters);
         }
+        if (kind == ReportKind.MANAGER_WORK) {
+            requireManagerWorkSelection(normalizedFilters);
+        }
         if (from != null && to != null && from.isAfter(to)) {
             throw new InteractionValidationException("to", "Дата окончания периода раньше даты начала");
         }
@@ -93,10 +102,11 @@ public record ReportRequest(
                 to,
                 basis,
                 normalizedFilters,
-                groupBy == null ? normalizedColumns() : List.of(),
+                groupBy == null ? normalizedColumns(payments) : List.of(),
                 format,
                 groupBy,
-                kind == ReportKind.DEMAND && sortBy == null ? ReportColumn.APPLICATIONS : sortBy,
+                kind == ReportKind.DEMAND && (sortBy == null || !payments && PAYMENT_COLUMNS.contains(sortBy))
+                        ? ReportColumn.APPLICATIONS : sortBy,
                 normalizedAsOf,
                 chartType,
                 seriesBy
@@ -139,6 +149,9 @@ public record ReportRequest(
             throw new InteractionValidationException(
                     "groupBy", "Для отчёта «Длительность этапов и цикла» диаграмма не строится: показатели уже сгруппированы"
             );
+        }
+        if (kind == ReportKind.MANAGER_WORK) {
+            throw new InteractionValidationException("groupBy", "Для отчёта «Работа менеджеров за период» диаграмма не строится");
         }
         if (groupBy == StatisticsGroupBy.MONTH && basis != null && basis != PeriodBasis.CREATED) {
             throw new InteractionValidationException(
@@ -222,6 +235,16 @@ public record ReportRequest(
         }
     }
 
+    private void requireManagerWorkSelection(ReportFilters normalizedFilters) {
+        if (!normalizedFilters.workStatuses().isEmpty() || !normalizedFilters.flags().isEmpty()
+                || !normalizedFilters.agreement().unrestricted()) {
+            throw new InteractionValidationException(
+                    "filters", "Отчёт «Работа менеджеров за период» отбирается по вузам, типу организации, ИТ-направлениям,"
+                            + " программам, продуктам, ответственным, этапам и периоду"
+            );
+        }
+    }
+
     public StatisticsRequest statisticsRequest() {
         return new StatisticsRequest(kind, groupBy, from, to, periodBasis, filters, asOf, seriesBy);
     }
@@ -246,9 +269,9 @@ public record ReportRequest(
         return runsAsOf().plusDays(1).atStartOfDay(ZONE).toOffsetDateTime();
     }
 
-    private List<ReportColumn> normalizedColumns() {
+    private List<ReportColumn> normalizedColumns(boolean payments) {
         if (columns == null || columns.isEmpty()) {
-            return kind.defaultColumns();
+            return withoutPayments(kind.defaultColumns(), payments);
         }
         LinkedHashSet<ReportColumn> selected = new LinkedHashSet<>();
         for (ReportColumn column : columns) {
@@ -257,6 +280,11 @@ public record ReportRequest(
             }
             selected.add(column);
         }
-        return List.copyOf(selected);
+        List<ReportColumn> result = withoutPayments(List.copyOf(selected), payments);
+        return result.isEmpty() ? withoutPayments(kind.defaultColumns(), payments) : result;
+    }
+
+    private static List<ReportColumn> withoutPayments(List<ReportColumn> columns, boolean payments) {
+        return payments ? columns : columns.stream().filter(column -> !PAYMENT_COLUMNS.contains(column)).toList();
     }
 }

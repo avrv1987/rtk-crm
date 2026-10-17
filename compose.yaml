@@ -32,6 +32,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        MAVEN_MIRROR_URL: ${MAVEN_MIRROR_URL:-}
     environment:
       SPRING_PROFILES_ACTIVE: oidc
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${CRM_DB_NAME:?CRM_DB_NAME is required}
@@ -61,11 +63,12 @@ services:
       APP_RETENTION_LEARNER_PROFILES: ${RETENTION_LEARNER_PROFILES:-P3Y}
       APP_SOURCES_STALE_AFTER: ${SOURCES_STALE_AFTER:-26h}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
-      APP_ENROLMENT_ENABLED: ${ENROLMENT_ENABLED:-false}
       APP_ENROLMENT_ACTIVE_KEY_VERSION: ${ENROLMENT_ACTIVE_KEY_VERSION:-}
       APP_ENROLMENT_KEYS_V1: ${ENROLMENT_KEYS_V1:-}
       APP_ENROLMENT_KEYS_V2: ${ENROLMENT_KEYS_V2:-}
       APP_ENROLMENT_FINGERPRINT_KEY: ${ENROLMENT_FINGERPRINT_KEY:-}
+      MODULE_ENROLMENT_ENABLED: ${MODULE_ENROLMENT_ENABLED:-false}
+      MODULE_PARTNER_ENABLED: ${MODULE_PARTNER_ENABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -73,6 +76,7 @@ services:
         condition: service_healthy
       clamav:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://localhost:8080/actuator/health"]
       interval: 10s
@@ -85,10 +89,12 @@ services:
       - rtk-crm
 
   backend-bootstrap:
-    profiles: [demo-bootstrap]
+    profiles: [demo]
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        MAVEN_MIRROR_URL: ${MAVEN_MIRROR_URL:-}
     command:
       - --spring.profiles.active=demo-bootstrap
       - --spring.config.additional-location=file:/run/demo-identities.yml
@@ -116,7 +122,7 @@ services:
 
   site-fixture:
     restart: unless-stopped
-    profiles: [demo-sources]
+    profiles: [demo]
     image: nginx:1.29.2-alpine
     environment:
       SITE_TOKEN: ${SITE_TOKEN:-}
@@ -180,6 +186,7 @@ services:
 
   clamav:
     restart: unless-stopped
+    profiles: [security]
     image: clamav/clamav:1.4.6-debian13-slim
     init: true
     entrypoint: ["sh", "/usr/local/sbin/rtk-clamav-supervise.sh"]

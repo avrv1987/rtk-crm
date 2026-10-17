@@ -13,6 +13,13 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public class WorkflowTemplateRepository {
+    private static final String VERSION_SELECT = """
+            SELECT v.version_number, v.name, v.content, v.change_comment, v.created_at,
+                   author.display_name AS author_name
+            FROM workflow_template_versions v
+            LEFT JOIN crm_user_profiles author ON author.id = v.created_by
+            """;
+
     private final JdbcClient jdbcClient;
 
     public WorkflowTemplateRepository(JdbcClient jdbcClient) {
@@ -284,7 +291,71 @@ public class WorkflowTemplateRepository {
                 findStages(row.id()),
                 findTransitions(row.id()),
                 row.defaultTemplate(),
-                row.version()
+                row.version(),
+                findLatestVersionNumber(row.id())
+        );
+    }
+
+    public int findLatestVersionNumber(UUID templateId) {
+        return jdbcClient.sql("""
+                SELECT COALESCE(MAX(version_number), 0)
+                FROM workflow_template_versions
+                WHERE template_id = :templateId
+                """)
+                .param("templateId", templateId)
+                .query(Integer.class)
+                .single();
+    }
+
+    public void insertVersion(
+            UUID templateId,
+            int number,
+            String name,
+            String content,
+            String comment,
+            UUID createdBy,
+            OffsetDateTime createdAt
+    ) {
+        jdbcClient.sql("""
+                INSERT INTO workflow_template_versions (
+                    template_id, version_number, name, content, change_comment, created_by, created_at
+                ) VALUES (
+                    :templateId, :number, :name, :content, :comment, :createdBy, :createdAt
+                )
+                """)
+                .param("templateId", templateId)
+                .param("number", number)
+                .param("name", name)
+                .param("content", content)
+                .param("comment", comment)
+                .param("createdBy", createdBy)
+                .param("createdAt", createdAt)
+                .update();
+    }
+
+    public List<VersionRow> findVersions(UUID templateId) {
+        return jdbcClient.sql(VERSION_SELECT + "WHERE v.template_id = :templateId ORDER BY v.version_number DESC")
+                .param("templateId", templateId)
+                .query(this::mapVersion)
+                .list();
+    }
+
+    public Optional<VersionRow> findVersion(UUID templateId, int number) {
+        return jdbcClient.sql(VERSION_SELECT + "WHERE v.template_id = :templateId AND v.version_number = :number")
+                .param("templateId", templateId)
+                .param("number", number)
+                .query(this::mapVersion)
+                .optional();
+    }
+
+    private VersionRow mapVersion(ResultSet resultSet, int rowNumber) throws SQLException {
+        return new VersionRow(
+                resultSet.getInt("version_number"),
+                resultSet.getString("name"),
+                resultSet.getString("content"),
+                resultSet.getString("change_comment"),
+                resultSet.getString("author_name"),
+                resultSet.getObject("created_at", OffsetDateTime.class)
         );
     }
 
@@ -299,5 +370,15 @@ public class WorkflowTemplateRepository {
     }
 
     record WorkflowTemplateRow(UUID id, UUID teamId, String name, boolean defaultTemplate, int version) {
+    }
+
+    record VersionRow(
+            int number,
+            String name,
+            String content,
+            String comment,
+            String authorName,
+            OffsetDateTime createdAt
+    ) {
     }
 }

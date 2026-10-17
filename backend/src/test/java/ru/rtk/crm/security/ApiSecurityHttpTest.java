@@ -12,9 +12,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.servlet.DispatcherType;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.RequestDispatcher;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
@@ -66,15 +68,68 @@ class ApiSecurityHttpTest {
     }
 
     @Test
-    void mutationWithoutCsrfTokenIsForbidden() throws Exception {
+    void mutationWithoutCsrfTokenIsRejectedWithCsrfCode() throws Exception {
         mockMvc.perform(post("/api/interactions")
                         .with(oidcLogin())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("FORBIDDEN"))
-                .andExpect(jsonPath("$.message").value("Доступ запрещён"))
+                .andExpect(jsonPath("$.code").value("CSRF_INVALID"))
+                .andExpect(jsonPath("$.message").value("Страница устарела. Обновите её и повторите действие"))
                 .andExpect(jsonPath("$.requestId").isNotEmpty());
+    }
+
+    @Test
+    void mutationWithStaleCsrfTokenIsRejectedWithCsrfCode() throws Exception {
+        mockMvc.perform(post("/api/auth/logout")
+                        .with(oidcLogin())
+                        .cookie(new Cookie("XSRF-TOKEN", "current-token"))
+                        .header("X-CSRF-TOKEN", "token-of-replaced-session"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CSRF_INVALID"));
+    }
+
+    @Test
+    void loginOfAnonymousUserStartsKeycloakAuthorization() throws Exception {
+        mockMvc.perform(get("/api/auth/login"))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl("/api/auth/authorization/keycloak"));
+    }
+
+    @Test
+    void loginWithLiveSessionOpensApplicationWithoutNewOauthExchange() throws Exception {
+        mockMvc.perform(get("/api/auth/login").with(oidcLogin()))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl("/"));
+    }
+
+    @Test
+    void repeatedCallbackWithLiveSessionLeadsToApplication() throws Exception {
+        MvcResult callback = mockMvc.perform(get("/api/auth/callback/keycloak")
+                        .param("code", "code-from-second-tab")
+                        .param("state", "already-used-state")
+                        .with(oidcLogin()))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl("/api/auth/login?error"))
+                .andReturn();
+
+        mockMvc.perform(get(callback.getResponse().getRedirectedUrl()).with(oidcLogin()))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl("/"));
+    }
+
+    @Test
+    void repeatedCallbackWithoutSessionStillRequiresNewAuthorization() throws Exception {
+        MvcResult callback = mockMvc.perform(get("/api/auth/callback/keycloak")
+                        .param("code", "code-from-second-tab")
+                        .param("state", "already-used-state"))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl("/api/auth/login?error"))
+                .andReturn();
+
+        mockMvc.perform(get(callback.getResponse().getRedirectedUrl()))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl("/api/auth/authorization/keycloak"));
     }
 
     @Test

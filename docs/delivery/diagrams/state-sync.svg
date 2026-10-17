@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="552" viewBox="0 0 600 552" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif">
+<title>Состояния: запуск синхронизации</title>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="24.0" y="31.0" font-size="15" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="24.0" dy="0">Состояния: запуск синхронизации</tspan></text>
+<text x="24.0" y="49.0" font-size="11" text-anchor="start" fill="#616e7c"><tspan x="24.0" dy="0">sync_runs.status; у источника одновременно не больше одного запуска в PENDING или RUNNING</tspan><tspan x="24.0" dy="14">(уникальный индекс).</tspan></text>
+<polyline points="115.0,106.0 115.0,144.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="110.5,134.0 115.0,144.0 119.5,134.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="200.0,155.0 530.0,155.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="520.0,159.5 530.0,155.0 520.0,150.5" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="115.0,200.0 115.0,294.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="110.5,284.0 115.0,294.0 119.5,284.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="115.0,350.0 115.0,444.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="110.5,434.0 115.0,444.0 119.5,434.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="200.0,322.0 465.0,322.0 465.0,444.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="460.5,434.0 465.0,444.0 469.5,434.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="200.0,186.0 538.5,186.0 538.5,444.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="534.0,434.0 538.5,444.0 543.0,434.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<rect x="120.0" y="117.5" width="77.9" height="16.0" fill="#ffffff"/>
+<text x="123.0" y="128.5" font-size="10" text-anchor="start" fill="#1f2933"><tspan x="123.0" dy="0">запрос принят</tspan></text>
+<rect x="240.4" y="133.5" width="249.2" height="16.0" fill="#ffffff"/>
+<text x="365.0" y="144.5" font-size="10" text-anchor="middle" fill="#1f2933"><tspan x="365.0" dy="0">исполнитель занят: запуск удаляется, ответ 503</tspan></text>
+<rect x="120.0" y="239.5" width="140.6" height="16.0" fill="#ffffff"/>
+<text x="123.0" y="250.5" font-size="10" text-anchor="start" fill="#1f2933"><tspan x="123.0" dy="0">исполнитель взял задание</tspan></text>
+<rect x="120.0" y="389.5" width="85.8" height="16.0" fill="#ffffff"/>
+<text x="123.0" y="400.5" font-size="10" text-anchor="start" fill="#1f2933"><tspan x="123.0" dy="0">результат готов</tspan></text>
+<rect x="260.9" y="304.5" width="143.2" height="16.0" fill="#ffffff"/>
+<text x="332.5" y="315.5" font-size="10" text-anchor="middle" fill="#1f2933"><tspan x="332.5" dy="0">ошибка: код в поле ошибки</tspan></text>
+<rect x="416.7" y="249.4" width="118.8" height="29.0" fill="#ffffff"/>
+<text x="532.5" y="260.4" font-size="10" text-anchor="end" fill="#1f2933"><tspan x="532.5" dy="0">перезапуск backend:</tspan><tspan x="532.5" dy="13">SYNC_INTERRUPTED</tspan></text>
+<circle cx="115.0" cy="95.0" r="8" fill="#1f2933"/>
+<rect x="30.0" y="144.0" width="170.0" height="56.0" rx="12" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="115.0" y="164.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="115.0" dy="0">PENDING</tspan></text>
+<text x="115.0" y="182.0" font-size="11" text-anchor="middle" fill="#616e7c"><tspan x="115.0" dy="0">в очереди</tspan><tspan x="115.0" dy="14">SourceSyncExecutor</tspan></text>
+<rect x="30.0" y="294.0" width="170.0" height="56.0" rx="12" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="115.0" y="314.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="115.0" dy="0">RUNNING</tspan></text>
+<text x="115.0" y="332.0" font-size="11" text-anchor="middle" fill="#616e7c"><tspan x="115.0" dy="0">чтение сайта или Moodle</tspan></text>
+<rect x="10.0" y="444.0" width="210.0" height="84.0" rx="12" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="115.0" y="464.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="115.0" dy="0">SUCCEEDED</tspan></text>
+<text x="115.0" y="482.0" font-size="11" text-anchor="middle" fill="#616e7c"><tspan x="115.0" dy="0">счётчики; метка updated_since</tspan><tspan x="115.0" dy="14">сайта сдвигается</tspan></text>
+<rect x="360.0" y="444.0" width="210.0" height="84.0" rx="12" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="465.0" y="464.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="465.0" dy="0">FAILED</tspan></text>
+<text x="465.0" y="482.0" font-size="11" text-anchor="middle" fill="#616e7c"><tspan x="465.0" dy="0">error_code: SOURCE_*,</tspan><tspan x="465.0" dy="14">SYNC_INTERRUPTED,</tspan><tspan x="465.0" dy="14">SYNC_FAILED</tspan></text>
+<circle cx="540.0" cy="155.0" r="10" fill="#ffffff" stroke="#1f2933" stroke-width="1.4"/><circle cx="540.0" cy="155.0" r="6" fill="#1f2933"/>
+</svg>

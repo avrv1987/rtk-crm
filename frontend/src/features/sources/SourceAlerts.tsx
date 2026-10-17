@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
-import { apiClient, type DataSource } from '../../shared/api/client'
+import { useEffect, useState } from 'react'
+import { apiClient, isAccessDenied, type DataSource } from '../../shared/api/client'
+import { startPolling } from '../../shared/api/polling'
 import { accessHandled, formatDateTime } from './sourceFormat'
 import './sources.css'
 
@@ -19,22 +20,18 @@ export const SourceAlerts = ({ onSessionExpired, onProfileUnavailable, refreshSi
   const [sources, setSources] = useState<DataSource[]>([])
   const [unavailable, setUnavailable] = useState(false)
 
-  const load = useCallback(async () => {
+  useEffect(() => startPolling(async () => {
     try {
       setSources(await apiClient.listDataSources())
       setUnavailable(false)
+      return true
     } catch (error) {
-      if (!accessHandled(error, onSessionExpired, onProfileUnavailable)) {
+      if (!accessHandled(error, onSessionExpired, onProfileUnavailable) && !isAccessDenied(error)) {
         setUnavailable(true)
       }
+      return !isAccessDenied(error)
     }
-  }, [onProfileUnavailable, onSessionExpired])
-
-  useEffect(() => {
-    void load()
-    const timer = window.setInterval(() => void load(), refreshIntervalMs)
-    return () => window.clearInterval(timer)
-  }, [load, refreshSignal])
+  }, refreshIntervalMs), [onProfileUnavailable, onSessionExpired, refreshSignal])
 
   const failures = sources.filter(failed)
   const staleSources = sources.filter(stale)

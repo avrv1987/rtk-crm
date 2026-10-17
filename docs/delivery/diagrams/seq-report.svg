@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1059" height="1359" viewBox="0 0 1059 1359" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif">
+<title>Последовательность: отчёт как фоновое задание</title>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="24.0" y="31.0" font-size="15" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="24.0" dy="0">Последовательность: отчёт как фоновое задание</tspan></text>
+<text x="24.0" y="49.0" font-size="11" text-anchor="start" fill="#616e7c"><tspan x="24.0" dy="0">Файл отчёта строится в фоне и выдаётся только заказчику.</tspan></text>
+<g stroke="#1f2933" stroke-width="1.3" fill="none"><circle cx="115.7" cy="76.0" r="6" fill="#ffffff"/><line x1="115.7" y1="82.0" x2="115.7" y2="94.0"/><line x1="107.7" y1="86.0" x2="123.7" y2="86.0"/></g>
+<rect x="60.0" y="96.0" width="111.5" height="53.0" rx="3" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="115.7" y="127.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="115.7" dy="0">Пользователь</tspan></text>
+<rect x="212.0" y="88.0" width="148.7" height="61.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="286.3" y="123.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="286.3" dy="0">ReportsApiController</tspan></text>
+<rect x="386.9" y="88.0" width="130.2" height="61.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="452.0" y="123.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="452.0" dy="0">ReportJobService</tspan></text>
+<rect x="568.2" y="88.0" width="95.5" height="61.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="616.0" y="123.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="616.0" dy="0">PostgreSQL</tspan></text>
+<rect x="715.4" y="88.0" width="142.5" height="61.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="786.6" y="108.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="786.6" dy="0">ReportJobExecutor:</tspan><tspan x="786.6" dy="15">10 потоков,</tspan><tspan x="786.6" dy="15">очередь 40</tspan></text>
+<rect x="887.7" y="88.0" width="131.5" height="61.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="953.4" y="115.5" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="953.4" dy="0">ReportStorage</tspan><tspan x="953.4" dy="15">(том reports-data)</tspan></text>
+<rect x="14.0" y="345.0" width="1031.2" height="122.0" rx="2" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<path d="M14.0,345.0 h28.2 v10 l-6,7 h-22.2 z" fill="#dbe7f3" stroke="#8a96a3" stroke-width="1"/>
+<text x="20.0" y="357.0" font-size="10" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="20.0" dy="0">alt</tspan></text>
+<rect x="47.2" y="347.0" width="109.6" height="16.0" fill="#ffffff"/>
+<text x="50.2" y="358.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="50.2" dy="0">[очередь заполнена]</tspan></text>
+<rect x="14.0" y="625.0" width="1031.2" height="138.0" rx="2" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<path d="M14.0,625.0 h28.2 v10 l-6,7 h-22.2 z" fill="#dbe7f3" stroke="#8a96a3" stroke-width="1"/>
+<text x="20.0" y="637.0" font-size="10" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="20.0" dy="0">alt</tspan></text>
+<rect x="47.2" y="627.0" width="195.6" height="16.0" fill="#ffffff"/>
+<text x="50.2" y="638.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="50.2" dy="0">[превышен предел строк или ошибка]</tspan></text>
+<polyline points="14.0,689.0 1045.2,689.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<rect x="19.0" y="691.0" width="88.4" height="16.0" fill="#ffffff"/>
+<text x="22.0" y="702.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="22.0" dy="0">[файл построен]</tspan></text>
+<rect x="14.0" y="775.0" width="1031.2" height="94.0" rx="2" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<path d="M14.0,775.0 h37.8 v10 l-6,7 h-31.8 z" fill="#dbe7f3" stroke="#8a96a3" stroke-width="1"/>
+<text x="20.0" y="787.0" font-size="10" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="20.0" dy="0">loop</tspan></text>
+<rect x="56.8" y="777.0" width="196.7" height="16.0" fill="#ffffff"/>
+<text x="59.8" y="788.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="59.8" dy="0">[пока статус PENDING или RUNNING]</tspan></text>
+<rect x="14.0" y="969.0" width="1031.2" height="358.0" rx="2" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<path d="M14.0,969.0 h28.2 v10 l-6,7 h-22.2 z" fill="#dbe7f3" stroke="#8a96a3" stroke-width="1"/>
+<text x="20.0" y="981.0" font-size="10" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="20.0" dy="0">alt</tspan></text>
+<rect x="47.2" y="971.0" width="156.4" height="16.0" fill="#ffffff"/>
+<text x="50.2" y="982.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="50.2" dy="0">[права заказчика изменились]</tspan></text>
+<polyline points="14.0,1061.0 1045.2,1061.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<rect x="19.0" y="1063.0" width="107.7" height="16.0" fill="#ffffff"/>
+<text x="22.0" y="1074.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="22.0" dy="0">[файл ещё не готов]</tspan></text>
+<polyline points="14.0,1135.0 1045.2,1135.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<rect x="19.0" y="1137.0" width="173.8" height="16.0" fill="#ffffff"/>
+<text x="22.0" y="1148.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="22.0" dy="0">[файл удалён по сроку хранения]</tspan></text>
+<polyline points="14.0,1223.0 1045.2,1223.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<rect x="19.0" y="1225.0" width="68.9" height="16.0" fill="#ffffff"/>
+<text x="22.0" y="1236.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="22.0" dy="0">[файл готов]</tspan></text>
+<polyline points="115.7,149.0 115.7,1349.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="286.3,149.0 286.3,1349.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="452.0,149.0 452.0,1349.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="616.0,149.0 616.0,1349.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="786.6,149.0 786.6,1349.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="953.4,149.0 953.4,1349.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="115.7,213.0 286.3,213.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="276.3,217.5 286.3,213.0 276.3,208.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="135.6" y="169.0" width="130.9" height="45.0" fill="#ffffff"/>
+<text x="201.0" y="181.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="201.0" dy="0">POST /api/reports: вид,</tspan><tspan x="201.0" dy="14">фильтры, формат;</tspan><tspan x="201.0" dy="14">Idempotency-Key</tspan></text>
+<polyline points="286.3,243.0 452.0,243.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="442.0,247.5 452.0,243.0 442.0,238.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="320.3" y="227.0" width="97.8" height="17.0" fill="#ffffff"/>
+<text x="369.2" y="239.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="369.2" dy="0">создать задание</tspan></text>
+<polyline points="452.0,301.0 616.0,301.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="606.0,305.5 616.0,301.0 606.0,296.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="461.0" y="257.0" width="146.0" height="45.0" fill="#ffffff"/>
+<text x="534.0" y="269.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="534.0" dy="0">report_jobs: PENDING и</tspan><tspan x="534.0" dy="14">снимок профиля — роль,</tspan><tspan x="534.0" dy="14">команда, access_revision</tspan></text>
+<polyline points="452.0,331.0 786.6,331.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="776.6,335.5 786.6,331.0 776.6,326.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="559.2" y="315.0" width="120.2" height="17.0" fill="#ffffff"/>
+<text x="619.3" y="327.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="619.3" dy="0">поставить в очередь</tspan></text>
+<polyline points="452.0,391.0 616.0,391.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="606.0,395.5 616.0,391.0 606.0,386.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="484.3" y="375.0" width="99.4" height="17.0" fill="#ffffff"/>
+<text x="534.0" y="387.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="534.0" dy="0">удалить задание</tspan></text>
+<polyline points="286.3,449.0 115.7,449.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="125.7,444.5 115.7,449.0 125.7,453.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="124.7" y="405.0" width="152.6" height="45.0" fill="#ffffff"/>
+<text x="201.0" y="417.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="201.0" dy="0">503</tspan><tspan x="201.0" dy="14">REPORT_CAPACITY_EXC</tspan><tspan x="201.0" dy="14">EEDED</tspan></text>
+<polyline points="286.3,509.0 115.7,509.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="125.7,504.5 115.7,509.0 125.7,513.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="130.9" y="479.0" width="140.2" height="31.0" fill="#ffffff"/>
+<text x="201.0" y="491.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="201.0" dy="0">202 Accepted,</tspan><tspan x="201.0" dy="14">идентификатор задания</tspan></text>
+<polyline points="786.6,553.0 616.0,553.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="626.0,548.5 616.0,553.0 626.0,557.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="625.0" y="523.0" width="152.6" height="31.0" fill="#ffffff"/>
+<text x="701.3" y="535.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="701.3" dy="0">RUNNING; данные в</tspan><tspan x="701.3" dy="14">области данных заказчика</tspan></text>
+<polyline points="786.6,611.0 953.4,611.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="943.4,615.5 953.4,611.0 943.4,606.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="795.6" y="567.0" width="148.8" height="45.0" fill="#ffffff"/>
+<text x="870.0" y="579.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="870.0" dy="0">файл &lt;uuid&gt;.part, затем</tspan><tspan x="870.0" dy="14">атомарное</tspan><tspan x="870.0" dy="14">переименование в &lt;uuid&gt;</tspan></text>
+<polyline points="786.6,671.0 616.0,671.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="626.0,666.5 616.0,671.0 626.0,675.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="644.2" y="655.0" width="114.3" height="17.0" fill="#ffffff"/>
+<text x="701.3" y="667.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="701.3" dy="0">FAILED и errorCode</tspan></text>
+<polyline points="786.6,745.0 616.0,745.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="626.0,740.5 616.0,745.0 626.0,749.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="642.1" y="715.0" width="118.4" height="31.0" fill="#ffffff"/>
+<text x="701.3" y="727.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="701.3" dy="0">SUCCEEDED, имя и</tspan><tspan x="701.3" dy="14">размер файла</tspan></text>
+<polyline points="115.7,821.0 286.3,821.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="276.3,825.5 286.3,821.0 276.3,816.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="134.3" y="805.0" width="133.4" height="17.0" fill="#ffffff"/>
+<text x="201.0" y="817.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="201.0" dy="0">GET /api/report-jobs/{id}</tspan></text>
+<polyline points="286.3,851.0 115.7,851.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="125.7,846.5 115.7,851.0 125.7,855.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="149.2" y="835.0" width="103.6" height="17.0" fill="#ffffff"/>
+<text x="201.0" y="847.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="201.0" dy="0">статус и прогресс</tspan></text>
+<polyline points="115.7,911.0 286.3,911.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="276.3,915.5 286.3,911.0 276.3,906.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="132.0" y="881.0" width="138.1" height="31.0" fill="#ffffff"/>
+<text x="201.0" y="893.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="201.0" dy="0">GET</tspan><tspan x="201.0" dy="14">/api/report-jobs/{id}/result</tspan></text>
+<polyline points="286.3,955.0 452.0,955.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="442.0,959.5 452.0,955.0 442.0,950.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="295.3" y="925.0" width="147.7" height="31.0" fill="#ffffff"/>
+<text x="369.2" y="937.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="369.2" dy="0">заказчик, access_revision,</tspan><tspan x="369.2" dy="14">статус, наличие файла</tspan></text>
+<polyline points="286.3,1043.0 115.7,1043.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="125.7,1038.5 115.7,1043.0 125.7,1047.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="125.4" y="999.0" width="151.2" height="45.0" fill="#ffffff"/>
+<text x="201.0" y="1011.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="201.0" dy="0">410</tspan><tspan x="201.0" dy="14">REPORT_ACCESS_CHAN</tspan><tspan x="201.0" dy="14">GED</tspan></text>
+<polyline points="286.3,1117.0 115.7,1117.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="125.7,1112.5 115.7,1117.0 125.7,1121.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="133.7" y="1087.0" width="134.7" height="31.0" fill="#ffffff"/>
+<text x="201.0" y="1099.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="201.0" dy="0">409</tspan><tspan x="201.0" dy="14">REPORT_NOT_READY</tspan></text>
+<polyline points="286.3,1205.0 115.7,1205.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="125.7,1200.5 115.7,1205.0 125.7,1209.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="126.7" y="1161.0" width="148.6" height="45.0" fill="#ffffff"/>
+<text x="201.0" y="1173.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="201.0" dy="0">410</tspan><tspan x="201.0" dy="14">REPORT_RESULT_UNAV</tspan><tspan x="201.0" dy="14">AILABLE</tspan></text>
+<polyline points="452.0,1279.0 616.0,1279.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="606.0,1283.5 616.0,1279.0 606.0,1274.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="469.3" y="1249.0" width="129.4" height="31.0" fill="#ffffff"/>
+<text x="534.0" y="1261.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="534.0" dy="0">запись о скачивании в</tspan><tspan x="534.0" dy="14">журнал</tspan></text>
+<polyline points="286.3,1309.0 115.7,1309.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="125.7,1304.5 115.7,1309.0 125.7,1313.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="163.0" y="1293.0" width="76.1" height="17.0" fill="#ffffff"/>
+<text x="201.0" y="1305.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="201.0" dy="0">файл отчёта</tspan></text>
+</svg>

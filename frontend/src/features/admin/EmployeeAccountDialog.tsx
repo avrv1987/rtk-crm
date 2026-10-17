@@ -1,3 +1,4 @@
+import { getModules } from '../../shared/modules'
 import { useState, type FormEvent } from 'react'
 import {
   ApiError,
@@ -281,8 +282,8 @@ export const EmployeeAccountDialog = ({
             </select>
           </label>
           <p className="admin-profile-form__hint">
-            Представителю вуза доступ открывают в карточке вуза, во вкладке «Контакты». Флаг «Оператор зачисления» ставят
-            после заведения кнопкой «Изменить».
+            {getModules().partner && 'Представителю вуза доступ открывают в карточке вуза, во вкладке «Контакты». '}
+            {getModules().enrolment && 'Флаг «Оператор зачисления» ставят после заведения кнопкой «Изменить».'}
           </p>
           {renderError()}
           {renderActions('Завести сотрудника', incomplete)}

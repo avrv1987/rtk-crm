@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="374" viewBox="0 0 640 374" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif">
+<title>Состояния: вложение</title>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="24.0" y="31.0" font-size="15" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="24.0" dy="0">Состояния: вложение</tspan></text>
+<text x="24.0" y="49.0" font-size="11" text-anchor="start" fill="#616e7c"><tspan x="24.0" dy="0">attachments.status. Переход из QUARANTINE выполняется в том же запросе загрузки. Удаление —</tspan><tspan x="24.0" dy="14">отметка deleted_at, статус не меняется.</tspan></text>
+<polyline points="315.0,106.0 315.0,144.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="310.5,134.0 315.0,144.0 319.5,134.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="315.0,200.0 315.0,234.0 110.0,234.0 110.0,294.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="105.5,284.0 110.0,294.0 114.5,284.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="315.0,200.0 315.0,234.0 315.0,234.0 315.0,294.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="310.5,284.0 315.0,294.0 319.5,284.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="315.0,200.0 315.0,234.0 520.0,234.0 520.0,294.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="515.5,284.0 520.0,294.0 524.5,284.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<rect x="320.0" y="117.5" width="48.0" height="16.0" fill="#ffffff"/>
+<text x="323.0" y="128.5" font-size="10" text-anchor="start" fill="#1f2933"><tspan x="323.0" dy="0">загрузка</tspan></text>
+<rect x="113.0" y="256.5" width="27.6" height="16.0" fill="#ffffff"/>
+<text x="116.0" y="267.5" font-size="10" text-anchor="start" fill="#1f2933"><tspan x="116.0" dy="0">[OK]</tspan></text>
+<rect x="261.6" y="256.5" width="50.4" height="16.0" fill="#ffffff"/>
+<text x="309.0" y="267.5" font-size="10" text-anchor="end" fill="#1f2933"><tspan x="309.0" dy="0">[FOUND]</tspan></text>
+<rect x="388.8" y="237.0" width="128.2" height="55.0" fill="#ffffff"/>
+<text x="514.0" y="248.0" font-size="10" text-anchor="end" fill="#1f2933"><tspan x="514.0" dy="0">[зашифрованный архив,</tspan><tspan x="514.0" dy="13">превышение пределов,</tspan><tspan x="514.0" dy="13">ClamAV недоступен или</tspan><tspan x="514.0" dy="13">тайм-аут]</tspan></text>
+<circle cx="315.0" cy="95.0" r="8" fill="#1f2933"/>
+<rect x="225.0" y="144.0" width="180.0" height="56.0" rx="12" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="315.0" y="164.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="315.0" dy="0">QUARANTINE</tspan></text>
+<text x="315.0" y="182.0" font-size="11" text-anchor="middle" fill="#616e7c"><tspan x="315.0" dy="0">файл сохранён, проверка</tspan><tspan x="315.0" dy="14">ClamAV</tspan></text>
+<rect x="20.0" y="294.0" width="180.0" height="56.0" rx="12" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="110.0" y="314.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="110.0" dy="0">CLEAN</tspan></text>
+<text x="110.0" y="332.0" font-size="11" text-anchor="middle" fill="#616e7c"><tspan x="110.0" dy="0">скачивание и просмотр</tspan><tspan x="110.0" dy="14">доступны</tspan></text>
+<rect x="225.0" y="294.0" width="180.0" height="56.0" rx="12" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="315.0" y="314.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="315.0" dy="0">REJECTED</tspan></text>
+<text x="315.0" y="332.0" font-size="11" text-anchor="middle" fill="#616e7c"><tspan x="315.0" dy="0">файл удалён с диска; не</tspan><tspan x="315.0" dy="14">выдаётся</tspan></text>
+<rect x="430.0" y="294.0" width="180.0" height="56.0" rx="12" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="520.0" y="314.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="520.0" dy="0">UNVERIFIABLE</tspan></text>
+<text x="520.0" y="332.0" font-size="11" text-anchor="middle" fill="#616e7c"><tspan x="520.0" dy="0">файл хранится, но не</tspan><tspan x="520.0" dy="14">выдаётся</tspan></text>
+</svg>

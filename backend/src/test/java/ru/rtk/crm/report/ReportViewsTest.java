@@ -37,6 +37,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.module.ModuleProperties;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
@@ -305,10 +306,10 @@ class ReportViewsTest {
                 .isInstanceOfSatisfying(InteractionValidationException.class,
                         exception -> assertThat(exception.field()).isEqualTo("seriesBy"));
         assertThatThrownBy(() -> new ReportRequest(ReportKind.EVENTS, null, null, null, filters(), null, ReportFormat.PNG,
-                StatisticsGroupBy.MONTH, null, null, ChartType.BAR, StatisticsGroupBy.PROGRAM).normalized())
+                StatisticsGroupBy.MONTH, null, null, ChartType.BAR, StatisticsGroupBy.PROGRAM).normalized(true))
                 .isInstanceOf(InteractionValidationException.class);
         assertThatThrownBy(() -> new ReportRequest(ReportKind.EVENTS, null, null, null, filters(), null, ReportFormat.PNG,
-                StatisticsGroupBy.PROGRAM, null, null, ChartType.LINE, null).normalized())
+                StatisticsGroupBy.PROGRAM, null, null, ChartType.LINE, null).normalized(true))
                 .isInstanceOfSatisfying(InteractionValidationException.class,
                         exception -> assertThat(exception.field()).isEqualTo("chartType"));
     }
@@ -366,6 +367,11 @@ class ReportViewsTest {
 
     @TestConfiguration
     static class PropertiesConfiguration {
+        @Bean
+        ModuleProperties moduleProperties() {
+            return new ModuleProperties(new ModuleProperties.Toggle(true), null);
+        }
+
         @Bean
         ReportProperties reportProperties() {
             return new ReportProperties(Path.of("target", "test-reports"), 10, 5, 1_000, 1_000);

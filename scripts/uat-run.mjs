@@ -1426,7 +1426,7 @@ scenario('UAT-ОБЩ-07', 'Единая картина по всем коман�
   return result
 })
 
-scenario('UAT-ОБЩ-11', 'Что передано по продукту и чего ждём', { gaps: ['шаг 7, замечание, BL-34 (P3): одностраничной сводки по вузу в PDF нет'] }, async ({ step }) => {
+scenario('UAT-ОБЩ-11', 'Что передано по продукту и чего ждём', { gaps: ['шаг 7, замечание: одностраничной сводки по вузу в PDF нет'] }, async ({ step }) => {
   const kamA = await session('kam-a')
   const university = await kamView('kam-a', demo.universityA)
   const products = await listAll(kamA, '/api/products', 'Продукты')

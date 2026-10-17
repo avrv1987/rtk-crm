@@ -1,5 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { getModules, type Modules } from '../../shared/modules'
 import { landingLinks } from './landingLinks'
+import { audienceNote, rolesFor, rolesLead, siteIntegrationText } from './landingModules'
 import './landing.css'
 
 type StageState = 'done' | 'skipped' | 'current' | 'ahead'
@@ -61,65 +63,6 @@ const routeSteps: [string, string][] = [
   ['Контроль', 'У карточки есть следующий шаг, срок и ответственный. Просроченные шаги подсчитываются, о ближайших приходят напоминания. В истории видно, кто и когда что изменил.']
 ]
 
-const roles = [
-  {
-    title: 'Менеджер по работе с вузами (КАМ)',
-    benefit: 'Знает, что сделать сегодня по каждому своему вузу.',
-    duties: [
-      '«Моя работа»: сроки шагов, просрочки, напоминания и сигналы из LMS',
-      'ведёт этапы, пишет комментарии, прикладывает документы',
-      'открывает представителю вуза доступ в кабинет',
-      'отчёты и статистика по своим вузам'
-    ]
-  },
-  {
-    title: 'Руководитель команды',
-    benefit: 'Видит всю команду и вовремя перераспределяет работу.',
-    duties: [
-      'пульт команды: просрочки, работы без шага, вузы без КАМ',
-      'назначает, меняет и снимает ответственных, назначает заместителя на период',
-      'шаблоны маршрута команды и показатели по менеджерам'
-    ]
-  },
-  {
-    title: 'Руководство',
-    benefit: 'Видит картину по всем командам.',
-    duties: [
-      'сводка по командам и тренд обучения',
-      'отчёты и план подписаний и продлений по всем вузам',
-      'только просмотр, свои сохранённые отчёты'
-    ]
-  },
-  {
-    title: 'Оператор зачисления',
-    benefit: 'Ведёт слушателей открытых курсов.',
-    duties: [
-      'оплаченные заявки с сайта и потоки курсов',
-      'анкеты слушателей, загрузка анкет из шаблона',
-      'файл «Загрузка пользователей» для LMS'
-    ]
-  },
-  {
-    title: 'Администратор платформы',
-    benefit: 'Отвечает за доступ и настройки.',
-    duties: [
-      'учётные записи сотрудников: заведение, сброс пароля, роль и команда',
-      'команды, справочники, общие шаблоны, загрузка каталогов из XLS/XLSX',
-      'подключение Moodle и сайта, журнал действий',
-      'работы с вузами администратору не видны'
-    ]
-  },
-  {
-    title: 'Представитель вуза',
-    benefit: 'Видит, как идёт совместная работа, без звонков и писем.',
-    duties: [
-      'входит по приглашению своего КАМ, пароль задаёт при первом входе',
-      'этапы работ, ближайший шаг и документы, которые КАМ открыл вузу',
-      'соглашения вуза и контакт своего менеджера, только просмотр'
-    ]
-  }
-]
-
 const features: Feature[] = [
   {
     title: 'Отчёты',
@@ -169,9 +112,9 @@ const features: Feature[] = [
   }
 ]
 
-const integrations: [string, string][] = [
+const integrations = (modules: Modules): [string, string][] => [
   ['Moodle', 'CRM читает данные об обучении через веб-сервис Moodle только на чтение. По потокам хранятся числа, без персональных данных учащихся. На стенде подключён демонстрационный Moodle 4.5.'],
-  ['Сайт ИТ Школы', 'Заявки и оплаты с сайта поступают через адаптер по описанному API. На стенде работает демонстрационный источник заявок. Адреса и токены источников администратор задаёт в CRM, токены хранятся зашифрованными.'],
+  ['Сайт ИТ Школы', siteIntegrationText(modules)],
   ['Каталоги из Excel', 'Вузы, направления, программы, продукты и ответственные загружаются из XLS и XLSX по шаблону из десяти полей ТЗ.']
 ]
 
@@ -233,6 +176,7 @@ type LandingPageProps = {
 
 export const LandingPage = ({ onLogin }: LandingPageProps) => {
   const [pending, setPending] = useState(false)
+  const modules = getModules()
   const { showJurySection, juryAccessNote, privacyPolicyUrl, operatorDetails, sourceCodeUrl } = landingLinks
 
   useEffect(() => {
@@ -296,7 +240,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
                   <circle cx="10" cy="10" r="8" />
                   <path d="M10 9v5M10 6.2v.1" strokeLinecap="round" />
                 </svg>
-                <span>Работу ведут сотрудники ИТ Школы РТК. Представитель вуза, колледжа или школы получает кабинет по приглашению своего менеджера (КАМ) и видит совместные работы, открытые ему документы и соглашения.</span>
+                <span>{audienceNote(modules)}</span>
               </p>
             </div>
 
@@ -367,9 +311,9 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
           <div className="landing-container">
             <p className="eyebrow">Роли</p>
             <h2>Каждый видит свою часть работы</h2>
-            <p className="landing-section__lead">Роль и команду сотруднику назначает администратор. Доступ представителю вуза открывает его КАМ. Сервер отдаёт каждому только данные его роли.</p>
+            <p className="landing-section__lead">{rolesLead(modules)}</p>
             <div className="landing-roles">
-              {roles.map((role) => (
+              {rolesFor(modules).map((role) => (
                 <div key={role.title} className="landing-card landing-role">
                   <h3>{role.title}</h3>
                   <p className="landing-role__benefit">{role.benefit}</p>
@@ -411,7 +355,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
           <div className="landing-container">
             <h2>Работает вместе с учебной платформой</h2>
             <div className="landing-integrations">
-              {integrations.map(([title, text]) => (
+              {integrations(modules).map(([title, text]) => (
                 <div key={title} className="landing-integration">
                   <h3>{title}</h3>
                   <p>{text}</p>

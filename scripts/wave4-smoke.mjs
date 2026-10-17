@@ -769,6 +769,11 @@ sections.indicators = async () => {
   const screen = await leader.evaluate('document.body.innerText')
   assert(kamIndicators.status === 403, 'KAM got team indicators: ' + kamIndicators.status)
   assert(tooLow.status === 400, 'stuckDays=0 was accepted: ' + tooLow.status)
+  const control = requireStatus(await api(leader, 'GET', '/api/work/control'), 200, 'Control matrix is unavailable')
+  const controlRow = control.teams.flatMap((team) => team.managers).find((item) => item.managerName === 'КАМ А')
+  assert(controlRow && controlRow.totals.works === row.interactions && controlRow.totals.overdue === row.overdue, 'Control matrix differs from the team indicators: ' + JSON.stringify([controlRow?.totals, row]))
+  assert((await api(kamA, 'GET', '/api/work/control')).status === 403, 'KAM got the control matrix')
+  assert((await api(await session('admin'), 'GET', '/api/work/control')).status === 403, 'Administrator got the control matrix')
   assert(row && row.overdue === overdueList.length && row.withoutNextStep === noStepList.length && row.stuck === stuckList.length, 'Indicator numbers differ from the lists: ' + JSON.stringify([row?.overdue, overdueList.length, row?.withoutNextStep, noStepList.length, row?.stuck, stuckList.length]))
   assert(indicators.managers.some((item) => item.managerId === null || item.managerName === null), 'No row for unassigned work')
   return {
@@ -1335,7 +1340,7 @@ sections.catalogImport = async () => {
       const bytes = Uint8Array.from(atob(${JSON.stringify(file)}), (character) => character.charCodeAt(0))
       const mapping = { columns: Object.fromEntries(${JSON.stringify(fields)}.map((field, index) => [field, ${JSON.stringify(headers)}[index]])), rowTargets: ${JSON.stringify(rowTargets)}, transferStatuses: {}, unassignedTeamId: ${JSON.stringify(teamA.id)} }
       const form = new FormData()
-      form.set('file', new File([bytes], 'w4-catalog.xlsx'))
+      form.set('file', new File([bytes], 'smoke-catalog.xlsx'))
       form.set('profile', 'AGREEMENT')
       form.set('sheet', 'Каталог')
       form.set('mapping', new Blob([JSON.stringify(mapping)], { type: 'application/json' }))

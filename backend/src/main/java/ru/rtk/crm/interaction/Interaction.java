@@ -31,6 +31,7 @@ public record Interaction(
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         InteractionMarks marks,
-        boolean nextStepPartnerVisible
+        boolean nextStepPartnerVisible,
+        InteractionRoute route
 ) {
 }

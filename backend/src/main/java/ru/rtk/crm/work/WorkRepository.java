@@ -67,7 +67,8 @@ public class WorkRepository {
                        SUM(work.at_risk) AS at_risk
                 FROM (
                 """ + WORK_FLAGS.formatted(group, InteractionRepository.STAGE_ENTERED_AT)
-                        + OPEN_WORK.formatted(scope.condition()) + """
+                        + OPEN_WORK.formatted(scope.condition())
+                        + " AND " + OrganizationRepository.currentStatus("o") + "\n" + """
                 ) work
                 GROUP BY work.group_id
                 """)

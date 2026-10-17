@@ -278,6 +278,9 @@ public class InteractionService {
         );
         interactionRepository.insertStages(interactionId, stages);
         interactionRepository.insertTransitions(interactionId, snapshot.transitions());
+        if (template.routeVersion() > 0) {
+            interactionRepository.updateRoute(interactionId, template.id(), template.routeVersion(), snapshot.templateStageIds());
+        }
         interactionRepository.insertContacts(interactionId, start.organizationId(), start.contactIds());
         interactionRepository.insertProductAgreements(interactionId, start.productIds(), now);
         interactionRepository.insertEvent(
@@ -1381,14 +1384,17 @@ public class InteractionService {
 
     private InteractionWorkflowSnapshot snapshotWorkflow(WorkflowTemplate template) {
         Map<UUID, UUID> stageIds = new HashMap<>();
+        Map<UUID, UUID> templateStageIds = new HashMap<>();
         List<InteractionStage> stages = template.stages().stream().map(stage -> {
             UUID interactionStageId = UUID.randomUUID();
             stageIds.put(stage.id(), interactionStageId);
+            templateStageIds.put(interactionStageId, stage.id());
             return new InteractionStage(interactionStageId, stage.name(), stage.order(), stage.optional());
         }).toList();
         return new InteractionWorkflowSnapshot(
                 stages,
-                WorkflowTemplateService.asInteractionTransitions(template.transitions(), stageIds)
+                WorkflowTemplateService.asInteractionTransitions(template.transitions(), stageIds),
+                templateStageIds
         );
     }
 
@@ -1458,7 +1464,8 @@ public class InteractionService {
                 row.createdAt(),
                 row.updatedAt(),
                 row.marks(),
-                row.nextStepPartnerVisible()
+                row.nextStepPartnerVisible(),
+                interactionRepository.findRoute(row.id()).orElse(null)
         );
     }
 
@@ -1711,7 +1718,8 @@ public class InteractionService {
 
     private record InteractionWorkflowSnapshot(
             List<InteractionStage> stages,
-            List<InteractionStageTransition> transitions
+            List<InteractionStageTransition> transitions,
+            Map<UUID, UUID> templateStageIds
     ) {
     }
 

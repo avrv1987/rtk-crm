@@ -28,6 +28,7 @@ import ru.rtk.crm.interaction.ProductTransferKind;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.interaction.InteractionWorkStatus;
+import ru.rtk.crm.module.ModuleProperties;
 import ru.rtk.crm.report.ReportRepository.CatalogTable;
 
 @Service
@@ -47,12 +48,13 @@ public class ReportService {
             + " сумма по потокам, где Moodle отслеживает завершение; доля завершивших — завершившие к обучающимся тех же потоков,"
             + " округлена до целого, без потоков, где завершение не отслеживается, «нет данных» — если таких потоков нет или"
             + " обучающихся в них нет; параллельные потоки — потоки, чей интервал [начало,"
-            + " окончание) содержит %1$s (последний день периода, а если он не задан — день формирования); оплаченные заявки — различные"
+            + " окончание) содержит %1$s (последний день периода, а если он не задан — день формирования)%2$s; «нет данных» — источник не дал"
+            + " значения, это не ноль. Показатели не сводятся в единый рейтинг";
+    private static final String PAYMENTS_NOTE = "; оплаченные заявки — различные"
             + " номера оплаченных заявок физлиц на открытые курсы (служебная организация «Открытый набор (физлица)», видна"
             + " всем КАМ и руководителям), потоки с оплатами — различные пары курса и номера потока; период к оплатам не"
             + " применяется: сайт не передаёт дату оплаты, поэтому они показаны за всё время; с заявками и данными Moodle"
-            + " оплаты не складываются; «нет данных» — источник не дал значения, это не ноль. Показатели не сводятся в единый"
-            + " рейтинг";
+            + " оплаты не складываются";
     private static final String DURATION_NOTE = "Длительность — календарные дни от входа в этап до перехода в следующий"
             + " по истории переходов; цикл — от создания работы до первого входа в последний этап её маршрута (статуса"
             + " «Завершена» в CRM нет); команда и ИТ-программа — текущие; «" + DurationReport.ALL_PROGRAMS + "» — итог"
@@ -72,6 +74,11 @@ public class ReportService {
             Map.entry(ReportEventType.ASSIGNMENT, "назначение, смена и снятие КАМ")
     );
 
+    private static final String MANAGER_WORK_NOTE = "Строка — работа с вузом, после работ каждого менеджера — итоговая строка."
+            + " Менеджер — ответственный за вуз на момент формирования отчёта; «Требует назначения» — вуз без действующего КАМ."
+            + " Этап на начало и на конец периода восстановлен по истории переходов; отбор по этапу — по этапу на конец периода."
+            + " Переходы и комментарии — события работы с датой в периоде, комментарии идут по порядку с датой."
+            + " Следующий шаг и срок — текущие; просрочено — срок раньше момента формирования отчёта";
     private static final String AGREEMENTS_NOTE = "Строка — мероприятие плана соглашения; соглашение без мероприятий"
             + " выводится одной строкой. Ответственный — ответственный за мероприятие. Объёмы указаны числом без ФИО;"
             + " обучающиеся (Moodle) — сумма участий по наблюдениям потоков Moodle для ИТ-программ связанных работ,"
@@ -81,10 +88,16 @@ public class ReportService {
 
     private final ReportRepository repository;
     private final ReportProperties properties;
+    private final ModuleProperties modules;
 
-    public ReportService(ReportRepository repository, ReportProperties properties) {
+    public ReportService(ReportRepository repository, ReportProperties properties, ModuleProperties modules) {
         this.repository = repository;
         this.properties = properties;
+        this.modules = modules;
+    }
+
+    ReportRequest normalize(ReportRequest request) {
+        return request.normalized(modules.enrolmentEnabled());
     }
 
     @Transactional(readOnly = true)
@@ -95,12 +108,14 @@ public class ReportService {
         if (size < 1 || size > MAX_PREVIEW_SIZE) {
             throw new InteractionValidationException("size", "Размер страницы должен быть от 1 до " + MAX_PREVIEW_SIZE);
         }
-        ReportRequest normalized = request.normalized();
+        ReportRequest normalized = normalize(request);
         OffsetDateTime generatedAt = OffsetDateTime.now();
         List<ReportRow> rows;
         long total;
-        if (normalized.kind() == ReportKind.DURATION) {
-            List<ReportRow> all = durationRows(profile, normalized, generatedAt);
+        if (normalized.kind() == ReportKind.DURATION || normalized.kind() == ReportKind.MANAGER_WORK) {
+            List<ReportRow> all = normalized.kind() == ReportKind.DURATION
+                    ? durationRows(profile, normalized, generatedAt)
+                    : managerWorkRows(profile, normalized, generatedAt);
             long offset = (long) page * size;
             rows = offset >= all.size() ? List.of() : all.subList((int) offset, (int) Math.min(all.size(), offset + size));
             total = all.size();
@@ -125,11 +140,13 @@ public class ReportService {
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public ReportDocument document(CrmProfile profile, ReportRequest request) {
-        ReportRequest normalized = request.normalized();
+        ReportRequest normalized = normalize(request);
         OffsetDateTime generatedAt = OffsetDateTime.now();
-        List<ReportRow> rows = normalized.kind() == ReportKind.DURATION
-                ? durationRows(profile, normalized, generatedAt)
-                : repository.findRows(profile, normalized, generatedAt, properties.maxRows() + 1, 0);
+        List<ReportRow> rows = switch (normalized.kind()) {
+            case DURATION -> durationRows(profile, normalized, generatedAt);
+            case MANAGER_WORK -> managerWorkRows(profile, normalized, generatedAt);
+            default -> repository.findRows(profile, normalized, generatedAt, properties.maxRows() + 1, 0);
+        };
         if (rows.size() > properties.maxRows()) {
             throw ReportException.rowLimit(properties.maxRows());
         }
@@ -142,7 +159,7 @@ public class ReportService {
         if (request.groupBy() == null) {
             throw new InteractionValidationException("groupBy", "Укажите группировку статистики");
         }
-        ReportRequest normalized = request.toReportRequest().normalized();
+        ReportRequest normalized = normalize(request.toReportRequest());
         OffsetDateTime generatedAt = OffsetDateTime.now();
         Map<String, StatisticsResult.Item> items = new LinkedHashMap<>();
         long unknown = 0;
@@ -251,6 +268,19 @@ public class ReportService {
         );
     }
 
+    private List<ReportRow> managerWorkRows(CrmProfile profile, ReportRequest request, OffsetDateTime generatedAt) {
+        List<ManagerWorkLine> lines = repository.findManagerWork(
+                profile, request.filters(), request.from(), request.to(), generatedAt
+        );
+        List<UUID> ids = lines.stream().map(ManagerWorkLine::interactionId).toList();
+        return ManagerWorkReport.rows(
+                lines,
+                repository.findManagerWorkProducts(ids),
+                repository.findManagerWorkComments(ids, request.from(), request.to()),
+                generatedAt
+        );
+    }
+
     private static OffsetDateTime durationCutoff(ReportRequest request, OffsetDateTime generatedAt) {
         return request.toAt() == null || request.toAt().isAfter(generatedAt) ? generatedAt : request.toAt();
     }
@@ -327,12 +357,14 @@ public class ReportService {
                             ? " назначение, смена и снятие КАМ — строки вуза без взаимодействия, ответственный в них — КАМ"
                             + " после события"
                             : " история назначений КАМ в отчёт КАМ не входит, её видит руководитель команды");
-                    case DEMAND -> DEMAND_NOTE.formatted(date(request.runsAsOf())) + "; сортировка: "
+                    case DEMAND -> DEMAND_NOTE.formatted(date(request.runsAsOf()), modules.enrolmentEnabled() ? PAYMENTS_NOTE : "")
+                            + "; сортировка: "
                             + request.sortBy().title(ReportKind.DEMAND).toLowerCase(Locale.ROOT) + " по убыванию";
                     case SNAPSHOT -> "Этап — по последнему переходу до конца выбранного дня, ответственный — КАМ вуза на эту"
                             + " дату по истории назначений; ИТ-программа и ИТ-продукты — текущие";
                     case DURATION -> DURATION_NOTE;
                     case AGREEMENTS -> AGREEMENTS_NOTE;
+                    case MANAGER_WORK -> MANAGER_WORK_NOTE;
                 },
                 "Фильтры: " + filterDescription(profile, request.filters())
         ));
@@ -349,7 +381,9 @@ public class ReportService {
         }
         String selection = switch (request.kind()) {
             case EVENTS -> "события с датой в периоде";
-            case DEMAND -> "заявки сайта с датой подачи в периоде; к оплатам период не применяется";
+            case DEMAND -> modules.enrolmentEnabled()
+                    ? "заявки сайта с датой подачи в периоде; к оплатам период не применяется"
+                    : "заявки сайта с датой подачи в периоде";
             case PORTFOLIO -> switch (request.periodBasis()) {
                 case ACTIVITY -> "взаимодействия, у которых есть события в периоде";
                 case ACTIVE -> "взаимодействия, созданные до конца периода и не завершённые к его началу (статуса"
@@ -359,6 +393,7 @@ public class ReportService {
             case DURATION -> "прохождения этапов и циклы, завершённые в периоде; «на конец периода» — на "
                     + ReportColumn.DATE_TIME.format(durationCutoff(request, generatedAt).atZoneSameInstant(ReportRequest.ZONE));
             case SNAPSHOT -> throw new IllegalStateException("Snapshot has no period");
+            case MANAGER_WORK -> "работы, созданные до конца периода, которые сейчас активны или имели события в периоде";
             case AGREEMENTS -> "мероприятия, сроки которых (фактические, иначе плановые, иначе срок соглашения)"
                     + " пересекаются с периодом";
         };
@@ -408,6 +443,13 @@ public class ReportService {
         agreementFilter(parts, filters.agreement());
         if (filters.minDaysOnStage() != null) {
             parts.add("на этапе дольше " + filters.minDaysOnStage() + " дн.");
+        }
+        if (filters.change() != null) {
+            parts.add("изменения за период: " + switch (filters.change()) {
+                case MOVED -> "перешли на другой этап";
+                case NEW -> "новые работы";
+                case COMPLETED -> "завершённые";
+            });
         }
         if (!filters.eventTypes().isEmpty()) {
             parts.add("виды событий: " + filters.eventTypes().stream().map(EVENT_TYPE_TITLES::get).collect(Collectors.joining(", ")));

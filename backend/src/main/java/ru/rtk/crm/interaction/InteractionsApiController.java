@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import ru.rtk.crm.access.CurrentProfileService;
+import ru.rtk.crm.module.ModuleProperties;
 import ru.rtk.crm.attachment.Attachment;
 import ru.rtk.crm.attachment.AttachmentDeletionRequest;
 import ru.rtk.crm.attachment.AttachmentKind;
@@ -36,16 +37,20 @@ public class InteractionsApiController {
     private final AttachmentService attachmentService;
     private final ProductAgreementService productAgreementService;
 
+    private final ModuleProperties modules;
+
     public InteractionsApiController(
             CurrentProfileService currentProfileService,
             InteractionService interactionService,
             AttachmentService attachmentService,
-            ProductAgreementService productAgreementService
+            ProductAgreementService productAgreementService,
+            ModuleProperties modules
     ) {
         this.currentProfileService = currentProfileService;
         this.interactionService = interactionService;
         this.attachmentService = attachmentService;
         this.productAgreementService = productAgreementService;
+        this.modules = modules;
     }
 
     @GetMapping
@@ -122,6 +127,10 @@ public class InteractionsApiController {
             @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestBody InteractionPlanRequest request
     ) {
+        if (request.nextStepPartnerVisible() != null && request.nextStepPartnerVisible().orElse(false)
+                && !modules.partnerEnabled()) {
+            throw new InteractionValidationException("nextStepPartnerVisible", "Кабинет вуза не подключён");
+        }
         return interactionService.updatePlan(
                 currentProfileService.requireActiveProfile(user),
                 parseRequiredUuid(id, "id"),

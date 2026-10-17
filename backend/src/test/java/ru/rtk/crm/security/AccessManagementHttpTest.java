@@ -21,6 +21,8 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.Base64;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -72,7 +74,7 @@ class AccessManagementHttpTest {
 
     @DynamicPropertySource
     static void enrolmentModule(DynamicPropertyRegistry registry) {
-        registry.add("app.enrolment.enabled", () -> "true");
+        registry.add("app.modules.enrolment.enabled", () -> "true");
         registry.add("app.enrolment.active-key-version", () -> "v1");
         registry.add("app.enrolment.keys.v1", () -> ENROLMENT_KEY);
         registry.add("app.enrolment.fingerprint-key", () -> ENROLMENT_FINGERPRINT_KEY);
@@ -417,6 +419,11 @@ class AccessManagementHttpTest {
         return oidcLogin().idToken(token -> token.issuer(ISSUER).subject(profileId.toString()));
     }
 
+    private RequestPostProcessor login(UUID profileId, String... keycloakRoles) {
+        return oidcLogin().idToken(token -> token.issuer(ISSUER).subject(profileId.toString())
+                .claim("realm_access", Map.of("roles", List.of(keycloakRoles))));
+    }
+
     private void insertProfile(UUID id, String displayName, String role, UUID teamId, boolean active, boolean pending) {
         jdbcTemplate.update("""
                 INSERT INTO crm_user_profiles (id, issuer, subject, display_name, role, team_id, active, pending_activation)
@@ -479,6 +486,42 @@ class AccessManagementHttpTest {
     }
 
     @Test
+    void roleFromKeycloakTokenIsRequiredOnceConfirmedAndRoleChangesNeedTheServiceClient() throws Exception {
+        mockMvc.perform(get("/api/me").with(login(USER_A)))
+                .andExpect(status().isOk());
+        jdbcTemplate.update("UPDATE crm_user_profiles SET role_synced_at = CURRENT_TIMESTAMP WHERE id = ?", USER_A);
+        mockMvc.perform(get("/api/me").with(login(USER_A)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CRM_PROFILE_REQUIRED"));
+        mockMvc.perform(get("/api/me").with(login(USER_A, "crm-admin", "crm-user")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("USER"));
+        mockMvc.perform(get("/api/admin/crm-profiles").with(login(USER_A, "crm-admin")))
+                .andExpect(status().isForbidden());
+
+        for (UUID profile : new UUID[] {LEADER_A, PENDING}) {
+            mockMvc.perform(post("/api/admin/crm-profiles/keycloak-roles").with(login(profile)).with(csrf()))
+                    .andExpect(status().isForbidden());
+        }
+        mockMvc.perform(post("/api/admin/crm-profiles/keycloak-roles").with(login(ADMIN)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/admin/crm-profiles/keycloak-roles").with(login(ADMIN)).with(csrf()))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.message").value(containsString("роли не перенесены")));
+        mockMvc.perform(patch("/api/admin/crm-profiles/{id}", LEADER_A)
+                        .with(login(ADMIN))
+                        .with(csrf())
+                        .header("Idempotency-Key", "role-without-keycloak")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":0,\"role\":\"USER\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("ACCOUNT_SYNC_FAILED"))
+                .andExpect(jsonPath("$.message").value(containsString("роль не изменена")));
+        assertThat(jdbcTemplate.queryForObject("SELECT role FROM crm_user_profiles WHERE id = ?", String.class, LEADER_A))
+                .isEqualTo("LEADER");
+    }
+
+    @Test
     void blockingWithoutKeycloakConnectionKeepsCrmBlockAndMarksAccountForSynchronization() throws Exception {
         mockMvc.perform(patch("/api/admin/crm-profiles/{id}", USER_A)
                         .with(login(ADMIN))
@@ -527,7 +570,7 @@ class AccessManagementHttpTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,

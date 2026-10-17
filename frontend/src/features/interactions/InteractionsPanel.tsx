@@ -42,6 +42,7 @@ import { LearningSnapshots } from './LearningSnapshots'
 import { LmsSignalsCard } from '../work/LmsSignals'
 import { OrganizationContacts, type PartnerAccessRights } from './OrganizationContacts'
 import { PartnerStepToggle } from '../partner/PartnerStepToggle'
+import { getModules } from '../../shared/modules'
 import { useUnsavedDraft } from './unsavedDrafts'
 import { contactRoleLabels, contactRoles, workStatusLabels } from './workMarks'
 import { AttachmentExtras } from '../documents/AttachmentExtras'
@@ -2316,6 +2317,14 @@ export const InteractionsPanel = ({
 
           <div className="work-card__route">
             <h4 id="interaction-path-title" className="work-card__route-title">Маршрут этапов</h4>
+            {currentInteraction.route && (
+              <p className="work-card__route-version">
+                По шаблону «{currentInteraction.route.templateName}», версия {currentInteraction.route.version}
+                {currentInteraction.route.latestVersion > currentInteraction.route.version
+                  ? ` (есть версия ${currentInteraction.route.latestVersion}; обновляет руководитель)`
+                  : ''}
+              </p>
+            )}
             <ol className="interaction-path interaction-path--strip" aria-labelledby="interaction-path-title">
               {pathItems.map((item, index) => (
                 <li
@@ -2340,7 +2349,7 @@ export const InteractionsPanel = ({
 
           <p className={`work-card__next ${schedule?.className ?? ''}`}>
             <span>Следующий шаг: <strong>{currentInteraction.nextAction ?? 'не задан'}</strong></span>
-            {currentInteraction.nextStepPartnerVisible && <span className="status status--planned">Виден вузу</span>}
+            {getModules().partner && currentInteraction.nextStepPartnerVisible && <span className="status status--planned">Виден вузу</span>}
             <span>{schedule?.label}</span>
           </p>
 
@@ -2808,16 +2817,18 @@ export const InteractionsPanel = ({
                     />
                   )}
                 </div>
-                <PartnerStepToggle
-                  key={`partner-step:${currentInteraction.id}:${currentInteraction.version}`}
-                  interaction={currentInteraction}
-                  onUpdated={(interaction) => applyUpdatedInteraction(interaction, interaction.nextStepPartnerVisible
-                    ? 'Следующий шаг показан в кабинете вуза.'
-                    : 'Следующий шаг больше не показан в кабинете вуза.')}
-                  onReload={reload}
-                  onSessionExpired={onSessionExpired}
-                  onProfileUnavailable={onProfileUnavailable}
-                />
+                {getModules().partner && (
+                  <PartnerStepToggle
+                    key={`partner-step:${currentInteraction.id}:${currentInteraction.version}`}
+                    interaction={currentInteraction}
+                    onUpdated={(interaction) => applyUpdatedInteraction(interaction, interaction.nextStepPartnerVisible
+                      ? 'Следующий шаг показан в кабинете вуза.'
+                      : 'Следующий шаг больше не показан в кабинете вуза.')}
+                    onReload={reload}
+                    onSessionExpired={onSessionExpired}
+                    onProfileUnavailable={onProfileUnavailable}
+                  />
+                )}
                 {planValues !== undefined && (
                   <form className="interaction-plan-form card-dialog__section" onSubmit={(event) => void submitPlan(event)}>
                     <h3>Изменить шаг, срок, программу и продукты</h3>

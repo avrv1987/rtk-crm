@@ -35,13 +35,19 @@ import ru.rtk.crm.attachment.AttachmentUploadRequest;
 import ru.rtk.crm.catalog.Contact;
 import ru.rtk.crm.catalog.ContactCreateRequest;
 import ru.rtk.crm.catalog.ContactService;
+import ru.rtk.crm.interaction.Interaction;
 import ru.rtk.crm.interaction.InteractionCreateRequest;
+import ru.rtk.crm.interaction.InteractionDue;
 import ru.rtk.crm.interaction.InteractionIssueKind;
 import ru.rtk.crm.interaction.InteractionIssueRequest;
 import ru.rtk.crm.interaction.InteractionIssueResolution;
 import ru.rtk.crm.interaction.InteractionIssueService;
 import ru.rtk.crm.interaction.InteractionRiskLevel;
 import ru.rtk.crm.interaction.InteractionService;
+import ru.rtk.crm.interaction.InteractionStage;
+import ru.rtk.crm.interaction.InteractionStatusRequest;
+import ru.rtk.crm.interaction.InteractionTransitionRequest;
+import ru.rtk.crm.interaction.InteractionWorkStatus;
 import ru.rtk.crm.interaction.ProductAgreementContract;
 import ru.rtk.crm.interaction.ProductAgreementService;
 import ru.rtk.crm.interaction.ProductAgreementUpdateRequest;
@@ -59,6 +65,66 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     private static final String DEMO_INTERACTION_TITLE = "Демо: внедрение цифрового университета";
     private static final String DEMO_RESOLVED_PROBLEM = "У преподавателей нет доступа к учебному стенду";
     private static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
+    private static final String CONTROL_DEMO_LEADER = "leader-c";
+    private static final int CONTROL_STAGE_GAP_DAYS = 6;
+    private static final List<DemoControlWork> DEMO_CONTROL_WORKS = List.of(
+            new DemoControlWork("Политехнический университет (демо)", "kam-a", "Демо: платформа обучения", 7, 12, false,
+                    DemoProducts.BOTH, DemoDue.THIS_WEEK, "Согласовать график внедрения", List.of(), false),
+            new DemoControlWork("Педагогический университет (демо)", "kam-c", "Демо: курсы для педагогов", 3, 4, true,
+                    DemoProducts.SECURE, DemoDue.OVERDUE_RECENT, "Получить правки по договору",
+                    List.of(new DemoIssue(InteractionIssueKind.PROBLEM, "Юристы вуза не вернули договор", null, null)), false),
+            new DemoControlWork("Колледж информационных технологий (демо)", "kam-c", "Демо: первичный контакт", 1, 2, false,
+                    DemoProducts.NONE, DemoDue.THIS_WEEK, "Уточнить актуальность запроса", List.of(), false),
+            new DemoControlWork("Лицей № 2 (демо)", "kam-d", "Демо: обновление программы", 9, 46, true,
+                    DemoProducts.CLOUD, DemoDue.NONE, null,
+                    List.of(new DemoIssue(InteractionIssueKind.RISK, "Преподаватели сменились, программа устарела",
+                            InteractionRiskLevel.MEDIUM, 21)), false),
+            new DemoControlWork("Школа № 1 (демо)", "kam-d", "Демо: подписание соглашения", 5, 9, false,
+                    DemoProducts.SECURE, DemoDue.OVERDUE_RECENT, "Подписать акт",
+                    List.of(new DemoIssue(InteractionIssueKind.RISK, "Вуз может отложить подписание на следующий квартал",
+                            InteractionRiskLevel.HIGH, 14)), false),
+            new DemoControlWork("Университет C — требует назначения", "leader", "Демо: заявка без ответственного", 0, 25, false,
+                    DemoProducts.NONE, DemoDue.NONE, null, List.of(), false),
+            new DemoControlWork("Университет Б", "kam-b", "Демо: передача материалов", 6, 20, true,
+                    DemoProducts.CLOUD, DemoDue.LATER, "Проверить получение лицензий", List.of(), false),
+            new DemoControlWork("Колледж связи (демо)", "kam-b", "Демо: повышение квалификации", 12, 10, false,
+                    DemoProducts.BOTH, DemoDue.NONE, null, List.of(), false),
+            new DemoControlWork("Университет телекоммуникаций (демо)", "kam-b", "Демо: встреча с проректором", 2, 6, false,
+                    DemoProducts.SECURE, DemoDue.THIS_WEEK, "Провести встречу с проректором", List.of(), false),
+            new DemoControlWork("Аграрный университет (демо)", "kam-e", "Демо: обучение преподавателей", 8, 33, true,
+                    DemoProducts.CLOUD, DemoDue.OVERDUE_LONG, "Назначить даты обучения",
+                    List.of(new DemoIssue(InteractionIssueKind.PROBLEM, "Вуз не назвал преподавателей для обучения", null, null)),
+                    false),
+            new DemoControlWork("Медицинский университет (демо)", "kam-e", "Демо: занятия по программе", 10, 15, false,
+                    DemoProducts.BOTH, DemoDue.LATER, "Проверить расписание занятий", List.of(), false),
+            new DemoControlWork("Медицинский университет (демо)", "kam-e", "Демо: продление лицензий", 5, 3, false,
+                    DemoProducts.SECURE, DemoDue.THIS_WEEK, "Подписать продление", List.of(), false),
+            new DemoControlWork("Колледж связи № 2 (демо)", "kam-e", "Демо: первое обращение", 0, 8, true,
+                    DemoProducts.NONE, DemoDue.THIS_WEEK, "Позвонить в приёмную колледжа", List.of(), false),
+            new DemoControlWork("Горный университет (демо)", "kam-f", "Демо: передача лицензий", 6, 25, false,
+                    DemoProducts.CLOUD, DemoDue.OVERDUE_RECENT, "Отправить лицензии вузу", List.of(), false),
+            new DemoControlWork("Транспортный университет (демо)", "kam-f", "Демо: обновление документации", 11, 28, true,
+                    DemoProducts.BOTH, DemoDue.LATER, "Согласовать новую редакцию документов",
+                    List.of(new DemoIssue(InteractionIssueKind.RISK, "Сроки обновления документов могут сдвинуться",
+                            InteractionRiskLevel.MEDIUM, 30)), false),
+            new DemoControlWork("Экономический университет (демо)", "kam-g", "Демо: встреча с кафедрой", 2, 1, false,
+                    DemoProducts.SECURE, DemoDue.THIS_WEEK, "Подготовить презентацию для кафедры", List.of(), false),
+            new DemoControlWork("Колледж автоматики (демо)", "kam-g", "Демо: подписание договора", 5, 60, false,
+                    DemoProducts.SECURE, DemoDue.OVERDUE_LONG, "Получить подписанный договор",
+                    List.of(new DemoIssue(InteractionIssueKind.PROBLEM, "Колледж не отвечает на письма", null, null),
+                            new DemoIssue(InteractionIssueKind.RISK, "Договор может не быть подписан в этом году",
+                                    InteractionRiskLevel.HIGH, 10)), false),
+            new DemoControlWork("Классический университет (демо)", "kam-h", "Демо: повышение квалификации", 12, 7, true,
+                    DemoProducts.BOTH, DemoDue.NONE, null, List.of(), false),
+            new DemoControlWork("Классический университет (демо)", "kam-h", "Демо: закрытый цикл", 12, 18, false,
+                    DemoProducts.CLOUD, DemoDue.NONE, null, List.of(), true),
+            new DemoControlWork("Строительный университет (демо)", "kam-h", "Демо: корректировка документов", 4, 11, false,
+                    DemoProducts.SECURE, DemoDue.LATER, "Получить согласованные документы", List.of(), false),
+            new DemoControlWork("Школа № 7 (демо)", "kam-h", "Демо: уточнение запроса", 1, 14, true,
+                    DemoProducts.NONE, DemoDue.NONE, null, List.of(), false),
+            new DemoControlWork("Институт без ответственного (демо)", CONTROL_DEMO_LEADER, "Демо: запрос без ответственного", 0, 20,
+                    false, DemoProducts.NONE, DemoDue.OVERDUE_RECENT, "Назначить ответственного менеджера", List.of(), false)
+    );
     private static final List<DemoAgreement> DEMO_AGREEMENTS = List.of(
             new DemoAgreement("Университет А", "kam-a", "ДЕМО-А/1", "DRAFT", null, null, "SIGNING", 20),
             new DemoAgreement("Университет А", "kam-a", "ДЕМО-А/2", "ACTIVE", -340, 15, "RENEWAL", 10),
@@ -125,6 +191,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         createDemoScenario(identitiesByKey, organizationIds, catalog);
         createDemoMarks(identitiesByKey, organizationIds.get(DEMO_ORGANIZATION_NAME));
         createDemoAgreements(organizationIds, profileIds);
+        createControlScenario(identitiesByKey, organizationIds, catalog);
         createPartners(identities, identitiesByKey, organizationIds);
         LOGGER.info("Demo CRM bootstrap completed");
     }
@@ -317,7 +384,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     private DemoCatalog createCatalogs() {
         UUID directionId = createDirection("demo-direction:digital-transformation", "Демо-направление: цифровая трансформация");
         UUID programId = createProgram(directionId, "demo-program:digital-transformation", "Демо-программа: цифровой университет");
-        createProgram(directionId, "demo-program:data-analysis", "Демо-программа: анализ данных");
+        UUID dataProgramId = createProgram(directionId, "demo-program:data-analysis", "Демо-программа: анализ данных");
         UUID openEnrolmentId = createDirection("demo-direction:open-enrolment", "Демо-направление: курсы для физлиц");
         createProgram(openEnrolmentId, "demo-program:prompt-engineering", "Промпт-инжиниринг");
         createProgram(openEnrolmentId, "demo-program:software-tester", "Инженер-тестировщик");
@@ -328,7 +395,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                 "Демо-продукт: защищённая связь"
         );
         UUID cloudPlatformId = createProduct(vendorId, "demo-product:cloud-platform", "Демо-продукт: облачная платформа");
-        return new DemoCatalog(programId, List.of(secureCommunicationsId, cloudPlatformId));
+        return new DemoCatalog(programId, List.of(secureCommunicationsId, cloudPlatformId), dataProgramId);
     }
 
     private UUID createDirection(String key, String name) {
@@ -535,6 +602,19 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             LocalDate dueOn,
             String key
     ) {
+        addDemoIssue(kam, interactionId, kind, description, riskLevel, dueOn, key, "university-a");
+    }
+
+    private void addDemoIssue(
+            CrmProfile kam,
+            UUID interactionId,
+            InteractionIssueKind kind,
+            String description,
+            InteractionRiskLevel riskLevel,
+            LocalDate dueOn,
+            String key,
+            String scope
+    ) {
         boolean present = jdbcClient.sql("SELECT COUNT(*) FROM interaction_issues WHERE interaction_id = :id AND description = :description")
                 .param("id", interactionId)
                 .param("description", description)
@@ -548,7 +628,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                 kam,
                 interactionId,
                 new InteractionIssueRequest(version, kind, description, riskLevel, null, dueOn),
-                "demo-bootstrap/v1/issue:university-a:" + key + ":" + version
+                "demo-bootstrap/v1/issue:" + scope + ":" + key + ":" + version
         );
     }
 
@@ -592,6 +672,115 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                     .param("now", now)
                     .update();
         }
+    }
+
+    private void createControlScenario(
+            Map<String, DemoBootstrapProperties.Identity> identitiesByKey,
+            Map<String, UUID> organizationIds,
+            DemoCatalog catalog
+    ) {
+        if (!identitiesByKey.containsKey(CONTROL_DEMO_LEADER)) {
+            return;
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        for (DemoControlWork work : DEMO_CONTROL_WORKS) {
+            UUID organizationId = organizationIds.get(work.organization());
+            DemoBootstrapProperties.Identity identity = identitiesByKey.get(work.actorKey());
+            if (organizationId == null || identity == null || controlWorkExists(organizationId, work.title())) {
+                continue;
+            }
+            CrmProfile actor = userProfileRepository.findActiveByIdentity(identity.issuer(), identity.subject())
+                    .orElseThrow(() -> new IllegalStateException("Demo bootstrap requires active " + work.actorKey() + " profile"));
+            createControlWork(actor, organizationId, work, catalog, now);
+        }
+    }
+
+    private void createControlWork(
+            CrmProfile actor,
+            UUID organizationId,
+            DemoControlWork work,
+            DemoCatalog catalog,
+            OffsetDateTime now
+    ) {
+        String scope = "control:" + work.organization() + ":" + work.title();
+        Interaction current = interactionService.create(
+                actor,
+                new InteractionCreateRequest(
+                        organizationId,
+                        work.title(),
+                        work.due().nextAction(work.nextAction()),
+                        work.due().at(now),
+                        List.of(),
+                        work.dataProgram() ? catalog.dataProgramId() : catalog.programId(),
+                        work.products().ids(catalog.productIds()),
+                        null
+                ),
+                "demo-bootstrap/v1/" + scope
+        );
+        UUID interactionId = current.id();
+        for (int step = 1; step <= work.stage(); step++) {
+            int order = step;
+            UUID target = current.stages().stream()
+                    .filter(stage -> stage.order() == order)
+                    .map(InteractionStage::id)
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("Demo workflow has no stage " + order));
+            current = interactionService.transition(
+                    actor,
+                    interactionId,
+                    new InteractionTransitionRequest(current.version(), target, null),
+                    "demo-bootstrap/v1/" + scope + ":move:" + step
+            );
+        }
+        for (DemoIssue issue : work.issues()) {
+            addDemoIssue(actor, interactionId, issue.kind(), issue.description(), issue.riskLevel(),
+                    issue.dueInDays() == null ? null : LocalDate.now(ZONE).plusDays(issue.dueInDays()), issue.description(), scope);
+        }
+        if (work.completed()) {
+            interactionService.changeStatus(
+                    actor,
+                    interactionId,
+                    new InteractionStatusRequest(interactionVersion(interactionId), InteractionWorkStatus.COMPLETED, "Цикл завершён"),
+                    "demo-bootstrap/v1/" + scope + ":completed"
+            );
+        }
+        backdateControlWork(interactionId, work, now);
+    }
+
+    private void backdateControlWork(UUID interactionId, DemoControlWork work, OffsetDateTime now) {
+        OffsetDateTime lastMoveAt = now.minusDays(work.lastMoveDaysAgo());
+        OffsetDateTime createdAt = lastMoveAt.minusDays(work.stage() == 0 ? 0 : (long) work.stage() * CONTROL_STAGE_GAP_DAYS + 3);
+        List<UUID> moves = jdbcClient.sql("""
+                SELECT id FROM interaction_events
+                WHERE interaction_id = :id AND type = 'TRANSITIONED'
+                ORDER BY version
+                """)
+                .param("id", interactionId)
+                .query(UUID.class)
+                .list();
+        for (int index = 0; index < moves.size(); index++) {
+            jdbcClient.sql("UPDATE interaction_events SET occurred_at = :at WHERE id = :id")
+                    .param("at", lastMoveAt.minusDays((long) (moves.size() - 1 - index) * CONTROL_STAGE_GAP_DAYS))
+                    .param("id", moves.get(index))
+                    .update();
+        }
+        jdbcClient.sql("UPDATE interaction_events SET occurred_at = :at WHERE interaction_id = :id AND type = 'CREATED'")
+                .param("at", createdAt)
+                .param("id", interactionId)
+                .update();
+        jdbcClient.sql("UPDATE interactions SET created_at = :createdAt, updated_at = :updatedAt WHERE id = :id")
+                .param("createdAt", createdAt)
+                .param("updatedAt", lastMoveAt)
+                .param("id", interactionId)
+                .update();
+    }
+
+    private boolean controlWorkExists(UUID organizationId, String title) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM interactions WHERE organization_id = :organizationId AND title = :title")
+                .param("organizationId", organizationId)
+                .param("title", title)
+                .query(Long.class)
+                .single() > 0;
     }
 
     private void createPartners(
@@ -779,7 +968,72 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         }
     }
 
-    private record DemoCatalog(UUID programId, List<UUID> productIds) {
+    private record DemoCatalog(UUID programId, List<UUID> productIds, UUID dataProgramId) {
+    }
+
+    private enum DemoProducts {
+        NONE,
+        SECURE,
+        CLOUD,
+        BOTH;
+
+        List<UUID> ids(List<UUID> productIds) {
+            return switch (this) {
+                case NONE -> List.of();
+                case SECURE -> productIds.subList(0, 1);
+                case CLOUD -> productIds.subList(1, 2);
+                case BOTH -> productIds;
+            };
+        }
+    }
+
+    private enum DemoDue {
+        OVERDUE_RECENT,
+        OVERDUE_LONG,
+        THIS_WEEK,
+        LATER,
+        NONE;
+
+        OffsetDateTime at(OffsetDateTime now) {
+            return switch (this) {
+                case OVERDUE_RECENT -> now.minusDays(2);
+                case OVERDUE_LONG -> now.minusDays(12);
+                case THIS_WEEK -> thisWeek(now);
+                case LATER -> now.plusDays(14);
+                case NONE -> null;
+            };
+        }
+
+        String nextAction(String text) {
+            return this == NONE ? null : text;
+        }
+
+        private static OffsetDateTime thisWeek(OffsetDateTime now) {
+            OffsetDateTime weekEnd = InteractionDue.weekStart(now).plusWeeks(1);
+            OffsetDateTime due = now.plusDays(1);
+            if (!due.isBefore(weekEnd)) {
+                due = weekEnd.minusMinutes(1);
+            }
+            return due.isAfter(now) ? due : now.plusMinutes(1);
+        }
+    }
+
+    private record DemoIssue(InteractionIssueKind kind, String description, InteractionRiskLevel riskLevel, Integer dueInDays) {
+    }
+
+    private record DemoControlWork(
+            String organization,
+            String actorKey,
+            String title,
+            int stage,
+            int lastMoveDaysAgo,
+            boolean dataProgram,
+            DemoProducts products,
+            DemoDue due,
+            String nextAction,
+            List<DemoIssue> issues,
+            boolean completed
+    ) {
     }
 
     private record DemoDocument(String key, String name, AttachmentKind kind, String title) {

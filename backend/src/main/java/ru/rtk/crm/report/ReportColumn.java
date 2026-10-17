@@ -59,7 +59,14 @@ public enum ReportColumn {
     ACTIVITY_STATUS("Статус мероприятия", null, false, 14, agreement(ReportRow.AgreementLine::activityStatus)),
     WORKS("Связанные работы", null, false, 26, agreement(ReportRow.AgreementLine::works)),
     CONFIRMATIONS("Подтверждения", null, "нет", 30, agreement(ReportRow.AgreementLine::confirmations)),
-    CONFIRMATION_LINKS("Ссылки на подтверждения", null, "", 40, agreement(ReportRow.AgreementLine::confirmationLinks));
+    CONFIRMATION_LINKS("Ссылки на подтверждения", null, "", 40, agreement(ReportRow.AgreementLine::confirmationLinks)),
+    STAGE_AT_START("Этап на начало периода", null, "—", 24, ReportRow::stageAtStart),
+    STAGE_AT_END("Этап на конец периода", null, "—", 24, ReportRow::stageAtEnd),
+    STAGE_POSITION("Положение на маршруте", null, "—", 16, ReportRow::stagePosition),
+    TRANSITIONS("Переходов за период", 12, ReportRow::transitions),
+    PERIOD_COMMENTS("Комментарии за период", null, "—", 50, ReportRow::periodComments),
+    DUE_STATE("Состояние срока", null, "", 24, ReportRow::dueState),
+    OVERDUE_DAYS("Просрочено, дн.", null, "", 12, ReportRow::overdueDays);
 
     public static final String UNSPECIFIED = "Не указано";
     public static final String NO_DATA = "нет данных";
@@ -96,12 +103,21 @@ public enum ReportColumn {
                 case LAST_EVENT_AT -> "Последнее событие до даты";
                 default -> title;
             };
+            case MANAGER_WORK -> switch (this) {
+                case MANAGER -> "Менеджер";
+                case INTERACTION -> "Работа";
+                default -> title;
+            };
             case PORTFOLIO, DURATION, DEMAND, AGREEMENTS -> title;
         };
     }
 
     public String emptyText() {
         return emptyText;
+    }
+
+    public String emptyText(ReportRow row) {
+        return row.managerWorkTotal() ? "" : emptyText;
     }
 
     public int width() {
@@ -118,7 +134,7 @@ public enum ReportColumn {
 
     public String text(ReportRow row) {
         return switch (value(row)) {
-            case null -> emptyText();
+            case null -> emptyText(row);
             case OffsetDateTime dateTime -> DATE_TIME.format(dateTime.atZoneSameInstant(ReportRequest.ZONE));
             case BigDecimal decimal -> decimal.toPlainString().replace('.', ',');
             case Object other -> other.toString();

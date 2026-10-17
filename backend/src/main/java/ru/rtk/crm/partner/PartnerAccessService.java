@@ -105,12 +105,13 @@ public class PartnerAccessService {
         OffsetDateTime now = OffsetDateTime.now();
         UUID profileId;
         String login;
+        String subject;
         if (existing == null) {
             String issuer = adminCrmProfileRepository.findIssuer(actor.id())
                     .orElseThrow(() -> new IllegalStateException("Actor profile is unavailable for partner access"));
             String email = contact.email() == null || contact.email().isBlank() ? null : contact.email().strip().toLowerCase(Locale.ROOT);
             login = email == null ? "vuz-" + HexFormat.of().formatHex(randomBytes(4)) : email;
-            String subject = keycloakAccountClient.createPartnerUser(
+            subject = keycloakAccountClient.createPartnerUser(
                     login, email, limit(contact.name()), limit(organization.name()), password
             );
             profileId = UUID.randomUUID();
@@ -122,7 +123,8 @@ public class PartnerAccessService {
             );
         } else {
             profileId = existing.id();
-            keycloakAccountClient.enableWithTemporaryPassword(existing.subject(), password);
+            subject = existing.subject();
+            keycloakAccountClient.enableWithTemporaryPassword(subject, password);
             partnerAccessRepository.changeActive(profileId, true, now);
             partnerAccessRepository.markIdpEnabled(profileId, true);
             recordProfileEvent(actor.id(), profileId, existing.displayName(), false, true, requestId, now);
@@ -132,6 +134,7 @@ public class PartnerAccessService {
             );
             login = partnerAccessRepository.findAccess(profileId).login();
         }
+        assignPartnerRole(actor.id(), profileId, subject, contact.name(), requestId, now);
         return new PartnerAccessGranted(partnerAccessRepository.findAccess(profileId), login, password);
     }
 
@@ -156,6 +159,26 @@ public class PartnerAccessService {
             partnerAccessRepository.lockProfile(profileId)
                     .filter(PartnerProfile::active)
                     .ifPresent(profile -> deactivate(event.actorProfileId(), profile, requestId));
+        }
+    }
+
+    private void assignPartnerRole(
+            UUID actorProfileId,
+            UUID profileId,
+            String subject,
+            String displayName,
+            String requestId,
+            OffsetDateTime now
+    ) {
+        try {
+            keycloakAccountClient.setCrmRole(subject, UserRole.PARTNER);
+            adminCrmProfileRepository.markRoleSynced(profileId, now);
+        } catch (AccountSyncException exception) {
+            LOGGER.warn("Keycloak role of partner profile {} is not assigned: {}", profileId, exception.getMessage());
+            auditJournalRepository.record(
+                    AuditAction.ACCOUNT_SYNC_FAILED, actorProfileId, "PROFILE", profileId, displayName,
+                    "роль не назначена: " + exception.getMessage(), requestId
+            );
         }
     }
 

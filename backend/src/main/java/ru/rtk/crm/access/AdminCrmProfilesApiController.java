@@ -24,6 +24,7 @@ import ru.rtk.crm.access.EmployeeAccountService.AccountCredentials;
 import ru.rtk.crm.access.EmployeeAccountService.AccountEmailRequest;
 import ru.rtk.crm.access.EmployeeAccountService.NewEmployeeRequest;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.module.ModuleProperties;
 import ru.rtk.crm.security.RequestId;
 
 @RestController
@@ -34,16 +35,20 @@ public class AdminCrmProfilesApiController {
     private final AccountSyncService accountSyncService;
     private final EmployeeAccountService employeeAccountService;
 
+    private final ModuleProperties modules;
+
     public AdminCrmProfilesApiController(
             CurrentProfileService currentProfileService,
             AdminCrmProfileService adminCrmProfileService,
             AccountSyncService accountSyncService,
-            EmployeeAccountService employeeAccountService
+            EmployeeAccountService employeeAccountService,
+            ModuleProperties modules
     ) {
         this.currentProfileService = currentProfileService;
         this.adminCrmProfileService = adminCrmProfileService;
         this.accountSyncService = accountSyncService;
         this.employeeAccountService = employeeAccountService;
+        this.modules = modules;
     }
 
     @PostMapping
@@ -139,9 +144,17 @@ public class AdminCrmProfilesApiController {
             HttpServletRequest httpRequest
     ) {
         CrmProfile actor = currentProfileService.requireActiveProfile(user);
+        if (Boolean.TRUE.equals(request.enrolmentOperator()) && !modules.enrolmentEnabled()) {
+            throw new InteractionValidationException("enrolmentOperator", "Модуль «Слушатели» выключен");
+        }
         String requestId = RequestId.from(httpRequest);
         AdminCrmProfile updated = adminCrmProfileService.update(actor, parseProfileId(id), request, idempotencyKey, requestId);
         return ResponseEntity.ok(accountSyncService.syncAfterChange(actor, updated.id(), requestId));
+    }
+
+    @PostMapping("/keycloak-roles")
+    public AccountSyncService.RoleMigration migrateRoles(@AuthenticationPrincipal OidcUser user, HttpServletRequest httpRequest) {
+        return accountSyncService.migrateRoles(currentProfileService.requireActiveProfile(user), RequestId.from(httpRequest));
     }
 
     @PostMapping("/{id}/account-sync")

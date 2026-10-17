@@ -14,6 +14,7 @@ const thinkMin = Number(process.env.LOAD_THINK_MIN_MS || 1000)
 const thinkMax = Number(process.env.LOAD_THINK_MAX_MS || 3000)
 const cdpPort = Number(process.env.LOAD_CDP_PORT || 9333)
 const httpOnly = process.env.LOAD_HTTP_LOGIN === '1'
+const reportJobs = Number(process.env.LOAD_REPORT_JOBS || 12)
 
 const readEnv = (file) => Object.fromEntries(
   fs.readFileSync(file, 'utf8').split(/\r?\n/)
@@ -499,7 +500,7 @@ const concurrency = (jobs, threshold) => {
 async function reportBurst(users, label) {
   const leaders = users.filter((user) => user.profile.role === 'LEADER')
   const kams = users.filter((user) => user.profile.role !== 'LEADER')
-  const assigned = reportPlan.map((plan, index) => ({
+  const assigned = reportPlan.slice(0, reportJobs).map((plan, index) => ({
     plan,
     user: plan.role === 'LEADER' && leaders.length > 0 ? leaders[index % leaders.length] : kams[(index * 3) % kams.length]
   }))

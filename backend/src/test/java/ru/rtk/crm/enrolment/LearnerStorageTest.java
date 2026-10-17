@@ -39,6 +39,7 @@ import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.catalog.PersonalDataStatus;
 import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.module.ModuleProperties;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
@@ -333,7 +334,7 @@ class LearnerStorageTest {
         assertThat(disclosed.getFirst().toString()).doesNotContain("Тестова");
         LearnerPrivacyService moduleOff = new LearnerPrivacyService(
                 learnerService, learnerRepository, enrolmentRepository,
-                new LearnerDataCipher(new EnrolmentProperties(false, "", Map.of(), ""))
+                new LearnerDataCipher(new EnrolmentProperties("", Map.of(), ""), new ModuleProperties(new ModuleProperties.Toggle(false), null))
         );
         assertThat(moduleOff.find("Анна Тестова", null, null, "11223344595")).isEmpty();
         assertThat(moduleOff.disclose(List.of(full.id()))).isEmpty();
@@ -405,7 +406,7 @@ class LearnerStorageTest {
     }
 
     private static LearnerDataCipher cipher(String active, Map<String, String> keys, String fingerprintKey) {
-        return new LearnerDataCipher(new EnrolmentProperties(true, active, keys, fingerprintKey));
+        return new LearnerDataCipher(new EnrolmentProperties(active, keys, fingerprintKey), new ModuleProperties(new ModuleProperties.Toggle(true), null));
     }
 
     private static String randomKey() {
@@ -416,7 +417,7 @@ class LearnerStorageTest {
 
     private void createSchema() {
         for (String statement : List.of(
-                "CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL)",
+                "CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL)",
                 "CREATE TABLE IF NOT EXISTS source_records (id UUID PRIMARY KEY, external_id VARCHAR(200))",
                 """
                 CREATE TABLE IF NOT EXISTS audit_events (

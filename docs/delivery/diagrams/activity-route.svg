@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1166" viewBox="0 0 900 1166" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif">
+<title>Деятельность: маршрут вуза и контроль исполнения</title>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="24.0" y="31.0" font-size="15" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="24.0" dy="0">Деятельность: маршрут вуза и контроль исполнения</tspan></text>
+<text x="24.0" y="49.0" font-size="11" text-anchor="start" fill="#616e7c"><tspan x="24.0" dy="0">Слева — 13 этапов базового шаблона (V8), справа — цикл работы на этапе. Необязательный этап — пунктир.</tspan></text>
+<rect x="470.0" y="190.0" width="420.0" height="680.0" rx="4" fill="#fbfcfd" stroke="#52606d" stroke-width="1.2"/>
+<text x="480.0" y="207.0" font-size="11" text-anchor="start" fill="#616e7c" font-weight="bold"><tspan x="480.0" dy="0">На каждом этапе: контроль исполнения</tspan></text>
+<polyline points="190.0,92.0 190.0,110.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,100.0 190.0,110.0 194.5,100.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,156.0 190.0,180.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,170.0 190.0,180.0 194.5,170.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,220.0 190.0,238.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,228.0 190.0,238.0 194.5,228.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,278.0 190.0,296.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,286.0 190.0,296.0 194.5,286.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,336.0 190.0,354.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,344.0 190.0,354.0 194.5,344.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,394.0 190.0,412.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,402.0 190.0,412.0 194.5,402.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,442.0 190.0,462.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,452.0 190.0,462.0 194.5,452.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,502.0 190.0,520.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,510.0 190.0,520.0 194.5,510.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,560.0 190.0,578.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,568.0 190.0,578.0 194.5,568.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,618.0 190.0,636.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,626.0 190.0,636.0 194.5,626.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,676.0 190.0,694.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,684.0 190.0,694.0 194.5,684.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,734.0 190.0,752.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,742.0 190.0,752.0 194.5,742.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,792.0 190.0,810.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,800.0 190.0,810.0 194.5,800.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,850.0 190.0,868.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,858.0 190.0,868.0 194.5,858.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,908.0 190.0,926.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,916.0 190.0,926.0 194.5,916.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="205.0,427.0 364.0,427.0 364.0,532.0 340.0,532.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="350.0,527.5 340.0,532.0 350.0,536.5" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,966.0 190.0,984.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,974.0 190.0,984.0 194.5,974.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,1014.0 190.0,1044.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,1034.0 190.0,1044.0 194.5,1034.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="190.0,1090.0 190.0,1120.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="185.5,1110.0 190.0,1120.0 194.5,1110.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="175.0,999.0 20.0,999.0 20.0,1131.0 180.0,1131.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="170.0,1135.5 180.0,1131.0 170.0,1126.5" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="640.0,242.0 640.0,260.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="635.5,250.0 640.0,260.0 644.5,250.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="640.0,308.0 640.0,340.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="635.5,330.0 640.0,340.0 644.5,330.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="640.0,388.0 640.0,420.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="635.5,410.0 640.0,420.0 644.5,410.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="640.0,450.0 640.0,468.0 590.0,468.0 590.0,490.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="585.5,480.0 590.0,490.0 594.5,480.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="655.0,435.0 785.0,435.0 785.0,480.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="780.5,470.0 785.0,480.0 789.5,470.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="590.0,530.0 590.0,560.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="585.5,550.0 590.0,560.0 594.5,550.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="590.0,590.0 590.0,630.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="585.5,620.0 590.0,630.0 594.5,620.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="575.0,575.0 482.0,575.0 482.0,284.0 500.0,284.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="490.0,288.5 500.0,284.0 490.0,279.5" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="590.0,670.0 590.0,700.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polygon points="585.5,690.0 590.0,700.0 594.5,690.0" fill="#52606d" stroke="#52606d" stroke-width="1.2"/>
+<rect x="195.0" y="444.5" width="118.5" height="16.0" fill="#ffffff"/>
+<text x="198.0" y="455.5" font-size="10" text-anchor="start" fill="#1f2933"><tspan x="198.0" dy="0">[нужна корректировка]</tspan></text>
+<rect x="367.0" y="452.5" width="83.0" height="55.0" fill="#ffffff"/>
+<text x="370.0" y="463.5" font-size="10" text-anchor="start" fill="#1f2933"><tspan x="370.0" dy="0">[без</tspan><tspan x="370.0" dy="13">корректировки:</tspan><tspan x="370.0" dy="13">переход с</tspan><tspan x="370.0" dy="13">комментарием]</tspan></text>
+<rect x="195.0" y="1021.5" width="106.9" height="16.0" fill="#ffffff"/>
+<text x="198.0" y="1032.5" font-size="10" text-anchor="start" fill="#1f2933"><tspan x="198.0" dy="0">[начать новый цикл]</tspan></text>
+<rect x="83.0" y="982.5" width="28.9" height="16.0" fill="#ffffff"/>
+<text x="97.5" y="993.5" font-size="10" text-anchor="middle" fill="#1f2933"><tspan x="97.5" dy="0">[нет]</tspan></text>
+<rect x="591.0" y="467.1" width="61.6" height="16.0" fill="#ffffff"/>
+<text x="594.0" y="478.1" font-size="10" text-anchor="start" fill="#1f2933"><tspan x="594.0" dy="0">[выполнен]</tspan></text>
+<rect x="682.0" y="418.5" width="76.0" height="16.0" fill="#ffffff"/>
+<text x="720.0" y="429.5" font-size="10" text-anchor="middle" fill="#1f2933"><tspan x="720.0" dy="0">[срок прошёл]</tspan></text>
+<rect x="595.0" y="602.5" width="82.6" height="16.0" fill="#ffffff"/>
+<text x="598.0" y="613.5" font-size="10" text-anchor="start" fill="#1f2933"><tspan x="598.0" dy="0">[этап закончен]</tspan></text>
+<rect x="514.0" y="558.5" width="28.9" height="16.0" fill="#ffffff"/>
+<text x="528.5" y="569.5" font-size="10" text-anchor="middle" fill="#1f2933"><tspan x="528.5" dy="0">[нет]</tspan></text>
+<circle cx="190.0" cy="81.0" r="8" fill="#1f2933"/>
+<rect x="40.0" y="110.0" width="300.0" height="46.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="130.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">Создать карточку: этапы и переходы</tspan><tspan x="190.0" dy="15">копируются из шаблона</tspan></text>
+<rect x="40.0" y="180.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="200.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">1. Поиск контакта</tspan></text>
+<rect x="40.0" y="238.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="258.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">2. Уточнение актуальности</tspan></text>
+<rect x="40.0" y="296.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="316.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">3. Встреча</tspan></text>
+<rect x="40.0" y="354.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="374.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">4. Обмен документами</tspan></text>
+<polygon points="190.0,412.0 205.0,427.0 190.0,442.0 175.0,427.0" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="40.0" y="462.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="190.0" y="482.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">5. Корректировка документов</tspan></text>
+<rect x="40.0" y="520.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="540.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">6. Подписание</tspan></text>
+<rect x="40.0" y="578.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="598.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">7. Передача материалов, лицензии и</tspan><tspan x="190.0" dy="15">документации</tspan></text>
+<rect x="40.0" y="636.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="656.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">8. Сопровождение внедрения</tspan></text>
+<rect x="40.0" y="694.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="714.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">9. Обучение преподавателей</tspan></text>
+<rect x="40.0" y="752.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="772.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">10. Актуализация программы</tspan></text>
+<rect x="40.0" y="810.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="830.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">11. Занятия</tspan></text>
+<rect x="40.0" y="868.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="888.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">12. Обновление документации и</tspan><tspan x="190.0" dy="15">материалов</tspan></text>
+<rect x="40.0" y="926.0" width="300.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="946.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">13. Повышение квалификации</tspan></text>
+<polygon points="190.0,984.0 205.0,999.0 190.0,1014.0 175.0,999.0" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="40.0" y="1044.0" width="300.0" height="46.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="190.0" y="1064.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="190.0" dy="0">Новый цикл: новая карточка с контактами,</tspan><tspan x="190.0" dy="15">программой и продуктами</tspan></text>
+<circle cx="190.0" cy="1131.0" r="10" fill="#ffffff" stroke="#1f2933" stroke-width="1.4"/><circle cx="190.0" cy="1131.0" r="6" fill="#1f2933"/>
+<circle cx="640.0" cy="231.0" r="8" fill="#1f2933"/>
+<rect x="500.0" y="260.0" width="280.0" height="48.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="640.0" y="280.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="640.0" dy="0">Задать следующий шаг и срок;</tspan><tspan x="640.0" dy="15">контакты, программа, продукты</tspan></text>
+<rect x="500.0" y="340.0" width="280.0" height="48.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="640.0" y="360.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="640.0" dy="0">Выполнить шаг: комментарии,</tspan><tspan x="640.0" dy="15">документы, соглашения</tspan></text>
+<polygon points="640.0,420.0 655.0,435.0 640.0,450.0 625.0,435.0" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="700.0" y="480.0" width="170.0" height="80.0" rx="0" fill="#fff8dc" stroke="#1f2933" stroke-width="1.2"/>
+<text x="785.0" y="500.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="785.0" dy="0">«Моя работа»: шаг</tspan><tspan x="785.0" dy="15">просрочен</tspan></text>
+<text x="785.0" y="533.0" font-size="11" text-anchor="middle" fill="#616e7c"><tspan x="785.0" dy="0">показатели руководителя:</tspan><tspan x="785.0" dy="14">просроченные, без шага</tspan></text>
+<rect x="500.0" y="490.0" width="180.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="590.0" y="510.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="590.0" dy="0">Отметить шаг</tspan><tspan x="590.0" dy="15">выполненным</tspan></text>
+<polygon points="590.0,560.0 605.0,575.0 590.0,590.0 575.0,575.0" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="500.0" y="630.0" width="180.0" height="40.0" rx="14" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="590.0" y="650.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="590.0" dy="0">Переход на следующий</tspan><tspan x="590.0" dy="15">этап</tspan></text>
+<circle cx="590.0" cy="711.0" r="10" fill="#ffffff" stroke="#1f2933" stroke-width="1.4"/><circle cx="590.0" cy="711.0" r="6" fill="#1f2933"/>
+<path d="M480.0,760.0 h390.0 l10,10 v97.0 h-400.0 z" fill="#fff8dc" stroke="#52606d" stroke-width="1"/>
+<text x="488.0" y="780.0" font-size="12" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="488.0" dy="0">Контроль</tspan></text>
+<text x="488.0" y="798.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="488.0" dy="0">Карточка без движения дольше 30 дней — «застряла». Отметки:</tspan><tspan x="488.0" dy="14">ожидание вуза или РТК, проблема, риск. Статус работы:</tspan><tspan x="488.0" dy="14">приостановить или завершить с причиной. Напоминания: срок шага</tspan><tspan x="488.0" dy="14">(7 дней вперёд), окончание лицензии за 1 год, цикл обучения раз в 3</tspan><tspan x="488.0" dy="14">года с предупреждением за 90 дней.</tspan></text>
+</svg>

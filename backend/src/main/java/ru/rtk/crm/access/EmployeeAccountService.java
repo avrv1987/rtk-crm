@@ -97,7 +97,22 @@ public class EmployeeAccountService {
                 AuditAction.ACCOUNT_CREATED, actor.id(), "PROFILE", profileId, employee.displayName(),
                 "сотрудник; логин " + employee.login() + "; временный пароль выдан", auditRequestId
         );
+        String roleError = null;
+        try {
+            keycloakAccountClient.setCrmRole(subject, employee.role());
+            adminCrmProfileRepository.markRoleSynced(profileId, now);
+        } catch (AccountSyncException exception) {
+            LOGGER.warn("Keycloak role is not assigned for new CRM profile {}: {}", profileId, exception.getMessage());
+            auditJournalRepository.record(
+                    AuditAction.ACCOUNT_SYNC_FAILED, actor.id(), "PROFILE", profileId, employee.displayName(),
+                    "роль не назначена: " + exception.getMessage(), auditRequestId
+            );
+            roleError = exception.getMessage();
+        }
         AdminCrmProfile created = complete(commandId, profileId);
+        if (roleError != null) {
+            created = created.withAccountSyncError(roleError);
+        }
         if (employee.role() == UserRole.ADMIN && keycloakAccountClient.configured()) {
             try {
                 keycloakAccountClient.setPrivileged(subject, true);

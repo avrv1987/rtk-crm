@@ -7,8 +7,11 @@ import {
   type PageWorkflowTemplate,
   type WorkflowTemplate,
   type WorkflowTemplateCreate,
+  type WorkflowTemplateVersion,
   type WorkflowTransitionInput
 } from '../../shared/api/client'
+import { WorkflowTemplateVersions } from './WorkflowTemplateVersions'
+import { parseRouteFile } from './workflowVersions'
 
 type WorkflowTemplatesPanelProps = {
   role: Me['role']
@@ -27,6 +30,7 @@ type CommandState =
   | { kind: 'failed'; action: 'create' | 'update' | 'delete'; error: unknown }
 
 type StageDraft = {
+  id?: string
   name: string
   optional: boolean
 }
@@ -37,6 +41,7 @@ type TemplateDraft = {
   name: string
   stages: StageDraft[]
   transitions: TransitionDraft[]
+  comment: string
 }
 
 type PendingDelete = {
@@ -50,13 +55,14 @@ const templatesSort = 'name,asc' as const
 const emptyDraft = (): TemplateDraft => ({
   name: '',
   stages: [{ name: '', optional: false }],
-  transitions: []
+  transitions: [],
+  comment: ''
 })
 
-const draftFromTemplate = (template: WorkflowTemplate): TemplateDraft => {
+const draftFromTemplate = (template: Pick<WorkflowTemplate, 'name' | 'stages' | 'transitions'>): TemplateDraft => {
   const stages = [...template.stages]
     .sort((left, right) => left.order - right.order)
-    .map((stage) => ({ name: stage.name, optional: stage.optional }))
+    .map((stage) => ({ id: stage.id, name: stage.name, optional: stage.optional }))
   const orderById = new Map(template.stages.map((stage) => [stage.id, stage.order]))
   const transitions = template.transitions.flatMap((transition) => {
     const fromOrder = orderById.get(transition.fromStageId)
@@ -65,7 +71,7 @@ const draftFromTemplate = (template: WorkflowTemplate): TemplateDraft => {
       ? []
       : [{ fromOrder, toOrder, commentRequired: transition.commentRequired }]
   })
-  return { name: template.name, stages, transitions }
+  return { name: template.name, stages, transitions, comment: '' }
 }
 
 const payloadFromDraft = (draft: TemplateDraft): WorkflowTemplateCreate => ({
@@ -73,9 +79,11 @@ const payloadFromDraft = (draft: TemplateDraft): WorkflowTemplateCreate => ({
   stages: draft.stages.map((stage, order) => ({
     name: stage.name.trim(),
     order,
-    optional: stage.optional
+    optional: stage.optional,
+    ...(stage.id === undefined ? {} : { id: stage.id })
   })),
-  transitions: draft.transitions
+  transitions: draft.transitions,
+  ...(draft.comment.trim().length === 0 ? {} : { comment: draft.comment.trim() })
 })
 
 const stageTitle = (draft: TemplateDraft, order: number) => `«${draft.stages[order]?.name.trim() || `этап ${order + 1}`}»`
@@ -228,10 +236,13 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const [commandState, setCommandState] = useState<CommandState>({ kind: 'idle' })
   const [stageNotice, setStageNotice] = useState<string | null>(null)
+  const [historyTemplate, setHistoryTemplate] = useState<WorkflowTemplate | null>(null)
+  const [importNotice, setImportNotice] = useState<{ text: string; error: boolean } | null>(null)
   const [defaultState, setDefaultState] = useState<{ templateId: string; saving: boolean; error?: unknown; key: string } | null>(null)
   const [defaultMessage, setDefaultMessage] = useState<string | null>(null)
   const listRequestVersion = useRef(0)
   const saveKey = useRef<string | null>(null)
+  const importInput = useRef<HTMLInputElement>(null)
 
   const loadTemplates = useCallback(async (requestedPage: number): Promise<PageWorkflowTemplate | null> => {
     const requestVersion = ++listRequestVersion.current
@@ -310,11 +321,62 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     }
   }
 
+  const canEditTemplate = (template: WorkflowTemplate) => (
+    role === 'ADMIN' ? template.teamId === null : template.teamId !== null
+  )
+
+  const versionToDraft = (template: WorkflowTemplate, version: WorkflowTemplateVersion) => {
+    saveKey.current = null
+    setPendingDelete(null)
+    setCommandState({ kind: 'idle' })
+    setImportNotice(null)
+    if (canEditTemplate(template)) {
+      setEditingTemplate(template)
+      setDraft({ ...draftFromTemplate(version), name: template.name, comment: `Возврат к версии ${version.number}` })
+    } else {
+      setEditingTemplate(null)
+      setDraft({ ...draftFromTemplate(version), name: `${template.name} — копия команды` })
+    }
+  }
+
+  const importFile = async (file: File | undefined) => {
+    if (file === undefined) {
+      return
+    }
+    const parsed = parseRouteFile(await file.text())
+    if ('error' in parsed) {
+      setImportNotice({ text: parsed.error, error: true })
+      return
+    }
+    updateDraft((current) => ({
+      name: editingTemplate === null ? parsed.file.name : current.name,
+      stages: parsed.file.stages.map((stage) => ({
+        ...(stage.key === undefined ? {} : { id: stage.key }),
+        name: stage.name,
+        optional: stage.optional
+      })),
+      transitions: parsed.file.transitions.map((transition) => ({
+        fromOrder: transition.from,
+        toOrder: transition.to,
+        commentRequired: transition.commentRequired
+      })),
+      comment: `Загружено из файла «${file.name}»`
+    }))
+    setImportNotice({
+      text: `Из файла загружено этапов: ${parsed.file.stages.length}, переходов: ${parsed.file.transitions.length}. `
+        + (editingTemplate === null
+          ? 'Проверьте и нажмите «Создать шаблон».'
+          : `Проверьте и нажмите «Сохранить шаблон» — появится новая версия «${editingTemplate.name}».`),
+      error: false
+    })
+  }
+
   const beginCreate = () => {
     saveKey.current = null
     setEditingTemplate(null)
     setPendingDelete(null)
     setCommandState({ kind: 'idle' })
+    setImportNotice(null)
     setDraft(emptyDraft())
   }
 
@@ -599,7 +661,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
                 <li key={template.id} className="workflow-templates__item">
                   <div>
                     <strong>{template.name}</strong>
-                    <p>{templateScopeLabel(template, teamDefaultTemplateId)}; этапов: {template.stages.length}; переходов: {template.transitions.length}; версия: {template.version}</p>
+                    <p>{templateScopeLabel(template, teamDefaultTemplateId)}; этапов: {template.stages.length}; переходов: {template.transitions.length}; версия маршрута: {template.routeVersion}</p>
                     {defaultState?.templateId === template.id && defaultState.error !== undefined && (
                       <div className="interaction-command-error" role="alert">
                         <p>{commandMessage(defaultState.error)}</p>
@@ -608,6 +670,9 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
                     )}
                   </div>
                   <div className="workflow-templates__actions">
+                    <button type="button" className="button--secondary" onClick={() => setHistoryTemplate(template)}>
+                      История версий
+                    </button>
                     {defaultActionLabel(template) !== null && (
                       <button
                         type="button"
@@ -669,10 +734,41 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
         </>
       )}
 
+      {historyTemplate !== null && (
+        <WorkflowTemplateVersions
+          key={historyTemplate.id}
+          template={historyTemplate}
+          role={role}
+          canEdit={canEditTemplate(historyTemplate)}
+          onUseVersion={(version) => versionToDraft(historyTemplate, version)}
+          onClose={() => setHistoryTemplate(null)}
+          onSessionExpired={onSessionExpired}
+          onProfileUnavailable={onProfileUnavailable}
+        />
+      )}
+
       <form className="workflow-template-editor" onSubmit={(event) => void submit(event)}>
         <div className="workflow-template-editor__header">
           <h3>{editingTemplate === null ? 'Новый шаблон' : `Редактирование: ${editingTemplate.name}`}</h3>
           <button type="button" disabled={commandState.kind === 'saving'} onClick={beginCreate}>Новый шаблон</button>
+        </div>
+        <div className="workflow-template-editor__import">
+          <button type="button" className="button--secondary" disabled={commandState.kind === 'saving'} onClick={() => importInput.current?.click()}>
+            Загрузить этапы из файла
+          </button>
+          <input
+            ref={importInput}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(event) => {
+              void importFile(event.target.files?.[0])
+              event.target.value = ''
+            }}
+          />
+          {importNotice !== null && (
+            <p className={importNotice.error ? 'workflow-template-editor__validation' : 'notice'} role="status">{importNotice.text}</p>
+          )}
         </div>
         <label>
           Название шаблона *
@@ -753,6 +849,14 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
             ))}
           </ol>
         </section>
+        <label>
+          Что изменилось (видно в истории версий)
+          <input
+            value={draft.comment}
+            maxLength={1000}
+            onChange={(event) => updateDraft((current) => ({ ...current, comment: event.target.value }))}
+          />
+        </label>
         {problem !== null && (
           <p className="workflow-template-editor__validation" role="status">{problem}</p>
         )}

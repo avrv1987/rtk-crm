@@ -220,6 +220,7 @@ public class StatisticsChartWriter {
             case DEMAND -> "Месяц подачи заявки";
             case DURATION -> throw new IllegalArgumentException("Duration report has no chart");
             case AGREEMENTS -> throw new IllegalArgumentException("Agreement report has no chart");
+            case MANAGER_WORK -> throw new IllegalArgumentException("Manager work report has no chart");
         }) + " по московскому времени; месяцы периода без строк показаны нулём";
     }
 

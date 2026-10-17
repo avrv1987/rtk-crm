@@ -16,7 +16,7 @@ public class AdminCrmProfileRepository {
     private static final String PROFILE_COLUMNS = """
             profile.id, profile.display_name, profile.role, profile.team_id, team.name AS team_name,
             profile.active, profile.enrolment_operator, profile.pending_activation, profile.access_revision, profile.version,
-            profile.login, profile.activation_requested_at, profile.idp_enabled,
+            profile.login, profile.activation_requested_at, profile.idp_enabled, profile.role_synced_at,
             (SELECT partner_organization.name FROM organizations partner_organization
              WHERE partner_organization.id = profile.partner_organization_id) AS partner_organization_name
             """;
@@ -117,6 +117,46 @@ public class AdminCrmProfileRepository {
                 .param("revisionIncrement", accessChanged ? 1 : 0)
                 .param("updatedAt", updatedAt)
                 .update() == 1;
+    }
+
+    public boolean applyKeycloakRole(UUID profileId, int expectedVersion, ProfileState state, OffsetDateTime updatedAt) {
+        return jdbcClient.sql("""
+                UPDATE crm_user_profiles
+                SET role = :role,
+                    active = :active,
+                    enrolment_operator = :enrolmentOperator,
+                    pending_activation = CASE WHEN active AND NOT :active THEN TRUE ELSE pending_activation END,
+                    access_revision = access_revision + 1,
+                    role_synced_at = :updatedAt,
+                    version = version + 1,
+                    updated_at = :updatedAt
+                WHERE id = :profileId AND version = :expectedVersion
+                """)
+                .param("profileId", profileId)
+                .param("expectedVersion", expectedVersion)
+                .param("role", state.role().name())
+                .param("active", state.active())
+                .param("enrolmentOperator", state.enrolmentOperator())
+                .param("updatedAt", updatedAt)
+                .update() == 1;
+    }
+
+    public void markRoleSynced(UUID profileId, OffsetDateTime syncedAt) {
+        jdbcClient.sql("UPDATE crm_user_profiles SET role_synced_at = :syncedAt WHERE id = :profileId")
+                .param("profileId", profileId)
+                .param("syncedAt", syncedAt)
+                .update();
+    }
+
+    public Optional<UUID> findIdByIdentity(String issuer, String subject) {
+        return jdbcClient.sql("""
+                SELECT id FROM crm_user_profiles
+                WHERE issuer = :issuer AND subject = :subject AND anonymized_at IS NULL
+                """)
+                .param("issuer", issuer)
+                .param("subject", subject)
+                .query(UUID.class)
+                .optional();
     }
 
     public Optional<String> findDisplayName(UUID profileId) {
@@ -248,7 +288,8 @@ public class AdminCrmProfileRepository {
                 resultSet.getObject("activation_requested_at", OffsetDateTime.class),
                 !pendingActivation && active != resultSet.getBoolean("idp_enabled"),
                 null,
-                resultSet.getString("partner_organization_name")
+                resultSet.getString("partner_organization_name"),
+                resultSet.getObject("role_synced_at", OffsetDateTime.class)
         );
     }
 

@@ -106,6 +106,7 @@ public class ApiSecurityConfiguration {
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         .requestMatchers("/openapi.yaml", "/swagger-ui/**", "/v3/api-docs/swagger-config").permitAll()
+                        .requestMatchers("/api/config").permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/authorization/*", "/api/auth/callback/*").permitAll()
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().denyAll())

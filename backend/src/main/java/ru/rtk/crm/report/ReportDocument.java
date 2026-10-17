@@ -29,7 +29,7 @@ public record ReportDocument(
     }
 
     public long organizationCount() {
-        return rows.stream().map(ReportRow::organizationId).distinct().count();
+        return rows.stream().map(ReportRow::organizationId).filter(Objects::nonNull).distinct().count();
     }
 
     public long interactionCount() {

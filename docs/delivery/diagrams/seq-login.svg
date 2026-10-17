@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="704" height="1312" viewBox="0 0 704 1312" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif">
+<title>Последовательность: вход OIDC по схеме BFF и CSRF</title>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="24.0" y="31.0" font-size="15" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="24.0" dy="0">Последовательность: вход OIDC по схеме BFF и CSRF</tspan></text>
+<text x="24.0" y="49.0" font-size="11" text-anchor="start" fill="#616e7c"><tspan x="24.0" dy="0">Authorization Code, клиент crm-bff, сессия Spring Session JDBC.</tspan></text>
+<g stroke="#1f2933" stroke-width="1.3" fill="none"><circle cx="117.0" cy="76.0" r="6" fill="#ffffff"/><line x1="117.0" y1="82.0" x2="117.0" y2="94.0"/><line x1="109.0" y1="86.0" x2="125.0" y2="86.0"/></g>
+<rect x="60.0" y="96.0" width="114.1" height="38.0" rx="3" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<text x="117.0" y="119.5" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="117.0" dy="0">Браузер (SPA)</tspan></text>
+<rect x="230.8" y="88.0" width="120.2" height="46.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="290.9" y="108.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="290.9" dy="0">backend: Spring</tspan><tspan x="290.9" dy="15">Security, BFF</tspan></text>
+<rect x="442.4" y="88.0" width="90.0" height="46.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="487.4" y="115.5" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="487.4" dy="0">Keycloak</tspan></text>
+<rect x="556.4" y="88.0" width="95.5" height="46.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="604.2" y="115.5" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="604.2" dy="0">PostgreSQL</tspan></text>
+<rect x="14.0" y="1068.0" width="676.2" height="212.0" rx="2" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<path d="M14.0,1068.0 h28.2 v10 l-6,7 h-22.2 z" fill="#dbe7f3" stroke="#8a96a3" stroke-width="1"/>
+<text x="20.0" y="1080.0" font-size="10" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="20.0" dy="0">alt</tspan></text>
+<rect x="47.2" y="1070.0" width="166.4" height="16.0" fill="#ffffff"/>
+<text x="50.2" y="1081.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="50.2" dy="0">[нет или неверный CSRF-токен]</tspan></text>
+<polyline points="14.0,1132.0 690.2,1132.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<rect x="19.0" y="1134.0" width="138.9" height="16.0" fill="#ffffff"/>
+<text x="22.0" y="1145.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="22.0" dy="0">[профиль ждёт активации]</tspan></text>
+<polyline points="14.0,1206.0 690.2,1206.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<rect x="19.0" y="1208.0" width="159.7" height="16.0" fill="#ffffff"/>
+<text x="22.0" y="1219.0" font-size="10" text-anchor="start" fill="#1f5f99"><tspan x="22.0" dy="0">[профиль активен, права есть]</tspan></text>
+<polyline points="117.0,134.0 117.0,1302.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="290.9,134.0 290.9,1302.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="487.4,134.0 487.4,1302.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="604.2,134.0 604.2,1302.0" fill="none" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="6 4"/>
+<path d="M127.0,154.0 h304.4 l8,8 v30.0 h-312.4 z" fill="#fff8dc" stroke="#52606d" stroke-width="1"/>
+<text x="135.0" y="169.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="135.0" dy="0">Все запросы браузера идут через web (nginx): /api/ →</tspan><tspan x="135.0" dy="14">backend, /idp/ → Keycloak.</tspan></text>
+<polyline points="117.0,220.0 290.9,220.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="280.9,224.5 290.9,220.0 280.9,215.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="150.1" y="204.0" width="107.7" height="17.0" fill="#ffffff"/>
+<text x="204.0" y="216.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="204.0" dy="0">GET /api/auth/login</tspan></text>
+<polyline points="290.9,320.0 117.0,320.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="127.0,315.5 117.0,320.0 127.0,324.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="126.0" y="234.0" width="155.9" height="87.0" fill="#ffffff"/>
+<text x="204.0" y="246.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="204.0" dy="0">302 →</tspan><tspan x="204.0" dy="14">/api/auth/authorization/keycl</tspan><tspan x="204.0" dy="14">oak → 302 на</tspan><tspan x="204.0" dy="14">PUBLIC_ORIGIN/idp/realms</tspan><tspan x="204.0" dy="14">/rtk-crm/protocol/openid-con</tspan><tspan x="204.0" dy="14">nect/auth</tspan></text>
+<polyline points="117.0,364.0 487.4,364.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="477.4,368.5 487.4,364.0 477.4,359.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="232.0" y="334.0" width="140.5" height="31.0" fill="#ffffff"/>
+<text x="302.2" y="346.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="302.2" dy="0">страница входа: логин и</tspan><tspan x="302.2" dy="14">пароль</tspan></text>
+<polyline points="487.4,422.0 117.0,422.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="127.0,417.5 117.0,422.0 127.0,426.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="228.6" y="378.0" width="147.3" height="45.0" fill="#ffffff"/>
+<text x="302.2" y="390.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="302.2" dy="0">302 →</tspan><tspan x="302.2" dy="14">/api/auth/callback/keycloak</tspan><tspan x="302.2" dy="14">с кодом авторизации</tspan></text>
+<polyline points="117.0,466.0 290.9,466.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="280.9,470.5 290.9,466.0 280.9,461.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="130.3" y="436.0" width="147.3" height="31.0" fill="#ffffff"/>
+<text x="204.0" y="448.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="204.0" dy="0">GET</tspan><tspan x="204.0" dy="14">/api/auth/callback/keycloak</tspan></text>
+<polyline points="290.9,552.0 487.4,552.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="477.4,556.5 487.4,552.0 477.4,547.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="312.2" y="480.0" width="153.9" height="73.0" fill="#ffffff"/>
+<text x="389.2" y="492.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="389.2" dy="0">обмен кода на токены,</tspan><tspan x="389.2" dy="14">userinfo, JWKS по</tspan><tspan x="389.2" dy="14">внутреннему адресу</tspan><tspan x="389.2" dy="14">APP_OIDC_INTERNAL_BA</tspan><tspan x="389.2" dy="14">SE_URL</tspan></text>
+<polyline points="487.4,582.0 290.9,582.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="300.9,577.5 290.9,582.0 300.9,586.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="317.6" y="566.0" width="143.1" height="17.0" fill="#ffffff"/>
+<text x="389.2" y="578.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="389.2" dy="0">ID-токен и токен доступа</tspan></text>
+<polyline points="290.9,596.0 318.9,596.0 318.9,638.0 292.9,638.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="302.9,633.5 292.9,638.0 302.9,642.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="323.9" y="594.0" width="144.0" height="45.0" fill="#ffffff"/>
+<text x="326.9" y="606.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="326.9" dy="0">издатель ID-токена</tspan><tspan x="326.9" dy="14">совпадает с</tspan><tspan x="326.9" dy="14">APP_OIDC_ISSUER_URI</tspan></text>
+<polyline points="290.9,716.0 604.2,716.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="594.2,720.5 604.2,716.0 594.2,711.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="372.7" y="658.0" width="149.7" height="59.0" fill="#ffffff"/>
+<text x="447.5" y="670.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="447.5" dy="0">профиль по issuer +</tspan><tspan x="447.5" dy="14">subject; при первом входе</tspan><tspan x="447.5" dy="14">— новый профиль, ждёт</tspan><tspan x="447.5" dy="14">активации</tspan></text>
+<polyline points="290.9,760.0 604.2,760.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="594.2,764.5 604.2,760.0 594.2,755.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="380.5" y="730.0" width="134.1" height="31.0" fill="#ffffff"/>
+<text x="447.5" y="742.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="447.5" dy="0">токены в серверной</tspan><tspan x="447.5" dy="14">сессии (spring_session)</tspan></text>
+<polyline points="290.9,832.0 117.0,832.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="127.0,827.5 117.0,832.0 127.0,836.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="130.1" y="774.0" width="147.6" height="59.0" fill="#ffffff"/>
+<text x="204.0" y="786.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="204.0" dy="0">Set-Cookie SESSION</tspan><tspan x="204.0" dy="14">(HttpOnly, SameSite=Lax);</tspan><tspan x="204.0" dy="14">токены в браузер не</tspan><tspan x="204.0" dy="14">передаются</tspan></text>
+<polyline points="117.0,862.0 290.9,862.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="280.9,866.5 290.9,862.0 280.9,857.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="166.3" y="846.0" width="75.3" height="17.0" fill="#ffffff"/>
+<text x="204.0" y="858.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="204.0" dy="0">GET /api/csrf</tspan></text>
+<polyline points="290.9,906.0 117.0,906.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="127.0,901.5 117.0,906.0 127.0,910.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="144.1" y="876.0" width="119.6" height="31.0" fill="#ffffff"/>
+<text x="204.0" y="888.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="204.0" dy="0">токен CSRF и cookie</tspan><tspan x="204.0" dy="14">XSRF-TOKEN</tspan></text>
+<polyline points="117.0,964.0 290.9,964.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="280.9,968.5 290.9,964.0 280.9,959.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="126.5" y="920.0" width="155.0" height="45.0" fill="#ffffff"/>
+<text x="204.0" y="932.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="204.0" dy="0">изменяющий запрос /api/…:</tspan><tspan x="204.0" dy="14">cookie SESSION и</tspan><tspan x="204.0" dy="14">заголовок X-CSRF-TOKEN</tspan></text>
+<polyline points="290.9,978.0 318.9,978.0 318.9,1048.0 292.9,1048.0" fill="none" stroke="#1f2933" stroke-width="1.2"/>
+<polygon points="302.9,1043.5 292.9,1048.0 302.9,1052.5" fill="#1f2933" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="323.9" y="976.0" width="152.6" height="73.0" fill="#ffffff"/>
+<text x="326.9" y="988.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="326.9" dy="0">CSRF и сессия;</tspan><tspan x="326.9" dy="14">CurrentProfileService.requir</tspan><tspan x="326.9" dy="14">eActiveProfile заново</tspan><tspan x="326.9" dy="14">читает профиль; права в</tspan><tspan x="326.9" dy="14">сервисе</tspan></text>
+<polyline points="290.9,1114.0 117.0,1114.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="127.0,1109.5 117.0,1114.0 127.0,1118.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="154.4" y="1098.0" width="99.1" height="17.0" fill="#ffffff"/>
+<text x="204.0" y="1110.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="204.0" dy="0">403 FORBIDDEN</tspan></text>
+<polyline points="290.9,1188.0 117.0,1188.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="127.0,1183.5 117.0,1188.0 127.0,1192.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="128.3" y="1158.0" width="151.2" height="31.0" fill="#ffffff"/>
+<text x="204.0" y="1170.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="204.0" dy="0">403</tspan><tspan x="204.0" dy="14">CRM_PROFILE_PENDING</tspan></text>
+<polyline points="290.9,1262.0 117.0,1262.0" fill="none" stroke="#52606d" stroke-width="1.2" stroke-dasharray="6 4"/>
+<polyline points="127.0,1257.5 117.0,1262.0 127.0,1266.5" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<rect x="161.1" y="1232.0" width="85.7" height="31.0" fill="#ffffff"/>
+<text x="204.0" y="1244.0" font-size="11" text-anchor="middle" fill="#1f2933"><tspan x="204.0" dy="0">2xx, заголовок</tspan><tspan x="204.0" dy="14">X-Request-Id</tspan></text>
+</svg>

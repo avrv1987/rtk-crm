@@ -27,8 +27,8 @@ load_users=${LOAD_NIGHT_USERS:-30}
 load_duration_s=${LOAD_NIGHT_DURATION_S:-180}
 load_report_bursts=${LOAD_NIGHT_REPORT_BURSTS:-60}
 max_total_s=${LOAD_NIGHT_MAX_TOTAL_S:-1500}
-atlas_url=${LOAD_NIGHT_ATLAS_URL:-https://atlas.baichein.ru/}
-atlas_max_s=${LOAD_NIGHT_ATLAS_MAX_S:-1.5}
+neighbor_url=${LOAD_NIGHT_NEIGHBOR_URL:-}
+neighbor_max_s=${LOAD_NIGHT_NEIGHBOR_MAX_S:-1.5}
 min_free_mb=${LOAD_NIGHT_MIN_FREE_MB:-400}
 check_interval_s=${LOAD_NIGHT_CHECK_INTERVAL_S:-5}
 node_image=${LOAD_NIGHT_NODE_IMAGE:-node:24-alpine}
@@ -62,20 +62,21 @@ free_mb() {
     awk '/MemAvailable/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null
 }
 
-atlas_ok() {
+neighbor_ok() {
     local metrics code seconds
-    metrics=$(curl -s -o /dev/null -w '%{http_code} %{time_total}' --max-time 5 "$atlas_url" 2>/dev/null) || return 1
+    [[ -n $neighbor_url ]] || return 0
+    metrics=$(curl -s -o /dev/null -w '%{http_code} %{time_total}' --max-time 5 "$neighbor_url" 2>/dev/null) || return 1
     code=${metrics%% *}
     seconds=${metrics##* }
     [[ $code == 2* || $code == 3* ]] || return 1
-    awk -v s="$seconds" -v max="$atlas_max_s" 'BEGIN { exit !(s <= max) }'
+    awk -v s="$seconds" -v max="$neighbor_max_s" 'BEGIN { exit !(s <= max) }'
 }
 
 monitor() {
     local elapsed=0 free
     while [[ "$(docker inspect -f '{{.State.Running}}' "$load_container" 2>/dev/null)" == "true" ]]; do
-        if ! atlas_ok; then
-            abort_reason="atlas ($atlas_url) отвечает медленнее ${atlas_max_s}s или с ошибкой"
+        if ! neighbor_ok; then
+            abort_reason="соседний сервис ($neighbor_url) отвечает медленнее ${neighbor_max_s}s или с ошибкой"
             docker stop -t 5 "$load_container" >/dev/null 2>&1 || true
             return
         fi
@@ -99,7 +100,7 @@ write_summary() {
     local exit_code=$1
     local body
     body=$(
-        printf 'Ночной замер NFR-01/NFR-03 (D-6a562c)\n'
+        printf 'Ночной замер NFR-01/NFR-03\n'
         printf 'запуск (UTC): %s\n' "$run_stamp"
         printf 'dry-run: %s\n' "$dry_run"
         printf 'сервер: PUBLIC_ORIGIN=%s\n' "$public_origin"
@@ -150,8 +151,8 @@ if $dry_run; then
     printf '[dry-run] would write %s/night.env with PUBLIC_ORIGIN=%s\n' "$state_dir" "$public_origin"
     printf '[dry-run] would run: docker run -d --name %s --network host -v %s:/opt/rtk-crm -w /opt/rtk-crm -e LOAD_HTTP_LOGIN=1 -e LOAD_USERS=%s -e LOAD_DURATION_S=%s -e LOAD_REPORT_BURSTS=%s -e LOAD_SUMMARY_FILE=%s %s node scripts/load/load-test.mjs .load-test/night.env\n' \
         "$load_container" "$project_root" "$load_users" "$load_duration_s" "$load_report_bursts" "$generator_summary" "$node_image"
-    printf '[dry-run] would monitor atlas (%s, max %ss) and host free memory (min %sMB) every %ss, stop the container early on breach\n' \
-        "$atlas_url" "$atlas_max_s" "$min_free_mb" "$check_interval_s"
+    printf '[dry-run] would monitor the neighbor service (%s, max %ss) and host free memory (min %sMB) every %ss, stop the container early on breach\n' \
+        "${neighbor_url:-none}" "$neighbor_max_s" "$min_free_mb" "$check_interval_s"
     printf '[dry-run] would read %s and exit with code 1 when it is missing or starts with "ошибка генератора:"\n' "$generator_summary"
     exit 0
 fi

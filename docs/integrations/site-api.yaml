@@ -1,0 +1,207 @@
+openapi: 3.1.0
+info:
+  title: Сайт ИТ Школы РТК — выдача заявок для CRM (предложенный контракт)
+  version: 0.1.0-proposed
+  description: |
+    ПРЕДЛОЖЕННЫЙ контракт. Заказчик не передал API сайта на Laravel, поэтому команда CRM
+    предлагает этот формат для согласования. Ни один эндпоинт сайта заказчика этим документом не подтверждён.
+    Демонстрационный стенд `infra/site-fixture` отдаёт статические страницы в этом формате и проверяет только
+    адаптер CRM, а не совместимость с сайтом.
+
+    Правила, которые CRM ожидает от сайта:
+    - запись однозначно определяется парой `type` + `externalId`; повтор той же записи с тем же `updatedAt`
+      CRM пропускает, запись с более поздним `updatedAt` заменяет прежнюю версию;
+    - `updated_since` включительный: сайт возвращает записи с `updatedAt >= updated_since`;
+    - страницы нумеруются с 1, `nextPage` — номер следующей страницы или `null` на последней;
+    - отзыв заявки на обучение передаётся той же записью со `status = withdrawn` и новым `updatedAt`;
+    - в `learning_application` не передаются персональные данные обучающихся: объект `contact` CRM у такой
+      записи отбрасывает и не хранит;
+    - вместо страницы записей сайт может вернуть JSON-массив оплат `OrdersV1` — формат файла организатора «Данные
+      оплат» от 26.09.2026, транспорт и адрес не подтверждены. CRM разбирает массив тем же разбором, что
+      и файл, который загружает оператор зачисления (`PaidOrderParser`): `null` пропускается со счётчиком, запись
+      сохраняется как `paid_order` служебной организации «Открытый набор (физлица)» с номером заявки, курсом и номером
+      потока. Фамилия, имя, отчество, телефон и email в CRM не записываются. Массив читается целиком с первой
+      страницы, `updated_since` для него не сдвигается. На демонстрационном стенде массив отдаёт путь
+      `/orders/api/crm/records` (`infra/site-fixture/data/orders-v1.json`, синтетические данные).
+servers:
+  - url: https://site.example.invalid
+    description: Адрес сайта задаётся в конфигурации развёртывания CRM (SITE_BASE_URL)
+security:
+  - bearerToken: []
+paths:
+  /api/crm/records:
+    get:
+      summary: Заявки, изменённые с указанного момента
+      operationId: listCrmRecords
+      parameters:
+        - name: updated_since
+          in: query
+          required: false
+          description: Нижняя граница updatedAt включительно, ISO 8601 со смещением. Без параметра — все записи.
+          schema:
+            type: string
+            format: date-time
+        - name: page
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Страница записей
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/RecordsPage'
+                  - $ref: '#/components/schemas/OrdersV1'
+        '400':
+          description: Неверные параметры
+        '401':
+          description: Нет токена или токен неверный
+        '403':
+          description: Токену не разрешено читать заявки
+        '500':
+          description: Ошибка сайта; CRM завершает синхронизацию ошибкой и не меняет уже загруженные данные
+components:
+  securitySchemes:
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: Отдельный токен только на чтение этого ресурса; в CRM хранится в переменной окружения SITE_TOKEN
+  schemas:
+    OrdersV1:
+      type: array
+      maxItems: 10000
+      description: >
+        Формат организатора 26.09.2026, транспорт не подтверждён. Массив оплаченных заявок физлиц на открытые курсы.
+        Дата оплаты, статус, сумма и updatedAt в формате отсутствуют: версией записи CRM считает SHA-256 от курса и
+        номера потока, повтор с той же версией пропускает, с другой — заменяет; исчезновение записи из следующего
+        ответа отзывом не считается.
+      items:
+        oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/PaidOrderV1'
+    PaidOrderV1:
+      type: object
+      required: ['Номер заявки', 'Курс', 'Номер потока']
+      properties:
+        'Номер заявки':
+          type: string
+          maxLength: 100
+          description: Непрозрачный идентификатор, обычно ORD-<цифры>-<латинские буквы и цифры>; дата из него не извлекается
+        'Курс':
+          type: string
+          maxLength: 300
+          description: Сопоставляется с программой CRM администратором в разборе источника
+        'Номер потока':
+          type: integer
+          minimum: 1
+          description: Номер набора внутри курса
+        'Фамилия':
+          type: string
+          maxLength: 100
+        'Имя':
+          type: string
+          maxLength: 100
+        'Отчество':
+          type: string
+          maxLength: 100
+        'Телефон':
+          type: string
+          maxLength: 50
+        'Email':
+          type: string
+          maxLength: 254
+    RecordsPage:
+      type: object
+      required: [items, nextPage]
+      properties:
+        items:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/Record'
+        nextPage:
+          type: [integer, 'null']
+          minimum: 2
+    Record:
+      type: object
+      required: [externalId, type, updatedAt, organization]
+      properties:
+        externalId:
+          type: string
+          maxLength: 200
+          description: Постоянный идентификатор записи на сайте
+        type:
+          type: string
+          enum: [partnership_request, learning_application]
+          description: >
+            partnership_request — заявка вуза на сотрудничество, создаёт или дополняет взаимодействие в CRM;
+            learning_application — заявка на обучение, учитывается только в статистике спроса
+        createdAt:
+          type: string
+          format: date-time
+          description: Дата подачи заявки; по ней отчёт спроса относит заявку к периоду. Если нет — берётся updatedAt
+        updatedAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          maxLength: 64
+          description: >
+            Статус заявки на сайте, например new, in_progress, accepted, rejected, withdrawn. CRM различает только
+            withdrawn: отозванная заявка на обучение не учитывается в спросе. Остальные статусы переносятся в текст
+            события взаимодействия.
+        organization:
+          type: object
+          properties:
+            externalId:
+              type: string
+              maxLength: 200
+              description: Идентификатор вуза на сайте; по нему CRM хранит сопоставление с организацией
+            name:
+              type: string
+              maxLength: 300
+            type:
+              type: string
+              enum: [UNIVERSITY, SCHOOL]
+              description: Справочно; CRM организации по данным сайта не создаёт
+        program:
+          type: object
+          properties:
+            name:
+              type: string
+              maxLength: 200
+        product:
+          type: object
+          properties:
+            name:
+              type: string
+              maxLength: 200
+        contact:
+          type: object
+          description: Только для partnership_request — представитель вуза
+          properties:
+            name:
+              type: string
+              maxLength: 200
+            email:
+              type: string
+              maxLength: 320
+            phone:
+              type: string
+              maxLength: 50
+            position:
+              type: string
+              maxLength: 200
+        applicationsCount:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          description: Только для learning_application, если одна запись сайта агрегирует несколько заявок; по умолчанию 1
+        message:
+          type: string
+          maxLength: 4000
+          description: Текст заявки для события взаимодействия

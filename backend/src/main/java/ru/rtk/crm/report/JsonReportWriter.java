@@ -45,7 +45,9 @@ public class JsonReportWriter {
                     .filter(Objects::nonNull).distinct().count());
         } else if (demand) {
             totals.put("applications", sum(document, ReportRow::applications));
-            totals.put("paidOrders", sum(document, ReportRow::paidOrders));
+            if (request.columns().contains(ReportColumn.PAID_ORDERS)) {
+                totals.put("paidOrders", sum(document, ReportRow::paidOrders));
+            }
             totals.put("participations", sum(document, ReportRow::participants));
             totals.put("completed", sum(document, ReportRow::completed));
             totals.put("parallelRuns", sum(document, ReportRow::parallelRuns));
@@ -68,7 +70,8 @@ public class JsonReportWriter {
             quality.put("noData", Stream.of(ReportColumn.APPLICATIONS, ReportColumn.PAID_ORDERS, ReportColumn.PAID_STREAMS,
                             ReportColumn.PARTICIPANTS, ReportColumn.LEARNERS_COMPLETED, ReportColumn.COMPLETION_SHARE,
                             ReportColumn.PARALLEL_RUNS)
-                    .filter(column -> document.countWithout(column) > 0)
+                    .filter(column -> (column != ReportColumn.PAID_ORDERS && column != ReportColumn.PAID_STREAMS
+                            || request.columns().contains(column)) && document.countWithout(column) > 0)
                     .toList());
         } else if (duration) {
             quality.put("noData", Stream.of(ReportColumn.AVG_DAYS, ReportColumn.MAX_DAYS, ReportColumn.CURRENT_MAX_DAYS)

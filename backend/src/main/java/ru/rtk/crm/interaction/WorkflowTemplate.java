@@ -10,6 +10,7 @@ public record WorkflowTemplate(
         List<WorkflowTemplateStage> stages,
         List<WorkflowTemplateTransition> transitions,
         boolean defaultTemplate,
-        int version
+        int version,
+        int routeVersion
 ) {
 }

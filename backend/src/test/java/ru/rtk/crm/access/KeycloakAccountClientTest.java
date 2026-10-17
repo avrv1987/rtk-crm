@@ -28,6 +28,7 @@ class KeycloakAccountClientTest {
     private volatile String slowPath;
     private final AtomicInteger slowResponses = new AtomicInteger();
     private volatile String lookup = "[]";
+    private volatile String availableRoles;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -238,6 +239,51 @@ class KeycloakAccountClientTest {
     }
 
     @Test
+    void crmRoleIsAssignedBeforeThePreviousCrmRoleIsRemovedAndOtherRolesStay() {
+        lookup = "[{\"id\":\"r-user\",\"name\":\"crm-user\"},{\"id\":\"r-mfa\",\"name\":\"crm-privileged\"},"
+                + "{\"id\":\"r-default\",\"name\":\"default-roles-rtk-crm\"}]";
+        availableRoles = "[{\"id\":\"r-leader\",\"name\":\"crm-leader\"},{\"id\":\"r-admin\",\"name\":\"crm-admin\"}]";
+        String mappings = "/admin/realms/rtk-crm/users/" + USER + "/role-mappings/realm";
+
+        client("sync-secret").setCrmRole(USER, UserRole.LEADER);
+
+        assertThat(requests).containsExactly(
+                "POST /realms/rtk-crm/protocol/openid-connect/token grant_type=client_credentials&client_id=crm-account-sync&client_secret=sync-secret",
+                "GET " + mappings + " Bearer service-token ",
+                "GET " + mappings + "/available Bearer service-token ",
+                "POST " + mappings + " Bearer service-token [{\"id\":\"r-leader\",\"name\":\"crm-leader\"}]",
+                "DELETE " + mappings + " Bearer service-token [{\"id\":\"r-user\",\"name\":\"crm-user\"}]"
+        );
+
+        requests.clear();
+        client("sync-secret").setCrmRole(USER, UserRole.USER);
+        assertThat(requests).hasSize(2);
+
+        assertThatThrownBy(() -> client("sync-secret").setCrmRole(USER, UserRole.MANAGEMENT))
+                .isInstanceOf(AccountSyncException.class)
+                .hasMessageContaining("В Keycloak нет роли realm crm-management")
+                .hasMessageContaining("роль не изменена");
+        assertThatThrownBy(() -> client("").setCrmRole(USER, UserRole.LEADER))
+                .isInstanceOf(AccountSyncException.class)
+                .hasMessageContaining("APP_KEYCLOAK_ACCOUNT_SYNC_CLIENT_SECRET");
+    }
+
+    @Test
+    void roleMigrationAddsTheCrmRoleOnlyToAccountsWithoutAnyCrmRole() {
+        availableRoles = "[{\"id\":\"r-admin\",\"name\":\"crm-admin\"}]";
+        lookup = "[{\"id\":\"r-default\",\"name\":\"default-roles-rtk-crm\"}]";
+
+        assertThat(client("sync-secret").addCrmRoleIfNone(USER, UserRole.ADMIN)).isTrue();
+        assertThat(requests).last().isEqualTo("POST /admin/realms/rtk-crm/users/" + USER
+                + "/role-mappings/realm Bearer service-token [{\"id\":\"r-admin\",\"name\":\"crm-admin\"}]");
+
+        requests.clear();
+        lookup = "[{\"id\":\"r-leader\",\"name\":\"crm-leader\"}]";
+        assertThat(client("sync-secret").addCrmRoleIfNone(USER, UserRole.ADMIN)).isFalse();
+        assertThat(requests).hasSize(2).noneMatch(request -> request.startsWith("POST /admin") || request.startsWith("DELETE"));
+    }
+
+    @Test
     void idempotentRequestIsRetriedOnlyOnceAndThenReportedAsUnavailable() {
         slowPath = "/admin/realms/rtk-crm/users/" + USER + "/reset-password";
         slowResponses.set(2);
@@ -322,7 +368,8 @@ class KeycloakAccountClientTest {
             }
         }
         if ("GET".equals(exchange.getRequestMethod())) {
-            byte[] users = lookup.getBytes(StandardCharsets.UTF_8);
+            byte[] users = (path.endsWith("/available") && availableRoles != null ? availableRoles : lookup)
+                    .getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, users.length);
             exchange.getResponseBody().write(users);

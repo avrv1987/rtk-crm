@@ -7,7 +7,7 @@ info:
 
     Аутентификация: вход через Keycloak (GET /api/auth/login) создаёт серверную сессию BFF, браузер получает HttpOnly cookie SESSION; токены OIDC клиенту не передаются. Выход (POST /api/auth/logout) завершает сессию CRM и возвращает адрес завершения сессии Keycloak.
 
-    Изменяющие запросы передают заголовок X-CSRF-TOKEN со значением token из GET /api/csrf. Команды передают Idempotency-Key; повтор с тем же ключом и телом возвращает прежний результат, с другим телом — 409 IDEMPOTENCY_CONFLICT. Устаревшая version даёт 409 VERSION_CONFLICT с currentVersion.
+    Изменяющие запросы передают заголовок X-CSRF-TOKEN со значением token из GET /api/csrf; отсутствующий или устаревший токен даёт 403 CSRF_INVALID, клиент получает новый токен и повторяет запрос один раз. Команды передают Idempotency-Key; повтор с тем же ключом и телом возвращает прежний результат, с другим телом — 409 IDEMPOTENCY_CONFLICT. Устаревшая version даёт 409 VERSION_CONFLICT с currentVersion.
 
     Ошибки возвращаются в формате ApiError {code, message, requestId}. requestId совпадает с заголовком X-Request-Id и записью в журнале сервера; stack trace и секреты в ответ не попадают.
 servers:
@@ -31,7 +31,7 @@ paths:
       security: []
       responses:
         '302':
-          description: Редирект на эндпоинт авторизации BFF, который перенаправляет на настроенный провайдер OIDC
+          description: Редирект на эндпоинт авторизации BFF, который перенаправляет на настроенный провайдер OIDC. При живой сессии BFF — редирект в SPA (/) без нового обмена OAuth
           headers:
             Location:
               description: Адрес редиректа браузера у провайдера OIDC
@@ -46,6 +46,7 @@ paths:
       tags: [Session]
       summary: Завершить вход через Keycloak
       operationId: finishLogin
+      description: Неизвестный или уже использованный state (например, вход завершился во второй вкладке) ведёт на GET /api/auth/login?error; при живой сессии BFF оттуда браузер попадает в SPA, сессия не заменяется.
       security: []
       parameters:
         - $ref: '#/components/parameters/RegistrationId'
@@ -107,6 +108,24 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/config:
+    get:
+      tags: [Session]
+      summary: Включённые модули CRM
+      operationId: getConfig
+      security: []
+      description: >-
+        Доступен без входа: интерфейс по нему скрывает разделы выключенных модулей, в том числе на посадочной странице.
+        Модули включаются переменными MODULE_ENROLMENT_ENABLED и MODULE_PARTNER_ENABLED (по умолчанию выключены).
+      responses:
+        '200':
+          description: Состояние модулей
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Config'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/me/activation-request:
@@ -511,6 +530,7 @@ paths:
       summary: Доступы представителей вуза в кабинет
       operationId: listPartnerAccess
       description: >-
+        Пока кабинет вуза выключен (MODULE_PARTNER_ENABLED=false, по умолчанию), метод отвечает 404 всем.
         Кому из контактов вуза открыт кабинет. Видят все, кому виден вуз (КАМ, заместитель, руководитель команды, «Руководство»), и администратор. Временный пароль здесь никогда не возвращается.
       parameters:
         - $ref: '#/components/parameters/UuidId'
@@ -539,6 +559,7 @@ paths:
       summary: Открыть доступ в кабинет вуза
       operationId: openPartnerAccess
       description: >-
+        Пока кабинет вуза выключен (MODULE_PARTNER_ENABLED=false, по умолчанию), метод отвечает 404 всем.
         Ответственный КАМ, руководитель команды вуза или администратор. CRM создаёт пользователя Keycloak клиентом crm-account-sync (или включает прежнего) с временным паролем и обязательной сменой пароля при первом входе. Пароль возвращается один раз в этом ответе, в журнал и другие ответы не попадает. Вуз должен быть действующим, контакт — актуальным. Повтор для контакта с открытым доступом — 409 PARTNER_ACCESS_EXISTS.
       parameters:
         - $ref: '#/components/parameters/UuidId'
@@ -579,6 +600,7 @@ paths:
       summary: Закрыть доступ в кабинет вуза
       operationId: closePartnerAccess
       description: >-
+        Пока кабинет вуза выключен (MODULE_PARTNER_ENABLED=false, по умолчанию), метод отвечает 404 всем.
         Блокирует профиль представителя и отключает учётную запись Keycloak с завершением сеансов. Если Keycloak недоступен, доступ в CRM всё равно закрыт, ответ содержит accountSyncError, а профиль — отметку accountSyncRequired. Повтор для закрытого доступа возвращает его без изменений. Архив контакта или вуза закрывает доступ так же.
       parameters:
         - $ref: '#/components/parameters/UuidId'
@@ -939,6 +961,100 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TeamsSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/work/control:
+    get:
+      tags: [Work]
+      summary: Матрица «менеджер, вуз, этап» для руководителя и руководства
+      operationId: getWorkControl
+      description: >-
+        Только LEADER со своей командой и MANAGEMENT (все команды, только чтение); USER, ADMIN и PARTNER получают 403.
+        Строки — работы вузов: активные, а при заданном периоде ещё и приостановленные или завершённые с событиями в нём.
+        Повторяющиеся параметры означают «любое из значений». Отбор «ответственный» принимает идентификатор профиля
+        или UNASSIGNED («Требует назначения»). Изменения за период (переходы, новые, завершённые) считаются по from и to
+        включительно, по московскому времени; без периода они считаются за всё время. Срок следующего шага:
+        OVERDUE — раньше текущего момента, THIS_WEEK — до конца текущей недели, NO_NEXT_STEP — нет шага или срока,
+        IN_ORDER — позже. Положение на маршруте — номер этапа среди этапов работы (stagePosition из stageTotal).
+      parameters:
+        - name: organizationId
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+        - name: directionId
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+        - name: programId
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+        - name: productId
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+        - name: managerId
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+        - name: stage
+          in: query
+          required: false
+          description: Название этапа на конец периода (без периода — текущий этап)
+          schema:
+            type: array
+            items:
+              type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: change
+          in: query
+          required: false
+          description: Оставить работы с изменением в периоде
+          schema:
+            $ref: '#/components/schemas/ManagerWorkChange'
+      responses:
+        '200':
+          description: Команды, менеджеры и их работы с итогами
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkControl'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -3926,6 +4042,114 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/workflow-templates/{id}/versions:
+    get:
+      tags: [Catalog]
+      summary: История версий шаблона процесса
+      operationId: listWorkflowTemplateVersions
+      x-implementation-stage: 12
+      description: >-
+        Версии шаблона от новой к старой: номер, автор, дата, комментарий, этапы и переходы. Шаблон доступен в той же
+        области, что и список доступных шаблонов. works — число идущих работ области на этой версии; null, если у роли
+        нет области бизнес-данных (администратор)
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Версии шаблона
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkflowTemplateVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/workflow-templates/{id}/versions/{number}/rollout-preview:
+    post:
+      tags: [Administration]
+      summary: Предпросмотр обновления работ до версии шаблона
+      operationId: previewWorkflowRollout
+      x-implementation-stage: 12
+      description: >-
+        Только руководитель, по идущим работам своей команды на других версиях шаблона. Этапы сопоставляются по
+        устойчивому идентификатору этапа шаблона, затем по названию; stageMap задаёт сопоставление вручную. Удалённый
+        этап без сопоставления переходит в следующий сохранившийся этап. Ничего не изменяет
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/WorkflowVersionNumber'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowRolloutRequest'
+      responses:
+        '200':
+          description: Влияние новой версии на работы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowRolloutPreview'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/workflow-templates/{id}/versions/{number}/rollout:
+    post:
+      tags: [Administration]
+      summary: Обновить работы до версии шаблона
+      operationId: rollOutWorkflowVersion
+      x-implementation-stage: 12
+      description: >-
+        Переводит выбранные работы на версию number одной транзакцией: этапы и переходы становятся как в версии,
+        история удалённых этапов переходит на этап, куда перешла работа, в историю каждой работы пишется событие
+        STAGES_EDITED «Маршрут обновлён до версии N» или «Маршрут возвращён к версии N». Для отката укажите прежнюю
+        версию. Версия каждой работы сверяется (409 VERSION_CONFLICT). Работы с этапами, изменёнными в карточке,
+        обновляются только при replaceLocalChanges = true
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/WorkflowVersionNumber'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowRolloutRequest'
+      responses:
+        '200':
+          description: Работы обновлены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowRolloutResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/crm-profiles:
     get:
       tags: [Administration]
@@ -3968,7 +4192,7 @@ paths:
       summary: Завести сотрудника с учётной записью Keycloak
       operationId: createEmployeeAccount
       description: >-
-        Только администратор. CRM создаёт пользователя Keycloak клиентом crm-account-sync с временным паролем и обязательной сменой пароля при первом входе, затем активный профиль CRM с ролью и командой. Пароль генерируется на сервере и возвращается один раз в этом ответе; в журнал, результат повтора и другие ответы не попадает. Повтор с тем же ключом возвращает профиль без пароля. Если Keycloak недоступен, профиль CRM не создаётся.
+        Только администратор. CRM создаёт пользователя Keycloak клиентом crm-account-sync с временным паролем и обязательной сменой пароля при первом входе, затем активный профиль CRM с ролью и командой. Пароль генерируется на сервере и возвращается один раз в этом ответе; в журнал, результат повтора и другие ответы не попадает. Повтор с тем же ключом возвращает профиль без пароля. Если Keycloak недоступен, профиль CRM не создаётся. После создания учётной записи CRM назначает ей роль realm crm-* по выбранной роли; если это не удалось, профиль создаётся, accountSyncError объясняет причину, а роль переносят запросом POST /api/admin/crm-profiles/keycloak-roles.
       parameters:
         - $ref: '#/components/parameters/CsrfHeader'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -4024,7 +4248,7 @@ paths:
       responses:
         '200':
           description: >-
-            Профиль CRM обновлён; изменение роли, команды или активности увеличивает accessRevision, каждое изменение записывается в журнал профиля. Закрытие или открытие доступа также отключает или включает учётную запись Keycloak через Admin API; если Keycloak недоступен или подключение не настроено, изменение CRM сохраняется, accountSyncRequired равно true, а accountSyncError объясняет, почему учётная запись не была синхронизирована. Если меняется, нужен ли второй фактор (роль «Администратор» или флаг «Оператор зачисления»), CRM сразу меняет это в Keycloak; при недоступном Keycloak изменение не сохраняется (503).
+            Профиль CRM обновлён; изменение роли, команды или активности увеличивает accessRevision, каждое изменение записывается в журнал профиля. Роль хранится в Keycloak: смена роли сначала назначает роль realm crm-* учётной записи клиентом crm-account-sync и снимает прежнюю, затем меняет профиль CRM; если Keycloak недоступен или служебный клиент не настроен, роль не меняется (503). Закрытие или открытие доступа также отключает или включает учётную запись Keycloak через Admin API; если Keycloak недоступен или подключение не настроено, изменение CRM сохраняется, accountSyncRequired равно true, а accountSyncError объясняет, почему учётная запись не была синхронизирована. Если меняется, нужен ли второй фактор (роль «Администратор» или флаг «Оператор зачисления»), CRM сразу меняет это в Keycloak; при недоступном Keycloak изменение не сохраняется (503).
           content:
             application/json:
               schema:
@@ -4040,7 +4264,7 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
         '503':
-          description: ACCOUNT_SYNC_FAILED — Keycloak недоступен или отклонил изменение обязательного второго фактора; профиль не изменён
+          description: ACCOUNT_SYNC_FAILED — Keycloak недоступен, служебный клиент не настроен или Keycloak отклонил смену роли либо обязательного второго фактора; профиль не изменён
           content:
             application/json:
               schema:
@@ -4072,6 +4296,34 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-profiles/keycloak-roles:
+    post:
+      tags: [Administration]
+      summary: Перенести роли профилей CRM в Keycloak
+      operationId: migrateCrmRolesToKeycloak
+      description: >-
+        Только администратор. Одноразовый перенос для установки, где роли хранились в CRM: каждой учётной записи профиля, роль которого ещё не подтверждена Keycloak (roleSyncedAt равно null, профиль не ожидает активации), назначается роль realm crm-* по роли профиля. Учётные записи, у которых уже есть роль CRM в Keycloak, не меняются. Повторный запуск безопасен: перенесённые профили не обрабатываются снова.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Итог переноса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeycloakRoleMigration'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          description: ACCOUNT_SYNC_FAILED — служебный клиент Keycloak не настроен; роли не перенесены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/admin/crm-profiles/{id}/account-sync:
@@ -5848,7 +6100,7 @@ paths:
       operationId: uploadPaidOrders
       x-implementation-stage: 5
       description: >-
-        Пока модуль «Слушатели» выключен (APP_ENROLMENT_ENABLED=false, по умолчанию), метод отвечает 404 всем.
+        Пока модуль «Слушатели» выключен (MODULE_ENROLMENT_ENABLED=false, по умолчанию), метод отвечает 404 всем.
         Во включённом модуле — только профиль USER или LEADER с флагом «Оператор зачисления» (флаг читается заново
         при каждом запросе), остальным 403. Файл — JSON-массив «Данные оплат» (до 5 МиБ и 10 000 элементов, null пропускается со счётчиком)
         разбирается PaidOrderParser и регистрируется запуском UPLOAD источника «Сайт»: в source_records пишутся только
@@ -5926,7 +6178,7 @@ paths:
       operationId: updateEnrolmentStream
       x-implementation-stage: 5
       description: >-
-        Дата окончания задаёт срок хранения анкет потока до связи с потоками LMS (D-7712bc). null снимает дату. Изменение
+        Дата окончания задаёт срок хранения анкет потока до связи с потоками LMS. null снимает дату. Изменение
         пишется в журнал (STREAM_END_DATE_CHANGED) без персональных данных.
       parameters:
         - $ref: '#/components/parameters/UuidId'
@@ -6398,6 +6650,7 @@ paths:
       summary: Кабинет вуза
       operationId: getPartnerCabinet
       description: >-
+        Пока кабинет вуза выключен (MODULE_PARTNER_ENABLED=false, по умолчанию), метод отвечает 404 всем.
         Только для роли PARTNER. Область — вуз профиля; проверяется в каждом запросе: профиль активен, вуз действующий, контакт актуален, иначе 403. Возвращает название и тип вуза, работы (программа, продукты, текущий и пройденные этапы с датами, статус), следующий шаг только с флагом «Показывать вузу», документы только с флагом «Доступен вузу», соглашения и имя ответственного КАМ. Комментарии, история, контакты и отметки не возвращаются.
       responses:
         '200':
@@ -6418,6 +6671,7 @@ paths:
       summary: Скачать документ, открытый вузу
       operationId: downloadPartnerDocument
       description: >-
+        Пока кабинет вуза выключен (MODULE_PARTNER_ENABLED=false, по умолчанию), метод отвечает 404 всем.
         Только для роли PARTNER. Документ своего вуза с флагом «Доступен вузу» и статусом CLEAN; иначе 404. Скачивание записывается в журнал безопасности.
       parameters:
         - $ref: '#/components/parameters/UuidId'
@@ -6520,6 +6774,14 @@ components:
       schema:
         type: string
         format: uuid
+    WorkflowVersionNumber:
+      name: number
+      in: path
+      required: true
+      description: Номер версии шаблона
+      schema:
+        type: integer
+        minimum: 1
     RegistrationId:
       name: registrationId
       in: path
@@ -6717,7 +6979,7 @@ components:
           schema:
             $ref: '#/components/schemas/ApiError'
     CrmProfileRequired:
-      description: У личности OIDC нет активного профиля CRM (CRM_PROFILE_REQUIRED), либо её профиль, созданный при первом входе, ожидает активации администратором (CRM_PROFILE_PENDING)
+      description: У личности OIDC нет активного профиля CRM (CRM_PROFILE_REQUIRED), либо её профиль, созданный при первом входе, ожидает активации администратором (CRM_PROFILE_PENDING), либо это представитель вуза при выключенном кабинете вуза (PARTNER_MODULE_DISABLED)
       content:
         application/json:
           schema:
@@ -7994,6 +8256,20 @@ components:
           type: string
           format: uri
           description: end_session_endpoint Keycloak с id_token_hint и post_logout_redirect_uri
+    Config:
+      type: object
+      required: [modules]
+      properties:
+        modules:
+          type: object
+          required: [enrolment, partner]
+          properties:
+            enrolment:
+              type: boolean
+              description: Модуль «Слушатели»; при false все методы /api/enrolment/** и /api/admin/personal-data/learners/** отвечают 404
+            partner:
+              type: boolean
+              description: Кабинет вуза; при false методы /api/partner/** и доступа в кабинет отвечают 404, вход представителя вуза отклоняется (403, PARTNER_MODULE_DISABLED)
     CsrfToken:
       type: object
       required: [headerName, token]
@@ -8015,8 +8291,10 @@ components:
             - BAD_REQUEST
             - UNAUTHENTICATED
             - FORBIDDEN
+            - CSRF_INVALID
             - CRM_PROFILE_REQUIRED
             - CRM_PROFILE_PENDING
+            - PARTNER_MODULE_DISABLED
             - LAST_ACTIVE_ADMIN
             - NOT_FOUND
             - METHOD_NOT_ALLOWED
@@ -8830,6 +9108,11 @@ components:
             nextStepPartnerVisible:
               type: boolean
               description: «Показывать вузу» — следующий шаг виден в кабинете вуза; сбрасывается, когда шаг или срок меняются без явного флага
+            route:
+              description: Шаблон и версия маршрута, по которым идёт работа; null — работа не связана с шаблоном
+              anyOf:
+                - $ref: '#/components/schemas/InteractionRoute'
+                - type: 'null'
             stages:
               type: array
               minItems: 1
@@ -9187,6 +9470,163 @@ components:
           type: integer
           minimum: 0
           description: Преподаватели по последним снимкам Moodle
+    ManagerWorkChange:
+      type: string
+      description: MOVED — были переходы между этапами, NEW — работа создана в периоде, COMPLETED — работа дошла до последнего этапа или завершена в периоде
+      enum: [MOVED, NEW, COMPLETED]
+    ManagerWorkDue:
+      type: string
+      enum: [OVERDUE, THIS_WEEK, NO_NEXT_STEP, IN_ORDER]
+    WorkControlTotals:
+      type: object
+      required: [organizations, works, overdue, thisWeek, noNextStep, inOrder, withIssues, moved, created, completed]
+      properties:
+        organizations:
+          type: integer
+          minimum: 0
+        works:
+          type: integer
+          minimum: 0
+        overdue:
+          type: integer
+          minimum: 0
+        thisWeek:
+          type: integer
+          minimum: 0
+        noNextStep:
+          type: integer
+          minimum: 0
+        inOrder:
+          type: integer
+          minimum: 0
+        withIssues:
+          type: integer
+          minimum: 0
+          description: Работы с открытой проблемой или риском
+        moved:
+          type: integer
+          minimum: 0
+        created:
+          type: integer
+          minimum: 0
+        completed:
+          type: integer
+          minimum: 0
+    WorkControlItem:
+      type: object
+      required: [interactionId, organizationId, organizationName, title, products, stage, stagePosition, stageTotal, due, problems, risks, transitions, created, completed]
+      properties:
+        interactionId:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        title:
+          type: string
+        direction:
+          type: [string, 'null']
+        program:
+          type: [string, 'null']
+        products:
+          type: array
+          items:
+            type: string
+        stage:
+          type: string
+        stagePosition:
+          type: integer
+          minimum: 0
+        stageTotal:
+          type: integer
+          minimum: 0
+        daysOnStage:
+          type: [integer, 'null']
+          minimum: 0
+        stageAtStart:
+          type: [string, 'null']
+          description: Этап на начало периода; null без периода или если работа создана позже
+        nextAction:
+          type: [string, 'null']
+        nextActionAt:
+          type: [string, 'null']
+          format: date-time
+        due:
+          $ref: '#/components/schemas/ManagerWorkDue'
+        status:
+          type: [string, 'null']
+          enum: [ACTIVE, PAUSED, COMPLETED, null]
+        problems:
+          type: integer
+          minimum: 0
+        risks:
+          type: integer
+          minimum: 0
+        issues:
+          type: [string, 'null']
+          description: Тексты открытых проблем и рисков
+        transitions:
+          type: integer
+          minimum: 0
+        created:
+          type: boolean
+        completed:
+          type: boolean
+    WorkControlManager:
+      type: object
+      required: [managerId, managerName, totals, works]
+      properties:
+        managerId:
+          type: [string, 'null']
+          format: uuid
+          description: null — работы вузов, требующих назначения
+        managerName:
+          type: [string, 'null']
+        totals:
+          $ref: '#/components/schemas/WorkControlTotals'
+        works:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkControlItem'
+    WorkControlTeam:
+      type: object
+      required: [teamId, teamName, totals, managers]
+      properties:
+        teamId:
+          type: [string, 'null']
+          format: uuid
+        teamName:
+          type: [string, 'null']
+        totals:
+          $ref: '#/components/schemas/WorkControlTotals'
+        managers:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkControlManager'
+    WorkControl:
+      type: object
+      required: [calculatedAt, byTeams, teams, total]
+      properties:
+        calculatedAt:
+          type: string
+          format: date-time
+        from:
+          type: [string, 'null']
+          format: date
+        to:
+          type: [string, 'null']
+          format: date
+        byTeams:
+          type: boolean
+          description: true у MANAGEMENT — разбивка по командам, у руководителя команда одна
+        teams:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkControlTeam'
+        total:
+          $ref: '#/components/schemas/WorkControlTotals'
     TeamsSummary:
       type: object
       required: [calculatedAt, stuckDays, teams, total]
@@ -9732,7 +10172,7 @@ components:
         nextStepPartnerVisible:
           type: [boolean, 'null']
           description: >-
-            «Показывать вузу» для следующего шага; true без шага — 400. Если поле не передано, флаг сохраняется, пока шаг и срок не меняются, и снимается при их изменении
+            «Показывать вузу» для следующего шага; true без шага или при выключенном кабинете вуза — 400. Если поле не передано, флаг сохраняется, пока шаг и срок не меняются, и снимается при их изменении
     InteractionStatusChange:
       type: object
       required: [version, status]
@@ -9807,7 +10247,7 @@ components:
           $ref: '#/components/schemas/AttachmentKind'
         partnerVisible:
           type: boolean
-          description: «Доступен вузу» — документ виден в кабинете вуза и скачивается там после антивирусной проверки
+          description: «Доступен вузу» — документ виден в кабинете вуза и скачивается там после антивирусной проверки; true при выключенном кабинете вуза — 400
     AttachmentDeletion:
       type: object
       required: [version]
@@ -9985,6 +10425,10 @@ components:
           minimum: 0
         optional:
           type: boolean
+        id:
+          type: [string, 'null']
+          format: uuid
+          description: Идентификатор этапа текущей версии, если этап сохраняется; новый этап — без идентификатора
     WorkflowTransitionInput:
       type: object
       required: [fromOrder, toOrder, commentRequired]
@@ -10014,6 +10458,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkflowTransitionInput'
+        comment:
+          type: [string, 'null']
+          maxLength: 1000
+          description: Комментарий к версии
     WorkflowTemplateUpdate:
       type: object
       required: [version]
@@ -10034,6 +10482,10 @@ components:
         version:
           type: integer
           minimum: 0
+        comment:
+          type: [string, 'null']
+          maxLength: 1000
+          description: Комментарий к новой версии
     WorkflowStage:
       allOf:
         - $ref: '#/components/schemas/WorkflowStageInput'
@@ -10057,7 +10509,7 @@ components:
           type: boolean
     WorkflowTemplate:
       type: object
-      required: [id, teamId, name, stages, transitions, defaultTemplate, version]
+      required: [id, teamId, name, stages, transitions, defaultTemplate, version, routeVersion]
       properties:
         id:
           type: string
@@ -10080,6 +10532,11 @@ components:
         version:
           type: integer
           minimum: 0
+          description: Версия записи для проверки одновременной правки
+        routeVersion:
+          type: integer
+          minimum: 0
+          description: Номер последней версии маршрута; каждое сохранение создаёт новую
     PageWorkflowTemplate:
       allOf:
         - $ref: '#/components/schemas/PageMeta'
@@ -10101,6 +10558,184 @@ components:
         version:
           type: integer
           minimum: 0
+    WorkflowTemplateVersion:
+      type: object
+      required: [number, name, comment, authorName, createdAt, stages, transitions, works]
+      properties:
+        number:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        comment:
+          type: [string, 'null']
+        authorName:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowStage'
+        transitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowTemplateTransition'
+        works:
+          type: [integer, 'null']
+          description: Идущие работы области на этой версии; null — у роли нет области бизнес-данных
+    WorkflowStageMatch:
+      type: string
+      description: SAME — тот же этап; RENAMED — тот же этап, новое название; BY_NAME — найден по названию; MANUAL — выбран вручную; REMOVED — этапа нет, работа переходит в следующий сохранившийся этап
+      enum: [SAME, RENAMED, BY_NAME, MANUAL, REMOVED]
+    WorkflowStageMapInput:
+      type: object
+      required: [fromStageId, toStageId]
+      properties:
+        fromStageId:
+          type: string
+          format: uuid
+        toStageId:
+          type: string
+          format: uuid
+    WorkflowRolloutWorkInput:
+      type: object
+      required: [id, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 0
+    WorkflowRolloutRequest:
+      type: object
+      properties:
+        stageMap:
+          type: [array, 'null']
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/WorkflowStageMapInput'
+        works:
+          type: [array, 'null']
+          minItems: 1
+          maxItems: 1000
+          description: Обязателен для обновления; версии работ из предпросмотра
+          items:
+            $ref: '#/components/schemas/WorkflowRolloutWorkInput'
+        replaceLocalChanges:
+          type: [boolean, 'null']
+          description: Заменить этапы, изменённые в карточке, этапами версии
+    WorkflowRolloutStageMatch:
+      type: object
+      required: [stageId, name, targetStageId, targetStageName, match, works]
+      properties:
+        stageId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        targetStageId:
+          type: string
+          format: uuid
+        targetStageName:
+          type: string
+        match:
+          $ref: '#/components/schemas/WorkflowStageMatch'
+        works:
+          type: integer
+          minimum: 0
+    WorkflowRolloutSource:
+      type: object
+      required: [version, works, stages]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        works:
+          type: integer
+          minimum: 0
+        stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowRolloutStageMatch'
+    WorkflowRolloutWork:
+      type: object
+      required: [id, title, organizationName, version, sourceVersion, currentStageName, targetStageName, currentStageRemoved, edited, changes]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        organizationName:
+          type: string
+        version:
+          type: integer
+          minimum: 0
+        sourceVersion:
+          type: integer
+          minimum: 1
+        currentStageName:
+          type: string
+        targetStageName:
+          type: string
+        currentStageRemoved:
+          type: boolean
+          description: Текущего этапа нет в новой версии или он объединён с другим
+        edited:
+          type: boolean
+          description: Этапы работы изменены в карточке
+        changes:
+          type: string
+    WorkflowRolloutPreview:
+      type: object
+      required: [templateId, targetVersion, targetStages, sources, works]
+      properties:
+        templateId:
+          type: string
+          format: uuid
+        targetVersion:
+          type: integer
+          minimum: 1
+        targetStages:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowStage'
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowRolloutSource'
+        works:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowRolloutWork'
+    WorkflowRolloutResult:
+      type: object
+      required: [targetVersion, updated]
+      properties:
+        targetVersion:
+          type: integer
+          minimum: 1
+        updated:
+          type: integer
+          minimum: 0
+    InteractionRoute:
+      type: object
+      required: [templateId, templateName, version, latestVersion]
+      properties:
+        templateId:
+          type: string
+          format: uuid
+        templateName:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        latestVersion:
+          type: integer
+          minimum: 1
     CrmProfile:
       type: object
       required: [id, displayName, role, teamId, teamName, active, enrolmentOperator, pendingActivation, accessRevision, version]
@@ -10149,6 +10784,27 @@ components:
         partnerOrganizationName:
           type: [string, 'null']
           description: Вуз представителя (роль PARTNER); у сотрудников null
+        roleSyncedAt:
+          type: [string, 'null']
+          format: date-time
+          description: >-
+            Когда роль последний раз подтверждена Keycloak (вход с ролью realm в токене, назначение роли из CRM или перенос ролей); null — роль ещё хранится только в CRM и не перенесена в Keycloak
+    KeycloakRoleMigration:
+      type: object
+      required: [assigned, kept, failed]
+      properties:
+        assigned:
+          type: integer
+          minimum: 0
+          description: Скольким учётным записям назначена роль realm по роли профиля CRM
+        kept:
+          type: integer
+          minimum: 0
+          description: Сколько учётных записей уже имели роль CRM в Keycloak; она не изменена и при следующем входе станет ролью профиля
+        failed:
+          type: integer
+          minimum: 0
+          description: Сколько учётных записей не удалось обработать (Keycloak отклонил запрос или учётной записи нет); их можно перенести повторным запуском
     NewEmployee:
       type: object
       required: [displayName, login, email, role]
@@ -10195,7 +10851,7 @@ components:
       additionalProperties: false
       required: [version]
       minProperties: 2
-      description: Изменяет только перечисленные поля. Профиль PARTNER здесь можно только переименовать или заблокировать, роль PARTNER не назначается и не снимается (400); доступ представителя вуза открывают в карточке вуза. Администратор не может изменить собственную роль, команду или активность; активному USER или LEADER нужна команда, MANAGEMENT (доступ на чтение ко всем командам) и ADMIN — нет; последнего активного ADMIN нельзя понизить или заблокировать (409 LAST_ACTIVE_ADMIN). enrolmentOperator разрешён только для USER и LEADER; смена роли на ADMIN или MANAGEMENT сбрасывает его в том же изменении
+      description: Изменяет только перечисленные поля. Профиль PARTNER здесь можно только переименовать или заблокировать, роль PARTNER не назначается и не снимается (400); доступ представителя вуза открывают в карточке вуза. Администратор не может изменить собственную роль, команду или активность; активному USER или LEADER нужна команда, MANAGEMENT (доступ на чтение ко всем командам) и ADMIN — нет; последнего активного ADMIN нельзя понизить или заблокировать (409 LAST_ACTIVE_ADMIN). enrolmentOperator разрешён только для USER и LEADER и только при включённом модуле «Слушатели» (иначе 400); смена роли на ADMIN или MANAGEMENT сбрасывает его в том же изменении
       properties:
         version:
           type: integer
@@ -10887,8 +11543,12 @@ components:
         фактические даты, иначе плановые даты, иначе срок договора пересекаются с ним; MANAGER — ответственный за
         мероприятие, PARTICIPANTS суммирует участия в Moodle по программам связанных работ, считая только запуски
         обучения, чей интервал [runStartsOn, runEndsOn) пересекается и с датами мероприятия, и с периодом отчёта;
-        применяются только фильтры organizationIds, organizationType, managerIds и includeNoManager, диаграмма не строится
-      enum: [PORTFOLIO, EVENTS, DEMAND, SNAPSHOT, DURATION, AGREEMENTS]
+        применяются только фильтры organizationIds, organizationType, managerIds и includeNoManager, диаграмма не строится.
+        MANAGER_WORK выдаёт по строке на работу с вузом, сгруппированную по менеджеру (ответственному за вуз), и итоговую строку
+        после работ каждого менеджера; период отбирает работы, созданные до его конца, активные сейчас или имевшие в нём
+        события; допускает фильтры по вузам, типу организации, направлениям, программам, продуктам, ответственным и этапам
+        (этап на конец периода), состояние работы, отметки и договор отклоняются, диаграмма не строится
+      enum: [PORTFOLIO, EVENTS, DEMAND, SNAPSHOT, DURATION, AGREEMENTS, MANAGER_WORK]
     ReportFormat:
       type: string
       description: PNG допустим только для диаграммы (при заданном groupBy); диаграмма экспортируется как PNG или PDF
@@ -10931,14 +11591,17 @@ components:
         STAGE, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; дни — десятичные числа с одним знаком после
         запятой. AGREEMENTS допускает ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND,
         ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS,
-        PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS.
+        PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS. MANAGER_WORK допускает MANAGER, ORGANIZATION, PRODUCTS,
+        PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS, NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS,
+        TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM, RISK.
       enum: [ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK,
              MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, EVENT_AT, EVENT_TYPE, FROM_STAGE, COMMENT, AUTHOR,
              APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, PARALLEL_RUNS, VENDORS, CONTRACT_NUMBER,
              LICENSE_SIGNED, LICENSE_EXPIRY_YEAR,
              TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON, TEAM, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS,
              AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME,
-             VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, ACTIVITY_STATUS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS]
+             VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, ACTIVITY_STATUS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS,
+             STAGE_AT_START, STAGE_AT_END, STAGE_POSITION, TRANSITIONS, PERIOD_COMMENTS, DUE_STATE, OVERDUE_DAYS]
     ReportFilters:
       type: object
       description: >
@@ -11017,6 +11680,11 @@ components:
           maximum: 3650
           description: >
             Только PORTFOLIO; оставляет взаимодействия, чей последний вход в текущий этап произошёл не менее чем за столько дней до формирования отчёта — то же правило, что у DAYS_ON_STAGE и фильтра minDaysOnStage списка работ; другие виды отклоняют его с 400 VALIDATION_ERROR
+        change:
+          oneOf:
+            - $ref: '#/components/schemas/ManagerWorkChange'
+            - type: 'null'
+          description: Только MANAGER_WORK; оставляет работы с переходами, новые или завершённые в периоде; другие виды отклоняют его с 400 VALIDATION_ERROR
     ReportAgreementFilters:
       type: object
       description: >
@@ -12301,6 +12969,7 @@ components:
                  CONTACT_RESTRICTED, CONTACT_RESTRICTION_LIFTED, SUBJECT_ANONYMIZED, RETENTION_APPLIED,
                  ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_SYNC_FAILED, ACCOUNT_CREATED,
                  ACCOUNT_PASSWORD_RESET, ACCOUNT_SESSIONS_ENDED, ACCOUNT_EMAIL_CHANGED, ACCOUNT_SECOND_FACTOR_RESET,
+                 ACCOUNT_ROLES_MIGRATED,
                  LEARNER_RESTRICTED, LEARNER_RESTRICTION_LIFTED, PAID_ORDERS_UPLOADED, LEARNERS_SYNCED,
                  LEARNER_LIST_VIEWED, LEARNER_SEARCHED, LEARNER_VIEWED, LEARNER_FIELDS_REVEALED, LEARNER_CHANGED,
                  LEARNER_ENROLMENTS_MOVED, LEARNER_TEMPLATE_PREVIEWED, LEARNER_TEMPLATE_IMPORTED, LMS_ROSTER_EXPORTED,
@@ -12671,7 +13340,7 @@ components:
       properties:
         moduleEnabled:
           type: boolean
-          description: APP_ENROLMENT_ENABLED; сохранённые профили учитываются и обезличиваются по сроку, даже если модуль отключён
+          description: MODULE_ENROLMENT_ENABLED; пока модуль выключен, срок хранения анкет не применяется и ключи не меняются, данные остаются в базе
         profiles:
           type: integer
           minimum: 0

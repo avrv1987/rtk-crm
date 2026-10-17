@@ -15,14 +15,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step 'backend: mvn -q -o test'
-(cd "$project_root/backend" && ./mvnw -q -o test)
+if [[ ${1-} != --compose-only ]]; then
+    step 'backend: mvn -q -o test'
+    (cd "$project_root/backend" && ./mvnw -q -o test)
 
-step 'frontend: npm run build'
-(cd "$project_root/frontend" && npm run build)
+    step 'frontend: npm run build'
+    (cd "$project_root/frontend" && npm run build)
 
-step 'frontend: npm test'
-(cd "$project_root/frontend" && npm test)
+    step 'frontend: npm test'
+    (cd "$project_root/frontend" && npm test)
+fi
 
 tmp_env=$(mktemp)
 cat > "$tmp_env" <<'ENV'
@@ -43,13 +45,20 @@ TLS_CERTIFICATE_KEY_FILE=/dev/null
 MOODLE_EDGE_HOST=lms.example.test
 ENV
 
-step 'docker compose config (compose.yaml)'
-(cd "$project_root" && docker compose --env-file "$tmp_env" config --quiet)
+step 'docker compose config (compose.yaml, profiles security and demo)'
+(cd "$project_root" && docker compose --env-file "$tmp_env" --profile security --profile demo config --quiet)
 
-step 'docker compose config (compose.yaml + compose.prod.yaml)'
-(cd "$project_root" && docker compose --env-file "$tmp_env" -f compose.yaml -f compose.prod.yaml config --quiet)
+step 'docker compose config (compose.yaml + compose.prod.yaml, profiles security and demo)'
+(cd "$project_root" && docker compose --env-file "$tmp_env" -f compose.yaml -f compose.prod.yaml --profile security --profile demo config --quiet)
 
-step 'docker compose config (compose.yaml + compose.edge.yaml)'
-(cd "$project_root" && docker compose --env-file "$tmp_env" -f compose.yaml -f compose.edge.yaml config --quiet)
+step 'docker compose config (compose.yaml + compose.edge.yaml, profiles security and demo)'
+(cd "$project_root" && docker compose --env-file "$tmp_env" -f compose.yaml -f compose.edge.yaml --profile security --profile demo config --quiet)
+
+step 'docker compose services without profiles: core only'
+core=$(cd "$project_root" && docker compose --env-file "$tmp_env" config --services | sort | paste -sd' ' -)
+[[ $core == 'backend keycloak postgres web' ]] || {
+    printf 'release-gate: unexpected core services: %s\n' "$core" >&2
+    exit 1
+}
 
 step 'OK'

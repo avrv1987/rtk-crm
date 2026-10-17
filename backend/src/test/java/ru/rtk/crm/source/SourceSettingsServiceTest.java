@@ -77,7 +77,7 @@ class SourceSettingsServiceTest {
     void setUp() {
         List.of(
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, 
                     id UUID PRIMARY KEY, display_name VARCHAR(200) NOT NULL
                 )
                 """,

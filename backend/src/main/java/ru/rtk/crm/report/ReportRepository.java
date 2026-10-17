@@ -171,6 +171,13 @@ public class ReportRepository {
             LEFT JOIN crm_user_profiles m ON m.id = ae.owner_manager_id
             """;
 
+    private static final String MANAGER_WORK_FROM = PORTFOLIO_FROM + "JOIN teams t ON t.id = o.team_id\n";
+    private static final String STAGE_AT = """
+            (SELECT se.stage_name_snapshot FROM interaction_events se
+             WHERE se.interaction_id = i.id AND se.occurred_at < :%s
+               AND se.type IN ('CREATED', 'TRANSITIONED', 'STAGES_EDITED', 'PLAN_UPDATED')
+             ORDER BY se.occurred_at DESC, se.version DESC LIMIT 1)""";
+
     private static final String DURATION_FROM = """
             FROM interaction_events e
             JOIN interactions i ON i.id = e.interaction_id
@@ -281,7 +288,7 @@ public class ReportRepository {
             }
             case SNAPSHOT -> new Selection("SELECT COUNT(*) " + SNAPSHOT_FROM + selection.sql(), selection.parameters());
             case PORTFOLIO -> new Selection("SELECT COUNT(*) " + PORTFOLIO_FROM + selection.sql(), selection.parameters());
-            case DEMAND, DURATION, AGREEMENTS -> throw new IllegalArgumentException("Rows of " + request.kind() + " are not counted here");
+            case DEMAND, DURATION, AGREEMENTS, MANAGER_WORK -> throw new IllegalArgumentException("Rows of " + request.kind() + " are not counted here");
         };
         return jdbcClient.sql(count.sql())
                 .params(count.parameters())
@@ -386,6 +393,169 @@ public class ReportRepository {
                         resultSet.getInt("final_stage") == 1
                 ))
                 .list();
+    }
+
+    public List<ManagerWorkLine> findManagerWork(
+            CrmProfile profile,
+            ReportFilters filters,
+            LocalDate from,
+            LocalDate to,
+            OffsetDateTime now
+    ) {
+        Optional<VisibilityScope> scope = organizationRepository.visibilityScope(profile);
+        if (scope.isEmpty()) {
+            return List.of();
+        }
+        OffsetDateTime fromAt = from == null ? null : from.atStartOfDay(ReportRequest.ZONE).toOffsetDateTime();
+        OffsetDateTime toAt = to == null ? null : to.plusDays(1).atStartOfDay(ReportRequest.ZONE).toOffsetDateTime();
+        Map<String, Object> parameters = new HashMap<>(scope.get().parameters());
+        if (fromAt != null) {
+            parameters.put("fromAt", fromAt);
+        }
+        if (toAt != null) {
+            parameters.put("toAt", toAt);
+        }
+        String startStage = fromAt == null ? "CAST(NULL AS VARCHAR(200))" : STAGE_AT.formatted("fromAt");
+        String endStage = toAt != null && toAt.isBefore(now) ? STAGE_AT.formatted("toAt") : "s.name";
+        List<String> conditions = new ArrayList<>(List.of(
+                "i.organization_id IN (SELECT id FROM organizations WHERE " + scope.get().condition() + ")",
+                "o.type <> 'OPEN_ENROLLMENT'",
+                OrganizationRepository.currentStatus("o")
+        ));
+        if (toAt != null) {
+            conditions.add("i.created_at < :toAt");
+        }
+        conditions.add(fromAt == null && toAt == null
+                ? "i.work_status = 'ACTIVE'"
+                : "(i.work_status = 'ACTIVE' OR EXISTS (SELECT 1 FROM interaction_events pe WHERE pe.interaction_id = i.id AND "
+                        + inPeriod("pe.occurred_at", fromAt, toAt) + "))");
+        organizationFilters(conditions, parameters, filters);
+        dimension(conditions, parameters, "d.id", "directionIds", filters.directionIds(), filters.includeNoDirection());
+        dimension(conditions, parameters, "i.program_id", "programIds", filters.programIds(), filters.includeNoProgram());
+        dimension(conditions, parameters, "o.owner_manager_id", "managerIds", filters.managerIds(), filters.includeNoManager());
+        products(conditions, parameters, filters);
+        if (!filters.stages().isEmpty()) {
+            conditions.add("(" + endStage + ") IN (:stages)");
+            parameters.put("stages", filters.stages());
+        }
+        String unassigned = OrganizationRepository.requiresAssignment("o");
+        String lastStage = "(SELECT fs.id FROM interaction_stages fs WHERE fs.interaction_id = i.id ORDER BY fs.stage_order DESC LIMIT 1)";
+        String sql = "SELECT * FROM (SELECT i.id AS interaction_id, i.title AS interaction_title, o.id AS organization_id,"
+                + " o.name AS organization_name, t.id AS team_id, t.name AS team_name,"
+                + " CASE WHEN " + unassigned + " THEN NULL ELSE o.owner_manager_id END AS manager_id,"
+                + " CASE WHEN " + unassigned + " THEN NULL ELSE m.display_name END AS manager_name,"
+                + " d.name AS direction_name, p.name AS program_name, s.name AS stage_name,"
+                + " (SELECT COUNT(*) FROM interaction_stages ps WHERE ps.interaction_id = i.id AND ps.stage_order <= s.stage_order)"
+                + " AS stage_position,"
+                + " (SELECT COUNT(*) FROM interaction_stages ps WHERE ps.interaction_id = i.id) AS stage_total,"
+                + " " + STAGE_ENTERED + " AS stage_entered_at, " + startStage + " AS start_stage, " + endStage + " AS end_stage,"
+                + " i.next_action, i.next_action_at,\n" + MARKS
+                + " (SELECT COUNT(*) FROM interaction_events te WHERE te.interaction_id = i.id AND te.type = 'TRANSITIONED'"
+                + " AND " + inPeriod("te.occurred_at", fromAt, toAt) + ") AS transitions,"
+                + " CASE WHEN " + inPeriod("i.created_at", fromAt, toAt) + " THEN 1 ELSE 0 END AS new_in_period,"
+                + " CASE WHEN EXISTS (SELECT 1 FROM interaction_events ce WHERE ce.interaction_id = i.id"
+                + " AND ce.type IN ('CREATED', 'TRANSITIONED') AND ce.stage_id = " + lastStage
+                + " AND " + inPeriod("ce.occurred_at", fromAt, toAt) + ")"
+                + " OR i.work_status = 'COMPLETED' AND EXISTS (SELECT 1 FROM interaction_events ke WHERE ke.interaction_id = i.id"
+                + " AND ke.type = 'STATUS_CHANGED' AND " + inPeriod("ke.occurred_at", fromAt, toAt) + ")"
+                + " THEN 1 ELSE 0 END AS completed_in_period "
+                + MANAGER_WORK_FROM + " WHERE " + String.join(" AND ", conditions) + ") w"
+                + (filters.change() == null ? "" : switch (filters.change()) {
+                    case MOVED -> " WHERE w.transitions > 0";
+                    case NEW -> " WHERE w.new_in_period = 1";
+                    case COMPLETED -> " WHERE w.completed_in_period = 1";
+                })
+                + " ORDER BY w.organization_name, w.interaction_title, w.interaction_id";
+        return jdbcClient.sql(sql)
+                .params(parameters)
+                .query((resultSet, rowNumber) -> {
+                    OffsetDateTime stageEnteredAt = resultSet.getObject("stage_entered_at", OffsetDateTime.class);
+                    return new ManagerWorkLine(
+                            resultSet.getObject("interaction_id", UUID.class),
+                            resultSet.getString("interaction_title"),
+                            resultSet.getObject("organization_id", UUID.class),
+                            resultSet.getString("organization_name"),
+                            resultSet.getObject("team_id", UUID.class),
+                            resultSet.getString("team_name"),
+                            resultSet.getObject("manager_id", UUID.class),
+                            resultSet.getString("manager_name"),
+                            resultSet.getString("direction_name"),
+                            resultSet.getString("program_name"),
+                            resultSet.getString("stage_name"),
+                            resultSet.getInt("stage_position"),
+                            resultSet.getInt("stage_total"),
+                            stageEnteredAt == null ? null : Math.max(0, Duration.between(stageEnteredAt, now).toDays()),
+                            resultSet.getString("start_stage"),
+                            resultSet.getString("end_stage"),
+                            resultSet.getString("next_action"),
+                            resultSet.getObject("next_action_at", OffsetDateTime.class),
+                            InteractionIssueRepository.mapMarks(resultSet),
+                            resultSet.getLong("transitions"),
+                            resultSet.getInt("new_in_period") == 1,
+                            resultSet.getInt("completed_in_period") == 1
+                    );
+                })
+                .list();
+    }
+
+    public Map<UUID, List<String>> findManagerWorkProducts(List<UUID> interactionIds) {
+        Map<UUID, List<String>> products = new HashMap<>();
+        for (int start = 0; start < interactionIds.size(); start += PRODUCT_BATCH_SIZE) {
+            jdbcClient.sql("""
+                    SELECT DISTINCT pa.interaction_id, pr.name
+                    FROM product_agreements pa
+                    JOIN products pr ON pr.id = pa.product_id
+                    WHERE pa.interaction_id IN (:interactionIds) AND pa.archived_at IS NULL
+                    ORDER BY pr.name
+                    """)
+                    .param("interactionIds", interactionIds.subList(start, Math.min(start + PRODUCT_BATCH_SIZE, interactionIds.size())))
+                    .query((ResultSet resultSet) -> {
+                        products.computeIfAbsent(resultSet.getObject("interaction_id", UUID.class), id -> new ArrayList<>())
+                                .add(resultSet.getString("name"));
+                    });
+        }
+        return products;
+    }
+
+    public Map<UUID, List<String>> findManagerWorkComments(List<UUID> interactionIds, LocalDate from, LocalDate to) {
+        OffsetDateTime fromAt = from == null ? null : from.atStartOfDay(ReportRequest.ZONE).toOffsetDateTime();
+        OffsetDateTime toAt = to == null ? null : to.plusDays(1).atStartOfDay(ReportRequest.ZONE).toOffsetDateTime();
+        Map<String, Object> parameters = new HashMap<>();
+        if (fromAt != null) {
+            parameters.put("fromAt", fromAt);
+        }
+        if (toAt != null) {
+            parameters.put("toAt", toAt);
+        }
+        Map<UUID, List<String>> comments = new HashMap<>();
+        for (int start = 0; start < interactionIds.size(); start += PRODUCT_BATCH_SIZE) {
+            jdbcClient.sql("SELECT e.interaction_id, e.occurred_at, " + InteractionRepository.EVENT_COMMENT + " AS event_comment"
+                            + " FROM interaction_events e WHERE e.interaction_id IN (:interactionIds)"
+                            + " AND e.type IN ('COMMENTED', 'TRANSITIONED') AND " + inPeriod("e.occurred_at", fromAt, toAt)
+                            + " ORDER BY e.occurred_at, e.version, e.id")
+                    .params(parameters)
+                    .param("interactionIds", interactionIds.subList(start, Math.min(start + PRODUCT_BATCH_SIZE, interactionIds.size())))
+                    .query((ResultSet resultSet) -> {
+                        String text = resultSet.getString("event_comment");
+                        if (text != null) {
+                            comments.computeIfAbsent(resultSet.getObject("interaction_id", UUID.class), id -> new ArrayList<>())
+                                    .add(DATE.format(resultSet.getObject("occurred_at", OffsetDateTime.class)
+                                            .atZoneSameInstant(ReportRequest.ZONE)) + ": " + text);
+                        }
+                    });
+        }
+        return comments;
+    }
+
+    private static String inPeriod(String column, OffsetDateTime fromAt, OffsetDateTime toAt) {
+        List<String> bounds = new ArrayList<>();
+        if (fromAt != null) {
+            bounds.add(column + " >= :fromAt");
+        }
+        if (toAt != null) {
+            bounds.add(column + " < :toAt");
+        }
+        return bounds.isEmpty() ? "TRUE" : "(" + String.join(" AND ", bounds) + ")";
     }
 
     private List<ReportRow> findDemandRows(VisibilityScope scope, ReportRequest request, int limit, long offset) {
@@ -587,7 +757,7 @@ public class ReportRepository {
                     + " ORDER BY o.name, i.created_at, i.id", selection.parameters());
             case PORTFOLIO -> new Selection(PORTFOLIO_SELECT + PORTFOLIO_FROM + selection.sql()
                     + " ORDER BY o.name, i.created_at, i.id", selection.parameters());
-            case DEMAND, DURATION, AGREEMENTS -> throw new IllegalArgumentException("Rows of " + request.kind() + " are not selected here");
+            case DEMAND, DURATION, AGREEMENTS, MANAGER_WORK -> throw new IllegalArgumentException("Rows of " + request.kind() + " are not selected here");
         };
     }
 
@@ -759,7 +929,7 @@ public class ReportRepository {
             case EVENTS -> conditions.addAll(bounds("e.occurred_at", request, parameters));
             case DEMAND -> conditions.addAll(bounds("r.submitted_at", request, parameters));
             case PORTFOLIO -> portfolioPeriod(conditions, parameters, request);
-            case SNAPSHOT, DURATION -> {
+            case SNAPSHOT, DURATION, MANAGER_WORK -> {
             }
         }
     }

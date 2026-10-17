@@ -15,6 +15,7 @@ import org.springframework.boot.context.properties.source.ConfigurationPropertyS
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
+import ru.rtk.crm.module.ModuleProperties;
 
 class LearnerDataCipherTest {
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -147,10 +148,10 @@ class LearnerDataCipherTest {
 
     @Test
     void failsAtStartupOnlyWhenEnabledModuleLacksKeys() {
-        LearnerDataCipher disabled = new LearnerDataCipher(new EnrolmentProperties(false, "", Map.of("v1", ""), ""));
+        LearnerDataCipher disabled = new LearnerDataCipher(new EnrolmentProperties("", Map.of("v1", ""), ""), new ModuleProperties(new ModuleProperties.Toggle(false), null));
         assertThatThrownBy(() -> disabled.encrypt("0123", SERIES_CONTEXT))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Модуль «Слушатели» выключен: шифрование недоступно (app.enrolment.enabled=false)");
+                .hasMessage("Модуль «Слушатели» выключен: шифрование недоступно (app.modules.enrolment.enabled=false)");
 
         assertThatThrownBy(() -> cipher("v1", Map.of("v1", ""), FINGERPRINT_KEY))
                 .isInstanceOf(IllegalStateException.class)
@@ -183,7 +184,6 @@ class LearnerDataCipherTest {
                 "APP_ENROLMENT_KEYS_V2", SECOND_KEY
         )));
         environment.getPropertySources().addLast(new MapPropertySource("application", Map.of(
-                "app.enrolment.enabled", "true",
                 "app.enrolment.keys.v1", FIRST_KEY,
                 "app.enrolment.fingerprint-key", FINGERPRINT_KEY
         )));
@@ -194,11 +194,11 @@ class LearnerDataCipherTest {
 
         assertThat(properties.activeKeyVersion()).isEqualTo("v2");
         assertThat(properties.keys()).containsOnlyKeys("v1", "v2");
-        assertThat(new LearnerDataCipher(properties).encrypt("0123", SERIES_CONTEXT)).startsWith("v2:");
+        assertThat(new LearnerDataCipher(properties, new ModuleProperties(new ModuleProperties.Toggle(true), null)).encrypt("0123", SERIES_CONTEXT)).startsWith("v2:");
     }
 
     private static LearnerDataCipher cipher(String active, Map<String, String> keys, String fingerprintKey) {
-        return new LearnerDataCipher(new EnrolmentProperties(true, active, keys, fingerprintKey));
+        return new LearnerDataCipher(new EnrolmentProperties(active, keys, fingerprintKey), new ModuleProperties(new ModuleProperties.Toggle(true), null));
     }
 
     private static String randomKey(int bytes) {

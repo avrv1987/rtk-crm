@@ -406,10 +406,13 @@ public class SourceSyncService {
         SiteResponse response = siteApiClient.fetch(settings.website(), updatedSince);
         if (response.paidOrders() != null) {
             PaidOrderBatch batch = response.paidOrders();
-            if (organizationId == null) {
+            if (!paidOrderEnrolment.enabled()) {
+                repository.completeRun(runId, totals(0, new int[SyncOutcome.values().length]),
+                        "Оплаты физлиц не принимаются: модуль «Слушатели» выключен", OffsetDateTime.now());
+            } else if (organizationId == null) {
                 PaidOrdersApplied applied = applyPaidOrders(batch, runId, actorProfileId, null);
                 repository.completeRun(runId, applied.totals(), paidOrdersMessage(batch), OffsetDateTime.now());
-                if (paidOrderEnrolment.enabled() && !batch.orders().isEmpty()) {
+                if (!batch.orders().isEmpty()) {
                     paidOrderEnrolment.journalSync(runId, applied.intake());
                 }
             } else {

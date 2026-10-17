@@ -3,6 +3,14 @@ package ru.rtk.crm.access;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -26,6 +34,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
+import org.springframework.security.oauth2.core.oidc.OidcUserInfo;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -69,6 +78,7 @@ import ru.rtk.crm.security.CrmProfileRegistrationSuccessHandler;
         CommandIdempotencyRepository.class,
         AuditJournalRepository.class,
         AccountSyncRepository.class,
+        AccountSyncService.class,
         AdminCrmProfileServiceTest.JsonConfiguration.class
 })
 class AdminCrmProfileServiceTest {
@@ -124,6 +134,9 @@ class AdminCrmProfileServiceTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private AccountSyncService accountSyncService;
 
     @MockitoBean
     private KeycloakAccountClient keycloakAccountClient;
@@ -517,7 +530,7 @@ class AdminCrmProfileServiceTest {
         OidcUser newcomer = oidcUser("newcomer-subject", "Новый Сотрудник", "newcomer");
         MockHttpServletResponse loginResponse = new MockHttpServletResponse();
 
-        new CrmProfileRegistrationSuccessHandler(currentProfileService).onAuthenticationSuccess(
+        new CrmProfileRegistrationSuccessHandler(currentProfileService, adminCrmProfileService).onAuthenticationSuccess(
                 new MockHttpServletRequest(),
                 loginResponse,
                 new OAuth2AuthenticationToken(newcomer, List.of(), "keycloak")
@@ -581,6 +594,166 @@ class AdminCrmProfileServiceTest {
         );
         assertThatThrownBy(() -> currentProfileService.requireActiveProfile(newcomer))
                 .isInstanceOf(CrmProfileNotFoundException.class);
+    }
+
+    @Test
+    void keycloakRoleAppliedAtNextLoginKeepsEveryConsequenceOfARoleChange() {
+        jdbcTemplate.update("UPDATE crm_user_profiles SET enrolment_operator = TRUE WHERE id = ?", USER_A);
+        CrmProfile before = activeProfile(USER_A);
+
+        login(USER_A, "crm-user");
+        assertThat(profile(USER_A).role()).isEqualTo(UserRole.USER);
+        assertThat(profile(USER_A).roleSyncedAt()).isNotNull();
+        assertThat(profile(USER_A).version()).isZero();
+        assertThat(count("crm_profile_events")).isZero();
+
+        login(USER_A, "crm-admin");
+
+        CrmProfile after = currentProfileService.requireActiveProfile(token(USER_A, "crm-admin"));
+        assertThat(after.role()).isEqualTo(UserRole.ADMIN);
+        assertThat(after.accessRevision()).isEqualTo(before.accessRevision() + 1);
+        assertThat(profile(USER_A).enrolmentOperator()).isFalse();
+        assertThat(ownerOf(ORGANIZATION_A)).isNull();
+        assertThat(ownerOf(ORGANIZATION_A_SECOND)).isNull();
+        assertThat(organizationAssignmentRepository.findEventsByOrganizationId(ORGANIZATION_A)).singleElement().satisfies(event -> {
+            assertThat(event.reason()).isEqualTo(OrganizationAssignmentReason.PROFILE_ROLE_CHANGED);
+            assertThat(event.actorDisplayName()).isEqualTo("Keycloak");
+        });
+        assertThat(adminCrmProfileService.events(administrator, USER_A)).singleElement().satisfies(event -> {
+            assertThat(event.actorDisplayName()).isEqualTo("Keycloak");
+            assertThat(event.previousRole()).isEqualTo(UserRole.USER);
+            assertThat(event.role()).isEqualTo(UserRole.ADMIN);
+            assertThat(event.previousEnrolmentOperator()).isTrue();
+            assertThat(event.enrolmentOperator()).isFalse();
+        });
+        verify(keycloakAccountClient, never()).setCrmRole(anyString(), any());
+    }
+
+    @Test
+    void severalKeycloakRolesResolveByPriorityAndForeignRolesAreIgnored() {
+        login(USER_A, "crm-user", "crm-leader", "crm-management", "crm-partner", "offline_access");
+        assertThat(profile(USER_A).role()).isEqualTo(UserRole.MANAGEMENT);
+
+        login(USER_B, "crm-user", "crm-leader");
+        assertThat(profile(USER_B).role()).isEqualTo(UserRole.LEADER);
+        assertThat(ownerOf(ORGANIZATION_B)).isEqualTo(USER_B);
+
+        login(LEADER_A, "crm-partner", "default-roles-rtk-crm");
+        assertThat(profile(LEADER_A).role()).isEqualTo(UserRole.LEADER);
+        assertThat(profile(LEADER_A).version()).isZero();
+    }
+
+    @Test
+    void withoutACrmRoleInTheTokenAProfileConfirmedByKeycloakHasNoAccess() {
+        assertThat(currentProfileService.requireActiveProfile(token(USER_A)).role()).isEqualTo(UserRole.USER);
+
+        login(USER_A, "crm-user");
+        assertThat(currentProfileService.requireActiveProfile(token(USER_A, "crm-user")).role()).isEqualTo(UserRole.USER);
+        assertThatThrownBy(() -> currentProfileService.requireActiveProfile(token(USER_A)))
+                .isInstanceOf(CrmProfileNotFoundException.class);
+        assertThatThrownBy(() -> currentProfileService.requireActiveProfile(token(USER_A, "crm-partner")))
+                .isInstanceOf(CrmProfileNotFoundException.class);
+
+        login(USER_A);
+        assertThat(profile(USER_A).role()).isEqualTo(UserRole.USER);
+        assertThat(profile(USER_A).active()).isTrue();
+        assertThat(ownerOf(ORGANIZATION_A)).isEqualTo(USER_A);
+
+        OidcUser newcomer = oidcUser("newcomer-subject", "Новый Сотрудник", "newcomer");
+        currentProfileService.registerPendingProfile(newcomer);
+        login("newcomer-subject", "crm-leader");
+        assertThatThrownBy(() -> currentProfileService.requireActiveProfile(token("newcomer-subject", "crm-leader")))
+                .isInstanceOf(CrmProfilePendingException.class);
+        assertThat(adminCrmProfileService.list(administrator, pendingQuery()).items())
+                .singleElement().extracting(AdminCrmProfile::role).isEqualTo(UserRole.LEADER);
+    }
+
+    @Test
+    void keycloakRoleCannotForgeOrEscalatePastCrmBindings() {
+        DefaultOidcUser forged = new DefaultOidcUser(
+                List.of(),
+                token(USER_A).getIdToken(),
+                new OidcUserInfo(Map.of("sub", USER_A.toString(), "realm_access", Map.of("roles", List.of("crm-admin"))))
+        );
+        assertThat(CurrentProfileService.keycloakRoles(forged)).isEmpty();
+
+        UUID partner = UUID.randomUUID();
+        insertProfile(partner, "Представитель вуза", "PARTNER", null, true);
+        jdbcTemplate.update("UPDATE crm_user_profiles SET partner_organization_id = ? WHERE id = ?", ORGANIZATION_A, partner);
+        login(partner, "crm-admin");
+        assertThat(profile(partner).role()).isEqualTo(UserRole.PARTNER);
+        assertThat(profile(partner).roleSyncedAt()).isNull();
+        login(partner, "crm-partner", "crm-admin");
+        assertThat(profile(partner).roleSyncedAt()).isNotNull();
+        assertThat(currentProfileService.requirePartnerProfile(token(partner, "crm-partner")).role()).isEqualTo(UserRole.PARTNER);
+        assertThatThrownBy(() -> currentProfileService.requirePartnerProfile(token(partner, "crm-admin")))
+                .isInstanceOf(CrmProfileNotFoundException.class);
+        assertThatThrownBy(() -> currentProfileService.requireActiveProfile(token(partner, "crm-partner")))
+                .isInstanceOf(AdminCrmProfileAccessDeniedException.class);
+
+        login(USER_A, "crm-partner");
+        assertThat(profile(USER_A).role()).isEqualTo(UserRole.USER);
+
+        UUID management = UUID.randomUUID();
+        insertProfile(management, "Руководство", "MANAGEMENT", null, true);
+        login(management, "crm-user");
+        assertThat(profile(management).role()).isEqualTo(UserRole.USER);
+        assertThat(profile(management).active()).isFalse();
+        assertThat(profile(management).pendingActivation()).isTrue();
+        assertThatThrownBy(() -> currentProfileService.requireActiveProfile(token(management, "crm-user")))
+                .isInstanceOf(CrmProfilePendingException.class);
+
+        assertThatThrownBy(() -> adminCrmProfileService.update(
+                userA, USER_A, new AdminCrmProfileUpdateRequest(0).setRole(UserRole.ADMIN), "self-escalation", REQUEST_ID
+        )).isInstanceOf(AdminCrmProfileAccessDeniedException.class);
+        verify(keycloakAccountClient, never()).setCrmRole(anyString(), any());
+    }
+
+    @Test
+    void administratorRoleChangeGoesToKeycloakFirstAndKeepsCrmUnchangedWhenKeycloakFails() {
+        AdminCrmProfile promoted = adminCrmProfileService.update(
+                administrator, USER_A, new AdminCrmProfileUpdateRequest(0).setRole(UserRole.LEADER), "promote", REQUEST_ID
+        );
+        verify(keycloakAccountClient).setCrmRole(USER_A.toString(), UserRole.LEADER);
+        assertThat(promoted.role()).isEqualTo(UserRole.LEADER);
+        assertThat(promoted.roleSyncedAt()).isNotNull();
+
+        adminCrmProfileService.update(
+                administrator, USER_A, new AdminCrmProfileUpdateRequest(1).setDisplayName("Анна"), "rename", REQUEST_ID
+        );
+        verify(keycloakAccountClient, times(1)).setCrmRole(anyString(), any());
+
+        doThrow(new AccountSyncException("Keycloak недоступен; роль не изменена, повторите позже"))
+                .when(keycloakAccountClient).setCrmRole(USER_B.toString(), UserRole.LEADER);
+        assertThatThrownBy(() -> adminCrmProfileService.update(
+                administrator, USER_B, new AdminCrmProfileUpdateRequest(0).setRole(UserRole.LEADER), "promote-down", REQUEST_ID
+        )).isInstanceOf(AccountSyncException.class);
+        assertThat(profile(USER_B).role()).isEqualTo(UserRole.USER);
+        assertThat(profile(USER_B).roleSyncedAt()).isNull();
+    }
+
+    @Test
+    void roleMigrationMovesOnlyRolesNotYetInKeycloakAndIsRepeatable() {
+        when(keycloakAccountClient.configured()).thenReturn(true);
+        when(keycloakAccountClient.addCrmRoleIfNone(anyString(), any())).thenReturn(true);
+        when(keycloakAccountClient.addCrmRoleIfNone(LEADER_A.toString(), UserRole.LEADER)).thenReturn(false);
+        doThrow(new AccountSyncException("HTTP 404")).when(keycloakAccountClient).addCrmRoleIfNone(USER_B.toString(), UserRole.USER);
+        login(ADMIN, "crm-admin");
+        currentProfileService.registerPendingProfile(oidcUser("newcomer-subject", "Новый", "newcomer"));
+
+        assertThat(accountSyncService.migrateRoles(administrator, REQUEST_ID))
+                .isEqualTo(new AccountSyncService.RoleMigration(1, 1, 1));
+        verify(keycloakAccountClient).addCrmRoleIfNone(USER_A.toString(), UserRole.USER);
+        verify(keycloakAccountClient, never()).addCrmRoleIfNone(eq(ADMIN.toString()), any());
+        verify(keycloakAccountClient, never()).addCrmRoleIfNone(eq("newcomer-subject"), any());
+        assertThat(profile(USER_B).roleSyncedAt()).isNull();
+
+        assertThat(accountSyncService.migrateRoles(administrator, REQUEST_ID))
+                .isEqualTo(new AccountSyncService.RoleMigration(0, 0, 1));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_events WHERE action = 'ACCOUNT_ROLES_MIGRATED'", Integer.class)).isEqualTo(2);
+        assertThatThrownBy(() -> accountSyncService.migrateRoles(leaderA, REQUEST_ID))
+                .isInstanceOf(AdminCrmProfileAccessDeniedException.class);
     }
 
     @Test
@@ -854,6 +1027,28 @@ class AdminCrmProfileServiceTest {
         assertThat(event.occurredAt()).isNotNull();
     }
 
+    private void login(UUID profileId, String... roles) {
+        login(profileId.toString(), roles);
+    }
+
+    private void login(String subject, String... roles) {
+        adminCrmProfileService.applyKeycloakRole(
+                ISSUER, subject, CurrentProfileService.keycloakRoles(token(subject, roles)), REQUEST_ID
+        );
+    }
+
+    private OidcUser token(UUID profileId, String... roles) {
+        return token(profileId.toString(), roles);
+    }
+
+    private OidcUser token(String subject, String... roles) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("iss", ISSUER);
+        claims.put("sub", subject);
+        claims.put("realm_access", Map.of("roles", List.of(roles)));
+        return new DefaultOidcUser(List.of(), new OidcIdToken("id-token", Instant.now(), Instant.now().plusSeconds(60), claims));
+    }
+
     private OidcUser oidcUser(String subject, String name, String preferredUsername) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("iss", ISSUER);
@@ -901,7 +1096,7 @@ class AdminCrmProfileServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,

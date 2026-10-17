@@ -203,6 +203,7 @@ class InteractionServiceTemplateLockTest {
                 ),
                 List.of(new WorkflowTemplateTransition(startId, finishId, false)),
                 false,
+                0,
                 0
         );
     }

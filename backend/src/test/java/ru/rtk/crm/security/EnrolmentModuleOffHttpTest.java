@@ -35,7 +35,7 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
         "app.oidc.public-base-url=http://crm.test",
         "app.oidc.internal-base-url=http://keycloak.test",
         "app.oidc.client-secret=test-client-secret",
-        "app.enrolment.enabled=false"
+        "app.modules.enrolment.enabled=false"
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("oidc")
@@ -52,7 +52,7 @@ class EnrolmentModuleOffHttpTest {
     @BeforeEach
     void setUp() {
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, 
                     id UUID PRIMARY KEY, issuer VARCHAR(512) NOT NULL, subject VARCHAR(512) NOT NULL,
                     display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL DEFAULT TRUE, pending_activation BOOLEAN NOT NULL DEFAULT FALSE,

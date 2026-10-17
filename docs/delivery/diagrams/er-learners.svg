@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="691" height="351" viewBox="0 0 691 351" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif">
+<title>ER: Модуль «Слушатели»</title>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="24.0" y="31.0" font-size="15" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="24.0" dy="0">ER: Модуль «Слушатели»</tspan></text>
+<text x="24.0" y="49.0" font-size="11" text-anchor="start" fill="#616e7c"><tspan x="24.0" dy="0">Колонки: PK, FK, уникальные, перечисления и имена. Связь идёт от колонки внешнего ключа (много) к таблице</tspan><tspan x="24.0" dy="14">(один). Пунктир — таблица, подробно показанная на другой диаграмме.</tspan></text>
+<polyline points="260.4,295.0 240.9,295.0 240.9,243.0 212.4,243.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="251.4,295.0 260.4,290.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="251.4,295.0 260.4,295.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="251.4,295.0 260.4,300.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="218.4,238.0 218.4,248.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="411.1,149.0 441.5,149.0 441.5,243.0 422.0,243.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="420.1,149.0 411.1,144.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="420.1,149.0 411.1,149.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="420.1,149.0 411.1,154.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="428.0,238.0 428.0,248.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="271.3,164.0 231.9,164.0 231.9,112.0 190.5,112.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="262.3,164.0 271.3,159.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="262.3,164.0 271.3,164.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="262.3,164.0 271.3,169.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="196.5,107.0 196.5,117.0" fill="none" stroke="#52606d" stroke-width="1.2"/>
+<polyline points="411.1,179.0 450.5,179.0 450.5,112.0 470.0,112.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="418.1,174.0 418.1,184.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<polyline points="464.0,107.0 464.0,117.0" fill="none" stroke="#8a96a3" stroke-width="1.2"/>
+<rect x="51.9" y="104.0" width="138.7" height="86.0" rx="0" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="51.9" y="104.0" width="138.7" height="22.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="121.2" y="119.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="121.2" dy="0">enrolment_streams</tspan></text>
+<text x="56.9" y="138.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="56.9" dy="0">PK</tspan></text>
+<text x="89.9" y="138.0" font-size="11" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="89.9" dy="0">id</tspan></text>
+<text x="89.9" y="153.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="89.9" dy="0">course_key</tspan></text>
+<text x="89.9" y="168.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="89.9" dy="0">stream_no</tspan></text>
+<text x="89.9" y="183.0" font-size="10" text-anchor="start" fill="#616e7c"><tspan x="89.9" dy="0">… ещё 5 кол.</tspan></text>
+<rect x="271.3" y="104.0" width="139.8" height="101.0" rx="0" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="271.3" y="104.0" width="139.8" height="22.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="341.2" y="119.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="341.2" dy="0">learner_enrolments</tspan></text>
+<text x="276.3" y="138.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="276.3" dy="0">PK</tspan></text>
+<text x="309.3" y="138.0" font-size="11" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="309.3" dy="0">id</tspan></text>
+<text x="276.3" y="153.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="276.3" dy="0">FK</tspan></text>
+<text x="309.3" y="153.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="309.3" dy="0">learner_id</tspan></text>
+<text x="276.3" y="168.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="276.3" dy="0">FK</tspan></text>
+<text x="309.3" y="168.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="309.3" dy="0">stream_id</tspan></text>
+<text x="276.3" y="183.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="276.3" dy="0">FK</tspan></text>
+<text x="309.3" y="183.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="309.3" dy="0">source_record_id</tspan></text>
+<text x="309.3" y="198.0" font-size="10" text-anchor="start" fill="#616e7c"><tspan x="309.3" dy="0">… ещё 5 кол.</tspan></text>
+<rect x="470.0" y="104.0" width="191.4" height="44.0" rx="0" fill="#f2f4f7" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="565.7" y="121.0" font-size="12" text-anchor="middle" fill="#616e7c" font-weight="bold"><tspan x="565.7" dy="0">source_records</tspan></text>
+<text x="565.7" y="136.0" font-size="10" text-anchor="middle" fill="#616e7c"><tspan x="565.7" dy="0">см. «Источники и синхронизации»</tspan></text>
+<rect x="30.0" y="235.0" width="182.4" height="44.0" rx="0" fill="#f2f4f7" stroke="#8a96a3" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="121.2" y="252.0" font-size="12" text-anchor="middle" fill="#616e7c" font-weight="bold"><tspan x="121.2" dy="0">crm_user_profiles</tspan></text>
+<text x="121.2" y="267.0" font-size="10" text-anchor="middle" fill="#616e7c"><tspan x="121.2" dy="0">см. «Профили, права и журнал»</tspan></text>
+<rect x="260.4" y="235.0" width="161.6" height="86.0" rx="0" fill="#ffffff" stroke="#1f2933" stroke-width="1.2"/>
+<rect x="260.4" y="235.0" width="161.6" height="22.0" rx="0" fill="#dbe7f3" stroke="#1f2933" stroke-width="1.2"/>
+<text x="341.2" y="250.0" font-size="12" text-anchor="middle" fill="#1f2933" font-weight="bold"><tspan x="341.2" dy="0">learners</tspan></text>
+<text x="265.4" y="269.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="265.4" dy="0">PK</tspan></text>
+<text x="298.4" y="269.0" font-size="11" text-anchor="start" fill="#1f2933" font-weight="bold"><tspan x="298.4" dy="0">id</tspan></text>
+<text x="298.4" y="284.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="298.4" dy="0">personal_data_status</tspan></text>
+<text x="265.4" y="299.0" font-size="9" text-anchor="start" fill="#1f5f99" font-weight="bold"><tspan x="265.4" dy="0">FK</tspan></text>
+<text x="298.4" y="299.0" font-size="11" text-anchor="start" fill="#1f2933"><tspan x="298.4" dy="0">created_by</tspan></text>
+<text x="298.4" y="314.0" font-size="10" text-anchor="start" fill="#616e7c"><tspan x="298.4" dy="0">… ещё 12 кол.</tspan></text>
+</svg>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { apiClient, type ReminderDigest } from '../../shared/api/client'
+import { apiClient, isAccessDenied, type ReminderDigest } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { type AccessHandlers, formatDate, formatDateTime, handledAccessError, requestIdOf, todayIso } from './workShared'
 import './workControl.css'
@@ -68,7 +68,7 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
       setState({ kind: 'ready', digest })
       setFresh(digest.enabled && reminderCount(digest) > 0 && !shownToday(profileId))
     } catch (error) {
-      if (version !== requestVersion.current || handledAccessError(error, { onSessionExpired, onProfileUnavailable })) {
+      if (version !== requestVersion.current || handledAccessError(error, { onSessionExpired, onProfileUnavailable }) || isAccessDenied(error)) {
         return
       }
       setState({ kind: 'failed', requestId: requestIdOf(error) })

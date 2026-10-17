@@ -38,6 +38,13 @@ public class UserProfileRepository {
                 .single() > 0;
     }
 
+    public boolean isRoleFromKeycloak(UUID profileId) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM crm_user_profiles WHERE id = :profileId AND role_synced_at IS NOT NULL")
+                .param("profileId", profileId)
+                .query(Long.class)
+                .single() > 0;
+    }
+
     public boolean isPendingActivation(String issuer, String subject) {
         return jdbcClient.sql("""
                 SELECT COUNT(*)

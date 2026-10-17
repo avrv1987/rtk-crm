@@ -1,3 +1,4 @@
+import { getModules } from '../../shared/modules'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ApiError,
@@ -6,6 +7,7 @@ import {
   type CrmProfile,
   type CrmProfileEvent,
   type CrmProfileUpdate,
+  type KeycloakRoleMigration,
   type Me,
   type PageCrmProfile,
   type Team
@@ -56,6 +58,11 @@ type EditState = {
 type AccountSyncState =
   | { kind: 'syncing'; profileId: string }
   | { kind: 'failed'; profileId: string; error: unknown }
+
+type RoleMigrationState =
+  | { kind: 'running' }
+  | { kind: 'done'; result: KeycloakRoleMigration }
+  | { kind: 'failed'; error: unknown }
 
 type JournalState =
   | { kind: 'loading'; profileId: string }
@@ -117,6 +124,13 @@ const changesAccess = (update: CrmProfileUpdate) => (
   || update.enrolmentOperator !== undefined
 )
 
+const roleSourceLabel = (profile: CrmProfile) => {
+  if (profile.roleSyncedAt) {
+    return 'из Keycloak'
+  }
+  return profile.pendingActivation ? null : 'в Keycloak не перенесена'
+}
+
 const teamNameById = (teams: Team[], teamId: string | null | undefined) => (
   teamId === null || teamId === undefined || teamId === ''
     ? 'Без команды'
@@ -127,6 +141,7 @@ const accessSummary = (profile: CrmProfile, update: CrmProfileUpdate, teams: Tea
   const lines: string[] = []
   if (update.role !== undefined) {
     lines.push(`Роль: ${roleLabels[profile.role]} → ${roleLabels[update.role]}`)
+    lines.push('Роль будет назначена учётной записи в Keycloak, прежняя роль снимется.')
   }
   if (update.teamId !== undefined) {
     lines.push(`Команда: ${teamLabel(profile.teamName)} → ${teamNameById(teams, update.teamId)}`)
@@ -147,7 +162,7 @@ const accessSummary = (profile: CrmProfile, update: CrmProfileUpdate, teams: Tea
       ? 'Флаг «Оператор зачисления»: появится раздел «Зачисление» и загрузка файла оплат с данными слушателей, если включён модуль «Слушатели».'
       : 'Флаг «Оператор зачисления» снимается: раздел «Зачисление» закроется.')
   }
-  if (profile.enrolmentOperator && update.role !== undefined && !operatorAllowed(update.role)) {
+  if (getModules().enrolment && profile.enrolmentOperator && update.role !== undefined && !operatorAllowed(update.role)) {
     lines.push('Флаг «Оператор зачисления» будет снят: он доступен только КАМ и руководителю.')
   }
   lines.push('Новые права действуют со следующего запроса пользователя; ранее сформированные им отчёты станут недоступны для скачивания.')
@@ -186,6 +201,7 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
   const [edit, setEdit] = useState<EditState | null>(null)
   const [journal, setJournal] = useState<JournalState | null>(null)
   const [accountAction, setAccountAction] = useState<AccountAction | null>(null)
+  const [roleMigration, setRoleMigration] = useState<RoleMigrationState | null>(null)
   const listRequestVersion = useRef(0)
   const journalRequestVersion = useRef(0)
   const teamsRequestVersion = useRef(0)
@@ -366,6 +382,19 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
     }
   }
 
+  const migrateRoles = async () => {
+    setRoleMigration({ kind: 'running' })
+    try {
+      const result = await apiClient.migrateCrmRolesToKeycloak()
+      setRoleMigration({ kind: 'done', result })
+      await loadProfiles(pageIndex, filter, search)
+    } catch (error) {
+      if (!handledSessionError(error, { onSessionExpired, onProfileUnavailable })) {
+        setRoleMigration({ kind: 'failed', error })
+      }
+    }
+  }
+
   const renderAccount = (profile: CrmProfile) => {
     if (!profile.accountSyncRequired) {
       return null
@@ -462,16 +491,18 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
             ответственный КАМ или руководитель команды в карточке вуза, во вкладке «Контакты».
           </p>
         )}
-        <label className="admin-profile-form__checkbox">
-          <input
-            type="checkbox"
-            checked={edit.draft.enrolmentOperator && operatorAllowed(edit.draft.role)}
-            disabled={edit.saving || !operatorAllowed(edit.draft.role)}
-            onChange={(event) => changeDraft({ enrolmentOperator: event.target.checked })}
-          />
-          Оператор зачисления: загрузка оплат и данные слушателей
-        </label>
-        {!operatorAllowed(edit.draft.role) && (
+        {getModules().enrolment && (
+          <label className="admin-profile-form__checkbox">
+            <input
+              type="checkbox"
+              checked={edit.draft.enrolmentOperator && operatorAllowed(edit.draft.role)}
+              disabled={edit.saving || !operatorAllowed(edit.draft.role)}
+              onChange={(event) => changeDraft({ enrolmentOperator: event.target.checked })}
+            />
+            Оператор зачисления: загрузка оплат и данные слушателей
+          </label>
+        )}
+        {getModules().enrolment && !operatorAllowed(edit.draft.role) && (
           <p className="admin-profile-form__hint">Флаг «Оператор зачисления» доступен только КАМ и руководителю команды.</p>
         )}
         {isCurrentProfile && (
@@ -598,6 +629,14 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
           <div className="security-actions">
             {profilesState.kind === 'ready' && <p className="admin-profiles__total">Всего: {profilesState.page.total}</p>}
             <button type="button" onClick={() => setAccountAction({ kind: 'create' })}>Новый сотрудник</button>
+            <button
+              type="button"
+              className="button--secondary"
+              disabled={roleMigration?.kind === 'running'}
+              onClick={() => void migrateRoles()}
+            >
+              {roleMigration?.kind === 'running' ? 'Переносим роли…' : 'Перенести роли в Keycloak'}
+            </button>
           </div>
         </div>
 
@@ -607,6 +646,25 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
           после первого входа появляется в списке «Ожидают активации». Закрытие доступа сразу отключает учётную запись в Keycloak,
           открытие — включает; если Keycloak недоступен, профиль помечается «требует синхронизации» с причиной.
         </p>
+        <p className="admin-profiles__intro">
+          Роль сотрудника хранится в Keycloak. Смена роли здесь сразу назначает роль в Keycloak; роль, изменённую в консоли
+          Keycloak, CRM применяет при следующем входе сотрудника. Команду и флаг «Оператор зачисления» ведёт CRM.
+        </p>
+
+        {roleMigration?.kind === 'done' && (
+          <p className="security-success" role="status">
+            {roleMigration.result.assigned === 0 && roleMigration.result.kept === 0 && roleMigration.result.failed === 0
+              ? 'Роли уже перенесены в Keycloak: изменений нет'
+              : `Роли перенесены в Keycloak: назначено ${roleMigration.result.assigned}, уже были ${roleMigration.result.kept}`}
+            {roleMigration.result.failed > 0 && `, не перенесено ${roleMigration.result.failed} — повторите позже`}.
+          </p>
+        )}
+        {roleMigration?.kind === 'failed' && (
+          <div className="interaction-command-error" role="alert">
+            <p>{commandErrorMessage(roleMigration.error)}</p>
+            {roleMigration.error instanceof ApiError && <p className="request-id">Request ID: {roleMigration.error.requestId}</p>}
+          </div>
+        )}
 
         {profilesState.kind === 'ready' && profilesState.page.pendingTotal > 0 && (
           <div className="security-pending" role="status">
@@ -682,7 +740,10 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
                         <dl className="admin-profiles__fields">
                           <div>
                             <dt>Роль</dt>
-                            <dd>{roleLabels[profile.role]}</dd>
+                            <dd>
+                              {roleLabels[profile.role]}
+                              {roleSourceLabel(profile) && <span className="admin-profiles__role-source"> · {roleSourceLabel(profile)}</span>}
+                            </dd>
                           </div>
                           <div>
                             <dt>{profile.role === 'PARTNER' ? 'Вуз' : 'Команда'}</dt>
@@ -692,7 +753,7 @@ export const AdminProfilesScreen = ({ currentProfile, onSessionExpired, onProfil
                             <dt>Ревизия доступа</dt>
                             <dd>{profile.accessRevision}</dd>
                           </div>
-                          {profile.enrolmentOperator && (
+                          {getModules().enrolment && profile.enrolmentOperator && (
                             <div>
                               <dt>Флаг</dt>
                               <dd>Оператор зачисления</dd>

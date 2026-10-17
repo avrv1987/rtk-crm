@@ -47,7 +47,11 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
         "app.oidc.issuer-uri=http://crm.test/idp/realms/rtk-crm",
         "app.oidc.public-base-url=http://crm.test",
         "app.oidc.internal-base-url=http://keycloak.test",
-        "app.oidc.client-secret=test-client-secret"
+        "app.oidc.client-secret=test-client-secret",
+        "app.modules.enrolment.enabled=true",
+        "app.enrolment.active-key-version=v1",
+        "app.enrolment.keys.v1=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+        "app.enrolment.fingerprint-key=ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA="
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("oidc")
@@ -417,7 +421,7 @@ class EmployeeAccountHttpTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, 
                     id UUID PRIMARY KEY, issuer VARCHAR(512) NOT NULL, subject VARCHAR(512) NOT NULL,
                     display_name VARCHAR(200) NOT NULL, login VARCHAR(200), role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL DEFAULT TRUE, pending_activation BOOLEAN NOT NULL DEFAULT FALSE,

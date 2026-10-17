@@ -133,8 +133,14 @@ JOIN load_stages current_stage ON current_stage.interaction_id = i.id AND curren
 JOIN load_events last_event ON last_event.interaction_id = i.id AND last_event.version = 9
 LEFT JOIN load_programs program ON program.n = (i.n % 6) + 1;
 
-INSERT INTO interaction_stages (id, interaction_id, stage_order, name, optional)
-SELECT id, interaction_id, stage_order, name, optional FROM load_stages;
+INSERT INTO interaction_stages (id, interaction_id, stage_order, name, optional, template_stage_id)
+SELECT id, interaction_id, stage_order, name, optional, template_stage_id FROM load_stages;
+
+UPDATE interactions
+SET workflow_template_id = t.id,
+    workflow_version = (SELECT MAX(v.version_number) FROM workflow_template_versions v WHERE v.template_id = t.id)
+FROM workflow_templates t
+WHERE t.default_template AND interactions.id IN (SELECT interaction_id FROM load_stages);
 
 INSERT INTO interaction_stage_transitions (interaction_id, from_stage_id, to_stage_id, comment_required)
 SELECT from_stage.interaction_id, from_stage.id, to_stage.id, transition.comment_required

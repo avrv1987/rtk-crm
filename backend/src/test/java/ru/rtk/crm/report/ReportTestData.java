@@ -45,7 +45,7 @@ final class ReportTestData {
 
     static void createSchema(JdbcTemplate jdbc) {
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     login VARCHAR(200),
                     idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -129,7 +129,7 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500),
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
@@ -142,7 +142,7 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_stages (
+                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
                     stage_order INTEGER NOT NULL,

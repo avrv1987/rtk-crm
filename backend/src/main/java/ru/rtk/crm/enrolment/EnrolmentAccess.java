@@ -6,24 +6,26 @@ import org.springframework.stereotype.Component;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserProfileRepository;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.module.ModuleDisabledException;
+import ru.rtk.crm.module.ModuleProperties;
 
 @Component
 public class EnrolmentAccess {
-    private final EnrolmentProperties properties;
+    private final ModuleProperties modules;
     private final UserProfileRepository userProfileRepository;
 
-    public EnrolmentAccess(EnrolmentProperties properties, UserProfileRepository userProfileRepository) {
-        this.properties = properties;
+    public EnrolmentAccess(ModuleProperties modules, UserProfileRepository userProfileRepository) {
+        this.modules = modules;
         this.userProfileRepository = userProfileRepository;
     }
 
     public boolean isOperator(UUID profileId) {
-        return properties.enabled() && userProfileRepository.isEnrolmentOperator(profileId);
+        return modules.enrolmentEnabled() && userProfileRepository.isEnrolmentOperator(profileId);
     }
 
     public void requireOperator(CrmProfile profile) {
-        if (!properties.enabled()) {
-            throw new EnrolmentDisabledException();
+        if (!modules.enrolmentEnabled()) {
+            throw ModuleDisabledException.enrolment();
         }
         if (!userProfileRepository.isEnrolmentOperator(profile.id())) {
             throw new EnrolmentAccessDeniedException();

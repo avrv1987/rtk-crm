@@ -1,5 +1,6 @@
 package ru.rtk.crm.source;
 
+import static org.mockito.Mockito.doReturn;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
@@ -68,7 +69,6 @@ import ru.rtk.crm.catalog.OrganizationNotFoundException;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.enrolment.EnrolmentAccess;
 import ru.rtk.crm.enrolment.EnrolmentAccessDeniedException;
-import ru.rtk.crm.enrolment.EnrolmentDisabledException;
 import ru.rtk.crm.enrolment.EnrolmentProperties;
 import ru.rtk.crm.enrolment.EnrolmentRepository;
 import ru.rtk.crm.enrolment.LearnerDataCipher;
@@ -105,6 +105,9 @@ import ru.rtk.crm.training.TeacherTrainingCreated;
 import ru.rtk.crm.training.TeacherTrainingRequest;
 import ru.rtk.crm.training.TrainingRepository;
 import ru.rtk.crm.training.TrainingService;
+import ru.rtk.crm.module.ModuleDisabledException;
+import ru.rtk.crm.module.ModuleProperties;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
@@ -309,7 +312,7 @@ class SourceSyncServiceTest {
     @Autowired
     private CommandIdempotencyRepository commandIdempotencyRepository;
 
-    @Autowired
+    @MockitoSpyBean
     private PaidOrderEnrolment paidOrderEnrolment;
 
     private UUID existingInteractionA;
@@ -1294,12 +1297,12 @@ class SourceSyncServiceTest {
         assertThatThrownBy(() -> paidOrderUploadService.upload(admin, paidOrdersFile(PAID_ORDERS), "upload-1", "rq"))
                 .isInstanceOf(EnrolmentAccessDeniedException.class);
         jdbcTemplate.update("UPDATE crm_user_profiles SET enrolment_operator = TRUE WHERE id = ?", operator);
-        EnrolmentAccess moduleOff = new EnrolmentAccess(new EnrolmentProperties(false, null, null, null), userProfileRepository);
+        EnrolmentAccess moduleOff = new EnrolmentAccess(new ModuleProperties(new ModuleProperties.Toggle(false), null), userProfileRepository);
         assertThat(moduleOff.isOperator(operator)).isFalse();
         assertThat(enrolmentAccess.isOperator(operator)).isTrue();
         assertThatThrownBy(() -> new PaidOrderUploadService(moduleOff, paidOrderParser, service, commandIdempotencyRepository,
                 paidOrderEnrolment, objectMapper).upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-off", "rq"))
-                .isInstanceOf(EnrolmentDisabledException.class);
+                .isInstanceOf(ModuleDisabledException.class);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_records WHERE record_type = 'paid_order'", Integer.class))
                 .isZero();
 
@@ -1442,6 +1445,23 @@ class SourceSyncServiceTest {
         assertThat(repeat.learners()).isEqualTo(new LearnerIntake(0, 6, 0, 0, 0, 0, 0));
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learners", Integer.class)).isEqualTo(5);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learner_enrolments", Integer.class)).isEqualTo(6);
+    }
+
+    @Test
+    void siteArrayWithPaidOrdersWritesNothingWhileTheEnrolmentModuleIsOff() {
+        insertOpenEnrolment();
+        PAGES.put(1, PAID_ORDERS);
+        PAGES.remove(2);
+        doReturn(false).when(paidOrderEnrolment).enabled();
+
+        SyncRunView run = sync();
+
+        assertThat(run.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(counters(run)).containsExactly(0, 0, 0, 0, 0, 0);
+        assertThat(run.errorMessage()).contains("модуль «Слушатели» выключен");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_records", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learners", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learner_enrolments", Integer.class)).isZero();
     }
 
     @Test
@@ -2048,7 +2068,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, login VARCHAR(200), idp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     activation_requested_at TIMESTAMP WITH TIME ZONE, anonymized_at TIMESTAMP WITH TIME ZONE, display_name VARCHAR(200) NOT NULL, role VARCHAR(16) NOT NULL, team_id UUID,
                     active BOOLEAN NOT NULL, access_revision INTEGER NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -2122,7 +2142,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500),
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL,
                     current_stage_id UUID NOT NULL, next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE,
@@ -2140,7 +2160,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_stages (
+                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL,
                     name VARCHAR(200) NOT NULL, optional BOOLEAN NOT NULL
                 )
@@ -2155,6 +2175,13 @@ class SourceSyncServiceTest {
                 CREATE TABLE IF NOT EXISTS interaction_contacts (
                     interaction_id UUID NOT NULL, organization_id UUID NOT NULL, contact_id UUID NOT NULL,
                     PRIMARY KEY (interaction_id, contact_id)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS workflow_template_versions (
+                    template_id UUID NOT NULL, version_number INTEGER NOT NULL, name VARCHAR(200) NOT NULL,
+                    content TEXT NOT NULL, change_comment VARCHAR(1000), created_by UUID,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, PRIMARY KEY (template_id, version_number)
                 )
                 """,
                 """
@@ -2383,8 +2410,13 @@ class SourceSyncServiceTest {
         }
 
         @Bean
+        ModuleProperties moduleProperties() {
+            return new ModuleProperties(new ModuleProperties.Toggle(true), null);
+        }
+
+        @Bean
         EnrolmentProperties enrolmentProperties() {
-            return new EnrolmentProperties(true, "v1", Map.of("v1", ENROLMENT_KEY), ENROLMENT_FINGERPRINT_KEY);
+            return new EnrolmentProperties("v1", Map.of("v1", ENROLMENT_KEY), ENROLMENT_FINGERPRINT_KEY);
         }
 
         @Bean

@@ -1,5 +1,6 @@
 import type {
   ChartType,
+  ManagerWorkChange,
   PeriodBasis,
   ReportColumn,
   ReportEventType,
@@ -9,6 +10,7 @@ import type {
   StatisticsRequest
 } from '../../shared/api/client'
 import { todayInMoscow } from '../../shared/format/datetime'
+import { getModules, withoutPaymentColumns } from '../../shared/modules'
 import {
   agreementColumnTitles,
   agreementColumns,
@@ -69,6 +71,7 @@ export type ReportSelection = {
   agreement: AgreementSelection
   eventTypes: ReportEventType[]
   minDaysOnStage: string
+  change: ManagerWorkChange | ''
   columns: Record<ReportKind, ReportColumn[]>
   groupBy: StatisticsGroupBy
   chartType: ChartType
@@ -76,11 +79,13 @@ export type ReportSelection = {
   sortBy: DemandSort
 }
 
-export const reportKinds: readonly ReportKind[] = ['PORTFOLIO', 'EVENTS', 'SNAPSHOT', 'DURATION', 'DEMAND', 'AGREEMENTS']
+export const reportKinds: readonly ReportKind[] = ['PORTFOLIO', 'EVENTS', 'SNAPSHOT', 'DURATION', 'DEMAND', 'AGREEMENTS', 'MANAGER_WORK']
 
 export const demandSorts: readonly DemandSort[] = [
   'APPLICATIONS', 'PAID_ORDERS', 'PAID_STREAMS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'PARALLEL_RUNS'
 ]
+
+export const availableDemandSorts = (): DemandSort[] => withoutPaymentColumns(demandSorts, getModules())
 
 export const kindLabels: Record<ReportKind, string> = {
   PORTFOLIO: 'Портфель взаимодействий',
@@ -88,7 +93,8 @@ export const kindLabels: Record<ReportKind, string> = {
   SNAPSHOT: 'Состояние портфеля на дату',
   DURATION: 'Длительность этапов и цикла',
   DEMAND: 'Востребованность программ',
-  AGREEMENTS: 'Реализация соглашений'
+  AGREEMENTS: 'Реализация соглашений',
+  MANAGER_WORK: 'Работа менеджеров за период'
 }
 
 export const chartKinds: readonly ReportKind[] = ['PORTFOLIO', 'EVENTS', 'SNAPSHOT', 'DEMAND']
@@ -130,7 +136,7 @@ export const eventTypeTitles: Record<ReportEventType, string> = {
 const demandGroupings: readonly StatisticsGroupBy[] = ['ORGANIZATION', 'DIRECTION', 'PROGRAM', 'MANAGER', 'MONTH']
 
 export const groupingsFor = (kind: ReportKind): readonly StatisticsGroupBy[] => (
-  kind === 'AGREEMENTS' ? [] : kind === 'DEMAND' ? demandGroupings : statisticsGroupings
+  kind === 'AGREEMENTS' || kind === 'MANAGER_WORK' ? [] : kind === 'DEMAND' ? demandGroupings : statisticsGroupings
 )
 
 export const seriesGroupingsFor = (kind: ReportKind): readonly StatisticsGroupBy[] => (
@@ -140,6 +146,15 @@ export const seriesGroupingsFor = (kind: ReportKind): readonly StatisticsGroupBy
 const periodBases: readonly PeriodBasis[] = ['CREATED', 'ACTIVITY', 'ACTIVE']
 
 const chartTypes: readonly ChartType[] = ['BAR', 'LINE']
+
+export const managerWorkChanges: readonly (ManagerWorkChange | '')[] = ['', 'MOVED', 'NEW', 'COMPLETED']
+
+export const managerWorkChangeLabels: Record<ManagerWorkChange | '', string> = {
+  '': 'Все работы',
+  MOVED: 'Перешли на другой этап',
+  NEW: 'Новые работы',
+  COMPLETED: 'Завершённые'
+}
 
 export const reportColumns: Record<ReportKind, readonly ReportColumn[]> = {
   PORTFOLIO: [
@@ -160,8 +175,18 @@ export const reportColumns: Record<ReportKind, readonly ReportColumn[]> = {
     'ORGANIZATION', 'AGREEMENT', 'AGREEMENT_STATUS', 'AGREEMENT_TERM', 'ACTIVITY_KIND', 'ACTIVITY', 'PLANNED_VOLUME',
     'ACTUAL_VOLUME', 'VOLUME_UNIT', 'PLANNED_DATES', 'ACTUAL_DATES', 'MANAGER', 'ACTIVITY_STATUS', 'PARTICIPANTS', 'WORKS',
     'CONFIRMATIONS', 'CONFIRMATION_LINKS'
+  ],
+  MANAGER_WORK: [
+    'MANAGER', 'ORGANIZATION', 'PRODUCTS', 'PROGRAM', 'STAGE_AT_START', 'STAGE_AT_END', 'TRANSITIONS', 'PERIOD_COMMENTS',
+    'NEXT_ACTION', 'NEXT_ACTION_AT', 'OVERDUE_DAYS', 'TEAM', 'DIRECTION', 'INTERACTION', 'STAGE_POSITION', 'DUE_STATE',
+    'DAYS_ON_STAGE', 'WORK_STATUS', 'PROBLEM', 'RISK'
   ]
 }
+
+export const availableColumns = (kind: ReportKind): ReportColumn[] => (
+  kind === 'DEMAND' ? withoutPaymentColumns(reportColumns.DEMAND, getModules()) : [...reportColumns[kind]]
+)
+export const managerWorkDefaultColumns: readonly ReportColumn[] = reportColumns.MANAGER_WORK.slice(0, 11)
 
 const columnTitles: Record<ReportColumn, string> = {
   ORGANIZATION: 'Вуз',
@@ -212,12 +237,20 @@ const columnTitles: Record<ReportColumn, string> = {
   ACTIVITY_STATUS: 'Статус мероприятия',
   WORKS: 'Связанные работы',
   CONFIRMATIONS: 'Подтверждения',
-  CONFIRMATION_LINKS: 'Ссылки на подтверждения'
+  CONFIRMATION_LINKS: 'Ссылки на подтверждения',
+  STAGE_AT_START: 'Этап на начало периода',
+  STAGE_AT_END: 'Этап на конец периода',
+  STAGE_POSITION: 'Положение на маршруте',
+  TRANSITIONS: 'Переходов за период',
+  PERIOD_COMMENTS: 'Комментарии за период',
+  DUE_STATE: 'Состояние срока',
+  OVERDUE_DAYS: 'Просрочено, дн.'
 }
 
 const kindColumnTitles: Partial<Record<ReportKind, Partial<Record<ReportColumn, string>>>> = {
   EVENTS: { MANAGER: 'Ответственный на момент события' },
-  SNAPSHOT: { STAGE: 'Этап на дату', MANAGER: 'Ответственный на дату', LAST_EVENT_AT: 'Последнее событие до даты' }
+  SNAPSHOT: { STAGE: 'Этап на дату', MANAGER: 'Ответственный на дату', LAST_EVENT_AT: 'Последнее событие до даты' },
+  MANAGER_WORK: { MANAGER: 'Менеджер' }
 }
 
 export const columnTitle = (kind: ReportKind, column: ReportColumn) => (
@@ -250,13 +283,15 @@ export const defaultSelection = (today: Date = new Date()): ReportSelection => (
   agreement: defaultAgreementSelection(),
   eventTypes: [],
   minDaysOnStage: '',
+  change: '',
   columns: {
     PORTFOLIO: reportColumns.PORTFOLIO.filter((column) => !agreementColumns.includes(column)),
     EVENTS: [...reportColumns.EVENTS],
-    DEMAND: [...reportColumns.DEMAND],
+    DEMAND: availableColumns('DEMAND'),
     SNAPSHOT: [...reportColumns.SNAPSHOT],
     DURATION: [...reportColumns.DURATION],
-    AGREEMENTS: [...reportColumns.AGREEMENTS]
+    AGREEMENTS: [...reportColumns.AGREEMENTS],
+    MANAGER_WORK: [...managerWorkDefaultColumns]
   },
   groupBy: 'STAGE',
   chartType: 'BAR',
@@ -285,8 +320,8 @@ const daysValue = (value: unknown) => {
 
 const columnList = (value: unknown, kind: ReportKind): ReportColumn[] => (
   Array.isArray(value)
-    ? [...new Set(value)].filter((column): column is ReportColumn => reportColumns[kind].some((item) => item === column))
-    : [...reportColumns[kind]]
+    ? [...new Set(value)].filter((column): column is ReportColumn => availableColumns(kind).some((item) => item === column))
+    : kind === 'MANAGER_WORK' ? [...managerWorkDefaultColumns] : availableColumns(kind)
 )
 
 export const normalizeSelection = (value: unknown, today: Date = new Date()): ReportSelection => {
@@ -320,18 +355,20 @@ export const normalizeSelection = (value: unknown, today: Date = new Date()): Re
     agreement: normalizeAgreementSelection(record.agreement),
     eventTypes: strings(record.eventTypes).filter((type): type is ReportEventType => eventTypes.some((item) => item === type)),
     minDaysOnStage: daysValue(record.minDaysOnStage),
+    change: oneOf(record.change, managerWorkChanges, ''),
     columns: {
       PORTFOLIO: columnList(columns.PORTFOLIO, 'PORTFOLIO'),
       EVENTS: columnList(columns.EVENTS, 'EVENTS'),
       DEMAND: columnList(columns.DEMAND, 'DEMAND'),
       SNAPSHOT: columnList(columns.SNAPSHOT, 'SNAPSHOT'),
       DURATION: columnList(columns.DURATION, 'DURATION'),
-      AGREEMENTS: columnList(columns.AGREEMENTS, 'AGREEMENTS')
+      AGREEMENTS: columnList(columns.AGREEMENTS, 'AGREEMENTS'),
+      MANAGER_WORK: columnList(columns.MANAGER_WORK, 'MANAGER_WORK')
     },
     groupBy: oneOf(record.groupBy, statisticsGroupings, defaults.groupBy),
     chartType: oneOf(record.chartType, chartTypes, defaults.chartType),
     seriesBy: statisticsGroupings.find((groupBy) => groupBy === record.seriesBy && groupBy !== 'MONTH') ?? null,
-    sortBy: oneOf(record.sortBy, demandSorts, defaults.sortBy)
+    sortBy: oneOf(record.sortBy, availableDemandSorts(), defaults.sortBy)
   }
 }
 
@@ -368,10 +405,11 @@ export const applyDefinition = (selection: ReportSelection, definition: ReportPr
     stages: filters.stages ?? [],
     eventTypes: filters.eventTypes ?? [],
     minDaysOnStage: filters.minDaysOnStage ?? '',
+    change: filters.change ?? '',
     sortBy: definition.sortBy ?? selection.sortBy
   })
   const columns = definition.columns === undefined || definition.columns.length === 0
-    ? [...reportColumns[restored.kind]]
+    ? [...(restored.kind === 'MANAGER_WORK' ? managerWorkDefaultColumns : reportColumns[restored.kind])]
     : columnList(definition.columns, restored.kind)
   return {
     ...restored,
@@ -393,6 +431,9 @@ export const lineChartSelected = (selection: ReportSelection) => (
 export const groupingProblem = (selection: ReportSelection): string | null => {
   if (selection.kind === 'AGREEMENTS') {
     return 'Для отчёта «Реализация соглашений» диаграмма не строится.'
+  }
+  if (selection.kind === 'MANAGER_WORK') {
+    return 'Для отчёта «Работа менеджеров за период» диаграмма не строится.'
   }
   if (selection.kind === 'DURATION') {
     return 'Для отчёта «Длительность этапов и цикла» диаграмма не строится: показатели уже сгруппированы по командам, программам и этапам и видны в таблице.'
@@ -420,13 +461,14 @@ export const selectionProblem = (selection: ReportSelection): string | null => (
   periodProblem(selection)
     ?? daysProblem(selection)
     ?? (selection.columns[selection.kind].length === 0 ? 'Выберите хотя бы одну колонку.' : null)
-    ?? (selection.kind === 'DEMAND' ? null : agreementProblem(selection.agreement))
+    ?? (selection.kind === 'DEMAND' || selection.kind === 'MANAGER_WORK' ? null : agreementProblem(selection.agreement))
 )
 
 const baseRequest = (selection: ReportSelection) => {
   const demand = selection.kind === 'DEMAND'
   const snapshot = selection.kind === 'SNAPSHOT'
   const agreements = selection.kind === 'AGREEMENTS'
+  const managerWork = selection.kind === 'MANAGER_WORK'
   return {
     kind: selection.kind,
     from: snapshot || selection.from === '' ? null : selection.from,
@@ -447,7 +489,8 @@ const baseRequest = (selection: ReportSelection) => {
       organizationType: selection.organizationType === '' ? null : selection.organizationType,
       workStatuses: selection.kind === 'PORTFOLIO' ? selection.workStatuses : [],
       flags: selection.kind === 'PORTFOLIO' ? selection.flags : [],
-      ...(demand || agreements ? {} : { agreement: toAgreementFilters(selection.agreement) }),
+      ...(demand || agreements || managerWork ? {} : { agreement: toAgreementFilters(selection.agreement) }),
+      ...(managerWork ? { change: selection.change === '' ? null : selection.change } : {}),
       eventTypes: selection.kind === 'EVENTS' ? selection.eventTypes : [],
       minDaysOnStage: selection.kind === 'PORTFOLIO' && selection.minDaysOnStage !== '' ? Number(selection.minDaysOnStage) : null
     }

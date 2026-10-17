@@ -70,7 +70,7 @@ public class ReportJobService {
 
     public ReportJobCreated submit(CrmProfile profile, ReportRequest request, String idempotencyKey) {
         String key = requiredIdempotencyKey(idempotencyKey);
-        ReportRequest normalized = request.normalized();
+        ReportRequest normalized = reportService.normalize(request);
         if (normalized.format() == null) {
             throw new InteractionValidationException("format", "Укажите формат файла: XLSX, XLS, PDF, JSON или PNG для диаграммы");
         }

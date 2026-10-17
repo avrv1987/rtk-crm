@@ -1,0 +1,81 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  stand:
+    name: Stand, smoke, load
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      REPORTS: ci-reports
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.21.0
+      - name: Host name of the stand
+        run: echo "127.0.0.1 rtk.localhost" | sudo tee -a /etc/hosts
+      - name: Start the stand
+        env:
+          DEMO_DATA: "true"
+          DEMO_LMS: "false"
+        run: |
+          mkdir -p "$REPORTS"
+          bash scripts/bootstrap-demo.sh
+          docker compose --env-file .env.local ps
+      - name: Smoke
+        shell: bash
+        run: |
+          status=0
+          google-chrome --headless=new --no-sandbox --disable-gpu --remote-debugging-port=9333 \
+            --user-data-dir="$RUNNER_TEMP/chrome" about:blank > "$RUNNER_TEMP/chrome.log" 2>&1 &
+          chrome_pid=$!
+          RELEASE_SMOKE_DIR="$REPORTS/release-smoke" node scripts/release-smoke.mjs | tee "$REPORTS/release-smoke.json" || status=1
+          WAVE4_LMS=false WAVE4_ONLY=organizations,catalogs,contacts,workStatus,myWork,indicators,documents,stages,agreements,reports,management,journal \
+            node scripts/wave4-smoke.mjs | tee "$REPORTS/wave4-smoke.json" || status=1
+          kill "$chrome_pid" || true
+          exit "$status"
+      - name: Load
+        env:
+          LOAD_HTTP_LOGIN: "1"
+          LOAD_USERS: "10"
+          LOAD_REPORT_JOBS: "10"
+          LOAD_REPORT_BURSTS: "25"
+          LOAD_DURATION_S: "90"
+          LOAD_SUMMARY_FILE: ci-reports/load-summary.txt
+        run: |
+          bash scripts/load/seed-load-data.sh .env.local
+          node scripts/load/load-test.mjs .env.local
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Load"
+            echo '```'
+            cat "$REPORTS/load-summary.txt" 2>/dev/null || echo "no summary"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cp .load-test/result-*.json "$REPORTS/" 2>/dev/null || true
+          docker compose --env-file .env.local logs --no-color --tail 400 backend web keycloak > "$REPORTS/compose.log" 2>&1 || true
+      - name: Reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-reports
+          path: ci-reports
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Stop the stand
+        if: always()
+        run: docker compose --env-file .env.local --profile security --profile demo down --volumes --remove-orphans

@@ -35,6 +35,7 @@ public enum AuditAction {
     ACCOUNT_SESSIONS_ENDED(AuditCategory.ACCOUNT, "Завершены сеансы учётной записи"),
     ACCOUNT_EMAIL_CHANGED(AuditCategory.ACCOUNT, "Изменена почта учётной записи Keycloak"),
     ACCOUNT_SECOND_FACTOR_RESET(AuditCategory.ACCOUNT, "Сброшен второй фактор учётной записи"),
+    ACCOUNT_ROLES_MIGRATED(AuditCategory.ACCOUNT, "Роли сотрудников перенесены в Keycloak"),
     LEARNER_RESTRICTED(AuditCategory.PERSONAL_DATA, "Ограничена обработка анкеты слушателя"),
     LEARNER_RESTRICTION_LIFTED(AuditCategory.PERSONAL_DATA, "Снято ограничение обработки анкеты слушателя"),
     PAID_ORDERS_UPLOADED(AuditCategory.LEARNER, "Загружен файл оплат"),

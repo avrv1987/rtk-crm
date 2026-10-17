@@ -6,7 +6,7 @@ import java.time.ZoneId;
 import java.time.temporal.TemporalAdjusters;
 import java.util.Arrays;
 
-enum InteractionDue {
+public enum InteractionDue {
     OVERDUE,
     THIS_WEEK,
     NO_NEXT_STEP;
@@ -23,7 +23,7 @@ enum InteractionDue {
                 .orElseThrow(() -> new InteractionValidationException("due", "Такой отбор по сроку не поддерживается"));
     }
 
-    static OffsetDateTime weekStart(OffsetDateTime now) {
+    public static OffsetDateTime weekStart(OffsetDateTime now) {
         return now.atZoneSameInstant(ZONE)
                 .toLocalDate()
                 .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))

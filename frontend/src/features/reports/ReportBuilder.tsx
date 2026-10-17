@@ -14,6 +14,7 @@ import {
   type StatisticsResult
 } from '../../shared/api/client'
 import { formatMoscowDateTime } from '../../shared/format/datetime'
+import { getModules } from '../../shared/modules'
 import { CardMenu, CardTabPanel, CardTabs } from '../interactions/cardUi'
 import { organizationTypeLabels } from '../organizations/OrganizationForm'
 import { ColumnOrder } from './ColumnOrder'
@@ -35,6 +36,7 @@ import {
   chartKinds,
   columnTitle,
   defaultSelection,
+  availableDemandSorts,
   demandSorts,
   eventTypeTitles,
   eventTypes,
@@ -43,10 +45,12 @@ import {
   groupingsFor,
   kindLabels,
   lineChartSelected,
+  managerWorkChangeLabels,
+  managerWorkChanges,
   maxDaysOnStage,
   organizationTypeFilters,
   periodProblem,
-  reportColumns,
+  availableColumns,
   reportFlagLabels,
   reportFlags,
   reportWorkStatusLabels,
@@ -93,13 +97,16 @@ type ResultTab = 'table' | 'chart'
 
 const previewPageSize = 50
 
+const demandPaymentsHint = 'Оплаченные заявки и потоки с оплатами — оплаты физлиц на открытые курсы («Открытый набор (физлица)»), их видят все КАМ и руководители; период к ним не применяется: сайт не передаёт дату оплаты, поэтому они показаны за всё время и с заявками не складываются.'
+
 const kindHints: Record<ReportKind, string> = {
   PORTFOLIO: 'Строка — взаимодействие. Этап и ответственный — текущие на момент формирования; «Дней на этапе» — полных суток с последнего входа в текущий этап, отбор «На этапе дольше» оставляет работы, которые стоят на этапе не меньше указанного числа дней. «Активные в периоде» — созданные до конца периода и не завершённые к его началу.',
   EVENTS: 'Строка — событие: создание, переход, комментарий, изменение этапов или плана, а также назначение, смена и снятие КАМ вуза. Ответственный — КАМ на момент события.',
   SNAPSHOT: 'Строка — взаимодействие, созданное до конца выбранного дня. Этап и ответственный восстановлены по истории переходов и назначений КАМ на эту дату; ИТ-программа и ИТ-продукты — текущие.',
   DURATION: 'Строка — команда, ИТ-программа (итог команды — «Все программы») и этап или «Весь цикл». Средняя и максимальная длительность в календарных днях — по прохождениям, завершённым в периоде, по истории переходов; отдельно — сколько работ ещё на этапе на конец периода и самая долгая из них. Диаграмма для этого отчёта не строится: показатели уже сгруппированы в таблице.',
-  DEMAND: 'Строка — ИТ-программа. Заявки — заявки на обучение с сайта по предложенному контракту (демонстрационный стенд) в ваших вузах, период — по дате подачи. Обучающиеся и завершившие (участия, не уникальные люди) — потоки занятий студентов в Moodle, которые шли в периоде хотя бы один день: у идущего потока — последнее наблюдение, у закрытого — последнее до окончания; обучение преподавателей не учитывается. Доля завершивших — завершившие к обучающимся тех же потоков, округлена до целого; потоки, где Moodle не отслеживает завершение, в неё не входят, а без таких потоков показано «нет данных». Оплаченные заявки и потоки с оплатами — оплаты физлиц на открытые курсы («Открытый набор (физлица)»), их видят все КАМ и руководители; период к ним не применяется: сайт не передаёт дату оплаты, поэтому они показаны за всё время и с заявками не складываются. Дата снимка Moodle и период заявок указаны в заголовках колонок. Параллельные потоки — потоки, которые идут в последний день периода, а если он не задан — сегодня. «Нет данных» — источник не дал значения, это не ноль. Единого рейтинга нет: выберите показатель для сортировки.',
-  AGREEMENTS: 'Строка — мероприятие плана соглашения с вузом; соглашение без мероприятий выводится одной строкой. Период отбирает мероприятия, чьи фактические сроки, а если их нет — плановые, иначе срок соглашения, пересекаются с периодом. Объёмы — числа без ФИО; подтверждения — проверенные документы, привязанные к мероприятию, со ссылками для скачивания после входа в CRM. Фильтр «Ответственный» — ответственный за мероприятие. Диаграмма для этого отчёта не строится.'
+  DEMAND: 'Строка — ИТ-программа. Заявки — заявки на обучение с сайта по предложенному контракту (демонстрационный стенд) в ваших вузах, период — по дате подачи. Обучающиеся и завершившие (участия, не уникальные люди) — потоки занятий студентов в Moodle, которые шли в периоде хотя бы один день: у идущего потока — последнее наблюдение, у закрытого — последнее до окончания; обучение преподавателей не учитывается. Доля завершивших — завершившие к обучающимся тех же потоков, округлена до целого; потоки, где Moodle не отслеживает завершение, в неё не входят, а без таких потоков показано «нет данных». Дата снимка Moodle и период заявок указаны в заголовках колонок. Параллельные потоки — потоки, которые идут в последний день периода, а если он не задан — сегодня. «Нет данных» — источник не дал значения, это не ноль. Единого рейтинга нет: выберите показатель для сортировки.',
+  AGREEMENTS: 'Строка — мероприятие плана соглашения с вузом; соглашение без мероприятий выводится одной строкой. Период отбирает мероприятия, чьи фактические сроки, а если их нет — плановые, иначе срок соглашения, пересекаются с периодом. Объёмы — числа без ФИО; подтверждения — проверенные документы, привязанные к мероприятию, со ссылками для скачивания после входа в CRM. Фильтр «Ответственный» — ответственный за мероприятие. Диаграмма для этого отчёта не строится.',
+  MANAGER_WORK: 'Строка — работа с вузом, работы сгруппированы по менеджеру, после каждого менеджера — итоговая строка. Менеджер — ответственный за вуз на момент формирования. Этап на начало и на конец периода восстановлен по истории переходов, отбор «Этап» — по этапу на конец периода. Переходы и комментарии — за выбранный период; просрочено — срок следующего шага раньше момента формирования. В отчёт входят работы, которые сейчас активны или имели события в периоде. Диаграмма для этого отчёта не строится.'
 }
 
 const managerEventsHint = 'Строка — событие: создание, переход, комментарий, изменение этапов или плана. Ответственный — КАМ на момент события. История назначений КАМ видна руководителю команды.'
@@ -127,7 +134,8 @@ const stageLegends: Record<ReportKind, string> = {
   SNAPSHOT: 'Этап на дату',
   DURATION: 'Этап',
   DEMAND: 'Этап',
-  AGREEMENTS: 'Этап'
+  AGREEMENTS: 'Этап',
+  MANAGER_WORK: 'Этап на конец периода'
 }
 
 const managerLegends: Record<ReportKind, string> = {
@@ -136,7 +144,8 @@ const managerLegends: Record<ReportKind, string> = {
   SNAPSHOT: 'Ответственный на дату',
   DURATION: 'Ответственный (текущий КАМ вуза)',
   DEMAND: 'Ответственный',
-  AGREEMENTS: 'Ответственный за мероприятие'
+  AGREEMENTS: 'Ответственный за мероприятие',
+  MANAGER_WORK: 'Менеджер'
 }
 
 const dateColumns: ReadonlySet<ReportColumn> = new Set<ReportColumn>(['CREATED_AT', 'LAST_EVENT_AT', 'NEXT_ACTION_AT', 'EVENT_AT'])
@@ -227,7 +236,7 @@ export const ReportBuilder = ({
   const statisticsBlocked = periodProblem(selection) !== null || statisticsProblem !== null || optionsState.kind !== 'ready'
   const currentStatisticsRequest = toStatisticsRequest(selection)
   const currentLine = lineChartSelected(selection)
-  const columns = reportColumns[kind]
+  const columns = availableColumns(kind)
   const selectedColumns = selection.columns[kind]
 
   const update = (patch: Partial<ReportSelection>) => {
@@ -357,6 +366,7 @@ export const ReportBuilder = ({
   const options = optionsState.kind === 'ready' ? optionsState.options : null
   const showProgramFilters = kind !== 'AGREEMENTS'
   const showProductFilters = kind !== 'DEMAND' && kind !== 'AGREEMENTS'
+  const showAgreementFilter = showProductFilters && kind !== 'MANAGER_WORK'
   const workStatusOptions = reportWorkStatuses.map((status) => ({ id: status, label: reportWorkStatusLabels[status] }))
   const flagOptions = reportFlags.map((flag) => ({ id: flag, label: reportFlagLabels[flag] }))
 
@@ -421,11 +431,15 @@ export const ReportBuilder = ({
       text: eventTypeTitles[type],
       onRemove: () => update({ eventTypes: selection.eventTypes.filter((item) => item !== type) })
     })) : []),
-    ...(showProductFilters ? agreementValues(selection.agreement, options.vendors, (agreement) => update({ agreement })) : [])
+    ...(showAgreementFilter ? agreementValues(selection.agreement, options.vendors, (agreement) => update({ agreement })) : [])
   ]
 
   const title = statisticsMode ? 'Статистика и диаграммы' : kindLabels[kind]
-  const hint = kind === 'EVENTS' && role !== 'LEADER' ? managerEventsHint : kindHints[kind]
+  const hint = kind === 'EVENTS' && role !== 'LEADER'
+    ? managerEventsHint
+    : kind === 'DEMAND' && getModules().enrolment
+      ? kindHints.DEMAND.replace(' Дата снимка Moodle', ` ${demandPaymentsHint} Дата снимка Moodle`)
+      : kindHints[kind]
 
   return (
     <section className="report-builder" aria-labelledby="report-builder-title">
@@ -484,9 +498,9 @@ export const ReportBuilder = ({
               <select
                 id="report-demand-sort"
                 value={selection.sortBy}
-                onChange={(event) => update({ sortBy: demandSorts.find((sort) => sort === event.target.value) ?? 'APPLICATIONS' })}
+                onChange={(event) => update({ sortBy: availableDemandSorts().find((sort) => sort === event.target.value) ?? 'APPLICATIONS' })}
               >
-                {demandSorts.map((sort) => <option key={sort} value={sort}>{demandSortLabels[sort]}</option>)}
+                {availableDemandSorts().map((sort) => <option key={sort} value={sort}>{demandSortLabels[sort]}</option>)}
               </select>
             </div>
           )}
@@ -584,7 +598,15 @@ export const ReportBuilder = ({
                     onChange={(ids) => update({ eventTypes: eventTypes.filter((type) => ids.includes(type)) })}
                   />
                 )}
-                {showProductFilters && (
+                {kind === 'MANAGER_WORK' && (
+                  <ChoiceChip
+                    label="Показать"
+                    options={managerWorkChanges.map((id) => ({ id, label: managerWorkChangeLabels[id] }))}
+                    value={selection.change}
+                    onChange={(change) => update({ change })}
+                  />
+                )}
+                {showAgreementFilter && (
                   <ReportAgreementFilter
                     value={selection.agreement}
                     vendors={options.vendors}

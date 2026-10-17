@@ -176,6 +176,55 @@ function Set-SecondFactorRequired([string]$Username) {
     Invoke-Keycloak @('add-roles', '-r', 'rtk-crm', '--uusername', $Username, '--rolename', 'crm-privileged') | Out-Null
 }
 
+function Set-CrmRealmRoles {
+    $existing = @((Invoke-Keycloak @('get', 'roles', '-r', 'rtk-crm') | ConvertFrom-Json).name)
+    foreach ($role in @('crm-user', 'crm-leader', 'crm-admin', 'crm-management', 'crm-partner')) {
+        if (-not ($existing -ccontains $role)) {
+            Invoke-Keycloak @('create', 'roles', '-r', 'rtk-crm', '-s', "name=$role", '-s', 'description=CRM role, see docs/roles.md') | Out-Null
+        }
+    }
+    $composites = @((Invoke-Keycloak @('get', 'roles/crm-admin/composites', '-r', 'rtk-crm') | ConvertFrom-Json).name)
+    if (-not ($composites -ccontains 'crm-privileged')) {
+        Invoke-Keycloak @('add-roles', '-r', 'rtk-crm', '--rname', 'crm-admin', '--rolename', 'crm-privileged') | Out-Null
+    }
+}
+
+function Set-CrmRolesMapper([string]$ClientId) {
+    $name = 'crm realm roles'
+    $mapper = [ordered]@{
+        name = $name
+        protocol = 'openid-connect'
+        protocolMapper = 'oidc-usermodel-realm-role-mapper'
+        config = [ordered]@{
+            'claim.name' = 'realm_access.roles'
+            multivalued = 'true'
+            'jsonType.label' = 'String'
+            'id.token.claim' = 'true'
+            'access.token.claim' = 'false'
+            'userinfo.token.claim' = 'false'
+            'introspection.token.claim' = 'false'
+        }
+    }
+    $path = "clients/$ClientId/protocol-mappers/models"
+    $existing = @(Invoke-Keycloak @('get', $path, '-r', 'rtk-crm') | ConvertFrom-Json | Where-Object { $_.name -ceq $name })
+    if ($existing.Count -eq 0) {
+        $mapper | ConvertTo-Json -Compress -Depth 5 |
+            & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh create $path -r rtk-crm -f -
+    }
+    else {
+        $mapper['id'] = $existing[0].id
+        $mapper | ConvertTo-Json -Compress -Depth 5 |
+            & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh update "$path/$($existing[0].id)" -r rtk-crm -f -
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Cannot configure the CRM realm roles mapper'
+    }
+}
+
+function Set-CrmRole([string]$Username, [string]$Role) {
+    Invoke-Keycloak @('add-roles', '-r', 'rtk-crm', '--uusername', $Username, '--rolename', "crm-$($Role.ToLowerInvariant())") | Out-Null
+}
+
 function Ensure-CrmAdministrator {
     $username = $values['CRM_ADMIN_USERNAME']
     $existing = Get-KeycloakUsers $username
@@ -275,6 +324,9 @@ if ([string]::IsNullOrWhiteSpace($values['DEMO_DATA'])) {
 if ($values['DEMO_DATA'] -cne 'true' -and $values['DEMO_DATA'] -cne 'false') {
     throw 'DEMO_DATA must be true or false'
 }
+if ([string]::IsNullOrWhiteSpace($values['MODULE_ENROLMENT_ENABLED']) -and -not [string]::IsNullOrWhiteSpace($values['ENROLMENT_ENABLED'])) {
+    $values['MODULE_ENROLMENT_ENABLED'] = $values['ENROLMENT_ENABLED']
+}
 $siteFixtureUrl = 'http://site-fixture:8080'
 $defaults = [ordered]@{
     POSTGRES_SUPERUSER = 'postgres'
@@ -303,7 +355,9 @@ $secrets = @(
 if ($values['DEMO_DATA'] -eq 'true') {
     $defaults['SITE_BASE_URL'] = $siteFixtureUrl
     $defaults['DEMO_LMS'] = 'true'
-    $defaults['ENROLMENT_ENABLED'] = 'true'
+    $defaults['MODULE_ENROLMENT_ENABLED'] = 'true'
+    $defaults['MODULE_PARTNER_ENABLED'] = 'true'
+    $defaults['COMPOSE_PROFILES'] = 'security,demo'
     $secrets += @('DEMO_USER_PASSWORD', 'SITE_TOKEN')
 }
 else {
@@ -314,7 +368,9 @@ else {
         $values['SITE_BASE_URL'] = ''
     }
     $defaults['DEMO_LMS'] = 'false'
-    $defaults['ENROLMENT_ENABLED'] = 'false'
+    $defaults['MODULE_ENROLMENT_ENABLED'] = 'false'
+    $defaults['MODULE_PARTNER_ENABLED'] = 'false'
+    $defaults['COMPOSE_PROFILES'] = 'security'
     $defaults['CRM_ADMIN_USERNAME'] = 'admin'
     $defaults['CRM_ADMIN_DISPLAY_NAME'] = 'Администратор'
     $defaults['CRM_ADMIN_EMAIL'] = 'admin@rtk-crm.local'
@@ -335,6 +391,11 @@ if ($values['DEMO_LMS'] -cne 'true' -and $values['DEMO_LMS'] -cne 'false') {
 }
 if ($values['MFA_REQUIRED_FOR_PRIVILEGED'] -cne 'true' -and $values['MFA_REQUIRED_FOR_PRIVILEGED'] -cne 'false') {
     throw 'MFA_REQUIRED_FOR_PRIVILEGED must be true or false'
+}
+foreach ($key in @('MODULE_ENROLMENT_ENABLED', 'MODULE_PARTNER_ENABLED')) {
+    if ($values[$key] -cne 'true' -and $values[$key] -cne 'false') {
+        throw "$key must be true or false"
+    }
 }
 $moodleDemoUrl = 'http://moodle:8080'
 if ($values['DEMO_LMS'] -eq 'true') {
@@ -375,6 +436,7 @@ try {
     ) | Out-Null
     Invoke-Keycloak @('update', 'realms/rtk-crm', '-f', '/opt/keycloak/data/import/rtk-crm-realm.json') | Out-Null
     Set-PrivilegedSecondFactor
+    Set-CrmRealmRoles
     $webOrigins = @($values['PUBLIC_ORIGIN'])
     if ($values['PUBLIC_ORIGIN'] -eq 'http://rtk.localhost:8081') {
         $webOrigins += 'http://localhost:8081'
@@ -409,6 +471,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw 'Cannot update the CRM OIDC client'
     }
+    Set-CrmRolesMapper $client[0].id
     $syncClient = @(Invoke-Keycloak @('get', 'clients', '-r', 'rtk-crm', '-q', 'clientId=crm-account-sync') | ConvertFrom-Json)
     $syncClientDefinition = @{
         clientId = 'crm-account-sync'
@@ -477,17 +540,25 @@ try {
             @('enrol', 'Оператор зачисления', 'USER', 'open-enrolment', $true),
             @('partner', 'Представитель вуза', 'PARTNER', '')
         )
+        $controlIdentities = @(
+            @('kam-e', 'КАМ Д', 'USER', 'team-b'),
+            @('kam-f', 'КАМ Е', 'USER', 'team-c'),
+            @('kam-g', 'КАМ Ж', 'USER', 'team-c'),
+            @('kam-h', 'КАМ З', 'USER', 'team-c'),
+            @('leader-c', 'Руководитель В', 'LEADER', 'team-c')
+        )
         $spareAccounts = @(
             @('unprofiled', 'Без профиля CRM'),
             @('unprofiled-2', 'Без профиля CRM, запасная')
         )
-        foreach ($account in $demoIdentities + $spareAccounts) {
+        foreach ($account in $demoIdentities + $controlIdentities + $spareAccounts) {
             $subjects[$account[0]] = Ensure-KeycloakUser $account[0] $account[1] $values['DEMO_USER_PASSWORD']
         }
-        foreach ($identity in $demoIdentities) {
+        foreach ($identity in $demoIdentities + $controlIdentities) {
             if ($identity[2] -eq 'ADMIN' -or ($identity.Count -gt 4 -and $identity[4])) {
                 Set-SecondFactorRequired $identity[0]
             }
+            Set-CrmRole $identity[0] $identity[2]
         }
         $identityYaml = @(
             'app:',
@@ -500,9 +571,11 @@ try {
             "        name: 'Команда Б'",
             "      - key: 'open-enrolment'",
             "        name: 'Открытый набор'",
+            "      - key: 'team-c'",
+            "        name: 'Команда В'",
             '    identities:'
         )
-        foreach ($identity in $demoIdentities) {
+        foreach ($identity in $demoIdentities + $controlIdentities) {
             $identityYaml += ConvertTo-IdentityYaml $identity[0] $identity[1] $identity[2] $identity[3] ($identity.Count -gt 4 -and $identity[4])
         }
         $identityYaml += @(
@@ -525,7 +598,70 @@ try {
             "      - name: 'Колледж связи (демо)'",
             "        type: COLLEGE",
             "        team-key: 'team-b'",
-            "        owner-key: 'kam-b'"
+            "        owner-key: 'kam-b'",
+            "      - name: 'Политехнический университет (демо)'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-a'",
+            "        owner-key: 'kam-a'",
+            "      - name: 'Педагогический университет (демо)'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-a'",
+            "        owner-key: 'kam-c'",
+            "      - name: 'Колледж информационных технологий (демо)'",
+            "        type: COLLEGE",
+            "        team-key: 'team-a'",
+            "        owner-key: 'kam-c'",
+            "      - name: 'Лицей № 2 (демо)'",
+            "        type: SCHOOL",
+            "        team-key: 'team-a'",
+            "        owner-key: 'kam-d'",
+            "      - name: 'Университет телекоммуникаций (демо)'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-b'",
+            "        owner-key: 'kam-b'",
+            "      - name: 'Аграрный университет (демо)'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-b'",
+            "        owner-key: 'kam-e'",
+            "      - name: 'Медицинский университет (демо)'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-b'",
+            "        owner-key: 'kam-e'",
+            "      - name: 'Колледж связи № 2 (демо)'",
+            "        type: COLLEGE",
+            "        team-key: 'team-b'",
+            "        owner-key: 'kam-e'",
+            "      - name: 'Горный университет (демо)'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-c'",
+            "        owner-key: 'kam-f'",
+            "      - name: 'Транспортный университет (демо)'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-c'",
+            "        owner-key: 'kam-f'",
+            "      - name: 'Экономический университет (демо)'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-c'",
+            "        owner-key: 'kam-g'",
+            "      - name: 'Колледж автоматики (демо)'",
+            "        type: COLLEGE",
+            "        team-key: 'team-c'",
+            "        owner-key: 'kam-g'",
+            "      - name: 'Классический университет (демо)'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-c'",
+            "        owner-key: 'kam-h'",
+            "      - name: 'Строительный университет (демо)'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-c'",
+            "        owner-key: 'kam-h'",
+            "      - name: 'Школа № 7 (демо)'",
+            "        type: SCHOOL",
+            "        team-key: 'team-c'",
+            "        owner-key: 'kam-h'",
+            "      - name: 'Институт без ответственного (демо)'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-c'"
         )
         if ($values['MOODLE_BASE_URL'] -eq $moodleDemoUrl -and
             -not [string]::IsNullOrWhiteSpace($values['MOODLE_DEMO_JAVA_COURSE']) -and
@@ -572,6 +708,7 @@ try {
     else {
         $subjects[$values['CRM_ADMIN_USERNAME']] = Ensure-CrmAdministrator
         Set-SecondFactorRequired $values['CRM_ADMIN_USERNAME']
+        Set-CrmRole $values['CRM_ADMIN_USERNAME'] 'ADMIN'
         $identityYaml = @(
             'app:',
             '  demo-bootstrap:',
@@ -582,7 +719,7 @@ try {
     Set-Content -LiteralPath $identityFile -Value $identityYaml -Encoding utf8NoBOM
     Protect-SecretFile $identityFile
     if ($values['SITE_BASE_URL'] -eq $siteFixtureUrl) {
-        & docker compose --env-file $envFilePath --profile demo-sources up -d --wait site-fixture
+        & docker compose --env-file $envFilePath --profile demo up -d --wait site-fixture
         if ($LASTEXITCODE -ne 0) {
             throw 'Cannot start the demo site fixture'
         }
@@ -607,7 +744,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw 'Cannot restart the CRM web server'
     }
-    & docker compose --env-file $envFilePath @moodleFiles --profile demo-bootstrap run --rm --build backend-bootstrap
+    & docker compose --env-file $envFilePath @moodleFiles --profile demo run --rm -T --build backend-bootstrap
     if ($LASTEXITCODE -ne 0) {
         throw 'CRM demo bootstrap failed'
     }

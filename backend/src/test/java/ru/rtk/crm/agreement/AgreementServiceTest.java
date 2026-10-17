@@ -63,6 +63,7 @@ import ru.rtk.crm.report.ReportRepository;
 import ru.rtk.crm.report.ReportRequest;
 import ru.rtk.crm.report.ReportService;
 import ru.rtk.crm.report.StatisticsGroupBy;
+import ru.rtk.crm.module.ModuleProperties;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
@@ -623,7 +624,7 @@ class AgreementServiceTest {
                 """);
         jdbc.execute("CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL)");
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS crm_user_profiles (partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     display_name VARCHAR(200) NOT NULL,
                     role VARCHAR(16) NOT NULL,
@@ -687,7 +688,7 @@ class AgreementServiceTest {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interactions (next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
                     title VARCHAR(200) NOT NULL,
@@ -697,7 +698,7 @@ class AgreementServiceTest {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_stages (
+                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
                     stage_order INTEGER NOT NULL,
@@ -846,6 +847,11 @@ class AgreementServiceTest {
         @ConditionalOnMissingBean(ObjectMapper.class)
         ObjectMapper objectMapper() {
             return new ObjectMapper().findAndRegisterModules();
+        }
+
+        @Bean
+        ModuleProperties moduleProperties() {
+            return new ModuleProperties(new ModuleProperties.Toggle(true), null);
         }
 
         @Bean

@@ -33,7 +33,8 @@ export const kindTitles: Record<StatisticsResult['kind'], string> = {
   DEMAND: 'Востребованность программ',
   SNAPSHOT: 'Состояние портфеля на дату',
   DURATION: 'Длительность этапов и цикла',
-  AGREEMENTS: 'Реализация соглашений с вузами'
+  AGREEMENTS: 'Реализация соглашений с вузами',
+  MANAGER_WORK: 'Работа менеджеров за период'
 }
 
 export const countTitles: Record<StatisticsResult['kind'], string> = {
@@ -42,7 +43,8 @@ export const countTitles: Record<StatisticsResult['kind'], string> = {
   DEMAND: 'Число заявок',
   SNAPSHOT: 'Число взаимодействий',
   DURATION: 'Число групп',
-  AGREEMENTS: 'Число мероприятий'
+  AGREEMENTS: 'Число мероприятий',
+  MANAGER_WORK: 'Число работ'
 }
 
 export const monthTitles: Record<StatisticsResult['kind'], string> = {
@@ -51,7 +53,8 @@ export const monthTitles: Record<StatisticsResult['kind'], string> = {
   DEMAND: 'Месяц подачи заявки',
   SNAPSHOT: 'Месяц создания взаимодействия',
   DURATION: 'Месяц',
-  AGREEMENTS: 'Месяц мероприятия'
+  AGREEMENTS: 'Месяц мероприятия',
+  MANAGER_WORK: 'Месяц'
 }
 
 const labelLineLength = 32
