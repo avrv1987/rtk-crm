@@ -25,7 +25,45 @@ const readEnv = (file) => Object.fromEntries(
 const nfrOps = [['transition', 'переход'], ['comment', 'комментарий'], ['preview', 'предпросмотр']]
 const opFigures = (stats) => stats ? `p95 ${stats.p95} мс, max ${stats.max} мс, дольше 1 с: ${stats.over1s} из ${stats.count}` : 'нет замеров'
 
-const verdict = (result) => {
+// Пороги НФТ: p95 до 1 с (НФТ1), 5xx не больше 1 %, 50 одновременных сессий (НФТ6), 10 готовых отчётов (НФТ7).
+// Короткие прогоны (ночной в CI, на сервере) задают свои пороги через env: это проверка стенда, а не замер НФТ.
+const thresholdsFromEnv = (env) => {
+  const read = (name, fallback) => {
+    const value = Number(env[name] ?? fallback)
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`${name}: ожидается неотрицательное число, получено "${env[name]}"`)
+    }
+    return value
+  }
+  return {
+    maxP95Ms: read('LOAD_MAX_P95_MS', 1000),
+    max5xxPercent: read('LOAD_MAX_5XX_PCT', 1),
+    minSessions: read('LOAD_MIN_SESSIONS', 50),
+    minReports: read('LOAD_MIN_REPORTS', 10)
+  }
+}
+
+// Пик одновременно активных сессий: сессия активна, пока от неё идут запросы с паузой не дольше окна.
+// Число разных учётных записей за весь прогон этого не показывает: они могли работать по очереди.
+const peakActiveSessions = (items, windowMs) => {
+  const byUser = new Map()
+  for (const item of items) {
+    (byUser.get(item.user) || byUser.set(item.user, []).get(item.user)).push(item.at)
+  }
+  if (byUser.size === 0) {
+    return 0
+  }
+  const times = [...byUser.values()]
+  const from = items.reduce((min, item) => Math.min(min, item.at), Infinity)
+  const to = items.reduce((max, item) => Math.max(max, item.at), -Infinity)
+  let peak = 0
+  for (let tick = from; tick <= to + windowMs; tick += 1000) {
+    peak = Math.max(peak, times.filter((list) => list.some((at) => at <= tick && at > tick - windowMs)).length)
+  }
+  return peak
+}
+
+const verdict = (result, limits = thresholdsFromEnv(process.env)) => {
   const problems = result.failure ? [result.failure] : [
     !result.requests && 'нет метрик: под нагрузкой не выполнено ни одного запроса',
     ...(result.reportBursts || []).filter((burst) => burst.error).map((burst) => `${burst.label}: ${burst.error}`)
@@ -34,10 +72,28 @@ const verdict = (result) => {
     return { ok: false, lines: ['ошибка генератора: ' + problems.join('; ')] }
   }
   const statuses = Object.entries(result.statuses)
+  const failedRequests = statuses.filter(([status]) => Number(status) === 0 || Number(status) >= 500).reduce((sum, [, count]) => sum + count, 0)
+  const failedPercent = failedRequests * 100 / result.requests
+  const readyReports = result.reportBursts.reduce((sum, burst) => sum + burst.succeeded, 0)
+  const breaches = [
+    result.counters.foreignLeaks > 0 && `утечка чужих карточек: ${result.counters.foreignLeaks}`,
+    failedPercent > limits.max5xxPercent && `ответов 5xx и сетевых ошибок ${failedRequests} из ${result.requests} (${failedPercent.toFixed(1)} %), допустимо ${limits.max5xxPercent} %`,
+    result.peakActiveSessions < limits.minSessions && `одновременных сессий ${result.peakActiveSessions}, нужно не меньше ${limits.minSessions}`,
+    readyReports < limits.minReports && `готовых отчётов ${readyReports}, нужно не меньше ${limits.minReports}`,
+    ...nfrOps.flatMap(([op, name]) => {
+      const stats = result.api[op]
+      return !stats ? [`${name}: нет замеров`] : stats.p95 > limits.maxP95Ms ? [`${name}: p95 ${stats.p95} мс, допустимо ${limits.maxP95Ms} мс`] : []
+    }),
+    ...nfrOps.flatMap(([op, name]) => {
+      const stats = result.apiDuringReports[op]
+      return stats && stats.p95 > limits.maxP95Ms ? [`${name} во время серий отчётов: p95 ${stats.p95} мс, допустимо ${limits.maxP95Ms} мс`] : []
+    })
+  ].filter(Boolean)
   return {
-    ok: true,
+    ok: breaches.length === 0,
     lines: [
-      `запросов под нагрузкой: ${result.requests}, активных сессий: ${result.activeSessionsDuringLoad}, ответов 5xx и сетевых ошибок: ${statuses.filter(([status]) => Number(status) === 0 || Number(status) >= 500).reduce((sum, [, count]) => sum + count, 0)}, утечек чужих карточек: ${result.counters.foreignLeaks}`,
+      ...(breaches.length > 0 ? ['пороги НФТ не выполнены: ' + breaches.join('; ')] : []),
+      `запросов под нагрузкой: ${result.requests}, одновременных сессий (пик): ${result.peakActiveSessions}, ответов 5xx и сетевых ошибок: ${failedRequests}, утечек чужих карточек: ${result.counters.foreignLeaks}`,
       ...nfrOps.map(([op, name]) => `NFR-01 ${name}: ${opFigures(result.api[op])}`),
       ...result.reportBursts.map((burst) => `NFR-03 ${burst.label}: готово ${burst.succeeded} из ${burst.jobs.length}, одновременно вычислялось до ${burst.concurrency.max}, общее время пика ${burst.concurrency.peakCommonMs} мс, вычисление ${Math.min(...burst.runningMs)}–${Math.max(...burst.runningMs)} мс`),
       ...nfrOps.map(([op, name]) => `NFR-03 ${name} во время серий: ${opFigures(result.apiDuringReports[op])}`)
@@ -62,17 +118,42 @@ if (process.argv[2] === '--self-test') {
   check(verdict({ requests: 0, reportBursts: [] }).lines[0].startsWith('ошибка генератора: нет метрик'), true, 'no samples is an error')
   check(verdict({ requests: 5, reportBursts: [{ label: 'burst-1', error: 'boom' }] }).lines[0], 'ошибка генератора: burst-1: boom', 'failed report burst is an error')
   const stats = { count: 20, p95: 310, max: 900, over1s: 0 }
-  const passed = verdict({
-    requests: 100, activeSessionsDuringLoad: 2, statuses: { 200: 97, 404: 1, 502: 2 }, counters: { foreignLeaks: 0 },
-    api: { transition: stats, comment: stats }, apiDuringReports: { preview: stats },
+  const limits = { maxP95Ms: 1000, max5xxPercent: 1, minSessions: 50, minReports: 10 }
+  const good = () => ({
+    requests: 100, peakActiveSessions: 50, statuses: { 200: 99, 404: 1 }, counters: { foreignLeaks: 0 },
+    api: { transition: stats, comment: stats, preview: stats }, apiDuringReports: { preview: stats },
     reportBursts: [{ label: 'burst-1', succeeded: 12, jobs: new Array(12), concurrency: { max: 10, peakCommonMs: 1500 }, runningMs: [800, 4000] }]
   })
+  const passed = verdict(good(), limits)
   check(passed.ok, true, 'complete result is a success')
-  check(passed.lines[0], 'запросов под нагрузкой: 100, активных сессий: 2, ответов 5xx и сетевых ошибок: 2, утечек чужих карточек: 0', 'totals line')
+  check(passed.lines[0], 'запросов под нагрузкой: 100, одновременных сессий (пик): 50, ответов 5xx и сетевых ошибок: 0, утечек чужих карточек: 0', 'totals line')
   check(passed.lines[1], 'NFR-01 переход: p95 310 мс, max 900 мс, дольше 1 с: 0 из 20', 'NFR-01 line')
-  check(passed.lines[3], 'NFR-01 предпросмотр: нет замеров', 'missing op is reported')
+  check(passed.lines[3], 'NFR-01 предпросмотр: p95 310 мс, max 900 мс, дольше 1 с: 0 из 20', 'NFR-01 preview line')
   check(passed.lines[4], 'NFR-03 burst-1: готово 12 из 12, одновременно вычислялось до 10, общее время пика 1500 мс, вычисление 800–4000 мс', 'NFR-03 burst line')
   check(passed.lines[7], 'NFR-03 предпросмотр во время серий: p95 310 мс, max 900 мс, дольше 1 с: 0 из 20', 'NFR-03 interactive line')
+  const refuses = (change, fragment, message, custom = limits) => {
+    const result = good()
+    change(result)
+    const outcome = verdict(result, custom)
+    check(outcome.ok, false, message + ': refuses')
+    check(outcome.lines[0].startsWith('пороги НФТ не выполнены:') && outcome.lines[0].includes(fragment), true, message + ': names the breach, got ' + outcome.lines[0])
+  }
+  refuses((r) => { r.statuses = { 200: 98, 502: 2 } }, 'ответов 5xx', 'two 502 of 100 are 2 %')
+  refuses((r) => { r.statuses = { 200: 98, 0: 2 } }, 'ответов 5xx', 'network errors count as failures')
+  refuses((r) => { r.api.transition = { ...stats, p95: 1200 } }, 'переход: p95 1200', 'slow transition')
+  refuses((r) => { r.apiDuringReports.preview = { ...stats, p95: 1500 } }, 'во время серий отчётов', 'slow preview during reports')
+  refuses((r) => { delete r.api.comment }, 'комментарий: нет замеров', 'unmeasured NFR operation')
+  refuses((r) => { r.peakActiveSessions = 49 }, 'одновременных сессий 49', 'too few concurrent sessions')
+  refuses((r) => { r.reportBursts[0].succeeded = 9 }, 'готовых отчётов 9', 'too few ready reports')
+  refuses((r) => { r.reportBursts = [] }, 'готовых отчётов 0', 'no report bursts')
+  refuses((r) => { r.counters.foreignLeaks = 1 }, 'утечка чужих карточек', 'leak refuses always', { maxP95Ms: 1e9, max5xxPercent: 100, minSessions: 0, minReports: 0 })
+  check(verdict({ ...good(), statuses: { 200: 99, 502: 1 } }, limits).ok, true, 'exactly 1 % is within the limit')
+  check(verdict({ ...good(), peakActiveSessions: 10 }, { ...limits, minSessions: 10 }).ok, true, 'short run with its own limits passes')
+  check(thresholdsFromEnv({ LOAD_MIN_SESSIONS: '10', LOAD_MAX_P95_MS: '3000' }).minSessions, 10, 'limits come from env')
+  check(thresholdsFromEnv({}).minReports, 10, 'default limits follow the NFR')
+  const at = (user, from, count) => Array.from({ length: count }, (_, i) => ({ user, at: from + i * 2000 }))
+  check(peakActiveSessions([...at('a', 0, 10), ...at('b', 0, 10), ...at('c', 100000, 10)], 10000), 2, 'sessions that work one after another are not concurrent')
+  check(peakActiveSessions([...at('a', 0, 10), ...at('b', 4000, 10), ...at('c', 8000, 10)], 10000), 3, 'overlapping sessions are counted')
   console.log('load-test.mjs --self-test: OK')
   process.exit(0)
 }
@@ -714,7 +795,8 @@ try {
   output.timeline = Object.entries(Object.groupBy(loadSamples.filter((sample) => interactiveOps.has(sample.op)), (sample) => Math.floor((sample.at - start) / 15000) * 15))
     .map(([second, list]) => ({ second: Number(second), ...summarize(list.map((sample) => ({ ...sample, op: 'interactive' }))).interactive }))
   fs.writeFileSync(path.join(stateDir, `samples-${output.startedAt.replace(/[:.]/g, '-')}.json`), JSON.stringify(loadSamples.map(({ op, at, elapsed, status, user }) => [op, at - start, Math.round(elapsed), status, user])))
-  output.activeSessionsDuringLoad = new Set(loadSamples.map((sample) => sample.user)).size
+  output.peakActiveSessions = peakActiveSessions(loadSamples, Math.max(10000, thinkMax * 3))
+  output.distinctSessions = new Set(loadSamples.map((sample) => sample.user)).size
   output.requests = loadSamples.length
   output.counters = counters
   output.errors = errors

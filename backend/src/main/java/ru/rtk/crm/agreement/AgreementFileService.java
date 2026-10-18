@@ -90,7 +90,16 @@ public class AgreementFileService {
         if (!file.downloadable() || file.storageKey() == null) {
             throw AgreementException.fileNotFound();
         }
-        return new DownloadedFile(file, storage.open(file.storageKey()));
+        String name = file.id().equals(repository.findSignedFileId(file.agreementId())) ? signedName(file.originalName()) : file.originalName();
+        return new DownloadedFile(file, name, storage.open(file.storageKey()));
+    }
+
+    // Подписанная версия скачивается с пометкой в имени файла, чтобы её не спутали с черновиками.
+    public static String signedName(String originalName) {
+        int dot = originalName.lastIndexOf('.');
+        return dot > 0
+                ? originalName.substring(0, dot) + " (подписанная)" + originalName.substring(dot)
+                : originalName + " (подписанная)";
     }
 
     private AgreementFile store(
@@ -149,7 +158,7 @@ public class AgreementFileService {
         }
     }
 
-    public record DownloadedFile(StoredFile file, InputStream content) {
+    public record DownloadedFile(StoredFile file, String fileName, InputStream content) {
     }
 
     private record UploadCommand(

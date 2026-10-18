@@ -66,6 +66,8 @@ import ru.rtk.crm.work.WorkControlService;
         ru.rtk.crm.work.LmsLearningTestBeans.class,
         WorkControlService.class,
         ru.rtk.crm.agreement.AgreementRepository.class,
+        ru.rtk.crm.agreement.AgreementApproval.class,
+        ru.rtk.crm.agreement.AgreementStages.class,
         ManagerWorkControlTest.PropertiesConfiguration.class
 })
 class ManagerWorkControlTest {
@@ -87,7 +89,13 @@ class ManagerWorkControlTest {
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS agreements (
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, number VARCHAR(100) NOT NULL, status VARCHAR(16) NOT NULL,
-                    status_changed_at TIMESTAMP WITH TIME ZONE NOT NULL, valid_until DATE
+                    status_changed_at TIMESTAMP WITH TIME ZONE NOT NULL, valid_until DATE, sent_on DATE
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_status_events (
+                    id UUID PRIMARY KEY, agreement_id UUID NOT NULL, from_status VARCHAR(16), to_status VARCHAR(16) NOT NULL,
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """);
         jdbcTemplate.execute("""
@@ -96,6 +104,7 @@ class ManagerWorkControlTest {
                 )
                 """);
         jdbcTemplate.update("DELETE FROM agreement_interactions");
+        jdbcTemplate.update("DELETE FROM agreement_status_events");
         jdbcTemplate.update("DELETE FROM agreements");
         ReportTestData.insertScenario(jdbcTemplate);
     }
@@ -124,6 +133,37 @@ class ManagerWorkControlTest {
                 });
         assertThat(works).filteredOn(work -> work.interactionId().equals(INTERACTION_WITHOUT_LINKS)).singleElement()
                 .satisfies(work -> assertThat(work.agreementStatus()).isNull());
+    }
+
+    @Test
+    void contractStageUnderApprovalIsNotStuckAndShowsTheApprovalColorOnScreenAndInExport() {
+        UUID review = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO agreements (id, organization_id, number, status, status_changed_at, sent_on)
+                VALUES (?, ?, 'Д-9', 'REVIEW', CURRENT_TIMESTAMP, ?)
+                """, review, ReportTestData.ORGANIZATION_A_UNASSIGNED, ReportTestData.TODAY.minusDays(400));
+        jdbcTemplate.update("INSERT INTO agreement_interactions (agreement_id, interaction_id) VALUES (?, ?)", review, INTERACTION_UNASSIGNED);
+        jdbcTemplate.update("""
+                INSERT INTO agreement_status_events (id, agreement_id, from_status, to_status, occurred_at)
+                VALUES (?, ?, 'DRAFT', 'REVIEW', CURRENT_TIMESTAMP)
+                """, UUID.randomUUID(), review);
+        assertThat(titles(tile(ManagerWorkTile.STUCK, 1))).hasSize(3);
+
+        jdbcTemplate.update("UPDATE interaction_stages SET name = 'Обмен документами' WHERE id = (SELECT current_stage_id FROM interactions WHERE id = ?)",
+                INTERACTION_UNASSIGNED);
+
+        WorkItem item = workControlService.control(LEADER_A_PROFILE, filters(), null, null).teams().getFirst().managers().stream()
+                .flatMap(manager -> manager.works().stream())
+                .filter(work -> work.interactionId().equals(INTERACTION_UNASSIGNED))
+                .findFirst().orElseThrow();
+        assertThat(item.stageUnderApproval()).isTrue();
+        assertThat(item.agreementApproval().round()).isEqualTo(1);
+        assertThat(item.agreementApproval().color()).isEqualTo(ru.rtk.crm.agreement.AgreementModels.ApprovalColor.RED);
+        assertThat(titles(tile(ManagerWorkTile.STUCK, 1))).hasSize(2).doesNotContain("Запрос на обучение");
+        assertThat(reportService.preview(LEADER_A_PROFILE, request(null, null, ReportColumn.INTERACTION, ReportColumn.AGREEMENT_STATUS),
+                0, 50).items())
+                .filteredOn(row -> "Запрос на обучение".equals(row.get("INTERACTION"))).singleElement()
+                .satisfies(row -> assertThat(row.get("AGREEMENT_STATUS")).isEqualTo("На согласовании · согласование: красный"));
     }
 
     @Test
@@ -426,7 +466,7 @@ class ManagerWorkControlTest {
         jdbcTemplate.update("""
                 INSERT INTO agreements (id, organization_id, number, status, status_changed_at) VALUES
                     (?, ?, 'Д-7', 'ACTIVE', TIMESTAMP WITH TIME ZONE '2026-09-01 10:00:00+03:00'),
-                    (?, ?, 'Д-8', 'REVIEW', TIMESTAMP WITH TIME ZONE '2026-09-02 10:00:00+03:00')
+                    (?, ?, 'Д-8', 'REVIEW', CURRENT_TIMESTAMP)
                 """, active, ReportTestData.ORGANIZATION_A, review, ReportTestData.ORGANIZATION_A_UNASSIGNED);
         jdbcTemplate.update("INSERT INTO agreement_interactions (agreement_id, interaction_id) VALUES (?, ?), (?, ?)",
                 active, INTERACTION_TWO_PRODUCTS, review, INTERACTION_UNASSIGNED);
@@ -480,7 +520,7 @@ class ManagerWorkControlTest {
         assertThat(control.teams().getFirst().totals().organizations()).isEqualTo(5);
         assertThat(control.teams().getFirst().managers())
                 .extracting(ManagerBlock::managerName, block -> block.totals().organizations(), block -> block.totals().idle())
-                .containsExactly(tuple("Анна Кузнецова", 2L, 1L), tuple("Борис Смирнов", 1L, 1L), tuple(null, 1L, 0L));
+                .containsExactly(tuple("Анна Кузнецова", 2L, 1L), tuple("Борис Смирнов", 1L, 1L), tuple(null, 2L, 0L));
 
         Control boris = workControlService.control(LEADER_A_PROFILE, filters(List.of(), List.of(MANAGER_A2), List.of(), false), null, null);
         assertThat(boris.idleOrganizations()).extracting(ManagerWorkOrganization::id).containsExactly(gamma);
@@ -494,6 +534,45 @@ class ManagerWorkControlTest {
         Control management = workControlService.control(new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0), filters(), null, null);
         assertThat(management.total().organizations()).isEqualTo(6);
         assertThat(management.idleOrganizations()).hasSize(2);
+    }
+
+    @Test
+    void exportTotalsCountOrganizationsWithoutWorkLikeTheControlScreen() {
+        ReportTestData.organization(jdbcTemplate, UUID.randomUUID(), "Университет «Гамма»", ReportTestData.TEAM_A, MANAGER_A2);
+        ReportTestData.organization(jdbcTemplate, UUID.randomUUID(), "Университет «Дельта»", ReportTestData.TEAM_A, MANAGER_A);
+        ReportTestData.organization(jdbcTemplate, UUID.randomUUID(), "Колледж без работы", ReportTestData.TEAM_A, null);
+        CrmProfile management = new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0);
+
+        Control control = workControlService.control(management, filters(), null, null);
+        ReportPreview preview = reportService.preview(management, request(null, null), 0, 50);
+
+        assertThat(preview.groupTotals())
+                .extracting(ManagerWorkTotal::team, ManagerWorkTotal::manager, ManagerWorkTotal::organizations, ManagerWorkTotal::works)
+                .containsExactly(
+                        tuple("Команда А", "Анна Кузнецова", 2L, 2L),
+                        tuple("Команда А", "Борис Смирнов", 1L, 0L),
+                        tuple("Команда А", "Требует назначения", 2L, 1L),
+                        tuple("Команда А", "Итого по команде", 5L, 3L),
+                        tuple("Команда Б", "Вера Орлова", 1L, 1L),
+                        tuple("Команда Б", "Итого по команде", 1L, 1L),
+                        tuple("Все команды", "Всего", 6L, 4L)
+                );
+        assertThat(preview.groupTotals().stream().filter(total -> "Итого по команде".equals(total.manager()))
+                .map(ManagerWorkTotal::organizations))
+                .containsExactlyElementsOf(control.teams().stream().map(team -> team.totals().organizations()).toList());
+        assertThat(preview.groupTotals().getLast().organizations()).isEqualTo(control.total().organizations());
+        ManagerBlock anna = control.teams().getFirst().managers().stream()
+                .filter(block -> "Анна Кузнецова".equals(block.managerName())).findFirst().orElseThrow();
+        assertThat(preview.groupTotals().getFirst().organizations()).isEqualTo(anna.totals().organizations());
+        // Вуз без КАМ и без работы входит в блок «не назначен» на экране так же, как в строку «Требует назначения».
+        ManagerBlock unassigned = control.teams().getFirst().managers().stream()
+                .filter(block -> block.managerId() == null).findFirst().orElseThrow();
+        assertThat(unassigned.totals().organizations()).isEqualTo(2);
+
+        assertThat(reportService.preview(LEADER_A_PROFILE, tile(ManagerWorkTile.NO_NEXT_STEP, null), 0, 50).groupTotals().getLast()
+                .organizations()).isEqualTo(2);
+        assertThat(reportService.preview(LEADER_A_PROFILE, request(SEPTEMBER_FIRST, SEPTEMBER_LAST), 0, 50).groupTotals().getLast()
+                .organizations()).isEqualTo(2);
     }
 
     private ReportRequest tile(ManagerWorkTile tile, Integer days) {

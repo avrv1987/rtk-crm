@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,6 +46,10 @@ public class KeycloakAccountClient {
             "Keycloak недоступен; роль не изменена, повторите позже",
             "; роль не изменена"
     );
+    private static final Outcome CONTACT_READ = new Outcome(
+            "Keycloak недоступен; контакты сотрудника не получены",
+            "; контакты сотрудника не получены"
+    );
     private static final String UPDATE_PASSWORD = "UPDATE_PASSWORD";
     private static final String PRIVILEGED_ROLE = "crm-privileged";
     private static final String OTP_CREDENTIAL = "otp";
@@ -66,6 +71,42 @@ public class KeycloakAccountClient {
 
     public boolean configured() {
         return properties.configured();
+    }
+
+    // Телефон берётся из атрибута phone_number (имя по OIDC) или phone, если администратор его заполнил.
+    public Optional<UserContact> contact(String userId) {
+        if (!configured() || userId == null) {
+            return Optional.empty();
+        }
+        HttpResponse<String> response = send(HttpRequest.newBuilder(uri(userPath(userId)))
+                .header("Authorization", "Bearer " + accessToken(CONTACT_READ))
+                .GET(), CONTACT_READ);
+        if (response.statusCode() == 404) {
+            return Optional.empty();
+        }
+        requireSuccess(response, "чтение учётной записи", CONTACT_READ);
+        try {
+            JsonNode user = objectMapper.readTree(response.body());
+            JsonNode attributes = user.path("attributes");
+            String phone = firstText(attributes.path("phone_number"));
+            return Optional.of(new UserContact(
+                    blankToNull(user.path("email").asText(null)),
+                    phone != null ? phone : firstText(attributes.path("phone"))
+            ));
+        } catch (IOException exception) {
+            throw new AccountSyncException("Keycloak вернул ответ не в формате JSON" + CONTACT_READ.rejectedSuffix(), exception);
+        }
+    }
+
+    private static String firstText(JsonNode values) {
+        return values.isArray() && !values.isEmpty() ? blankToNull(values.get(0).asText(null)) : null;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
+    }
+
+    public record UserContact(String email, String phone) {
     }
 
     public void setEnabled(String userId, boolean enabled) {

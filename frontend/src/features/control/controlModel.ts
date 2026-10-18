@@ -1,3 +1,4 @@
+import type { ReportSelection } from '../reports/reportSelection'
 import type {
   ManagerWorkChange,
   ManagerWorkDue,
@@ -272,8 +273,10 @@ export const controlStateFromHash = (hash: string): { filters: ControlFilters; v
 
 const isActiveWork = (item: Pick<WorkControlItem, 'status'>) => item.status !== 'COMPLETED' && item.status !== 'PAUSED'
 
-export const isStuck = (item: Pick<WorkControlItem, 'status' | 'daysOnStage'>, stuckDays: number) => (
-  isActiveWork(item) && (item.daysOnStage ?? 0) >= stuckDays
+// Этап договора, пока договор на согласовании, не считается застрявшим: там действуют пороги согласования
+// (как на сервере, ManagerWorkReport.matches).
+export const isStuck = (item: Pick<WorkControlItem, 'status' | 'daysOnStage' | 'stageUnderApproval'>, stuckDays: number) => (
+  isActiveWork(item) && !item.stageUnderApproval && (item.daysOnStage ?? 0) >= stuckDays
 )
 
 export const tileMatches = (item: WorkControlItem, managerId: string | null, tile: ControlTile, stuckDays: number): boolean => {
@@ -364,3 +367,124 @@ export const panelFilterCount = (filters: ControlFilters) => [
   filters.managerId,
   filters.stage
 ].filter((values) => values.length > 0).length
+
+// Переходы из «Контроля» в список и в отчёт «Работа менеджеров» переносят отборы. У списка отбор одиночный и нет
+// продукта, программы, направления и периода; отчёт не знает плиток. Что не перенеслось, целевой экран называет по
+// параметру skipped, чтобы пользователь не принял неполную выборку за ту же самую.
+const skippedLabels: Record<string, string> = {
+  product: 'продукт',
+  program: 'ИТ-программа',
+  direction: 'ИТ-направление',
+  organizations: 'несколько вузов',
+  managers: 'несколько менеджеров',
+  stages: 'несколько этапов',
+  period: 'период',
+  change: 'изменения за период',
+  tile: 'плитка'
+}
+
+const withSkipped = (params: URLSearchParams, skipped: string[]) => {
+  if (skipped.length > 0) {
+    params.set('skipped', skipped.join(','))
+  }
+  return params.toString()
+}
+
+export const controlListHref = (filters: ControlFilters, view: ControlView): string => {
+  const params = new URLSearchParams({ view: 'list' })
+  const skipped: string[] = []
+  const single = (values: string[], name: string, many: string) => {
+    if (values.length === 1) {
+      params.set(name, values[0])
+    } else if (values.length > 1) {
+      skipped.push(many)
+    }
+  }
+  single(filters.organizationId, 'organization', 'organizations')
+  single(filters.managerId, 'responsible', 'managers')
+  single(filters.stage, 'stage', 'stages')
+  const unsupported: [string, boolean][] = [
+    ['product', filters.productId.length > 0],
+    ['program', filters.programId.length > 0],
+    ['direction', filters.directionId.length > 0],
+    ['period', hasPeriod(filters)],
+    ['change', filters.change !== '']
+  ]
+  unsupported.filter(([, active]) => active).forEach(([key]) => skipped.push(key))
+  switch (view.tile) {
+    case 'OVERDUE':
+    case 'THIS_WEEK':
+    case 'NO_NEXT_STEP':
+      params.set('due', view.tile)
+      break
+    case 'ISSUES':
+      params.set('flag', 'RISK_OR_PROBLEM')
+      break
+    case 'STUCK':
+      params.set('minDaysOnStage', String(view.stuckDays))
+      break
+    case 'UNASSIGNED':
+      if (params.has('responsible') || skipped.includes('managers')) {
+        skipped.push('tile')
+      } else {
+        params.set('responsible', managerUnassigned)
+      }
+      break
+    case 'AGREEMENT':
+    case 'LMS':
+    case 'IDLE':
+      skipped.push('tile')
+      break
+    case null:
+      break
+  }
+  return `#/control?${withSkipped(params, skipped)}`
+}
+
+export const controlReportHref = (filters: ControlFilters, view: ControlView): string => {
+  const params = new URLSearchParams(controlQueryFromFilters(filters))
+  params.set('source', 'control')
+  return `#/reports/manager-work?${withSkipped(params, view.tile === null ? [] : ['tile'])}`
+}
+
+export const skippedNotice = (query: string): string | null => {
+  const labels = (new URLSearchParams(query).get('skipped') ?? '')
+    .split(',')
+    .map((key) => skippedLabels[key])
+    .filter((label): label is string => label !== undefined)
+  return labels.length === 0 ? null : `Не перенесено из «Контроля»: ${labels.join(', ')} — на этом экране такого отбора нет.`
+}
+
+export const reportSelectionFromControl = (selection: ReportSelection, query: string): ReportSelection | null => {
+  if (new URLSearchParams(query).get('source') !== 'control') {
+    return null
+  }
+  const filters = controlFiltersFromQuery(query)
+  return {
+    ...selection,
+    kind: 'MANAGER_WORK',
+    from: filters.from,
+    to: filters.to,
+    organizationIds: filters.organizationId,
+    organizationType: '',
+    directionIds: filters.directionId,
+    includeNoDirection: false,
+    programIds: filters.programId,
+    includeNoProgram: false,
+    productIds: filters.productId,
+    includeNoProduct: false,
+    managerIds: filters.managerId.filter((id) => id !== managerUnassigned),
+    includeNoManager: filters.managerId.includes(managerUnassigned),
+    stages: filters.stage,
+    change: filters.change
+  }
+}
+
+// Сколько строк осталось под выбранной плиткой: общий счётчик описывает всю выборку по фильтрам, а этот — отбор.
+// У «Без работы» строк взаимодействий нет, там считаются вузы.
+export const tileShownCount = (shown: WorkControl, tile: ControlTile | null): number | null => {
+  if (tile === null) {
+    return null
+  }
+  return tile === 'IDLE' ? shown.idleOrganizations?.length ?? 0 : allWorks(shown).length
+}

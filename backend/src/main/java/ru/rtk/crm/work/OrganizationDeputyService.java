@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -87,10 +88,85 @@ public class OrganizationDeputyService {
         )) {
             return replay(profile.id(), CommandOperation.ASSIGN_ORGANIZATION_DEPUTY, normalizedKey, fingerprint);
         }
+        requireNotEnded(command, now);
+        return store(commandId, assignTo(profile, organizationId, command, commandId, now));
+    }
+
+    // Отпуск или больничный КАМ: одна команда руководителя создаёт замещение по каждому его вузу. Вуз, где
+    // замещение уже есть, пропускается с причиной, остальные назначаются.
+    @Transactional
+    public ManagerDeputyResult assignForManager(
+            CrmProfile profile,
+            UUID managerId,
+            OrganizationDeputyRequest request,
+            String idempotencyKey
+    ) {
+        requireLeader(profile);
+        if (organizationAssignmentRepository.findCandidate(managerId, profile.teamId(), profile.id()).isEmpty()) {
+            throw new OrganizationAssignmentAccessDeniedException();
+        }
+        OrganizationDeputyRequest command = validated(request);
+        if (command.deputyProfileId().equals(managerId)) {
+            throw new InteractionValidationException("deputyProfileId", "Заместитель должен отличаться от ответственного");
+        }
+        if (command.deputyProfileId().equals(profile.id())
+                || organizationAssignmentRepository.findCandidate(command.deputyProfileId(), profile.teamId(), profile.id()).isEmpty()) {
+            throw new InteractionValidationException(
+                    "deputyProfileId", "Заместителем можно назначить только активного менеджера своей команды"
+            );
+        }
+        String normalizedKey = AdminAuthorization.requiredIdempotencyKey(idempotencyKey);
+        String fingerprint = CommandFingerprint.of(objectMapper, new ManagerAssignCommand(managerId, command));
+        UUID commandId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
+        if (!commandIdempotencyRepository.reserve(
+                commandId,
+                profile.id(),
+                CommandOperation.ASSIGN_MANAGER_DEPUTY,
+                normalizedKey,
+                fingerprint,
+                now
+        )) {
+            return replayResult(profile.id(), normalizedKey, fingerprint);
+        }
+        requireNotEnded(command, now);
+        List<OrganizationDeputyRepository.OwnedOrganization> organizations =
+                organizationDeputyRepository.findOwnedOrganizations(profile.teamId(), managerId);
+        if (organizations.isEmpty()) {
+            throw new InteractionValidationException("managerId", "У КАМ нет вузов, где можно назначить заместителя");
+        }
+        List<OrganizationDeputy> assigned = new ArrayList<>();
+        List<ManagerDeputyResult.Skipped> skipped = new ArrayList<>();
+        for (OrganizationDeputyRepository.OwnedOrganization organization : organizations) {
+            try {
+                assigned.add(assignTo(profile, organization.id(), command, commandId, now));
+            } catch (InteractionValidationException exception) {
+                skipped.add(new ManagerDeputyResult.Skipped(organization.id(), organization.name(), exception.getMessage()));
+            }
+        }
+        try {
+            String resultJson = objectMapper.writeValueAsString(new ManagerDeputyResult(assigned, skipped));
+            commandIdempotencyRepository.complete(commandId, resultJson);
+            return objectMapper.readValue(resultJson, ManagerDeputyResult.class);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Manager deputy command result cannot be stored", exception);
+        }
+    }
+
+    private void requireNotEnded(OrganizationDeputyRequest command, OffsetDateTime now) {
         LocalDate today = now.atZoneSameInstant(WorkProperties.ZONE).toLocalDate();
         if (command.endsOn().isBefore(today)) {
             throw new InteractionValidationException("endsOn", "Период замещения уже закончился");
         }
+    }
+
+    private OrganizationDeputy assignTo(
+            CrmProfile profile,
+            UUID organizationId,
+            OrganizationDeputyRequest command,
+            UUID commandId,
+            OffsetDateTime now
+    ) {
         organizationDeputyRepository.lockOrganization(organizationId);
         Organization organization = requireVisibleOrganization(profile, organizationId);
         if (organization.requiresAssignment()) {
@@ -135,7 +211,7 @@ public class OrganizationDeputyService {
         );
         organizationDeputyRepository.insert(row, commandId);
         organizationAssignmentRepository.incrementAccessRevisions(deputy.id(), null);
-        return store(commandId, row.view(now));
+        return row.view(now);
     }
 
     @Transactional
@@ -239,6 +315,23 @@ public class OrganizationDeputyService {
         return read(command.resultJson());
     }
 
+    private ManagerDeputyResult replayResult(UUID actorProfileId, String idempotencyKey, String fingerprint) {
+        CommandIdempotencyRepository.CommandRecord command = commandIdempotencyRepository
+                .find(actorProfileId, CommandOperation.ASSIGN_MANAGER_DEPUTY, idempotencyKey)
+                .orElseThrow(() -> new IllegalStateException("Reserved manager deputy command is unavailable"));
+        if (!fingerprint.equals(command.requestFingerprint())) {
+            throw InteractionConflictException.idempotency();
+        }
+        if (command.resultJson() == null) {
+            throw new IllegalStateException("Reserved manager deputy command has no result");
+        }
+        try {
+            return objectMapper.readValue(command.resultJson(), ManagerDeputyResult.class);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Stored manager deputy command result cannot be read", exception);
+        }
+    }
+
     private OrganizationDeputy store(UUID commandId, OrganizationDeputy deputy) {
         try {
             String resultJson = objectMapper.writeValueAsString(deputy);
@@ -258,6 +351,9 @@ public class OrganizationDeputyService {
     }
 
     private record AssignCommand(UUID organizationId, OrganizationDeputyRequest request) {
+    }
+
+    private record ManagerAssignCommand(UUID managerId, OrganizationDeputyRequest request) {
     }
 
     private record EndCommand(UUID organizationId, UUID deputyId) {

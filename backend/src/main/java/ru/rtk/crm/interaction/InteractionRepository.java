@@ -191,19 +191,8 @@ public class InteractionRepository {
             parameters.put("stageEnteredBefore", now.minusDays(filter.minDaysOnStage()));
         }
         if (filter.due() != null) {
-            switch (filter.due()) {
-                case OVERDUE -> {
-                    conditions.add("i.next_action_at < :now");
-                    parameters.put("now", now);
-                }
-                case THIS_WEEK -> {
-                    OffsetDateTime weekStart = InteractionDue.weekStart(now);
-                    conditions.add("i.next_action IS NOT NULL AND i.next_action_at >= :weekStart AND i.next_action_at < :weekEnd");
-                    parameters.put("weekStart", weekStart);
-                    parameters.put("weekEnd", weekStart.plusWeeks(1));
-                }
-                case NO_NEXT_STEP -> conditions.add("(i.next_action IS NULL OR i.next_action_at IS NULL)");
-            }
+            conditions.add(filter.due().condition());
+            parameters.putAll(InteractionDue.parameters(now));
         }
         if (filter.licenseExpiresBy() != null) {
             conditions.add("""

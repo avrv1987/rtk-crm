@@ -177,15 +177,14 @@ scenario('UAT-КАМ-03', '«Моя работа»: список дел на д�
     assert(value === 'ga', 'Просрочено: ' + value)
     return value
   })
-  await step(4, 'Срок на этой неделе: Б (и А, если вчера на этой неделе)', async () => {
+  await step(4, 'Срок на этой неделе: Б (просроченная вчерашняя А — только в «Просрочено», как в «Контроле»)', async () => {
     const value = ids(await listAll(kamA, '/api/interactions?due=THIS_WEEK&sort=nextActionAt,asc' + query, 'Неделя'))
-    const yesterdayThisWeek = weekday !== 1
-    assert(value === (yesterdayThisWeek ? 'ab' : 'b'), 'На этой неделе: ' + value)
+    assert(value === 'b', 'На этой неделе: ' + value)
     return value
   })
-  await step(5, 'Без следующего шага или срока: В и Г', async () => {
+  await step(5, 'Без следующего шага или срока: В (Г со сроком в прошлом — в «Просрочено»)', async () => {
     const value = ids(await listAll(kamA, '/api/interactions?due=NO_NEXT_STEP' + query, 'Без шага')).split('').sort().join('')
-    assert(value === 'gv', 'Без шага: ' + value)
+    assert(value === 'v', 'Без шага: ' + value)
     return value
   })
   await step(1, 'Рабочий стол: плитки равны спискам, напоминания не закрывают экран', async () => {
@@ -578,7 +577,7 @@ scenario('UAT-КАМ-21', 'Несколько работ с вузом: прав
     return 'COMPLETED, скрыта по умолчанию'
   })
   await step(8, 'Первая приостановлена с причиной', async () => {
-    const paused = requireStatus(await api(kamA, 'POST', '/api/interactions/' + first.id + '/status', { body: { version: one.version, status: 'PAUSED', reason: 'Вуз перенёс старт на следующий год' } }), 200, 'Приостановка')
+    const paused = requireStatus(await api(kamA, 'POST', '/api/interactions/' + first.id + '/status', { body: { version: one.version, status: 'PAUSED', reason: 'Вуз перенёс старт на следующий год', resumeOn: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10) } }), 200, 'Приостановка')
     assert(paused.marks.status === 'PAUSED', 'Статус ' + paused.marks.status)
     return 'PAUSED'
   })

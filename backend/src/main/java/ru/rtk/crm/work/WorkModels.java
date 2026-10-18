@@ -63,7 +63,19 @@ public final class WorkModels {
             int licenseExpiresBy,
             List<ReminderQualification> qualificationDue,
             int agreementNoticeDays,
-            List<ReminderAgreement> expiringAgreements
+            List<ReminderAgreement> expiringAgreements,
+            ReminderFeed feed
+    ) {
+    }
+
+    public record ReminderFeed(
+            long overdue,
+            long today,
+            long thisWeek,
+            long later,
+            long noNextStep,
+            long resumeDue,
+            long resumeNoDate
     ) {
     }
 

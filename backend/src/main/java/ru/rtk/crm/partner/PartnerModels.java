@@ -44,7 +44,7 @@ public final class PartnerModels {
     public record PartnerOrganization(UUID id, String name, OrganizationType type) {
     }
 
-    public record PartnerManager(String name) {
+    public record PartnerManager(String name, String email, String phone) {
     }
 
     public record PartnerWork(
@@ -85,7 +85,8 @@ public final class PartnerModels {
             LocalDate concludedOn,
             LocalDate validUntil,
             AgreementStatus status,
-            OffsetDateTime statusChangedAt
+            OffsetDateTime statusChangedAt,
+            Integer approvalRound
     ) {
     }
 }

@@ -301,7 +301,7 @@ public class ReportService {
         ManagerWorkTile tile = request.filters().tile();
         boolean withLearning = tile == ManagerWorkTile.LMS
                 || request.columns().contains(ReportColumn.LMS_LEARNING) || request.columns().contains(ReportColumn.LMS_CHECK);
-        boolean withAgreements = tile == ManagerWorkTile.AGREEMENT
+        boolean withAgreements = tile == ManagerWorkTile.AGREEMENT || tile == ManagerWorkTile.STUCK
                 || request.columns().contains(ReportColumn.AGREEMENT) || request.columns().contains(ReportColumn.AGREEMENT_STATUS);
         Map<UUID, WorkLearning> learning = withLearning ? lmsWorkLearningService.byWork(profile, foundIds) : Map.of();
         Map<UUID, WorkAgreementStatus> agreements = withAgreements ? agreementRepository.findWorkStatuses(foundIds) : null;
@@ -322,8 +322,19 @@ public class ReportService {
                                 ? agreements : null,
                         generatedAt
                 ),
-                ManagerWorkReport.totals(lines, generatedAt)
+                ManagerWorkReport.totals(lines, idleOrganizations(profile, request), generatedAt)
         );
+    }
+
+    // Итоги файла считают вузы без идущей работы так же, как экран «Контроля». С плиткой итоги описывают только
+    // отобранные строки, а вуз без работы ни под одну плитку не подходит.
+    private List<ManagerWorkOrganization> idleOrganizations(CrmProfile profile, ReportRequest request) {
+        if (request.filters().tile() != null || !ManagerWorkOrganization.counted(request.filters(), request.from(), request.to())) {
+            return List.of();
+        }
+        return repository.findOrganizationsWithoutActiveWork(profile).stream()
+                .filter(organization -> organization.selected(request.filters()))
+                .toList();
     }
 
     private static OffsetDateTime durationCutoff(ReportRequest request, OffsetDateTime generatedAt) {

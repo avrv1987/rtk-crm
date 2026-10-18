@@ -21,14 +21,14 @@ import {
   type AgreementStatus,
   type AgreementSummary
 } from './agreementsApi'
-import { agreementStatuses, daysInStatus, inputFromAgreement } from './agreementModel'
+import { agreementStatuses, approvalText, daysInStatus, inputFromAgreement } from './agreementModel'
 import { planKindLabels } from '../reports/signingPlan'
 import { daysLabel } from '../work/workShared'
 import { AgreementFiles } from './AgreementFiles'
 import { AgreementForm } from './AgreementForm'
 import { AgreementSupplements } from './AgreementSupplements'
 import { AgreementTransitions } from './AgreementTransitions'
-import { AgreementTermMark, CommandError, useAccessErrorHandler, useCommandKey } from './agreementUi'
+import { AgreementTermMark, ApprovalMark, CommandError, useAccessErrorHandler, useCommandKey } from './agreementUi'
 import './agreements.css'
 
 type AgreementsPanelProps = {
@@ -426,6 +426,13 @@ const AgreementDetail = ({
           ]}
         />
       </div>
+      {agreement.approval && (
+        <p className="agreement-detail__approval">
+          {`Согласование: ${approvalText(agreement.approval)} `}
+          <ApprovalMark approval={agreement.approval} />
+          <span className="agreement-activity__document-meta"> Июль и август не считаются.</span>
+        </p>
+      )}
       {canEdit && (
         <AgreementTransitions agreement={agreement} onDone={changed} handleAccessError={handleAccessError} />
       )}

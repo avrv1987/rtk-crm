@@ -7,6 +7,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,6 +22,7 @@ import ru.rtk.crm.agreement.AgreementModels.ActivityKind;
 import ru.rtk.crm.agreement.AgreementModels.ActivityStatus;
 import ru.rtk.crm.agreement.AgreementModels.Agreement;
 import ru.rtk.crm.agreement.AgreementModels.AgreementFile;
+import ru.rtk.crm.agreement.AgreementModels.Approval;
 import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
 import ru.rtk.crm.agreement.AgreementModels.AgreementSummary;
 import ru.rtk.crm.agreement.AgreementModels.Confirmation;
@@ -34,6 +36,7 @@ import ru.rtk.crm.agreement.AgreementModels.RegistryQuery;
 import ru.rtk.crm.agreement.AgreementModels.RegistryRow;
 import ru.rtk.crm.agreement.AgreementModels.Responsible;
 import ru.rtk.crm.agreement.AgreementModels.SignerContact;
+import ru.rtk.crm.agreement.AgreementModels.StatusEntry;
 import ru.rtk.crm.agreement.AgreementModels.StatusEvent;
 import ru.rtk.crm.agreement.AgreementModels.Supplement;
 import ru.rtk.crm.agreement.AgreementModels.SupplementStatus;
@@ -65,9 +68,13 @@ public class AgreementRepository {
                  ELSE FALSE END""";
 
     private final JdbcClient jdbcClient;
+    private final AgreementStages stages;
+    private final AgreementApproval approval;
 
-    public AgreementRepository(JdbcClient jdbcClient) {
+    public AgreementRepository(JdbcClient jdbcClient, AgreementStages stages, AgreementApproval approval) {
         this.jdbcClient = jdbcClient;
+        this.stages = stages;
+        this.approval = approval;
     }
 
     public List<ActivityKind> findKinds(boolean includeArchived) {
@@ -226,7 +233,12 @@ public class AgreementRepository {
                 .optional()
                 .map(header -> {
                     List<AgreementFile> files = findFiles(header.id());
-                    List<AgreementFile> own = files.stream().filter(file -> file.supplementId() == null).toList();
+                    List<StatusEvent> history = findHistory(header.id());
+                    UUID signedId = signedFileId(files, history);
+                    List<AgreementFile> own = files.stream()
+                            .filter(file -> file.supplementId() == null)
+                            .map(file -> file.id().equals(signedId) ? file.markSigned() : file)
+                            .toList();
                     return new Agreement(
                             header.id(),
                             header.organizationId(),
@@ -249,12 +261,15 @@ public class AgreementRepository {
                             current(own),
                             own,
                             findSupplements(header.id(), files),
-                            findHistory(header.id()),
+                            history,
                             header.status().transitions(),
                             header.version(),
                             header.createdAt(),
                             header.updatedAt(),
-                            findActivities(header.id())
+                            findActivities(header.id()),
+                            approval.state(header.status(), header.statusChangedAt(), header.sentOn(),
+                                    history.reversed().stream().map(event -> new StatusEntry(event.toStatus(), event.occurredAt())).toList(),
+                                    LocalDate.now(ZONE))
                     );
                 });
     }
@@ -522,9 +537,57 @@ public class AgreementRepository {
                         resultSet.getString("comment"),
                         resultSet.getString("created_by_name"),
                         resultSet.getObject("created_at", OffsetDateTime.class),
-                        resultSet.getString("interaction_title")
+                        resultSet.getString("interaction_title"),
+                        false
                 ))
                 .list();
+    }
+
+    // Подписанная версия — последняя скачиваемая версия файла самого договора, загруженная до перехода в «Действует».
+    // Возврат из «Завершён» в «Действует» договор заново не подписывает, поэтому такой переход не учитывается.
+    public static UUID signedFileId(List<AgreementFile> files, List<StatusEvent> history) {
+        OffsetDateTime signedAt = history.stream()
+                .filter(event -> event.toStatus() == AgreementStatus.ACTIVE && event.fromStatus() != AgreementStatus.COMPLETED)
+                .map(StatusEvent::occurredAt)
+                .max(Comparator.naturalOrder())
+                .orElse(null);
+        if (signedAt == null) {
+            return null;
+        }
+        return files.stream()
+                .filter(file -> file.supplementId() == null && file.downloadable() && !file.createdAt().isAfter(signedAt))
+                .max(Comparator.comparingInt(AgreementFile::versionNumber))
+                .map(AgreementFile::id)
+                .orElse(null);
+    }
+
+    public UUID findSignedFileId(UUID agreementId) {
+        return signedFileId(findFiles(agreementId), findHistory(agreementId));
+    }
+
+    private Map<UUID, List<StatusEntry>> findStatusEntries(List<UUID> agreementIds) {
+        Map<UUID, List<StatusEntry>> entries = new HashMap<>();
+        if (agreementIds.isEmpty()) {
+            return entries;
+        }
+        jdbcClient.sql("""
+                SELECT agreement_id, to_status, occurred_at
+                FROM agreement_status_events
+                WHERE agreement_id IN (:ids)
+                ORDER BY occurred_at, id
+                """)
+                .param("ids", agreementIds)
+                .query((ResultSet resultSet) -> {
+                    entries.computeIfAbsent(resultSet.getObject("agreement_id", UUID.class), id -> new ArrayList<>())
+                            .add(new StatusEntry(AgreementStatus.valueOf(resultSet.getString("to_status")),
+                                    resultSet.getObject("occurred_at", OffsetDateTime.class)));
+                });
+        return entries;
+    }
+
+    private Approval approval(UUID agreementId, AgreementStatus status, OffsetDateTime statusChangedAt, LocalDate sentOn,
+                              Map<UUID, List<StatusEntry>> entries, LocalDate today) {
+        return approval.state(status, statusChangedAt, sentOn, entries.getOrDefault(agreementId, List.of()), today);
     }
 
     public Optional<AgreementFile> findFile(UUID fileId) {
@@ -770,7 +833,11 @@ public class AgreementRepository {
             conditions.add("ag.status = 'REVIEW' AND ag.status_changed_at < :reviewStartedBefore");
             parameters.put("reviewStartedBefore", reviewStartedBefore);
         }
-        return registryRows(String.join(" AND ", conditions), parameters, today);
+        if (query.delayed()) {
+            conditions.add("ag.status IN ('REVIEW', 'CORRECTION', 'SIGNING')");
+        }
+        List<RegistryRow> rows = registryRows(String.join(" AND ", conditions), parameters, today);
+        return query.delayed() ? rows.stream().filter(row -> row.approval() != null && row.approval().delayed()).toList() : rows;
     }
 
     public List<RegistryRow> findSignedBetween(VisibilityScope scope, LocalDate from, LocalDate to, LocalDate today) {
@@ -818,27 +885,52 @@ public class AgreementRepository {
                 .list();
     }
 
+    // У работы показывается последний по смене статуса связанный договор. «Этап под согласованием» — текущий этап работы
+    // относится к договору, а этот договор на согласовании, корректировке или подписании: тогда срок этапа контролируют
+    // пороги согласования, а не «на этапе дольше N дней». В SQL то же правило — AgreementStages.stageUnderApprovalCondition.
     public Map<UUID, WorkAgreementStatus> findWorkStatuses(List<UUID> interactionIds) {
         Map<UUID, WorkAgreementStatus> statuses = new HashMap<>();
         if (interactionIds.isEmpty()) {
             return statuses;
         }
+        Map<UUID, AgreementPoint> latest = new HashMap<>();
         jdbcClient.sql("""
-                SELECT ai.interaction_id, ag.status, ag.number, ag.valid_until
+                SELECT ai.interaction_id, ag.id, ag.status, ag.number, ag.valid_until, ag.status_changed_at, ag.sent_on,
+                       CASE WHEN %s THEN 1 ELSE 0 END AS agreement_stage
                 FROM agreement_interactions ai
                 JOIN agreements ag ON ag.id = ai.agreement_id
+                JOIN interactions i ON i.id = ai.interaction_id
                 WHERE ai.interaction_id IN (:ids)
                 ORDER BY ag.status_changed_at DESC, ag.id
-                """)
+                """.formatted(stages.currentStageCondition("i")))
+                .params(stages.currentStageParameters())
                 .param("ids", interactionIds)
                 .query((ResultSet resultSet) -> {
-                    statuses.putIfAbsent(resultSet.getObject("interaction_id", UUID.class), new WorkAgreementStatus(
+                    latest.putIfAbsent(resultSet.getObject("interaction_id", UUID.class), new AgreementPoint(
+                            resultSet.getObject("id", UUID.class),
                             AgreementStatus.valueOf(resultSet.getString("status")),
                             resultSet.getString("number"),
-                            resultSet.getObject("valid_until", LocalDate.class)
+                            resultSet.getObject("valid_until", LocalDate.class),
+                            resultSet.getObject("status_changed_at", OffsetDateTime.class),
+                            resultSet.getObject("sent_on", LocalDate.class),
+                            resultSet.getInt("agreement_stage") == 1
                     ));
                 });
+        Map<UUID, List<StatusEntry>> entries = findStatusEntries(latest.values().stream()
+                .filter(point -> AgreementApproval.inProgress(point.status())).map(AgreementPoint::id).distinct().toList());
+        LocalDate today = LocalDate.now(ZONE);
+        latest.forEach((interactionId, point) -> statuses.put(interactionId, new WorkAgreementStatus(
+                point.status(),
+                point.number(),
+                point.validUntil(),
+                approval(point.id(), point.status(), point.statusChangedAt(), point.sentOn(), entries, today),
+                point.agreementStage() && AgreementApproval.inProgress(point.status())
+        )));
         return statuses;
+    }
+
+    private record AgreementPoint(UUID id, AgreementStatus status, String number, LocalDate validUntil, OffsetDateTime statusChangedAt,
+                                  LocalDate sentOn, boolean agreementStage) {
     }
 
     private List<RegistryRow> registryRows(String condition, Map<String, Object> parameters, LocalDate today) {
@@ -867,16 +959,20 @@ public class AgreementRepository {
                             resultSet.getObject("valid_until", LocalDate.class),
                             null,
                             resultSet.getObject("owner_manager_id", UUID.class),
-                            resultSet.getString("manager_name")
+                            resultSet.getString("manager_name"),
+                            null
                     );
                 })
                 .list();
         Map<UUID, List<String>> subjects = findSubjectNames(rows.stream().map(RegistryRow::id).toList());
+        Map<UUID, List<StatusEntry>> entries = findStatusEntries(rows.stream()
+                .filter(row -> AgreementApproval.inProgress(row.status())).map(RegistryRow::id).toList());
         return rows.stream()
                 .map(row -> new RegistryRow(row.id(), row.organizationId(), row.organizationName(), row.number(), row.status(),
                         row.statusChangedAt(), row.daysInStatus(), row.sentOn(), row.concludedOn(), row.validUntil(),
                         subjects.containsKey(row.id()) ? String.join("; ", subjects.get(row.id())) : null,
-                        row.managerId(), row.managerName()))
+                        row.managerId(), row.managerName(),
+                        approval(row.id(), row.status(), row.statusChangedAt(), row.sentOn(), entries, today)))
                 .toList();
     }
 
@@ -1247,7 +1343,8 @@ public class AgreementRepository {
     ) {
     }
 
-    public record WorkAgreementStatus(AgreementStatus status, String number, LocalDate validUntil) {
+    public record WorkAgreementStatus(AgreementStatus status, String number, LocalDate validUntil, Approval approval,
+                                      boolean stageUnderApproval) {
     }
 
     public record NewFile(

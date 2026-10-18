@@ -57,6 +57,36 @@ public final class AgreementModels {
         }
     }
 
+    // Сторона, у которой сейчас договор: «На согласовании» — у вуза, «На корректировке» — у школы (решение владельца),
+    // «На подписании» — у подписантов обеих сторон, порога стороны нет.
+    public enum ApprovalSide {
+        UNIVERSITY,
+        SCHOOL,
+        SIGNING
+    }
+
+    public enum ApprovalColor {
+        NORMAL,
+        YELLOW,
+        RED
+    }
+
+    public record Approval(
+            ApprovalSide side,
+            int round,
+            long sideDays,
+            Integer sideLimitDays,
+            long totalDays,
+            ApprovalColor color
+    ) {
+        public boolean delayed() {
+            return color != ApprovalColor.NORMAL;
+        }
+    }
+
+    public record StatusEntry(AgreementStatus toStatus, OffsetDateTime occurredAt) {
+    }
+
     public enum SupplementStatus {
         DRAFT("Проект"),
         SIGNED("Подписано");
@@ -178,7 +208,8 @@ public final class AgreementModels {
             int version,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
-            List<Activity> activities
+            List<Activity> activities,
+            Approval approval
     ) {
     }
 
@@ -229,8 +260,13 @@ public final class AgreementModels {
             String comment,
             String createdByName,
             OffsetDateTime createdAt,
-            String interactionTitle
+            String interactionTitle,
+            boolean signed
     ) {
+        AgreementFile markSigned() {
+            return new AgreementFile(id, agreementId, supplementId, versionNumber, originalName, mediaType, sizeBytes, status,
+                    downloadable, comment, createdByName, createdAt, interactionTitle, true);
+        }
     }
 
     public record Supplement(
@@ -286,7 +322,8 @@ public final class AgreementModels {
             UUID organizationId,
             UUID managerId,
             LocalDate expiresBefore,
-            Integer reviewLongerThanDays
+            Integer reviewLongerThanDays,
+            boolean delayed
     ) {
     }
 
@@ -303,7 +340,8 @@ public final class AgreementModels {
             LocalDate validUntil,
             String subject,
             UUID managerId,
-            String managerName
+            String managerName,
+            Approval approval
     ) {
     }
 
@@ -412,7 +450,7 @@ public final class AgreementModels {
             OffsetDateTime generatedAt,
             LocalDate from,
             LocalDate to,
-            int longerThanDays,
+            Integer longerThanDays,
             List<String> notes,
             PeriodTotals totals,
             List<PeriodTransition> transitions,

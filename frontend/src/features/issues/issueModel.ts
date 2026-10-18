@@ -121,3 +121,10 @@ export const issueQueryFromFilters = (filters: IssueFilters) => {
 export const issuesHref = (organizationId: string, interactionId: string) => (
   `#/organizations/${organizationId}/${interactionId}?issues=1`
 )
+
+// Карточка с окном проблем открывается, только если вуз доступен; назначенное коллегой по чужому вузу ведёт в реестр.
+export const myIssueHref = (issue: Pick<InteractionIssue, 'organizationAccessible' | 'organizationId' | 'interactionId'>, profileId: string) => (
+  issue.organizationAccessible
+    ? issuesHref(issue.organizationId, issue.interactionId)
+    : `#/issues?${new URLSearchParams({ responsible: profileId }).toString()}`
+)

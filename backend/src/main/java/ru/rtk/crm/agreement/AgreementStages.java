@@ -54,6 +54,31 @@ public class AgreementStages {
         return signingRule;
     }
 
+    // Тот же признак этапа договора, что role(), но в SQL: текущий этап работы взят из базового шаблона или назван как
+    // этап договора в настройках. Параметры — currentStageParameters().
+    public String currentStageCondition(String interactionAlias) {
+        String byName = names.values().stream().allMatch(List::isEmpty)
+                ? ""
+                : " OR LOWER(TRIM(agreement_stage.name)) IN (:agreementStageNames)";
+        return "EXISTS (SELECT 1 FROM interaction_stages agreement_stage WHERE agreement_stage.id = " + interactionAlias
+                + ".current_stage_id AND (agreement_stage.template_stage_id IN (:agreementStageTemplates)" + byName + "))";
+    }
+
+    // Работа на этапе договора, а последний по смене статуса связанный договор на согласовании, корректировке или
+    // подписании — то же правило, что WorkAgreementStatus.stageUnderApproval в AgreementRepository.findWorkStatuses.
+    public String stageUnderApprovalCondition(String interactionAlias) {
+        return "(" + currentStageCondition(interactionAlias) + " AND (SELECT latest.status FROM agreement_interactions latest_link"
+                + " JOIN agreements latest ON latest.id = latest_link.agreement_id WHERE latest_link.interaction_id = " + interactionAlias
+                + ".id ORDER BY latest.status_changed_at DESC, latest.id LIMIT 1) IN ('REVIEW', 'CORRECTION', 'SIGNING'))";
+    }
+
+    public Map<String, Object> currentStageParameters() {
+        return Map.of(
+                "agreementStageTemplates", List.copyOf(BASE_TEMPLATE_STAGES.keySet()),
+                "agreementStageNames", names.values().stream().flatMap(List::stream).toList()
+        );
+    }
+
     public List<WorkStage> stages(UUID interactionId) {
         return jdbcClient.sql("""
                 SELECT id, name, template_stage_id

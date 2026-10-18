@@ -10,6 +10,7 @@ import { agreementsApi, formatDate, saveBlob, type AgreementRegistryRow } from '
 import {
   agreementStatusLabels,
   agreementStatuses,
+  approvalText,
   emptyRegistryFilters,
   registryTileCounts,
   registryTileFilters,
@@ -18,7 +19,7 @@ import {
   type AgreementStatus,
   type RegistryFilters
 } from './agreementModel'
-import { AgreementTermMark, CommandError, useAccessErrorHandler } from './agreementUi'
+import { AgreementTermMark, ApprovalMark, CommandError, useAccessErrorHandler } from './agreementUi'
 import '../reports/reports.css'
 import './agreements.css'
 
@@ -133,6 +134,7 @@ export const AgreementRegistry = ({ role, onSessionExpired, onProfileUnavailable
         <HintButton label="Что в реестре">
           {role === 'USER' ? 'Договоры ваших вузов.' : role === 'LEADER' ? 'Договоры вузов вашей команды.' : 'Договоры всех вузов, только просмотр.'}
           {' '}Сначала — договоры, которые дольше всего в текущем статусе. Строка открывает договор в карточке вуза.
+          {' '}«Согласование» — у кого договор, круг, дни на стороне из нормы и общий срок; июль и август не считаются.
         </HintButton>
         {state.kind === 'ready' && <span className="agreement-registry__count" aria-live="polite">Договоров: {state.rows.length}</span>}
         <ActionMenu
@@ -190,6 +192,10 @@ export const AgreementRegistry = ({ role, onSessionExpired, onProfileUnavailable
             onChange={(event) => update({ reviewLongerThanDays: event.target.value })}
           />
         </label>
+        <label className="checkbox-field">
+          <input type="checkbox" checked={filters.delayed} onChange={(event) => update({ delayed: event.target.checked })} />
+          Согласование затянулось
+        </label>
         {filtered && <button type="button" className="button--secondary" onClick={() => setFilters(emptyRegistryFilters)}>Сбросить фильтры</button>}
       </form>
       {state.kind === 'loading' && <p role="status">Загружаем реестр договоров…</p>}
@@ -208,6 +214,7 @@ export const AgreementRegistry = ({ role, onSessionExpired, onProfileUnavailable
                   <th scope="col">Вуз</th>
                   <th scope="col">Статус</th>
                   <th scope="col">В статусе</th>
+                  <th scope="col">Согласование</th>
                   <th scope="col">Подписан</th>
                   <th scope="col">Действует до</th>
                   <th scope="col">Предмет</th>
@@ -224,6 +231,9 @@ export const AgreementRegistry = ({ role, onSessionExpired, onProfileUnavailable
                       {' '}<AgreementTermMark agreement={row} />
                     </td>
                     <td data-label="В статусе" className="agreement-registry__nowrap">{daysLabel(row.daysInStatus)}</td>
+                    <td data-label="Согласование">
+                      {row.approval ? <>{approvalText(row.approval)} <ApprovalMark approval={row.approval} /></> : '—'}
+                    </td>
                     <td data-label="Подписан" className="agreement-registry__nowrap">{row.concludedOn ? formatDate(row.concludedOn) : '—'}</td>
                     <td data-label="Действует до" className="agreement-registry__nowrap">{row.validUntil ? formatDate(row.validUntil) : '—'}</td>
                     <td data-label="Предмет">{row.subject ?? '—'}</td>

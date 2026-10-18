@@ -55,7 +55,8 @@ const NavIcon = ({ href }: { href: string }) => {
     '#/work': 'M4 5h16M4 12h16M4 19h10',
     '#/organizations': 'M3 21h18M5 21V9l7-5 7 5v12M10 21v-6h4v6',
     '#/agreements': 'M7 3h7l4 4v14H7zM14 3v4h4M10 12h5M10 16h5',
-    '#/reports': 'M5 20V10M12 20V4M19 20v-7'
+    '#/reports': 'M5 20V10M12 20V4M19 20v-7',
+    '#/enrolment': 'M17 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7M21 20v-2a3.5 3.5 0 0 0-3-3.4M16 4.2a3.5 3.5 0 0 1 0 6.6'
   }
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -336,6 +337,7 @@ export const App = () => {
           {section === 'work' && (
             <WorkScreen
               role={profile.role}
+              profileId={profile.id}
               initialQuery={route.query}
               refreshSignal={routePulse}
               onSessionExpired={handleSessionExpired}

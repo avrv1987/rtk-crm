@@ -86,7 +86,7 @@
   background: var(--color-danger-surface);
 }
 
-.document-extras__panel label,
+.document-extras__panel label:not(.camera-input),
 .product-contract__form label {
   display: grid;
   gap: var(--space-1);

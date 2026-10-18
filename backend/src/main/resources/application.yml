@@ -66,6 +66,13 @@ app:
     exchange-stage-names: Обмен документами
     correction-stage-names: Корректировка документов
     signing-stage-names: Подписание
+    approval:
+      university-first-round-days: ${APP_AGREEMENTS_APPROVAL_UNIVERSITY_FIRST_ROUND_DAYS:42}
+      university-next-round-days: ${APP_AGREEMENTS_APPROVAL_UNIVERSITY_NEXT_ROUND_DAYS:21}
+      school-days: ${APP_AGREEMENTS_APPROVAL_SCHOOL_DAYS:7}
+      total-yellow-days: ${APP_AGREEMENTS_APPROVAL_TOTAL_YELLOW_DAYS:60}
+      total-red-days: ${APP_AGREEMENTS_APPROVAL_TOTAL_RED_DAYS:90}
+      excluded-months: ${APP_AGREEMENTS_APPROVAL_EXCLUDED_MONTHS:7,8}
   reports:
     storage-root: ${APP_REPORTS_STORAGE_ROOT:/var/lib/rtk-crm/reports}
     slots: 10

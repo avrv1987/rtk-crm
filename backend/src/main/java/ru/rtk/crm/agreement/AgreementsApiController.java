@@ -217,7 +217,7 @@ public class AgreementsApiController {
                 .contentType(MediaType.parseMediaType(downloaded.file().mediaType()))
                 .contentLength(downloaded.file().sizeBytes())
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
-                        .filename(downloaded.file().originalName(), StandardCharsets.UTF_8)
+                        .filename(downloaded.fileName(), StandardCharsets.UTF_8)
                         .build()
                         .toString())
                 .header("X-Content-Type-Options", "nosniff")
@@ -258,11 +258,12 @@ public class AgreementsApiController {
             @RequestParam(required = false) UUID organizationId,
             @RequestParam(required = false) UUID managerId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expiresBefore,
-            @RequestParam(required = false) Integer reviewLongerThanDays
+            @RequestParam(required = false) Integer reviewLongerThanDays,
+            @RequestParam(defaultValue = "false") boolean delayed
     ) {
         return registryService.registry(
                 currentProfileService.requireActiveProfile(user),
-                new RegistryQuery(statuses, organizationId, managerId, expiresBefore, reviewLongerThanDays)
+                new RegistryQuery(statuses, organizationId, managerId, expiresBefore, reviewLongerThanDays, delayed)
         );
     }
 
@@ -274,11 +275,12 @@ public class AgreementsApiController {
             @RequestParam(required = false) UUID managerId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expiresBefore,
             @RequestParam(required = false) Integer reviewLongerThanDays,
+            @RequestParam(defaultValue = "false") boolean delayed,
             HttpServletRequest request
     ) throws IOException {
         CrmProfile profile = currentProfileService.requireActiveProfile(user);
         List<RegistryRow> rows = registryService.registry(
-                profile, new RegistryQuery(statuses, organizationId, managerId, expiresBefore, reviewLongerThanDays)
+                profile, new RegistryQuery(statuses, organizationId, managerId, expiresBefore, reviewLongerThanDays, delayed)
         );
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         registryService.writeRegistry(rows, OffsetDateTime.now(), output);

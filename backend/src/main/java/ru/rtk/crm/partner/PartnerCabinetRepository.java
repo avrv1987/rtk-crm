@@ -44,7 +44,7 @@ public class PartnerCabinetRepository {
 
     public OrganizationRow findOrganization(UUID organizationId) {
         return jdbcClient.sql("""
-                SELECT o.id, o.name, o.type, owner.display_name AS manager_name
+                SELECT o.id, o.name, o.type, owner.display_name AS manager_name, owner.subject AS manager_subject
                 FROM organizations o
                 LEFT JOIN crm_user_profiles owner ON owner.id = o.owner_manager_id AND owner.active = TRUE
                 WHERE o.id = :organizationId
@@ -54,7 +54,8 @@ public class PartnerCabinetRepository {
                         resultSet.getObject("id", UUID.class),
                         resultSet.getString("name"),
                         OrganizationType.valueOf(resultSet.getString("type")),
-                        resultSet.getString("manager_name")
+                        resultSet.getString("manager_name"),
+                        resultSet.getString("manager_subject")
                 ))
                 .single();
     }
@@ -167,7 +168,9 @@ public class PartnerCabinetRepository {
 
     public List<AgreementRow> findAgreements(UUID organizationId) {
         return jdbcClient.sql("""
-                SELECT id, number, concluded_on, valid_until, status, status_changed_at
+                SELECT id, number, concluded_on, valid_until, status, status_changed_at,
+                       (SELECT COUNT(*) FROM agreement_status_events e
+                        WHERE e.agreement_id = agreements.id AND e.to_status = 'REVIEW') AS review_rounds
                 FROM agreements
                 WHERE organization_id = :organizationId AND status <> 'DRAFT'
                 ORDER BY concluded_on DESC NULLS LAST, number, id
@@ -179,7 +182,8 @@ public class PartnerCabinetRepository {
                         resultSet.getObject("concluded_on", LocalDate.class),
                         resultSet.getObject("valid_until", LocalDate.class),
                         AgreementStatus.valueOf(resultSet.getString("status")),
-                        resultSet.getObject("status_changed_at", OffsetDateTime.class)
+                        resultSet.getObject("status_changed_at", OffsetDateTime.class),
+                        resultSet.getInt("review_rounds")
                 ))
                 .list();
     }
@@ -200,7 +204,7 @@ public class PartnerCabinetRepository {
                 .list();
     }
 
-    public record OrganizationRow(UUID id, String name, OrganizationType type, String managerName) {
+    public record OrganizationRow(UUID id, String name, OrganizationType type, String managerName, String managerSubject) {
     }
 
     public record WorkRow(
@@ -230,7 +234,8 @@ public class PartnerCabinetRepository {
             LocalDate concludedOn,
             LocalDate validUntil,
             AgreementStatus status,
-            OffsetDateTime statusChangedAt
+            OffsetDateTime statusChangedAt,
+            int reviewRounds
     ) {
     }
 

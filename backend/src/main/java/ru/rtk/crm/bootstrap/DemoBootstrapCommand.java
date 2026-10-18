@@ -700,7 +700,82 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                     .update();
             UUID agreementId = stableId("agreement:" + agreement.organization() + "\u0000" + agreement.number());
             statusEvent(agreementId, null, agreement.status(), createdBy, now, "created");
+            dateDemoAgreement(agreementId, createdBy);
         }
+    }
+
+    // История статусов демо-договора получает даты по его сроку, а не по дню заполнения: действующий прошёл
+    // согласование и подписание до даты заключения, проект создан за месяц до плановой даты. Опора — даты, уже
+    // сохранённые в договоре, поэтому повторный запуск даёт те же события, а давний стенд, заполненный до этой правки,
+    // получает их вместо события «создан в день заполнения». Договор, который уже меняли (version > 0) или у которого
+    // есть события не из демо-заполнения, остаётся как есть.
+    private void dateDemoAgreement(UUID agreementId, UUID actorId) {
+        Optional<DatedAgreement> stored = jdbcClient.sql("""
+                SELECT status, concluded_on, planned_on FROM agreements WHERE id = :id AND version = 0
+                """)
+                .param("id", agreementId)
+                .query((resultSet, rowNumber) -> new DatedAgreement(resultSet.getString("status"),
+                        resultSet.getObject("concluded_on", LocalDate.class), resultSet.getObject("planned_on", LocalDate.class)))
+                .optional();
+        if (stored.isEmpty()) {
+            return;
+        }
+        LocalDate concludedOn = stored.get().concludedOn();
+        LocalDate plannedOn = stored.get().plannedOn();
+        List<String> path;
+        List<LocalDate> dates;
+        LocalDate sentOn = null;
+        if (stored.get().status().equals("ACTIVE") && concludedOn != null) {
+            sentOn = concludedOn.minusDays(26);
+            path = List.of("DRAFT", "REVIEW", "SIGNING", "ACTIVE");
+            dates = List.of(sentOn.minusDays(6), sentOn, concludedOn.minusDays(5), concludedOn);
+        } else if (stored.get().status().equals("DRAFT") && plannedOn != null) {
+            path = List.of("DRAFT");
+            dates = List.of(plannedOn.minusDays(30));
+        } else {
+            return;
+        }
+        // Первое событие — то же «created», что писалось раньше в день заполнения: на давнем стенде оно переписывается.
+        List<String> keys = List.of("created", "lifecycle:1", "lifecycle:2", "lifecycle:3").subList(0, path.size());
+        List<UUID> eventIds = keys.stream().map(key -> stableId("agreement-event:" + agreementId + ":" + key)).toList();
+        boolean foreignEvents = jdbcClient.sql("""
+                SELECT COUNT(*) FROM agreement_status_events WHERE agreement_id = :id AND id NOT IN (:eventIds)
+                """)
+                .param("id", agreementId)
+                .param("eventIds", eventIds)
+                .query(Long.class)
+                .single() > 0;
+        if (foreignEvents) {
+            return;
+        }
+        for (int index = 0; index < path.size(); index++) {
+            OffsetDateTime at = dates.get(index).atTime(11, 0).atZone(ZONE).toOffsetDateTime();
+            String from = index == 0 ? null : path.get(index - 1);
+            jdbcClient.sql("""
+                    UPDATE agreement_status_events
+                    SET from_status = CAST(:fromStatus AS VARCHAR(16)), to_status = :toStatus, occurred_at = :at
+                    WHERE id = :id
+                    """)
+                    .param("id", eventIds.get(index))
+                    .param("fromStatus", from)
+                    .param("toStatus", path.get(index))
+                    .param("at", at)
+                    .update();
+            statusEvent(agreementId, from, path.get(index), actorId, at, keys.get(index));
+        }
+        jdbcClient.sql("""
+                UPDATE agreements
+                SET status_changed_at = :changedAt, created_at = :createdAt, sent_on = COALESCE(sent_on, CAST(:sentOn AS DATE))
+                WHERE id = :id AND version = 0
+                """)
+                .param("id", agreementId)
+                .param("changedAt", dates.getLast().atTime(11, 0).atZone(ZONE).toOffsetDateTime())
+                .param("createdAt", dates.getFirst().atTime(11, 0).atZone(ZONE).toOffsetDateTime())
+                .param("sentOn", sentOn)
+                .update();
+    }
+
+    private record DatedAgreement(String status, LocalDate concludedOn, LocalDate plannedOn) {
     }
 
     // Главная демо-работа КАМ согласуется с остальными данными: лицензии подписаны и переданы, поэтому она стоит

@@ -594,7 +594,7 @@ sections.workStatus = async () => {
   const interaction = await createInteraction(kamA, organization.id, 'W4 статус ' + nonce, { nextAction: 'Позвонить проректору', nextActionAt: past })
   ctx.statusInteraction = interaction
   const pauseWithout = await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/status', { body: { version: interaction.version, status: 'PAUSED', reason: null } })
-  const paused = requireStatus(await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/status', { body: { version: interaction.version, status: 'PAUSED', reason: 'Вуз на каникулах' } }), 200, 'Pause failed')
+  const paused = requireStatus(await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/status', { body: { version: interaction.version, status: 'PAUSED', reason: 'Вуз на каникулах', resumeOn: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10) } }), 200, 'Pause failed')
   const defaultList = await listAll(kamA, '/api/interactions?q=' + encodeURIComponent('W4 статус ' + nonce), 'Work list failed')
   const pausedList = await listAll(kamA, '/api/interactions?status=PAUSED&q=' + encodeURIComponent('W4 статус ' + nonce), 'Paused list failed')
   const completeWithout = await api(kamA, 'POST', '/api/interactions/' + interaction.id + '/status', { body: { version: paused.version, status: 'COMPLETED' } })
@@ -671,7 +671,7 @@ sections.myWork = async () => {
   requireError(emptyStep, 400, 'Step completion without a step was accepted', 'nextStep')
   assert(done.nextAction === 'Получить замечания' && stepEvent && stepEvent.comment.includes('Проект отправлен'), 'Step completion is not recorded')
   assert(overdue.some((item) => item.id === noText.id) && !overdue.some((item) => item.id === planned.id), 'Any past deadline is not overdue')
-  assert(noStep.some((item) => item.id === noText.id) && noStep.some((item) => item.id === empty.id), 'No step filter is wrong')
+  assert(!noStep.some((item) => item.id === noText.id) && noStep.some((item) => item.id === empty.id), 'No step filter is wrong')
   assert(byResponsible.length >= 3 && byResponsible.every((item) => item.ownerManagerName === 'КАМ А'), 'Responsible filter is wrong')
   assert(unassigned.every((item) => item.ownerManagerName === null || item.ownerManagerName !== 'КАМ А'), 'Unassigned filter returned KAM A cards')
   assert(!stuck.some((item) => item.id === planned.id), 'New work is counted as stuck')
@@ -1066,6 +1066,8 @@ sections.reports = async () => {
 
 sections.management = async () => {
   const admin = await session('admin')
+  // Логин профиля появляется при первом входе; на свежем стенде (ночная проверка без раздела handover) его ещё нет.
+  await session('kam-c')
   const profile = await adminProfile('kam-c')
   const teamId = profile.teamId
   const changed = requireStatus(await api(admin, 'PATCH', '/api/admin/crm-profiles/' + profile.id, { body: { version: profile.version, role: 'MANAGEMENT', teamId: null } }), 200, 'Management role failed')
@@ -1420,7 +1422,7 @@ sections.reminders = async () => {
     ['Лицензии истекают до ' + digest.licenseExpiresBy + ' года']: await totalOf('licenseExpiresBy=' + digest.licenseExpiresBy + '&status=ALL')
   }
   await call('Page.navigate', { url: origin + '/#/work' }, kamA.sessionId)
-  await kamA.waitFor(() => kamA.evaluate("document.querySelectorAll('.work .stat-tile').length === 5 && Boolean(document.querySelector('.reminder-center__open'))"), 'KAM desk tiles are not shown')
+  await kamA.waitFor(() => kamA.evaluate("document.querySelectorAll('.work .stat-tile').length >= 5 && Boolean(document.querySelector('.reminder-center__open'))"), 'KAM desk tiles are not shown')
   const shown = await kamA.evaluate("Object.fromEntries([...document.querySelectorAll('.work .stat-tile')].map((tile) => [tile.querySelector('.stat-tile__label').textContent, Number(tile.querySelector('.stat-tile__value').textContent)]))")
   const tiles = Object.fromEntries(Object.keys(expected).map((label) => [label, shown[label]]))
   const panelHidden = await kamA.evaluate("document.querySelector('.reminder-center__panel').hidden")

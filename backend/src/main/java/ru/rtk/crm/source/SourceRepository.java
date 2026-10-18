@@ -370,11 +370,12 @@ public class SourceRepository {
     }
 
     // Меняются только статус и ошибка: данные записи, снимки и карточки остаются, поэтому прежние числа курса не
-    // пропадают.
+    // пропадают. Запуск закрепляется за записью, только если она впервые попала в ошибку (см. updateRecord).
     int failMoodleCourseRecords(String courseKey, String error, UUID runId, OffsetDateTime now) {
         return jdbcClient.sql("""
                 UPDATE source_records
-                SET status = 'FAILED', error = :error, sync_run_id = :runId, updated_at = :now
+                SET sync_run_id = CASE WHEN status = 'FAILED' THEN sync_run_id ELSE :runId END,
+                    status = 'FAILED', error = :error, updated_at = :now
                 WHERE source = 'MOODLE' AND (external_id = :courseKey OR external_id LIKE :groups)
                 """)
                 .param("courseKey", courseKey)
@@ -432,18 +433,22 @@ public class SourceRepository {
     }
 
     // У оплат нет даты изменения во внешней системе (в записи время загрузки), поэтому повторная загрузка
-    // external_updated_at и submitted_at не сдвигает. Переприменение без запуска (runId = null) прежний запуск
-    // сохраняет.
+    // external_updated_at и submitted_at не сдвигает. sync_run_id — запуск, который отправил запись на разбор или в
+    // ошибку (или впервые её сохранил): по нему журнал отличает новые записи на разбор от тех, что каждый плановый
+    // запуск снова находит в той же очереди. Поэтому запуск закрепляется за записью, только когда она переходит в
+    // NEEDS_MAPPING или FAILED из другого состояния; переприменение без запуска (runId = null) прежний запуск
+    // сохраняет. sync_run_id стоит первым, чтобы условие читало прежний статус в любой СУБД.
     void updateRecord(UUID id, RecordVersion item, ApplyResult result, UUID runId, OffsetDateTime now) {
         jdbcClient.sql("""
                 UPDATE source_records
-                SET external_updated_at = CASE WHEN record_type = 'paid_order' THEN external_updated_at ELSE :externalUpdatedAt END,
+                SET sync_run_id = CASE WHEN CAST(:runId AS UUID) IS NOT NULL AND :status IN ('NEEDS_MAPPING', 'FAILED')
+                                        AND status <> :status THEN CAST(:runId AS UUID) ELSE sync_run_id END,
+                    external_updated_at = CASE WHEN record_type = 'paid_order' THEN external_updated_at ELSE :externalUpdatedAt END,
                     submitted_at = CASE WHEN record_type = 'paid_order' THEN submitted_at ELSE :submittedAt END,
                     external_status = :externalStatus,
                     payload = :payload, status = :status, error = :error, organization_id = :organizationId,
                     program_id = :programId, applications_count = :applicationsCount, interaction_id = :interactionId,
-                    stream_no = :streamNo, payload_hash = :payloadHash,
-                    sync_run_id = COALESCE(:runId, sync_run_id), updated_at = :now
+                    stream_no = :streamNo, payload_hash = :payloadHash, updated_at = :now
                 WHERE id = :id
                 """)
                 .param("id", id)

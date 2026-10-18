@@ -5,18 +5,24 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.attachment.AttachmentStorage;
 import ru.rtk.crm.audit.AuditAction;
 import ru.rtk.crm.audit.AuditJournalRepository;
+import ru.rtk.crm.access.AccountSyncException;
 import ru.rtk.crm.access.CrmProfile;
+import ru.rtk.crm.access.KeycloakAccountClient;
 import ru.rtk.crm.partner.PartnerCabinetRepository.DownloadRow;
 import ru.rtk.crm.partner.PartnerCabinetRepository.OrganizationRow;
 import ru.rtk.crm.partner.PartnerCabinetRepository.StageRow;
+import ru.rtk.crm.agreement.AgreementApproval;
 import ru.rtk.crm.partner.PartnerModels.PartnerAgreement;
 import ru.rtk.crm.partner.PartnerModels.PartnerCabinet;
 import ru.rtk.crm.partner.PartnerModels.PartnerManager;
@@ -28,19 +34,23 @@ import ru.rtk.crm.partner.PartnerModels.PartnerWork;
 @Service
 public class PartnerCabinetService {
     private static final ZoneId MOSCOW = ZoneId.of("Europe/Moscow");
+    private static final Logger LOGGER = LoggerFactory.getLogger(PartnerCabinetService.class);
 
     private final PartnerCabinetRepository partnerCabinetRepository;
     private final AttachmentStorage attachmentStorage;
     private final AuditJournalRepository auditJournalRepository;
+    private final KeycloakAccountClient keycloakAccountClient;
 
     public PartnerCabinetService(
             PartnerCabinetRepository partnerCabinetRepository,
             AttachmentStorage attachmentStorage,
-            AuditJournalRepository auditJournalRepository
+            AuditJournalRepository auditJournalRepository,
+            KeycloakAccountClient keycloakAccountClient
     ) {
         this.partnerCabinetRepository = partnerCabinetRepository;
         this.attachmentStorage = attachmentStorage;
         this.auditJournalRepository = auditJournalRepository;
+        this.keycloakAccountClient = keycloakAccountClient;
     }
 
     @Transactional(readOnly = true)
@@ -85,12 +95,14 @@ public class PartnerCabinetService {
                         agreement.concludedOn(),
                         agreement.validUntil(),
                         agreement.status(),
-                        agreement.statusChangedAt()
+                        agreement.statusChangedAt(),
+                        // Круг согласования — как в карточке договора у школы (AgreementApproval): номер прохода «На согласовании».
+                        AgreementApproval.inProgress(agreement.status()) ? Math.max(1, agreement.reviewRounds()) : null
                 ))
                 .toList();
         return new PartnerCabinet(
                 new PartnerOrganization(organization.id(), organization.name(), organization.type()),
-                organization.managerName() == null ? null : new PartnerManager(organization.managerName()),
+                organization.managerName() == null ? null : manager(organization),
                 works,
                 partnerCabinetRepository.findDocuments(organizationId),
                 agreements
@@ -104,6 +116,23 @@ public class PartnerCabinetService {
                 .orElseThrow(PartnerException::documentNotFound);
         auditJournalRepository.recordAttachmentAccess(AuditAction.ATTACHMENT_DOWNLOADED, partner.id(), document.id(), requestId);
         return new PartnerDownload(document, attachmentStorage.open(document.storageKey()));
+    }
+
+    // Почта и телефон сотрудника хранятся только в Keycloak, в профиле CRM их нет. Если Keycloak недоступен,
+    // кабинет открывается с именем КАМ без контактов.
+    private PartnerManager manager(OrganizationRow organization) {
+        Optional<KeycloakAccountClient.UserContact> contact;
+        try {
+            contact = keycloakAccountClient.contact(organization.managerSubject());
+        } catch (AccountSyncException exception) {
+            LOGGER.warn("Partner cabinet manager contact is unavailable: {}", exception.getMessage());
+            contact = Optional.empty();
+        }
+        return new PartnerManager(
+                organization.managerName(),
+                contact.map(KeycloakAccountClient.UserContact::email).orElse(null),
+                contact.map(KeycloakAccountClient.UserContact::phone).orElse(null)
+        );
     }
 
     private UUID requireOrganization(CrmProfile partner) {

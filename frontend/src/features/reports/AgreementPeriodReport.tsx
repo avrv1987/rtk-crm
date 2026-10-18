@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { pluralForm } from '../../shared/format/plural'
 import type { Me } from '../../shared/api/client'
 import { formatMoscowDateTime, todayInMoscow } from '../../shared/format/datetime'
 import { saveFile } from '../admin/saveFile'
 import { agreementsApi, type AgreementPeriodQuery, type AgreementPeriodReport as Report, type AgreementRegistryRow } from '../agreements/agreementsApi'
-import { agreementStatusLabels, periodDefaults } from '../agreements/agreementModel'
+import { agreementStatusLabels, approvalText, periodDefaults } from '../agreements/agreementModel'
+import { ApprovalMark } from '../agreements/agreementUi'
 import { type AccessHandlers, daysLabel, formatDate, handledAccessError } from '../work/workShared'
 import { reportMeta } from './ReportCatalog'
 import { PeriodPicker } from './ReportControls'
@@ -12,6 +14,10 @@ import { ExportMenu } from './ReportExportMenu'
 import { ReportHeader } from './ReportHeader'
 import { pageHints } from './reportHints'
 import './reports.css'
+
+// Дробное число дней читается «21,5 дня», целое склоняется по числу.
+const averageDaysWord = (days: number | null | undefined) =>
+  days === null || days === undefined ? 'дней' : Number.isInteger(days) ? pluralForm(days, 'день', 'дня', 'дней') : 'дня'
 
 type State =
   | { kind: 'loading' }
@@ -32,6 +38,7 @@ const RowsTable = ({ title, rows, empty }: { title: string; rows: AgreementRegis
             <th scope="col">Статус</th>
             <th scope="col">В статусе</th>
             <th scope="col">Отправлен</th>
+            <th scope="col">Согласование</th>
             <th scope="col">Подписан</th>
             <th scope="col">Действует до</th>
             <th scope="col">КАМ</th>
@@ -45,6 +52,7 @@ const RowsTable = ({ title, rows, empty }: { title: string; rows: AgreementRegis
               <td>{agreementStatusLabels[row.status]}</td>
               <td>{daysLabel(row.daysInStatus)}</td>
               <td>{row.sentOn ? formatDate(row.sentOn) : '—'}</td>
+              <td>{row.approval ? <>{approvalText(row.approval)} <ApprovalMark approval={row.approval} /></> : '—'}</td>
               <td>{row.concludedOn ? formatDate(row.concludedOn) : '—'}</td>
               <td>{row.validUntil ? formatDate(row.validUntil) : '—'}</td>
               <td>{row.managerName ?? 'Без ответственного КАМ'}</td>
@@ -60,12 +68,10 @@ export const AgreementPeriodReport = ({ role, onSessionExpired, onProfileUnavail
   const initial = periodDefaults(todayInMoscow())
   const [from, setFrom] = useState(initial.from)
   const [to, setTo] = useState(initial.to)
-  const [days, setDays] = useState('30')
   const [state, setState] = useState<State>({ kind: 'loading' })
   const [download, setDownload] = useState<{ format: 'XLSX' | 'PDF' | null; error: unknown }>({ format: null, error: null })
   const version = useRef(0)
-  const daysValue = Number(days)
-  const invalid = from === '' || to === '' || from > to || !Number.isInteger(daysValue) || daysValue < 1 || daysValue > 3650
+  const invalid = from === '' || to === '' || from > to
 
   const load = useCallback(async (query: AgreementPeriodQuery) => {
     const current = ++version.current
@@ -87,9 +93,9 @@ export const AgreementPeriodReport = ({ role, onSessionExpired, onProfileUnavail
     if (invalid) {
       return
     }
-    const timer = window.setTimeout(() => void load({ from, to, reviewLongerThanDays: daysValue }), 300)
+    const timer = window.setTimeout(() => void load({ from, to }), 300)
     return () => window.clearTimeout(timer)
-  }, [daysValue, from, invalid, load, to])
+  }, [from, invalid, load, to])
 
   const save = async (format: 'XLSX' | 'PDF') => {
     if (state.kind !== 'ready') {
@@ -134,15 +140,11 @@ export const AgreementPeriodReport = ({ role, onSessionExpired, onProfileUnavail
             setTo(nextTo)
           }}
         />
-        <label className="report-field">
-          На согласовании дольше, дней
-          <input type="number" min={1} max={3650} inputMode="numeric" value={days} required onChange={(event) => setDays(event.target.value)} />
-        </label>
       </form>
-      {invalid && <p className="field-error" role="alert">Укажите период (начало не позже конца) и число дней от 1 до 3650.</p>}
+      {invalid && <p className="field-error" role="alert">Укажите период: начало не позже конца.</p>}
       {state.kind === 'loading' && <p role="status">Собираем отчёт по договорам…</p>}
       {state.kind === 'failed' && (
-        <ErrorNotice error={state.error} message="Не удалось собрать отчёт по договорам." onRetry={() => void load({ from, to, reviewLongerThanDays: daysValue })} />
+        <ErrorNotice error={state.error} message="Не удалось собрать отчёт по договорам." onRetry={() => void load({ from, to })} />
       )}
       {state.kind === 'ready' && (
         <>
@@ -154,9 +156,9 @@ export const AgreementPeriodReport = ({ role, onSessionExpired, onProfileUnavail
               <strong>{state.result.totals.averageApprovalDays === null || state.result.totals.averageApprovalDays === undefined
                 ? '—'
                 : state.result.totals.averageApprovalDays.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}</strong>
-              {` дней в среднем от отправки до подписания (договоров: ${state.result.totals.approvalSamples})`}
+              {` ${averageDaysWord(state.result.totals.averageApprovalDays)} в среднем от отправки до подписания (договоров: ${state.result.totals.approvalSamples})`}
             </li>
-            <li><strong>{state.result.totals.longReview}</strong> {`на согласовании дольше ${state.result.longerThanDays} дн.`}</li>
+            <li><strong>{state.result.totals.longReview}</strong> согласование затянулось</li>
           </ul>
           {state.result.transitions.length === 0 ? (
             <p className="agreement-period__empty"><strong>Переходы статусов:</strong> за период переходов не было.</p>
@@ -191,11 +193,7 @@ export const AgreementPeriodReport = ({ role, onSessionExpired, onProfileUnavail
           )}
           <RowsTable title="Подписанные" rows={state.result.signed} empty="в периоде договоры не подписывались." />
           <RowsTable title="Расторгнутые" rows={state.result.terminated} empty="в периоде договоры не расторгались." />
-          <RowsTable
-            title={`Сейчас на согласовании дольше ${state.result.longerThanDays} дн.`}
-            rows={state.result.longReview}
-            empty="таких договоров нет."
-          />
+          <RowsTable title="Согласование затянулось" rows={state.result.longReview} empty="таких договоров нет." />
           <ul className="reports__notes">
             {state.result.notes.map((note) => <li key={note}>{note}</li>)}
           </ul>

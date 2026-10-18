@@ -55,6 +55,24 @@ class KeycloakAccountClientTest {
     }
 
     @Test
+    void employeeContactIsReadFromEmailAndPhoneAttributesAndSkippedWithoutConfiguration() {
+        lookup = "{\"email\":\"kam@example.test\",\"attributes\":{\"phone\":[\"+7 900 000-00-02\"]}}";
+        assertThat(client("sync-secret").contact(USER))
+                .contains(new KeycloakAccountClient.UserContact("kam@example.test", "+7 900 000-00-02"));
+        assertThat(requests).last().asString().startsWith("GET /admin/realms/rtk-crm/users/" + USER + " Bearer service-token");
+
+        lookup = "{\"email\":\"kam@example.test\",\"attributes\":{\"phone_number\":[\"+7 900 000-00-03\"],\"phone\":[\"x\"]}}";
+        assertThat(client("sync-secret").contact(USER))
+                .contains(new KeycloakAccountClient.UserContact("kam@example.test", "+7 900 000-00-03"));
+
+        lookup = "{\"username\":\"kam\"}";
+        assertThat(client("sync-secret").contact(USER)).contains(new KeycloakAccountClient.UserContact(null, null));
+        int before = requests.size();
+        assertThat(client("").contact(USER)).isEmpty();
+        assertThat(requests).hasSize(before);
+    }
+
+    @Test
     void unblockingEnablesTheUserWithoutTouchingSessions() {
         client("sync-secret").setEnabled(USER, true);
 

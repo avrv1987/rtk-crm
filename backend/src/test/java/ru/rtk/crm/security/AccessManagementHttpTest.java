@@ -1,7 +1,9 @@
 package ru.rtk.crm.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItem;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oidcLogin;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -101,6 +103,7 @@ class AccessManagementHttpTest {
         jdbcTemplate.update("DELETE FROM crm_profile_events");
         jdbcTemplate.update("DELETE FROM organization_assignment_events");
         jdbcTemplate.update("DELETE FROM organization_team_events");
+        jdbcTemplate.update("DELETE FROM source_records");
         jdbcTemplate.update("DELETE FROM sync_runs");
         jdbcTemplate.update("DELETE FROM contacts");
         jdbcTemplate.update("DELETE FROM command_idempotency_records");
@@ -381,6 +384,43 @@ class AccessManagementHttpTest {
                 .andExpect(jsonPath("$.total").value(1));
         mockMvc.perform(get("/api/admin/audit-events/export").with(login(USER_A)))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void scheduledRunsReachTheJournalOnlyWhenTheyFirstSendRecordsToReview() throws Exception {
+        OffsetDateTime now = OffsetDateTime.now();
+        UUID siteFirst = UUID.randomUUID();
+        UUID siteRepeat = UUID.randomUUID();
+        UUID siteSkipped = UUID.randomUUID();
+        UUID crmFirst = UUID.randomUUID();
+        UUID crmRepeat = UUID.randomUUID();
+        UUID market = UUID.randomUUID();
+        String run = """
+                INSERT INTO sync_runs (id, source, status, started_by, fetched_count, needs_mapping_count, failed_count,
+                    run_trigger, created_at)
+                VALUES (?, ?, 'SUCCEEDED', ?, 17, ?, ?, 'SCHEDULE', ?)
+                """;
+        jdbcTemplate.update(run, siteFirst, "WEBSITE", ADMIN, 3, 0, now.minusHours(2));
+        jdbcTemplate.update(run, siteRepeat, "WEBSITE", ADMIN, 3, 0, now.minusHours(1));
+        jdbcTemplate.update(run, siteSkipped, "WEBSITE", ADMIN, 3, 0, now.minusMinutes(30));
+        jdbcTemplate.update(run, crmFirst, "CUSTOMER_CRM", ADMIN, 1, 0, now.minusHours(2));
+        jdbcTemplate.update(run, crmRepeat, "CUSTOMER_CRM", ADMIN, 1, 1, now.minusHours(1));
+        jdbcTemplate.update(run, market, "LABOR_MARKET", ADMIN, 1, 0, now.minusHours(1));
+        String record = "INSERT INTO source_records (id, external_id, status, sync_run_id) VALUES (?, ?, ?, ?)";
+        jdbcTemplate.update(record, UUID.randomUUID(), "la-2", "NEEDS_MAPPING", siteFirst);
+        jdbcTemplate.update(record, UUID.randomUUID(), "la-3", "SKIPPED", siteSkipped);
+        // Запись, отправленная на разбор первым запуском CRM, уже разобрана, но строка того запуска в журнале остаётся.
+        jdbcTemplate.update(record, UUID.randomUUID(), "c-4", "APPLIED", crmFirst);
+
+        mockMvc.perform(get("/api/admin/audit-events").param("category", "SYNC").with(login(ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(3))
+                .andExpect(jsonPath("$.items[*].objectName").value(containsInAnyOrder(
+                        "Сайт", "CRM заказчика", "Рынок труда")))
+                .andExpect(jsonPath("$.items[*].details").value(hasItem(
+                        "выполнена; получено: 17, создано: 0, обновлено: 0, на разбор: 3")));
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sync_runs WHERE run_trigger = 'SCHEDULE'", Integer.class))
+                .isEqualTo(6);
     }
 
     @Test
@@ -831,7 +871,8 @@ class AccessManagementHttpTest {
                     lms_transferred_at TIMESTAMP WITH TIME ZONE
                 )
                 """);
-        jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS source_records (id UUID PRIMARY KEY, external_id VARCHAR(200), program_id UUID)");
+        jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS source_records (id UUID PRIMARY KEY, external_id VARCHAR(200), program_id UUID,"
+                + " status VARCHAR(16) DEFAULT 'APPLIED' NOT NULL, sync_run_id UUID)");
         jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS programs (id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL)");
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS source_mappings (

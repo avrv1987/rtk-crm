@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { agreementsApi, formatInstant, saveBlob, type AgreementFile } from './agreementsApi'
-import { fileStatusLabels } from './agreementModel'
+import { fileStatusLabels, signedFileName } from './agreementModel'
 import { CommandError, useCommandKey } from './agreementUi'
 
 type AgreementFilesProps = {
@@ -44,7 +44,7 @@ export const AgreementFiles = ({
   const download = async (item: AgreementFile) => {
     setError(null)
     try {
-      saveBlob(await agreementsApi.downloadFile(item.id), item.originalName)
+      saveBlob(await agreementsApi.downloadFile(item.id), item.signed ? signedFileName(item.originalName) : item.originalName)
     } catch (caught) {
       if (!handleAccessError(caught)) {
         setError(caught)
@@ -78,10 +78,15 @@ export const AgreementFiles = ({
   }
 
   const fileLink = (item: AgreementFile) => (
-    item.downloadable ? (
-      <button type="button" className="agreements-link" onClick={() => void download(item)}>{item.originalName}</button>
-    ) : <span>{item.originalName}</span>
+    <>
+      {item.downloadable ? (
+        <button type="button" className="agreements-link" onClick={() => void download(item)}>{item.originalName}</button>
+      ) : <span>{item.originalName}</span>}
+      {item.signed && <> <span className="status status--planned">подписанная</span></>}
+    </>
   )
+  // Подписанная версия может быть не последней: скан часто загружают после перехода в «Действует».
+  const signed = files.find((item) => item.signed && item.id !== currentFile?.id)
 
   return (
     <section className="agreement-files" aria-label={title}>
@@ -93,6 +98,12 @@ export const AgreementFiles = ({
           {fileLink(currentFile)}
           <span className="agreement-activity__document-meta">{fileMeta(currentFile)}</span>
           {currentFile.comment && <span className="agreement-files__comment">{currentFile.comment}</span>}
+        </p>
+      )}
+      {signed && (
+        <p className="agreement-files__current">
+          <span>Подписанная версия:</span> {fileLink(signed)}
+          <span className="agreement-activity__document-meta">{fileMeta(signed)}</span>
         </p>
       )}
       {canEdit && !uploading && (

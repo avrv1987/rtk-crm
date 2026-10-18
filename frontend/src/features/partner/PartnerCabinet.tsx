@@ -3,7 +3,7 @@ import { ApiError } from '../../shared/api/client'
 import { formatCalendarDate, formatMoscowDateTime, todayInMoscow } from '../../shared/format/datetime'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { saveFile } from '../admin/saveFile'
-import { daysInStatus } from '../agreements/agreementModel'
+import { daysInStatus, partnerApprovalLine } from '../agreements/agreementModel'
 import { AgreementTermMark } from '../agreements/agreementUi'
 import { attachmentKindLabels } from '../documents/documentsApi'
 import { handledAccessError, workStatusLabels } from '../interactions/workMarks'
@@ -15,6 +15,8 @@ import {
   type PartnerCabinet as Cabinet,
   type PartnerDocument
 } from './partnerApi'
+import { emailHref, phoneHref } from '../../shared/format/links'
+import { ContactLink } from '../../shared/ui/ContactLink'
 import './partner.css'
 
 type PartnerCabinetProps = {
@@ -105,6 +107,8 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
         <dl className="partner-cabinet__manager">
           <dt>Ваш менеджер ИТ Школы РТК</dt>
           <dd>{manager?.name ?? 'пока не назначен'}</dd>
+          {manager?.phone && <dd><ContactLink href={phoneHref(manager.phone)} text={manager.phone} /></dd>}
+          {manager?.email && <dd><ContactLink href={emailHref(manager.email)} text={manager.email} /></dd>}
         </dl>
         <p className="interaction-field-hint">
           Кабинет только для просмотра. Чтобы что-то изменить или задать вопрос, напишите своему менеджеру.
@@ -191,7 +195,7 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
                 <div className="interaction-command-error" role="alert">
                   <p>{download.error instanceof ApiError && download.error.code === 'FILE_UNAVAILABLE'
                     ? download.error.message
-                    : 'Не удалось скачать файл. Обновите страницу и повторите.'}</p>
+                    : 'Не удалось скачать файл. Нажмите «Скачать» ещё раз; если не получится, обратитесь к вашему менеджеру в школе.'}</p>
                   {download.error instanceof ApiError && <SupportDetails requestId={download.error.requestId} code={download.error.code} />}
                 </div>
               )}
@@ -214,6 +218,9 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
                 </span>
               </div>
               {agreement.statusChangedAt && <p className="partner-card__meta">{statusSince(agreement.statusChangedAt)}</p>}
+              {partnerApprovalLine(agreement.status, agreement.approvalRound) && (
+                <p className="partner-card__meta">{partnerApprovalLine(agreement.status, agreement.approvalRound)}</p>
+              )}
               <p className="partner-card__meta">Срок: {term(agreement.concludedOn, agreement.validUntil)}</p>
               {agreement.subject.length > 0 && (
                 <div className="partner-card__stages">

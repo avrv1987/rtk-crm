@@ -1,7 +1,7 @@
 export type StatTile<K extends string> = {
   key: K
   label: string
-  value: number
+  value: number | null
   tone?: 'danger' | 'warning'
 }
 
@@ -15,7 +15,7 @@ type StatTilesProps<K extends string> = {
 export const StatTiles = <K extends string>({ label, tiles, selected, onSelect }: StatTilesProps<K>) => (
   <div className="stat-tiles" role="group" aria-label={label}>
     {tiles.map((tile) => {
-      const tone = tile.value === 0 ? 'zero' : tile.tone
+      const tone = tile.value === 0 || tile.value === null ? 'zero' : tile.tone
       return (
         <button
           key={tile.key}
@@ -24,7 +24,7 @@ export const StatTiles = <K extends string>({ label, tiles, selected, onSelect }
           aria-pressed={tile.key === selected}
           onClick={() => onSelect(tile.key === selected ? null : tile.key)}
         >
-          <span className="stat-tile__value">{tile.value}</span>
+          <span className="stat-tile__value">{tile.value ?? '—'}</span>
           <span className="stat-tile__label">{tile.label}</span>
         </button>
       )

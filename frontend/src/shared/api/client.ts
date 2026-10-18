@@ -94,6 +94,7 @@ export type OrganizationBulkAssignment = components['schemas']['OrganizationBulk
 export type OrganizationBulkAssignmentResult = components['schemas']['OrganizationBulkAssignmentResult']
 export type OrganizationDeputy = components['schemas']['OrganizationDeputy']
 export type OrganizationDeputyCreate = components['schemas']['OrganizationDeputyCreate']
+export type ManagerDeputyResult = components['schemas']['ManagerDeputyResult']
 export type TeamIndicators = components['schemas']['TeamIndicators']
 export type ManagerIndicators = components['schemas']['ManagerIndicators']
 export type TeamsSummary = components['schemas']['TeamsSummary']
@@ -148,6 +149,7 @@ const signingPlanQuery = (query: SigningPlanQuery, extra: Record<string, string>
   return `?${searchParams.toString()}`
 }
 export type ReminderDigest = components['schemas']['ReminderDigest']
+export type ReminderFeed = components['schemas']['ReminderFeed']
 export type ReminderSettings = components['schemas']['ReminderSettings']
 export type LmsSignals = components['schemas']['LmsSignals']
 export type LmsSignal = components['schemas']['LmsSignal']
@@ -470,6 +472,9 @@ export class ApiClient {
     }
     if (query.status !== undefined) {
       searchParams.set('status', query.status)
+    }
+    if (query.excludeService === true) {
+      searchParams.set('excludeService', 'true')
     }
     const suffix = searchParams.size === 0 ? '' : `?${searchParams.toString()}`
     return this.request<PageOrganization>(`/api/organizations${suffix}`)
@@ -1458,6 +1463,14 @@ export class ApiClient {
       undefined,
       idempotencyKey
     )
+  }
+
+  async assignManagerDeputy(
+    managerId: string,
+    payload: OrganizationDeputyCreate,
+    idempotencyKey: string
+  ): Promise<ManagerDeputyResult> {
+    return this.command<ManagerDeputyResult>(`/api/managers/${encodeURIComponent(managerId)}/deputies`, payload, idempotencyKey)
   }
 
   async getTeamIndicators(stuckDays?: number): Promise<TeamIndicators> {

@@ -29,6 +29,7 @@ import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -117,7 +118,7 @@ class PartnerCabinetHttpTest {
     void setUp() throws IOException {
         createSchema();
         for (String table : new String[] {
-                "audit_events", "crm_profile_events", "contact_events", "agreement_activities", "agreements", "attachments",
+                "audit_events", "crm_profile_events", "contact_events", "agreement_activities", "agreement_status_events", "agreements", "attachments",
                 "product_agreements", "products", "interaction_stage_completions", "interaction_events", "interaction_issues", "interactions",
                 "interaction_stages", "programs", "command_idempotency_records", "crm_user_profiles", "contacts", "organizations",
                 "teams"
@@ -163,6 +164,8 @@ class PartnerCabinetHttpTest {
                 .andExpect(jsonPath("$.agreements[0].subject[0]").value("Стажировки студентов"))
                 .andExpect(jsonPath("$.agreements[1].number").value("С-2/2026"))
                 .andExpect(jsonPath("$.agreements[1].status").value("REVIEW"))
+                .andExpect(jsonPath("$.agreements[1].approvalRound").value(2))
+                .andExpect(jsonPath("$.agreements[0].approvalRound").doesNotExist())
                 .andExpect(jsonPath("$.agreements[1].statusChangedAt").value(containsString("2026-10-03")))
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         JsonNode cabinet = objectMapper.readTree(body);
@@ -201,6 +204,35 @@ class PartnerCabinetHttpTest {
                 .andExpect(jsonPath("$.organization.name").value("Университет Б"))
                 .andExpect(jsonPath("$.manager").doesNotExist())
                 .andExpect(jsonPath("$.works[0].nextStep").doesNotExist());
+    }
+
+    @Test
+    void partnerSeesNameEmailAndPhoneOfOnlyItsOwnKam() throws Exception {
+        jdbcTemplate.update("UPDATE organizations SET owner_manager_id = ? WHERE id = ?", LEADER_B, ORGANIZATION_B);
+        when(keycloakAccountClient.contact(KAM_A.toString()))
+                .thenReturn(Optional.of(new KeycloakAccountClient.UserContact("irina.kam@example.test", "+7 900 000-00-01")));
+        when(keycloakAccountClient.contact(LEADER_B.toString()))
+                .thenReturn(Optional.of(new KeycloakAccountClient.UserContact("leader.b@example.test", null)));
+
+        String body = mockMvc.perform(get("/api/partner/cabinet").with(partnerLogin(PARTNER_A)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.manager.name").value("Ирина КАМ"))
+                .andExpect(jsonPath("$.manager.email").value("irina.kam@example.test"))
+                .andExpect(jsonPath("$.manager.phone").value("+7 900 000-00-01"))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(body).doesNotContain("leader.b@example.test", "Руководитель Б", "КАМ без вуза");
+
+        mockMvc.perform(get("/api/partner/cabinet").with(partnerLogin(PARTNER_B)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.manager.name").value("Руководитель Б"))
+                .andExpect(jsonPath("$.manager.email").value("leader.b@example.test"))
+                .andExpect(jsonPath("$.manager.phone").doesNotExist());
+
+        when(keycloakAccountClient.contact(KAM_A.toString())).thenThrow(new AccountSyncException("Keycloak недоступен"));
+        mockMvc.perform(get("/api/partner/cabinet").with(partnerLogin(PARTNER_A)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.manager.name").value("Ирина КАМ"))
+                .andExpect(jsonPath("$.manager.email").doesNotExist());
     }
 
     @Test
@@ -509,14 +541,21 @@ class PartnerCabinetHttpTest {
         insertDocument(QUARANTINED_DOCUMENT, WORK_A, "Проект договора.pdf", "QUARANTINE", true, UUID.randomUUID());
         insertDocument(FOREIGN_DOCUMENT, WORK_B, "Документ вуза Б.pdf", "CLEAN", true, UUID.randomUUID());
         UUID agreementA = UUID.randomUUID();
+        UUID agreementInReview = UUID.randomUUID();
         jdbcTemplate.update("""
                 INSERT INTO agreements (id, organization_id, number, concluded_on, valid_until, status, status_changed_at)
                 VALUES (?, ?, 'С-1/2026', DATE '2026-01-15', DATE '2028-12-31', 'ACTIVE', TIMESTAMP WITH TIME ZONE '2026-01-15 11:00:00+03:00'),
                        (?, ?, 'С-2/2026', NULL, NULL, 'REVIEW', TIMESTAMP WITH TIME ZONE '2026-10-03 11:00:00+03:00'),
                        (?, ?, 'С-3/2026', NULL, NULL, 'DRAFT', TIMESTAMP WITH TIME ZONE '2026-10-01 11:00:00+03:00'),
                        (?, ?, 'С-Б', NULL, NULL, 'SIGNING', TIMESTAMP WITH TIME ZONE '2026-10-01 11:00:00+03:00')
-                """, agreementA, ORGANIZATION_A, UUID.randomUUID(), ORGANIZATION_A, UUID.randomUUID(), ORGANIZATION_A,
+                """, agreementA, ORGANIZATION_A, agreementInReview, ORGANIZATION_A, UUID.randomUUID(), ORGANIZATION_A,
                 UUID.randomUUID(), ORGANIZATION_B);
+        jdbcTemplate.update("""
+                INSERT INTO agreement_status_events (id, agreement_id, from_status, to_status, occurred_at)
+                VALUES (?, ?, 'DRAFT', 'REVIEW', TIMESTAMP WITH TIME ZONE '2026-09-01 11:00:00+03:00'),
+                       (?, ?, 'REVIEW', 'CORRECTION', TIMESTAMP WITH TIME ZONE '2026-09-20 11:00:00+03:00'),
+                       (?, ?, 'CORRECTION', 'REVIEW', TIMESTAMP WITH TIME ZONE '2026-10-03 11:00:00+03:00')
+                """, UUID.randomUUID(), agreementInReview, UUID.randomUUID(), agreementInReview, UUID.randomUUID(), agreementInReview);
         jdbcTemplate.update("""
                 INSERT INTO agreement_activities (id, agreement_id, title, status) VALUES (?, ?, 'Стажировки студентов', 'PLANNED'),
                 (?, ?, 'Отменённое мероприятие', 'CANCELLED')
@@ -696,6 +735,12 @@ class PartnerCabinetHttpTest {
                 CREATE TABLE IF NOT EXISTS agreements (
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, number VARCHAR(100) NOT NULL, concluded_on DATE,
                     valid_until DATE, status VARCHAR(16) NOT NULL, status_changed_at TIMESTAMP WITH TIME ZONE
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agreement_status_events (
+                    id UUID PRIMARY KEY, agreement_id UUID NOT NULL, from_status VARCHAR(16), to_status VARCHAR(16) NOT NULL,
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
                 """

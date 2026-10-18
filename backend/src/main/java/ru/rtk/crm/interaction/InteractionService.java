@@ -1,6 +1,7 @@
 package ru.rtk.crm.interaction;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -42,6 +43,9 @@ public class InteractionService {
     private static final DateTimeFormatter STEP_DEADLINE_FORMAT = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
     private static final ZoneId COMPLETION_ZONE = ZoneId.of("Europe/Moscow");
     private static final DateTimeFormatter COMPLETION_DATE_FORMAT = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+    private static final String RESUME_ACTION = "Вернуться к работе после приостановки";
+    private static final LocalTime RESUME_TIME = LocalTime.of(9, 0);
+    private static final int MAX_PAUSE_YEARS = 2;
 
     private final OrganizationRepository organizationRepository;
     private final ContactRepository contactRepository;
@@ -368,6 +372,11 @@ public class InteractionService {
                 fromStage,
                 toStage
         );
+        // Возврат на прежний этап требует причину в любом шаблоне, даже если в шаблоне комментарий не отмечен:
+        // иначе ход работы нельзя проследить по истории.
+        if (toStage.order() < fromStage.order() && comment == null) {
+            throw new InteractionValidationException("comment", "Укажите причину возврата на прежний этап");
+        }
         if (transition.commentRequired() && comment == null) {
             throw new InteractionValidationException("comment", "Заполните значение");
         }
@@ -963,8 +972,9 @@ public class InteractionService {
                     request.status() == InteractionWorkStatus.COMPLETED ? "Укажите итог взаимодействия" : "Укажите причину приостановки"
             );
         }
+        LocalDate resumeOn = request.status() == InteractionWorkStatus.PAUSED ? requiredResumeOn(request.resumeOn()) : null;
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
-        ChangeStatusCommand command = new ChangeStatusCommand(interactionId, expectedVersion, request.status(), reason);
+        ChangeStatusCommand command = new ChangeStatusCommand(interactionId, expectedVersion, request.status(), reason, resumeOn);
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
         OffsetDateTime now = OffsetDateTime.now();
@@ -985,8 +995,27 @@ public class InteractionService {
             throw new InteractionValidationException("status", "Взаимодействие уже в этом статусе");
         }
         InteractionMarks next = current.withStatus(request.status(), reason);
+        // Отдельного поля «вернуться к работе» в модели нет: дата повторного касания записывается следующим шагом
+        // со сроком. Так она видна в карточке и истории, а «Моя работа» возвращает взаимодействие к этой дате.
+        InteractionNextStep resumeStep = resumeOn == null
+                ? null
+                : new InteractionNextStep(RESUME_ACTION, resumeOn.atTime(RESUME_TIME).atZone(InteractionDue.ZONE).toOffsetDateTime());
         return saveMarks(profile, visible, commandId, expectedVersion, next, InteractionEventType.STATUS_CHANGED,
-                statusDescription(request.status(), reason), now);
+                statusDescription(request.status(), reason, resumeOn), now, resumeStep);
+    }
+
+    private LocalDate requiredResumeOn(LocalDate resumeOn) {
+        if (resumeOn == null) {
+            throw new InteractionValidationException("resumeOn", "Укажите дату, когда вернуться к взаимодействию");
+        }
+        LocalDate today = LocalDate.now(InteractionDue.ZONE);
+        if (!resumeOn.isAfter(today)) {
+            throw new InteractionValidationException("resumeOn", "Дата возврата должна быть позже сегодняшней");
+        }
+        if (resumeOn.isAfter(today.plusYears(MAX_PAUSE_YEARS))) {
+            throw new InteractionValidationException("resumeOn", "Приостановить можно не больше чем на два года");
+        }
+        return resumeOn;
     }
 
     @Transactional
@@ -1036,7 +1065,7 @@ public class InteractionService {
             return storeInteraction(commandId, toInteraction(row));
         }
         return saveMarks(profile, visible, commandId, expectedVersion, next, InteractionEventType.DETAILS_UPDATED,
-                String.join("; ", changes), now);
+                String.join("; ", changes), now, null);
     }
 
     private Interaction saveMarks(
@@ -1047,11 +1076,15 @@ public class InteractionService {
             InteractionMarks marks,
             InteractionEventType type,
             String description,
-            OffsetDateTime now
+            OffsetDateTime now,
+            InteractionNextStep nextStep
     ) {
         InteractionRepository.InteractionRow row = visible.row();
         if (!interactionRepository.updateMarks(row.id(), expectedVersion, marks, now)) {
             throw versionConflict(row.id(), row.version());
+        }
+        if (nextStep != null) {
+            interactionRepository.updatePlan(row.id(), nextStep.nextAction(), nextStep.nextActionAt(), row.programId());
         }
         interactionRepository.insertEvent(
                 UUID.randomUUID(),
@@ -1062,7 +1095,7 @@ public class InteractionService {
                 null,
                 null,
                 description,
-                null,
+                nextStep,
                 profile.id(),
                 visible.organization().ownerManagerId(),
                 expectedVersion + 1,
@@ -1073,10 +1106,10 @@ public class InteractionService {
         return storeInteraction(commandId, updated);
     }
 
-    private String statusDescription(InteractionWorkStatus status, String reason) {
+    private String statusDescription(InteractionWorkStatus status, String reason, LocalDate resumeOn) {
         return switch (status) {
             case ACTIVE -> reason == null ? "Взаимодействие возобновлено" : "Взаимодействие возобновлено: " + reason;
-            case PAUSED -> "Взаимодействие приостановлено. Причина: " + reason;
+            case PAUSED -> "Взаимодействие приостановлено до " + COMPLETION_DATE_FORMAT.format(resumeOn) + ". Причина: " + reason;
             case COMPLETED -> "Взаимодействие завершено. Итог: " + reason;
         };
     }
@@ -1531,7 +1564,9 @@ public class InteractionService {
                     if (target == null) {
                         throw new IllegalStateException("Interaction transition target is unavailable");
                     }
-                    return new InteractionTransitionOption(target.id(), target.name(), transition.commentRequired());
+                    return new InteractionTransitionOption(
+                            target.id(), target.name(), transition.commentRequired() || target.order() < currentStage.order()
+                    );
                 })
                 .sorted(Comparator.comparing(option -> stagesById.get(option.stageId()).order()))
                 .toList();
@@ -1802,7 +1837,9 @@ public class InteractionService {
     ) {
     }
 
-    private record ChangeStatusCommand(UUID interactionId, int version, InteractionWorkStatus status, String reason) {
+    private record ChangeStatusCommand(
+            UUID interactionId, int version, InteractionWorkStatus status, String reason, LocalDate resumeOn
+    ) {
     }
 
     private record UpdateFlagsCommand(

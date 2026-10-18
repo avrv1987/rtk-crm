@@ -226,7 +226,7 @@ class WorkListsHttpTest {
 
     @Test
     void unknownDueFilterIsValidationErrorOfDueField() throws Exception {
-        mockMvc.perform(get("/api/interactions").with(oidcLogin()).param("due", "LATER"))
+        mockMvc.perform(get("/api/interactions").with(oidcLogin()).param("due", "NEXT_YEAR"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
                 .andExpect(jsonPath("$.fieldErrors.due").value("Такой отбор по сроку не поддерживается"))
@@ -262,6 +262,7 @@ class WorkListsHttpTest {
                         .with(oidcLogin())
                         .param("q", " Колледж ")
                         .param("requiresAssignment", "true")
+                        .param("excludeService", "true")
                         .param("sort", "name,asc"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(1))
@@ -271,7 +272,7 @@ class WorkListsHttpTest {
 
         verify(organizationRepository).findVisible(
                 eq(PROFILE),
-                eq(new OrganizationQuery(0, 25, OrganizationSort.NAME_ASC, "Колледж", true, OrganizationListStatus.CURRENT))
+                eq(new OrganizationQuery(0, 25, OrganizationSort.NAME_ASC, "Колледж", true, OrganizationListStatus.CURRENT, true))
         );
     }
 

@@ -18,6 +18,7 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.CrmProfile;
+import ru.rtk.crm.agreement.AgreementModels.Approval;
 import ru.rtk.crm.agreement.AgreementModels.PeriodReport;
 import ru.rtk.crm.agreement.AgreementModels.PeriodTotals;
 import ru.rtk.crm.agreement.AgreementModels.PeriodTransition;
@@ -34,24 +35,25 @@ import ru.rtk.crm.report.ReportFormat;
 public class AgreementRegistryService {
     public static final String REGISTRY_TITLE = "Реестр договоров с вузами";
     public static final String PERIOD_TITLE = "Договоры с вузами за период";
-    public static final int DEFAULT_REVIEW_DAYS = 30;
-
     private static final int MAX_REVIEW_DAYS = 3650;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
     private static final List<String> REGISTRY_COLUMNS = List.of("Номер", "Вуз", "Статус", "Дней в статусе", "Отправлен на согласование",
-            "Подписан", "Действует до", "Предмет", "Менеджер");
-    private static final int[] REGISTRY_WIDTHS = {12, 28, 16, 10, 14, 12, 12, 34, 20};
+            "Согласование", "Подписан", "Действует до", "Предмет", "Менеджер");
+    private static final int[] REGISTRY_WIDTHS = {12, 28, 16, 10, 14, 26, 12, 12, 34, 20};
     private static final List<String> TRANSITION_COLUMNS = List.of("Дата и время (МСК)", "Вуз", "Договор", "Из статуса", "В статус",
             "Кто", "Комментарий");
     private static final int[] TRANSITION_WIDTHS = {14, 26, 12, 16, 16, 18, 34};
 
     private final OrganizationRepository organizationRepository;
     private final AgreementRepository repository;
+    private final AgreementApproval approval;
 
-    public AgreementRegistryService(OrganizationRepository organizationRepository, AgreementRepository repository) {
+    public AgreementRegistryService(OrganizationRepository organizationRepository, AgreementRepository repository,
+                                    AgreementApproval approval) {
         this.organizationRepository = organizationRepository;
         this.repository = repository;
+        this.approval = approval;
     }
 
     @Transactional(readOnly = true)
@@ -74,7 +76,7 @@ public class AgreementRegistryService {
         if (from.isAfter(to)) {
             throw new InteractionValidationException("to", "Дата окончания периода раньше даты начала");
         }
-        int days = reviewDays(requestedDays, DEFAULT_REVIEW_DAYS);
+        Integer days = reviewDays(requestedDays, null);
         OffsetDateTime generatedAt = OffsetDateTime.now();
         OffsetDateTime start = from.atStartOfDay(AgreementService.ZONE).toOffsetDateTime();
         OffsetDateTime end = to.plusDays(1).atStartOfDay(AgreementService.ZONE).toOffsetDateTime();
@@ -82,8 +84,12 @@ public class AgreementRegistryService {
         List<PeriodTransition> transitions = scope == null ? List.of() : repository.findTransitionsBetween(scope, start, end);
         List<RegistryRow> signed = scope == null ? List.of() : repository.findSignedBetween(scope, from, to, today);
         List<RegistryRow> terminated = scope == null ? List.of() : repository.findTerminatedBetween(scope, start, end, today);
-        List<RegistryRow> longReview = scope == null ? List.of() : repository.findRegistry(
-                scope, new RegistryQuery(null, null, null, null, days), generatedAt.minusDays(days), today, true);
+        // Без числа дней — договоры, у которых согласование затянулось по порогам (AgreementApproval); число дней
+        // оставлено для прежнего отбора «На согласовании дольше N дней».
+        List<RegistryRow> longReview = scope == null ? List.of() : days == null
+                ? repository.findRegistry(scope, new RegistryQuery(null, null, null, null, null, true), null, today, true)
+                : repository.findRegistry(scope, new RegistryQuery(null, null, null, null, days, false), generatedAt.minusDays(days),
+                        today, true);
         List<Long> approval = signed.stream()
                 .filter(row -> row.sentOn() != null && row.concludedOn() != null && !row.sentOn().isAfter(row.concludedOn()))
                 .map(row -> row.concludedOn().toEpochDay() - row.sentOn().toEpochDay())
@@ -125,7 +131,7 @@ public class AgreementRegistryService {
                         report.signed().stream().map(AgreementRegistryService::registryValues).toList());
                 pdfSection(layout, "Расторгнутые", REGISTRY_COLUMNS, REGISTRY_WIDTHS,
                         report.terminated().stream().map(AgreementRegistryService::registryValues).toList());
-                pdfSection(layout, "На согласовании дольше " + report.longerThanDays() + " дн.", REGISTRY_COLUMNS, REGISTRY_WIDTHS,
+                pdfSection(layout, longReviewTitle(report.longerThanDays()), REGISTRY_COLUMNS, REGISTRY_WIDTHS,
                         report.longReview().stream().map(AgreementRegistryService::registryValues).toList());
             });
             return;
@@ -142,7 +148,7 @@ public class AgreementRegistryService {
                     List.of("Подписано", Integer.toString(report.totals().signed())),
                     List.of("Расторгнуто", Integer.toString(report.totals().terminated())),
                     List.of("Среднее время согласования, дней", average(report.totals())),
-                    List.of("На согласовании дольше " + report.longerThanDays() + " дн.", Integer.toString(report.totals().longReview()))
+                    List.of(longReviewTitle(report.longerThanDays()), Integer.toString(report.totals().longReview()))
             );
             table(summary, styles, position, List.of("Показатель", "Значение"), new int[] {36, 14}, totals);
             sheet(workbook, styles, "Переходы", TRANSITION_COLUMNS, TRANSITION_WIDTHS,
@@ -151,7 +157,8 @@ public class AgreementRegistryService {
                     report.signed().stream().map(AgreementRegistryService::registryValues).toList());
             sheet(workbook, styles, "Расторгнутые", REGISTRY_COLUMNS, REGISTRY_WIDTHS,
                     report.terminated().stream().map(AgreementRegistryService::registryValues).toList());
-            sheet(workbook, styles, "Долго на согласовании", REGISTRY_COLUMNS, REGISTRY_WIDTHS,
+            sheet(workbook, styles, report.longerThanDays() == null ? "Согласование затянулось" : "Долго на согласовании",
+                    REGISTRY_COLUMNS, REGISTRY_WIDTHS,
                     report.longReview().stream().map(AgreementRegistryService::registryValues).toList());
             workbook.write(output);
         }
@@ -167,19 +174,25 @@ public class AgreementRegistryService {
         return requested;
     }
 
-    private static List<String> periodNotes(OffsetDateTime generatedAt, LocalDate from, LocalDate to, int days) {
+    private static String longReviewTitle(Integer days) {
+        return days == null ? "Согласование затянулось" : "На согласовании дольше " + days + " дн.";
+    }
+
+    private List<String> periodNotes(OffsetDateTime generatedAt, LocalDate from, LocalDate to, Integer days) {
         return List.of(
                 "Сформирован: " + dateTime(generatedAt) + " (МСК)",
                 "Период: " + DATE.format(from) + " – " + DATE.format(to) + "; вузы вашей области доступа",
                 "Подписанные — договоры с датой подписания в периоде. Среднее время согласования — от даты отправки на согласование"
                         + " до даты подписания по этим договорам",
-                "Долго на согласовании — сейчас в статусе «На согласовании» дольше " + days + " дн."
+                days == null
+                        ? "Согласование затянулось — договор на согласовании дольше нормы: " + approval.rule()
+                        : "Долго на согласовании — сейчас в статусе «На согласовании» дольше " + days + " дн."
         );
     }
 
     private static String totalsLine(PeriodTotals totals) {
         return "Переходов: " + totals.transitions() + "; подписано: " + totals.signed() + "; расторгнуто: " + totals.terminated()
-                + "; среднее время согласования, дней: " + average(totals) + "; долго на согласовании: " + totals.longReview();
+                + "; среднее время согласования, дней: " + average(totals) + "; согласование затянулось: " + totals.longReview();
     }
 
     private static String average(PeriodTotals totals) {
@@ -191,8 +204,29 @@ public class AgreementRegistryService {
         String status = row.status().title()
                 + (row.status().expired(row.validUntil(), LocalDate.now(AgreementService.ZONE)) ? " · срок истёк" : "");
         return List.of(row.number(), row.organizationName(), status, Long.toString(row.daysInStatus()), date(row.sentOn()),
-                date(row.concludedOn()), date(row.validUntil()), row.subject() == null ? "" : row.subject(),
+                approvalText(row.approval()), date(row.concludedOn()), date(row.validUntil()), row.subject() == null ? "" : row.subject(),
                 row.managerName() == null ? "Не назначен" : row.managerName());
+    }
+
+    // Та же строка, что на экране: сторона и круг, дни на стороне из нормы, общий срок и оценка.
+    static String approvalText(Approval approval) {
+        if (approval == null) {
+            return "";
+        }
+        String side = switch (approval.side()) {
+            case UNIVERSITY -> "у вуза, круг " + approval.round();
+            case SCHOOL -> "у школы, круг " + approval.round();
+            case SIGNING -> "на подписании";
+        };
+        String sideDays = approval.sideLimitDays() == null
+                ? approval.sideDays() + " дн."
+                : approval.sideDays() + " из " + approval.sideLimitDays() + " дн.";
+        String color = switch (approval.color()) {
+            case NORMAL -> "в норме";
+            case YELLOW -> "жёлтый";
+            case RED -> "красный";
+        };
+        return side + ": " + sideDays + "; всего " + approval.totalDays() + " дн. — " + color;
     }
 
     private static List<String> transitionValues(PeriodTransition row) {

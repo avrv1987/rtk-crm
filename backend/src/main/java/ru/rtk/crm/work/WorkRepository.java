@@ -10,8 +10,10 @@ import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import ru.rtk.crm.agreement.AgreementStages;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
+import ru.rtk.crm.interaction.InteractionDue;
 import ru.rtk.crm.interaction.InteractionFlag;
 import ru.rtk.crm.interaction.InteractionRepository;
 import ru.rtk.crm.work.WorkModels.ReminderAgreement;
@@ -30,9 +32,9 @@ public class WorkRepository {
             """;
     private static final String WORK_FLAGS = """
             SELECT %s AS group_id,
-                   CASE WHEN i.next_action_at < :now THEN 1 ELSE 0 END AS overdue,
-                   CASE WHEN i.next_action IS NULL OR i.next_action_at IS NULL THEN 1 ELSE 0 END AS without_next_step,
-                   CASE WHEN %s <= :stuckBefore THEN 1 ELSE 0 END AS stuck,
+            """ + "CASE WHEN " + InteractionDue.OVERDUE.condition() + " THEN 1 ELSE 0 END AS overdue,\n"
+            + "CASE WHEN " + InteractionDue.NO_NEXT_STEP.condition() + " THEN 1 ELSE 0 END AS without_next_step,\n" + """
+                   CASE WHEN %s <= :stuckBefore AND NOT %s THEN 1 ELSE 0 END AS stuck,
             """ + "CASE WHEN " + InteractionFlag.RISK_OR_PROBLEM.condition() + " THEN 1 ELSE 0 END AS at_risk\n";
 
     private static final String COUNTED_LEARNING = """
@@ -46,9 +48,11 @@ public class WorkRepository {
             WHERE organizations.team_id = team.id AND """ + " " + OrganizationRepository.currentStatus("organizations") + " AND %s";
 
     private final JdbcClient jdbcClient;
+    private final AgreementStages agreementStages;
 
-    public WorkRepository(JdbcClient jdbcClient) {
+    public WorkRepository(JdbcClient jdbcClient, AgreementStages agreementStages) {
         this.jdbcClient = jdbcClient;
+        this.agreementStages = agreementStages;
     }
 
     public Map<UUID, WorkCounts> countWorkByManager(VisibilityScope scope, OffsetDateTime now, OffsetDateTime stuckBefore) {
@@ -68,14 +72,15 @@ public class WorkRepository {
                        SUM(work.without_next_step) AS without_next_step, SUM(work.stuck) AS stuck,
                        SUM(work.at_risk) AS at_risk
                 FROM (
-                """ + WORK_FLAGS.formatted(group, InteractionRepository.STAGE_ENTERED_AT)
+                """ + WORK_FLAGS.formatted(group, InteractionRepository.STAGE_ENTERED_AT, agreementStages.stageUnderApprovalCondition("i"))
                         + OPEN_WORK.formatted(scope.condition())
                         + " AND " + OrganizationRepository.currentStatus("o") + "\n" + """
                 ) work
                 GROUP BY work.group_id
                 """)
                 .params(scope.parameters())
-                .param("now", now)
+                .params(agreementStages.currentStageParameters())
+                .params(InteractionDue.parameters(now))
                 .param("stuckBefore", stuckBefore)
                 .query((resultSet, rowNumber) -> counts.put(
                         resultSet.getObject("group_id", UUID.class),
@@ -152,6 +157,36 @@ public class WorkRepository {
                         resultSet.getLong("teachers")
                 ))
                 .list();
+    }
+
+    // Итоги групп ленты «Моей работы» одним запросом и по тому же правилу срока, что отбор due списка: число в
+    // группе равно «Найдено» в списке по ссылке «Показать все», сколько бы строк ни было.
+    public WorkModels.ReminderFeed countFeed(VisibilityScope scope, OffsetDateTime now) {
+        String active = "COUNT(CASE WHEN i.work_status = 'ACTIVE' AND %s THEN 1 END)";
+        return jdbcClient.sql("SELECT "
+                        + active.formatted(InteractionDue.OVERDUE.condition()) + " AS overdue, "
+                        + active.formatted(InteractionDue.TODAY.condition()) + " AS today, "
+                        + active.formatted(InteractionDue.THIS_WEEK.condition()) + " AS this_week, "
+                        + active.formatted(InteractionDue.LATER.condition()) + " AS later, "
+                        + active.formatted(InteractionDue.NO_NEXT_STEP.condition()) + " AS no_next_step, "
+                        + """
+                        COUNT(CASE WHEN i.work_status = 'PAUSED' AND i.next_action_at < :dueDayEnd THEN 1 END) AS resume_due,
+                        COUNT(CASE WHEN i.work_status = 'PAUSED' AND i.next_action_at IS NULL THEN 1 END) AS resume_no_date
+                        FROM interactions i
+                        WHERE i.organization_id IN (SELECT id FROM organizations WHERE %s)
+                        """.formatted(scope.condition()))
+                .params(scope.parameters())
+                .params(InteractionDue.parameters(now))
+                .query((resultSet, rowNumber) -> new WorkModels.ReminderFeed(
+                        resultSet.getLong("overdue"),
+                        resultSet.getLong("today"),
+                        resultSet.getLong("this_week"),
+                        resultSet.getLong("later"),
+                        resultSet.getLong("no_next_step"),
+                        resultSet.getLong("resume_due"),
+                        resultSet.getLong("resume_no_date")
+                ))
+                .single();
     }
 
     public long countSteps(VisibilityScope scope, OffsetDateTime from, OffsetDateTime to) {

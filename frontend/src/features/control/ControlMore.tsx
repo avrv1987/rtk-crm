@@ -3,6 +3,8 @@ import { apiClient, type LearningTrend, type LmsSignal, type Organization, type 
 import { currentPeriod, periodTitle, stateCounts } from '../reports/signingPlan'
 import { LearningTrendPanel } from '../work/LearningTrendPanel'
 import { LmsSignalList } from '../work/LmsSignals'
+import type { FilterOption } from '../reports/ReportControls'
+import { ManagerDeputyForm } from './ManagerDeputyForm'
 import { type AccessHandlers, formatDate, handledAccessError, todayIso } from '../work/workShared'
 
 type Panel = 'signals' | 'deputies' | 'trend' | null
@@ -54,9 +56,21 @@ type ControlMoreProps = AccessHandlers & {
   management: boolean
   organizations: Organization[] | null
   refreshKey: unknown
+  managers?: FilterOption[] | null
+  leaderId?: string
+  onDeputiesChanged?: () => void
 }
 
-export const ControlMore = ({ management, organizations, refreshKey, onSessionExpired, onProfileUnavailable }: ControlMoreProps) => {
+export const ControlMore = ({
+  management,
+  organizations,
+  refreshKey,
+  managers,
+  leaderId,
+  onDeputiesChanged,
+  onSessionExpired,
+  onProfileUnavailable
+}: ControlMoreProps) => {
   const handlers = { onSessionExpired, onProfileUnavailable }
   const [panel, setPanel] = useState<Panel>(null)
   const signals = useLoaded<LmsSignal[]>(() => apiClient.listLmsSignals().then((result) => result.items), handlers, refreshKey)
@@ -134,7 +148,20 @@ export const ControlMore = ({ management, organizations, refreshKey, onSessionEx
               ))}
             </ul>
           )}
-          <p className="control-muted">Замещение назначают и снимают в карточке вуза.</p>
+          <p className="control-muted">По одному вузу замещение назначают и снимают в карточке вуза.</p>
+          {managers && managers.length > 0 && (
+            <>
+              <h3 className="control-more__subtitle">Заместитель на все вузы КАМ</h3>
+              <p className="control-muted">Отпуск или больничный: заместитель получает все действующие вузы КАМ на период, ответственный не меняется.</p>
+              <ManagerDeputyForm
+                managers={managers}
+                leaderId={leaderId}
+                onAssigned={() => onDeputiesChanged?.()}
+                onSessionExpired={onSessionExpired}
+                onProfileUnavailable={onProfileUnavailable}
+              />
+            </>
+          )}
         </div>
       )}
       {panel === 'trend' && (

@@ -22,7 +22,10 @@ public class AuditJournalRepository {
             CASE %s WHEN 'USER' THEN 'КАМ' WHEN 'LEADER' THEN 'руководитель' WHEN 'MANAGEMENT' THEN 'руководство' WHEN 'PARTNER' THEN 'представитель вуза' ELSE 'администратор' END""";
 
     // Плановые запуски источников идут от имени «Система» и попадают в журнал, только если что-то изменили или
-    // завершились ошибкой: иначе ежечасные пустые запуски вытесняли бы записи о входах, ролях и ПДн.
+    // завершились ошибкой: иначе ежечасные пустые запуски вытесняли бы записи о входах, ролях и ПДн. «На разбор»
+    // считается изменением, только если запуск впервые отправил запись на разбор или в ошибку (за ней закреплён
+    // sync_run_id, см. SourceRepository.updateRecord): записи, которые уже ждут разбора, каждый запуск находит снова.
+    // У «Рынка труда» записей источника нет, для него правило прежнее.
     private static final String JOURNAL = """
             SELECT a.id, a.occurred_at, a.category, a.action, a.actor_profile_id, a.actor_display_name,
                    a.object_type, a.object_id, a.object_name, a.details, a.request_id
@@ -88,7 +91,10 @@ public class AuditJournalRepository {
             FROM sync_runs r
             JOIN crm_user_profiles p ON p.id = r.started_by
             WHERE r.run_trigger <> 'SCHEDULE' OR r.status = 'FAILED'
-               OR r.status = 'SUCCEEDED' AND r.created_count + r.updated_count + r.needs_mapping_count + r.failed_count > 0
+               OR r.status = 'SUCCEEDED' AND (r.created_count + r.updated_count > 0
+                   OR r.source = 'LABOR_MARKET' AND r.needs_mapping_count + r.failed_count > 0
+                   OR r.id IN (SELECT sr.sync_run_id FROM source_records sr
+                               WHERE sr.sync_run_id IS NOT NULL AND sr.status <> 'SKIPPED'))
             """.formatted(ROLE_LABEL.formatted("e.previous_role"), ROLE_LABEL.formatted("e.role"), SYSTEM_ACTOR);
 
     private final JdbcClient jdbcClient;

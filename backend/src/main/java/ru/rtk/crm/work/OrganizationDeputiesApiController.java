@@ -12,13 +12,11 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import ru.rtk.crm.access.CurrentProfileService;
 import ru.rtk.crm.interaction.InteractionValidationException;
 
 @RestController
-@RequestMapping("/api/organizations/{id}/deputies")
 public class OrganizationDeputiesApiController {
     private final CurrentProfileService currentProfileService;
     private final OrganizationDeputyService organizationDeputyService;
@@ -31,12 +29,12 @@ public class OrganizationDeputiesApiController {
         this.organizationDeputyService = organizationDeputyService;
     }
 
-    @GetMapping
+    @GetMapping("/api/organizations/{id}/deputies")
     public List<OrganizationDeputy> list(@AuthenticationPrincipal OidcUser user, @PathVariable String id) {
         return organizationDeputyService.list(currentProfileService.requireActiveProfile(user), parseUuid(id, "id"));
     }
 
-    @PostMapping
+    @PostMapping("/api/organizations/{id}/deputies")
     public ResponseEntity<OrganizationDeputy> assign(
             @AuthenticationPrincipal OidcUser user,
             @PathVariable String id,
@@ -51,7 +49,7 @@ public class OrganizationDeputiesApiController {
         ));
     }
 
-    @PostMapping("/{deputyId}/end")
+    @PostMapping("/api/organizations/{id}/deputies/{deputyId}/end")
     public OrganizationDeputy end(
             @AuthenticationPrincipal OidcUser user,
             @PathVariable String id,
@@ -62,6 +60,21 @@ public class OrganizationDeputiesApiController {
                 currentProfileService.requireActiveProfile(user),
                 parseUuid(id, "id"),
                 parseUuid(deputyId, "deputyId"),
+                idempotencyKey
+        );
+    }
+
+    @PostMapping("/api/managers/{id}/deputies")
+    public ManagerDeputyResult assignForManager(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody(required = false) OrganizationDeputyRequest request
+    ) {
+        return organizationDeputyService.assignForManager(
+                currentProfileService.requireActiveProfile(user),
+                parseUuid(id, "id"),
+                request,
                 idempotencyKey
         );
     }

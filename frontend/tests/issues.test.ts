@@ -7,7 +7,8 @@ import {
   issueBadges,
   issueFiltersFromQuery,
   issueQueryFromFilters,
-  issueTitle
+  issueTitle,
+  myIssueHref
 } from '../src/features/issues/issueModel.ts'
 
 test('плашки называют число проблем и наибольший уровень риска', () => {
@@ -37,4 +38,10 @@ test('отборы страницы переживают адресную стр
   assert.equal(query, 'kind=RISK&riskLevel=HIGH&overdue=true&status=ALL&page=2')
   assert.deepEqual(issueFiltersFromQuery(query), filters)
   assert.deepEqual(issueFiltersFromQuery('kind=OTHER&status=OPEN&page=-1'), emptyIssueFilters)
+})
+
+test('«Мои риски»: доступный вуз открывает карточку с окном проблем, чужой — реестр с отбором «Кто решает: я»', () => {
+  const issue = { organizationId: 'org', interactionId: 'work', organizationAccessible: true }
+  assert.equal(myIssueHref(issue, 'me'), '#/organizations/org/work?issues=1')
+  assert.equal(myIssueHref({ ...issue, organizationAccessible: false }, 'me'), '#/issues?responsible=me')
 })

@@ -167,6 +167,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
         ReportRepository.class,
         ReportService.class,
         ru.rtk.crm.agreement.AgreementRepository.class,
+        ru.rtk.crm.agreement.AgreementApproval.class,
         ru.rtk.crm.work.LmsLearningTestBeans.class,
         SourceSyncServiceTest.SourceTestConfiguration.class
 })
@@ -693,6 +694,24 @@ class SourceSyncServiceTest {
 
         assertThat(sync().needsMappingCount()).isZero();
         assertThat(interactionIds(ORGANIZATION_A)).hasSize(2);
+    }
+
+    @Test
+    void recordsStayPinnedToTheRunThatFirstSentThemToReviewWhileHistoryKeepsCountingThem() {
+        SyncRunView first = sync();
+        SyncRunView repeat = sync();
+
+        assertThat(List.of(repeat.createdCount(), repeat.updatedCount(), repeat.needsMappingCount())).containsExactly(0, 0, 2);
+        assertThat(jdbcTemplate.queryForList("SELECT DISTINCT sync_run_id FROM source_records WHERE status = 'NEEDS_MAPPING'",
+                UUID.class)).containsExactly(first.id());
+
+        CRM_ORGANIZATIONS.add(crmOrganization("c-4", "Школа № 7", "SCHOOL", null, "2026-10-04T10:00:00+03:00"));
+        SyncRunView crm = syncCrm();
+        syncCrm();
+
+        assertThat(crmStatus("crm_organization", "c-4")).isEqualTo("NEEDS_MAPPING");
+        assertThat(jdbcTemplate.queryForObject("SELECT sync_run_id FROM source_records WHERE id = ?", UUID.class,
+                crmRecord("crm_organization", "c-4"))).isEqualTo(crm.id());
     }
 
     @Test

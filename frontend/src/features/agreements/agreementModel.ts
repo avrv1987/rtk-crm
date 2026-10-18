@@ -5,6 +5,8 @@ export type AgreementStatus = Schemas['AgreementStatus']
 export type SupplementStatus = Schemas['AgreementSupplementStatus']
 export type AgreementStageRole = Schemas['AgreementStageRole']
 export type AgreementFileStatus = Schemas['AgreementFile']['status']
+export type AgreementApproval = Schemas['AgreementApproval']
+export type ApprovalColor = AgreementApproval['color']
 
 export const agreementStatuses: readonly AgreementStatus[] = ['DRAFT', 'REVIEW', 'CORRECTION', 'SIGNING', 'ACTIVE', 'COMPLETED', 'TERMINATED']
 
@@ -36,12 +38,57 @@ export const stageRoleLabels: Record<AgreementStageRole, string> = {
   SIGNING: 'Подписание'
 }
 
+export const approvalColorLabels: Record<ApprovalColor, string> = {
+  NORMAL: 'в норме',
+  YELLOW: 'жёлтый',
+  RED: 'красный'
+}
+
+export const approvalColorClass: Record<ApprovalColor, string> = {
+  NORMAL: 'status status--planned',
+  YELLOW: 'status status--missing',
+  RED: 'status status--overdue'
+}
+
+// Та же строка, что в выгрузках (AgreementRegistryService.approvalText), без оценки: её показывает цветная отметка.
+export const approvalText = (approval: AgreementApproval) => {
+  const side = approval.side === 'UNIVERSITY'
+    ? `у вуза, круг ${approval.round}`
+    : approval.side === 'SCHOOL' ? `у школы, круг ${approval.round}` : 'на подписании'
+  const days = approval.sideLimitDays === null || approval.sideLimitDays === undefined
+    ? `${approval.sideDays} дн.`
+    : `${approval.sideDays} из ${approval.sideLimitDays} дн.`
+  return `${side}: ${days}; всего ${approval.totalDays} дн.`
+}
+
+export const approvalDelayed = (approval: AgreementApproval | null | undefined) => (
+  approval !== null && approval !== undefined && approval.color !== 'NORMAL'
+)
+
+// Строка для кабинета вуза: у кого договор и какой круг, без порогов школы.
+export const partnerApprovalLine = (status: AgreementStatus, round: number | null | undefined) => {
+  if (round === null || round === undefined) {
+    return null
+  }
+  if (status === 'REVIEW') {
+    return `Сейчас у вуза, круг согласования ${round}`
+  }
+  return status === 'CORRECTION' ? `Сейчас у школы, круг согласования ${round}` : `На подписании, кругов согласования: ${round}`
+}
+
+// Так же называет файл сервер (AgreementFileService.signedName).
+export const signedFileName = (name: string) => {
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? `${name.slice(0, dot)} (подписанная)${name.slice(dot)}` : `${name} (подписанная)`
+}
+
 export type RegistryFilters = {
   statuses: AgreementStatus[]
   organizationId: string
   managerId: string
   expiresBefore: string
   reviewLongerThanDays: string
+  delayed: boolean
 }
 
 export const emptyRegistryFilters: RegistryFilters = {
@@ -49,7 +96,8 @@ export const emptyRegistryFilters: RegistryFilters = {
   organizationId: '',
   managerId: '',
   expiresBefore: '',
-  reviewLongerThanDays: ''
+  reviewLongerThanDays: '',
+  delayed: false
 }
 
 export const registrySearch = (filters: RegistryFilters) => {
@@ -67,6 +115,9 @@ export const registrySearch = (filters: RegistryFilters) => {
     if (value !== '') {
       params.set(key, value)
     }
+  }
+  if (filters.delayed) {
+    params.set('delayed', 'true')
   }
   return params.size === 0 ? '' : `?${params.toString()}`
 }
@@ -122,12 +173,13 @@ export const inputFromAgreement = (agreement: AgreementLike): Schemas['Agreement
   plannedOn: agreement.plannedOn ?? null
 })
 
-export type RegistryTile = 'REVIEW' | 'CORRECTION' | 'SIGNING' | 'ACTIVE' | 'EXPIRING'
+export type RegistryTile = 'REVIEW' | 'CORRECTION' | 'SIGNING' | 'DELAYED' | 'ACTIVE' | 'EXPIRING'
 
 export const registryTiles: { key: RegistryTile; label: string; tone?: 'warning' }[] = [
   { key: 'REVIEW', label: 'На согласовании' },
   { key: 'CORRECTION', label: 'На корректировке' },
   { key: 'SIGNING', label: 'На подписании' },
+  { key: 'DELAYED', label: 'Согласование затянулось', tone: 'warning' },
   { key: 'ACTIVE', label: 'Действует' },
   { key: 'EXPIRING', label: 'Истёк или истекает за 90 дней', tone: 'warning' }
 ]
@@ -141,14 +193,17 @@ const plusDays = (today: string, days: number) => {
 }
 
 export const registryTileCounts = (
-  rows: readonly { status: AgreementStatus; validUntil?: string | null }[],
+  rows: readonly { status: AgreementStatus; validUntil?: string | null; approval?: AgreementApproval | null }[],
   today: string
 ): Record<RegistryTile, number> => {
   const limit = plusDays(today, expiringDays)
-  const counts: Record<RegistryTile, number> = { REVIEW: 0, CORRECTION: 0, SIGNING: 0, ACTIVE: 0, EXPIRING: 0 }
+  const counts: Record<RegistryTile, number> = { REVIEW: 0, CORRECTION: 0, SIGNING: 0, DELAYED: 0, ACTIVE: 0, EXPIRING: 0 }
   for (const row of rows) {
     if (row.status === 'REVIEW' || row.status === 'CORRECTION' || row.status === 'SIGNING' || row.status === 'ACTIVE') {
       counts[row.status] += 1
+    }
+    if (approvalDelayed(row.approval)) {
+      counts.DELAYED += 1
     }
     // Тот же отбор, что ставит плитка (registryTileFilters): «Действует» со сроком до границы, истёкшие включены.
     if (row.status === 'ACTIVE' && row.validUntil && row.validUntil <= limit) {
@@ -158,19 +213,26 @@ export const registryTileCounts = (
   return counts
 }
 
-export const registryTileFilters = (tile: RegistryTile | null, today: string): Pick<RegistryFilters, 'statuses' | 'expiresBefore'> => {
+export const registryTileFilters = (
+  tile: RegistryTile | null,
+  today: string
+): Pick<RegistryFilters, 'statuses' | 'expiresBefore' | 'delayed'> => {
   if (tile === null) {
-    return { statuses: [], expiresBefore: '' }
+    return { statuses: [], expiresBefore: '', delayed: false }
+  }
+  if (tile === 'DELAYED') {
+    return { statuses: [], expiresBefore: '', delayed: true }
   }
   return tile === 'EXPIRING'
-    ? { statuses: ['ACTIVE'], expiresBefore: plusDays(today, expiringDays) }
-    : { statuses: [tile], expiresBefore: '' }
+    ? { statuses: ['ACTIVE'], expiresBefore: plusDays(today, expiringDays), delayed: false }
+    : { statuses: [tile], expiresBefore: '', delayed: false }
 }
 
 export const registryTileOf = (filters: RegistryFilters, today: string): RegistryTile | null => {
   const tile = registryTiles.find((item) => {
     const expected = registryTileFilters(item.key, today)
     return expected.expiresBefore === filters.expiresBefore
+      && expected.delayed === filters.delayed
       && expected.statuses.length === filters.statuses.length
       && expected.statuses.every((status) => filters.statuses.includes(status))
   })

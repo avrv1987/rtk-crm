@@ -11,12 +11,27 @@ import {
   emptyControlFilters,
   exportColumns,
   hasPeriod,
+  isStuck,
   learningText,
   routeLabel,
   routeShare,
   toExportRequest,
-  controlViewFromQuery
+  controlViewFromQuery,
+  controlListHref,
+  controlReportHref,
+  reportSelectionFromControl,
+  skippedNotice,
+  tileShownCount
 } from '../src/features/control/controlModel.ts'
+import type { ReportSelection } from '../src/features/reports/reportSelection.ts'
+import type { WorkControl } from '../src/shared/api/client.ts'
+
+test('этап договора на согласовании не считается застрявшим', () => {
+  assert.equal(isStuck({ status: 'ACTIVE', daysOnStage: 40, stageUnderApproval: false }, 30), true)
+  assert.equal(isStuck({ status: 'ACTIVE', daysOnStage: 40, stageUnderApproval: true }, 30), false)
+  assert.equal(isStuck({ status: 'PAUSED', daysOnStage: 40, stageUnderApproval: false }, 30), false)
+  assert.equal(isStuck({ status: 'ACTIVE', daysOnStage: 10, stageUnderApproval: false }, 30), false)
+})
 
 test('отборы экрана «Контроль» переживают круг через адрес', () => {
   const filters = {
@@ -137,4 +152,80 @@ test('выгрузка «Контроля» берёт выбранную пли
   assert.ok(overdue.columns?.includes('AGREEMENT'))
   assert.ok(overdue.columns?.includes('AGREEMENT_STATUS'))
   assert.equal(controlViewFromQuery('tile=IDLE').tile, 'IDLE')
+})
+
+const queryOf = (href: string) => href.slice(href.indexOf('?') + 1)
+
+test('«Показать списком» переносит вуз, менеджера, этап и плитку, остальное называет', () => {
+  const filters = { ...emptyControlFilters, organizationId: ['o1'], managerId: ['m1'], stage: ['Пилот'] }
+  const href = controlListHref(filters, { tile: 'OVERDUE', stuckDays: 30 })
+  const params = new URLSearchParams(queryOf(href))
+  assert.ok(href.startsWith('#/control?'))
+  assert.equal(params.get('view'), 'list')
+  assert.equal(params.get('organization'), 'o1')
+  assert.equal(params.get('responsible'), 'm1')
+  assert.equal(params.get('stage'), 'Пилот')
+  assert.equal(params.get('due'), 'OVERDUE')
+  assert.equal(params.get('skipped'), null)
+  assert.equal(new URLSearchParams(queryOf(controlListHref(emptyControlFilters, { tile: 'ISSUES', stuckDays: 30 }))).get('flag'), 'RISK_OR_PROBLEM')
+  assert.equal(new URLSearchParams(queryOf(controlListHref(emptyControlFilters, { tile: 'STUCK', stuckDays: 14 }))).get('minDaysOnStage'), '14')
+  assert.equal(new URLSearchParams(queryOf(controlListHref(emptyControlFilters, { tile: 'UNASSIGNED', stuckDays: 30 }))).get('responsible'), 'UNASSIGNED')
+
+  const lossy = controlListHref(
+    { ...emptyControlFilters, productId: ['p1'], organizationId: ['o1', 'o2'], from: '2026-10-01', to: '2026-10-18' },
+    { tile: 'LMS', stuckDays: 30 }
+  )
+  assert.equal(new URLSearchParams(queryOf(lossy)).get('organization'), null)
+  assert.equal(
+    skippedNotice(queryOf(lossy)),
+    'Не перенесено из «Контроля»: несколько вузов, продукт, период, плитка — на этом экране такого отбора нет.'
+  )
+  assert.equal(skippedNotice('view=list'), null)
+})
+
+test('«Все форматы — в отчёте» переносит период и фильтры, плитку называет', () => {
+  const filters = {
+    ...emptyControlFilters,
+    productId: ['p1'],
+    programId: ['g1'],
+    directionId: ['d1'],
+    organizationId: ['o1'],
+    managerId: ['m1', 'UNASSIGNED'],
+    stage: ['Пилот'],
+    from: '2026-10-01',
+    to: '2026-10-18',
+    change: 'MOVED' as const
+  }
+  const href = controlReportHref(filters, { tile: 'THIS_WEEK', stuckDays: 30 })
+  assert.ok(href.startsWith('#/reports/manager-work?'))
+  assert.equal(skippedNotice(queryOf(href)), 'Не перенесено из «Контроля»: плитка — на этом экране такого отбора нет.')
+  assert.equal(skippedNotice(queryOf(controlReportHref(filters, { tile: null, stuckDays: 30 }))), null)
+  const stored = { kind: 'PORTFOLIO', organizationType: 'COLLEGE', includeNoDirection: true, from: '', to: '' } as unknown as ReportSelection
+  const selection = reportSelectionFromControl(stored, queryOf(href))
+  assert.ok(selection !== null)
+  assert.equal(selection.kind, 'MANAGER_WORK')
+  assert.equal(selection.from, '2026-10-01')
+  assert.equal(selection.to, '2026-10-18')
+  assert.deepEqual(selection.productIds, ['p1'])
+  assert.deepEqual(selection.programIds, ['g1'])
+  assert.deepEqual(selection.directionIds, ['d1'])
+  assert.deepEqual(selection.organizationIds, ['o1'])
+  assert.deepEqual(selection.managerIds, ['m1'])
+  assert.equal(selection.includeNoManager, true)
+  assert.deepEqual(selection.stages, ['Пилот'])
+  assert.equal(selection.change, 'MOVED')
+  assert.equal(selection.organizationType, '')
+  assert.equal(selection.includeNoDirection, false)
+  assert.equal(reportSelectionFromControl(stored, 'from=2026-10-01'), null)
+})
+
+test('счётчик «Контроля» показывает число строк под выбранной плиткой', () => {
+  const works = (count: number) => Array.from({ length: count }, () => ({}))
+  const shown = {
+    teams: [{ managers: [{ managerId: 'm1', works: works(2) }, { managerId: null, works: works(1) }] }],
+    idleOrganizations: [{}, {}]
+  } as unknown as WorkControl
+  assert.equal(tileShownCount(shown, null), null)
+  assert.equal(tileShownCount(shown, 'OVERDUE'), 3)
+  assert.equal(tileShownCount(shown, 'IDLE'), 2)
 })

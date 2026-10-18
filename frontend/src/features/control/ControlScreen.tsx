@@ -28,6 +28,8 @@ import { ControlMore } from './ControlMore'
 import {
   changeOptions,
   controlFiltersFromQuery,
+  controlListHref,
+  controlReportHref,
   controlQuery,
   controlQueryFromFilters,
   controlStateFromHash,
@@ -40,8 +42,10 @@ import {
   hottestTeamId,
   managerUnassigned,
   panelFilterCount,
+  skippedNotice,
   stuckDayOptions,
   tileCounts,
+  tileShownCount,
   toExportRequest,
   type ControlFilters
 } from './controlModel'
@@ -119,25 +123,29 @@ export const ControlScreen = (props: ControlScreenProps) => (
   isListQuery(props.initialQuery) ? <ControlList {...props} /> : <ControlBoard {...props} />
 )
 
-const ControlList = ({ role, initialQuery, refreshSignal, onSessionExpired, onProfileUnavailable }: ControlScreenProps) => (
-  <section className="control" aria-label="Контроль списком">
-    <div className="control-toolbar">
-      <HintButton label="Что на этом экране">
-        Все взаимодействия {role === 'MANAGEMENT' ? 'всех команд, только просмотр' : 'команды'} одним списком: сначала ближайшие и просроченные сроки следующего шага.
-      </HintButton>
-      <ActionMenu label={terms.moreActions} items={[{ label: 'Показать по менеджерам', href: '#/control' }]} />
-    </div>
-    <WorkList
-      role={role}
-      path="control"
-      initialQuery={initialQuery}
-      refreshSignal={refreshSignal}
-      title="Все взаимодействия"
-      onSessionExpired={onSessionExpired}
-      onProfileUnavailable={onProfileUnavailable}
-    />
-  </section>
-)
+const ControlList = ({ role, initialQuery, refreshSignal, onSessionExpired, onProfileUnavailable }: ControlScreenProps) => {
+  const [notice] = useState(() => skippedNotice(initialQuery))
+  return (
+    <section className="control" aria-label="Контроль списком">
+      <div className="control-toolbar">
+        <HintButton label="Что на этом экране">
+          Все взаимодействия {role === 'MANAGEMENT' ? 'всех команд, только просмотр' : 'команды'} одним списком: сначала ближайшие и просроченные сроки следующего шага.
+        </HintButton>
+        <ActionMenu label={terms.moreActions} items={[{ label: 'Показать по менеджерам', href: '#/control' }]} />
+      </div>
+      {notice !== null && <p className="notice" role="status">{notice}</p>}
+      <WorkList
+        role={role}
+        path="control"
+        initialQuery={initialQuery}
+        refreshSignal={refreshSignal}
+        title="Все взаимодействия"
+        onSessionExpired={onSessionExpired}
+        onProfileUnavailable={onProfileUnavailable}
+      />
+    </section>
+  )
+}
 
 const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionExpired, onProfileUnavailable }: ControlScreenProps) => {
   const [filters, setFilters] = useState<ControlFilters>(() => controlFiltersFromQuery(initialQuery))
@@ -348,6 +356,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
   const control = dataState.kind === 'ready' ? dataState.control : null
   const counts = control === null ? null : tileCounts(control, view.stuckDays)
   const shown = control === null ? null : filterControl(control, view.tile, view.stuckDays)
+  const inTile = shown === null ? null : tileShownCount(shown, view.tile)
   const today = todayInMoscow()
   const choice = customPeriod ? 'CUSTOM' : periodChoice(filters.from, filters.to, today)
   const unassignedOrganizations = options?.organizationList.filter((item) => item.requiresAssignment && item.status !== 'ARCHIVED') ?? []
@@ -418,8 +427,8 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
   const menu: ActionMenuItem[] = [
     { label: exporting ? 'Готовим файл…' : `${terms.export} XLSX`, onSelect: () => void exportFile('XLSX') },
     { label: `${terms.export} PDF`, onSelect: () => void exportFile('PDF') },
-    { label: 'Все форматы — в отчёте', href: '#/reports/manager-work' },
-    { label: 'Показать списком', href: '#/control?view=list', separated: true },
+    { label: 'Все форматы — в отчёте', href: controlReportHref(filters, view) },
+    { label: 'Показать списком', href: controlListHref(filters, view), separated: true },
     { label: 'Развернуть всех', onSelect: () => setAll(true) },
     { label: 'Свернуть всех', onSelect: () => setAll(false) }
   ]
@@ -449,7 +458,9 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
       <FilterChips chips={chips} onReset={resetAll} />
       {control !== null && (
         <p className="control-status">
-          <span>{`${withCount(control.total.organizations, 'вуз', 'вуза', 'вузов')} · ${withCount(control.total.works, 'взаимодействие', 'взаимодействия', 'взаимодействий')} · данные на ${formatMoscowDateTime(control.calculatedAt)}`}</span>
+          <span>{`${withCount(control.total.organizations, 'вуз', 'вуза', 'вузов')} · ${withCount(control.total.works, 'взаимодействие', 'взаимодействия', 'взаимодействий')}${
+            inTile === null ? '' : ` · в плитке: ${view.tile === 'IDLE' ? withCount(inTile, 'вуз', 'вуза', 'вузов') : withCount(inTile, 'взаимодействие', 'взаимодействия', 'взаимодействий')}`
+          } · данные на ${formatMoscowDateTime(control.calculatedAt)}`}</span>
           <button type="button" className="button--secondary" onClick={() => void load(filters)}>{terms.refresh}</button>
         </p>
       )}
@@ -544,6 +555,9 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
         management={management}
         organizations={options?.organizationList ?? null}
         refreshKey={refreshSignal}
+        managers={role === 'LEADER' ? options?.activeManagers ?? null : null}
+        leaderId={profileId}
+        onDeputiesChanged={() => void loadOptions()}
         onSessionExpired={onSessionExpired}
         onProfileUnavailable={onProfileUnavailable}
       />

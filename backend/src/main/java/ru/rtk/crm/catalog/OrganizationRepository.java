@@ -92,6 +92,9 @@ public class OrganizationRepository {
         if (query.requiresAssignment()) {
             conditions.add(REQUIRES_ASSIGNMENT);
         }
+        if (query.excludeService()) {
+            conditions.add("type <> 'OPEN_ENROLLMENT'");
+        }
         String where = String.join(" AND ", conditions);
         List<Organization> items = jdbcClient.sql("""
                 SELECT %s

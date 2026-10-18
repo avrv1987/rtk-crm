@@ -304,7 +304,7 @@
   gap: 14px;
 }
 
-.interaction-attachment-upload label {
+.interaction-attachment-upload label:not(.camera-input) {
   display: grid;
   gap: 6px;
   color: var(--color-text-label);

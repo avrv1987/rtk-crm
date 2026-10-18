@@ -152,7 +152,8 @@ public class WorkService {
                         limit
                 ),
                 properties.agreementNoticeDays(),
-                workRepository.findExpiringAgreements(scope, today.plusDays(properties.agreementNoticeDays()), limit)
+                workRepository.findExpiringAgreements(scope, today.plusDays(properties.agreementNoticeDays()), limit),
+                workRepository.countFeed(scope, now)
         );
     }
 

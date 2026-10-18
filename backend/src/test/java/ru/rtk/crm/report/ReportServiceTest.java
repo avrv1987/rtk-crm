@@ -59,6 +59,8 @@ import ru.rtk.crm.module.ModuleProperties;
         ReportRepository.class,
         ReportService.class,
         ru.rtk.crm.agreement.AgreementRepository.class,
+        ru.rtk.crm.agreement.AgreementApproval.class,
+        ru.rtk.crm.agreement.AgreementStages.class,
         ru.rtk.crm.work.LmsLearningTestBeans.class,
         ReportServiceTest.PropertiesConfiguration.class
 })

@@ -5,17 +5,21 @@ import {
   agreementStatusLabels,
   agreementTerm,
   agreementStatuses,
+  approvalDelayed,
+  approvalText,
   daysInStatus,
   defaultSignerId,
   emptyRegistryFilters,
   inputFromAgreement,
   linkCandidates,
   linkInput,
+  partnerApprovalLine,
   periodDefaults,
   registrySearch,
   registryTileCounts,
   registryTileFilters,
   registryTileOf,
+  signedFileName,
   supplementStatusLabels,
   transitionFields
 } from '../src/features/agreements/agreementModel.ts'
@@ -34,6 +38,7 @@ test('запрос реестра повторяет статус и пропу�
     '?status=REVIEW&status=SIGNING&managerId=m1&reviewLongerThanDays=30'
   )
   assert.equal(registrySearch({ ...emptyRegistryFilters, organizationId: 'o1', expiresBefore: '2026-12-31' }), '?organizationId=o1&expiresBefore=2026-12-31')
+  assert.equal(registrySearch({ ...emptyRegistryFilters, delayed: true }), '?delayed=true')
 })
 
 test('дни в статусе считаются полными сутками и не бывают отрицательными', () => {
@@ -99,15 +104,41 @@ test('плитки реестра: счёт по статусам, «Истёк 
     { status: 'ACTIVE', validUntil: '2026-12-01' },
     { status: 'ACTIVE', validUntil: '2027-06-01' },
     { status: 'ACTIVE', validUntil: '2026-10-01' },
-    { status: 'COMPLETED', validUntil: '2026-11-01' }
+    { status: 'COMPLETED', validUntil: '2026-11-01' },
+    { status: 'CORRECTION', approval: { side: 'SCHOOL', round: 1, sideDays: 9, sideLimitDays: 7, totalDays: 30, color: 'YELLOW' } },
+    { status: 'SIGNING', approval: { side: 'SIGNING', round: 2, sideDays: 1, sideLimitDays: null, totalDays: 10, color: 'NORMAL' } }
   ], '2026-10-17')
-  assert.deepEqual(counts, { REVIEW: 2, CORRECTION: 0, SIGNING: 1, ACTIVE: 3, EXPIRING: 2 })
-  assert.deepEqual(registryTileFilters('EXPIRING', '2026-10-17'), { statuses: ['ACTIVE'], expiresBefore: '2027-01-15' })
-  assert.deepEqual(registryTileFilters('SIGNING', '2026-10-17'), { statuses: ['SIGNING'], expiresBefore: '' })
-  assert.deepEqual(registryTileFilters(null, '2026-10-17'), { statuses: [], expiresBefore: '' })
+  assert.deepEqual(counts, { REVIEW: 2, CORRECTION: 1, SIGNING: 2, DELAYED: 1, ACTIVE: 3, EXPIRING: 2 })
+  assert.deepEqual(registryTileFilters('EXPIRING', '2026-10-17'), { statuses: ['ACTIVE'], expiresBefore: '2027-01-15', delayed: false })
+  assert.deepEqual(registryTileFilters('SIGNING', '2026-10-17'), { statuses: ['SIGNING'], expiresBefore: '', delayed: false })
+  assert.deepEqual(registryTileFilters(null, '2026-10-17'), { statuses: [], expiresBefore: '', delayed: false })
+  assert.deepEqual(registryTileFilters('DELAYED', '2026-10-17'), { statuses: [], expiresBefore: '', delayed: true })
+  assert.equal(registryTileOf({ ...emptyRegistryFilters, delayed: true }, '2026-10-17'), 'DELAYED')
+  assert.equal(registryTileOf({ ...emptyRegistryFilters, statuses: ['SIGNING'], delayed: true }, '2026-10-17'), null)
   assert.equal(registryTileOf({ ...emptyRegistryFilters, statuses: ['ACTIVE'], expiresBefore: '2027-01-15' }, '2026-10-17'), 'EXPIRING')
   assert.equal(registryTileOf({ ...emptyRegistryFilters, statuses: ['ACTIVE'] }, '2026-10-17'), 'ACTIVE')
   assert.equal(registryTileOf({ ...emptyRegistryFilters, statuses: ['ACTIVE', 'SIGNING'] }, '2026-10-17'), null)
+})
+
+test('согласование: сторона, круг и дни из нормы, затянулось только жёлтое и красное', () => {
+  assert.equal(approvalText({ side: 'UNIVERSITY', round: 2, sideDays: 12, sideLimitDays: 21, totalDays: 45, color: 'NORMAL' }),
+    'у вуза, круг 2: 12 из 21 дн.; всего 45 дн.')
+  assert.equal(approvalText({ side: 'SCHOOL', round: 1, sideDays: 9, sideLimitDays: 7, totalDays: 30, color: 'YELLOW' }),
+    'у школы, круг 1: 9 из 7 дн.; всего 30 дн.')
+  assert.equal(approvalText({ side: 'SIGNING', round: 1, sideDays: 3, sideLimitDays: null, totalDays: 95, color: 'RED' }),
+    'на подписании: 3 дн.; всего 95 дн.')
+  assert.equal(approvalDelayed(null), false)
+  assert.equal(approvalDelayed({ side: 'SCHOOL', round: 1, sideDays: 1, sideLimitDays: 7, totalDays: 1, color: 'NORMAL' }), false)
+  assert.equal(approvalDelayed({ side: 'SCHOOL', round: 1, sideDays: 1, sideLimitDays: 7, totalDays: 95, color: 'RED' }), true)
+  assert.equal(partnerApprovalLine('REVIEW', 2), 'Сейчас у вуза, круг согласования 2')
+  assert.equal(partnerApprovalLine('CORRECTION', 1), 'Сейчас у школы, круг согласования 1')
+  assert.equal(partnerApprovalLine('ACTIVE', null), null)
+})
+
+test('подписанная версия скачивается с пометкой в имени, как на сервере', () => {
+  assert.equal(signedFileName('Договор.pdf'), 'Договор (подписанная).pdf')
+  assert.equal(signedFileName('договор'), 'договор (подписанная)')
+  assert.equal(signedFileName('.pdf'), '.pdf (подписанная)')
 })
 
 test('отметка срока: «срок истёк» только у действующего с прошедшей датой, «истекает» — в горизонте предупреждения', () => {

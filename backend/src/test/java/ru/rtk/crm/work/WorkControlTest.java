@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -32,6 +33,7 @@ import ru.rtk.crm.catalog.OrganizationNotFoundException;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
 import ru.rtk.crm.interaction.InteractionConflictException;
+import ru.rtk.crm.interaction.InteractionDue;
 import ru.rtk.crm.interaction.InteractionValidationException;
 
 @JdbcTest(properties = {
@@ -47,6 +49,7 @@ import ru.rtk.crm.interaction.InteractionValidationException;
         OrganizationDeputyService.class,
         CommandIdempotencyRepository.class,
         WorkRepository.class,
+        ru.rtk.crm.agreement.AgreementStages.class,
         WorkService.class,
         WorkControlTest.TestBeans.class
 })
@@ -91,7 +94,7 @@ class WorkControlTest {
     void setUp() {
         createSchema();
         for (String table : List.of(
-                "agreements", "interaction_stage_completions", "teacher_trainings", "interaction_stages", "reminder_settings", "learning_snapshots", "source_mappings", "source_records", "product_agreements", "products", "interaction_events", "interaction_issues",
+                "agreement_interactions", "agreements", "interaction_stage_completions", "teacher_trainings", "interaction_stages", "reminder_settings", "learning_snapshots", "source_mappings", "source_records", "product_agreements", "products", "interaction_events", "interaction_issues",
                 "interactions", "organization_deputies", "organization_assignment_events", "command_idempotency_records",
                 "organizations", "crm_user_profiles", "teams"
         )) {
@@ -326,7 +329,7 @@ class WorkControlTest {
         assertThat(indicators.managers()).containsExactly(
                 new WorkModels.ManagerIndicators(KAM_A, "КАМ А", 1, 2, 1, 1, 1, 0),
                 new WorkModels.ManagerIndicators(KAM_C, "КАМ В", 0, 0, 0, 0, 0, 0),
-                new WorkModels.ManagerIndicators(null, null, 1, 1, 1, 1, 0, 0)
+                new WorkModels.ManagerIndicators(null, null, 1, 1, 1, 0, 0, 0)
         );
         assertThat(workService.teamIndicators(leaderA, 1).managers())
                 .filteredOn(row -> KAM_A.equals(row.managerId()))
@@ -338,6 +341,49 @@ class WorkControlTest {
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
                     assertThat(exception.field()).isEqualTo("stuckDays");
                 });
+    }
+
+    @Test
+    void contractStagesUnderApprovalAreNotCountedAsStuck() {
+        OffsetDateTime now = OffsetDateTime.now();
+        UUID exchange = insertInteraction(UNIVERSITY_A, "Обмен документами у КАМ А", "Позвонить", now.plusDays(3), now.minusDays(40), "ACTIVE");
+        UUID signing = insertInteraction(UNIVERSITY_A, "Подписание у КАМ А", "Позвонить", now.plusDays(3), now.minusDays(40), "ACTIVE");
+        UUID meeting = insertInteraction(UNIVERSITY_A, "Встреча у КАМ А", "Позвонить", now.plusDays(3), now.minusDays(40), "ACTIVE");
+        currentStage(exchange, "Обмен документами");
+        currentStage(signing, "Подписание");
+        currentStage(meeting, "Встреча");
+        UUID inReview = linkAgreement(exchange, "REVIEW", now.minusDays(1));
+        linkAgreement(exchange, "ACTIVE", now.minusDays(30));
+        UUID draft = linkAgreement(signing, "DRAFT", now.minusDays(1));
+        linkAgreement(meeting, "REVIEW", now.minusDays(1));
+
+        assertThat(kamAStuck()).as("договор на согласовании — этап договора не застрял").isEqualTo(2);
+        jdbcTemplate.update("UPDATE agreements SET status = 'SIGNING' WHERE id = ?", draft);
+        assertThat(kamAStuck()).isEqualTo(1);
+        jdbcTemplate.update("UPDATE agreements SET status = 'ACTIVE' WHERE id = ?", inReview);
+        assertThat(kamAStuck()).as("договор подписан — пороги согласования больше не действуют").isEqualTo(2);
+    }
+
+    private long kamAStuck() {
+        return workService.teamIndicators(leaderA, null).managers().stream()
+                .filter(row -> KAM_A.equals(row.managerId())).findFirst().orElseThrow().stuck();
+    }
+
+    private void currentStage(UUID interactionId, String name) {
+        jdbcTemplate.update("""
+                INSERT INTO interaction_stages (id, interaction_id, stage_order, name)
+                SELECT current_stage_id, id, 0, ? FROM interactions WHERE id = ?
+                """, name, interactionId);
+    }
+
+    private UUID linkAgreement(UUID interactionId, String status, OffsetDateTime statusChangedAt) {
+        UUID id = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO agreements (id, organization_id, number, status, status_changed_at)
+                SELECT ?, organization_id, ?, ?, ? FROM interactions WHERE id = ?
+                """, id, "Д-" + id.toString().substring(0, 4), status, statusChangedAt, interactionId);
+        jdbcTemplate.update("INSERT INTO agreement_interactions (agreement_id, interaction_id) VALUES (?, ?)", id, interactionId);
+        return id;
     }
 
     @Test
@@ -507,6 +553,31 @@ class WorkControlTest {
     }
 
     @Test
+    void feedTotalsCountEveryGroupBeyondTheFirstHundredRows() {
+        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime laterToday = now.plusSeconds(Duration.between(now, InteractionDue.dayEnd(now)).toSeconds() / 2);
+        for (int index = 0; index < 120; index++) {
+            insertInteraction(UNIVERSITY_A, "Просрочено " + index, "Позвонить", now.minusDays(1 + index % 5), now, "ACTIVE");
+        }
+        for (int index = 0; index < 20; index++) {
+            insertInteraction(UNIVERSITY_A, "Сегодня " + index, "Встреча", laterToday, now, "ACTIVE");
+        }
+        insertInteraction(UNIVERSITY_A, "Через две недели", "Встреча", now.plusWeeks(2), now, "ACTIVE");
+        insertInteraction(UNIVERSITY_A, "Шага нет", null, null, now, "ACTIVE");
+        insertInteraction(UNIVERSITY_A, "Срок прошёл, шага нет", null, now.minusDays(2), now, "ACTIVE");
+        insertInteraction(UNIVERSITY_A, "Вернуться вчера", "Возобновить работу", now.minusDays(1), now, "PAUSED");
+        insertInteraction(UNIVERSITY_A, "Вернуться через месяц", "Возобновить работу", now.plusMonths(1), now, "PAUSED");
+        insertInteraction(UNIVERSITY_A, "Приостановлено без даты", null, null, now, "PAUSED");
+        insertInteraction(UNIVERSITY_A, "Завершено", "Позвонить", now.minusDays(1), now, "COMPLETED");
+        insertInteraction(UNIVERSITY_B, "Чужой вуз", "Позвонить", now.minusDays(1), now, "ACTIVE");
+
+        WorkModels.ReminderFeed feed = workService.reminders(kamA).feed();
+
+        assertThat(feed).isEqualTo(new WorkModels.ReminderFeed(121, 20, 20, 1, 1, 1, 1));
+        assertThat(workService.reminders(kamB).feed().overdue()).isEqualTo(1);
+    }
+
+    @Test
     void qualificationIsRemindedAMonthThresholdAfterTheLastTeacherTrainingUntilTheStageIsReachedOrMarked() {
         LocalDate today = LocalDate.now(WorkProperties.ZONE);
         UUID due = insertRoute(UNIVERSITY_A, "Пора на ПК", 9, today.minusMonths(13), today.minusMonths(12));
@@ -628,6 +699,84 @@ class WorkControlTest {
                 .singleElement()
                 .satisfies(row -> assertThat(row.status()).isEqualTo(OrganizationDeputy.Status.ENDED));
         assertThat(ownerOf(UNIVERSITY_A)).isEqualTo(KAM_A);
+    }
+
+    @Test
+    void leaderAssignsOneDeputyToAllOrganizationsOfAManagerAndSkipsThoseThatAlreadyHaveOne() {
+        LocalDate today = LocalDate.now(WorkProperties.ZONE);
+        UUID covered = UUID.randomUUID();
+        UUID archived = UUID.randomUUID();
+        insertOrganization(covered, "Университет с замещением", TEAM_A, KAM_A);
+        insertOrganization(archived, "Университет в архиве", TEAM_A, KAM_A, "ARCHIVED");
+        organizationDeputyService.assign(
+                leaderA, covered, new OrganizationDeputyRequest(KAM_C, today.plusDays(10), today.plusDays(12)), "deputy-existing"
+        );
+        OrganizationDeputyRequest vacation = new OrganizationDeputyRequest(KAM_C, today, today.plusDays(14));
+
+        ManagerDeputyResult result = organizationDeputyService.assignForManager(leaderA, KAM_A, vacation, "vacation");
+        ManagerDeputyResult replayed = organizationDeputyService.assignForManager(leaderA, KAM_A, vacation, "vacation");
+
+        assertThat(replayed).isEqualTo(result);
+        assertThat(result.assigned()).singleElement().satisfies(deputy -> {
+            assertThat(deputy.organizationId()).isEqualTo(UNIVERSITY_A);
+            assertThat(deputy.deputyDisplayName()).isEqualTo("КАМ В");
+            assertThat(deputy.endsOn()).isEqualTo(today.plusDays(14));
+        });
+        assertThat(result.skipped()).singleElement().satisfies(skipped -> {
+            assertThat(skipped.organizationId()).isEqualTo(covered);
+            assertThat(skipped.reason()).contains("уже есть заместитель");
+        });
+        assertThat(organizationRepository.findVisibleById(kamC, UNIVERSITY_A)).isPresent();
+        assertThat(organizationRepository.findVisibleById(kamC, archived)).isEmpty();
+        assertThat(organizationRepository.findVisibleById(kamA, UNIVERSITY_A)).hasValueSatisfying(
+                organization -> assertThat(organization.ownerManagerId()).isEqualTo(KAM_A)
+        );
+    }
+
+    @Test
+    void onlyTheLeaderOfTheManagersOwnTeamAssignsADeputyForAllHisOrganizations() {
+        LocalDate today = LocalDate.now(WorkProperties.ZONE);
+        OrganizationDeputyRequest request = new OrganizationDeputyRequest(KAM_C, today, today.plusDays(3));
+
+        assertThatThrownBy(() -> organizationDeputyService.assignForManager(leaderB, KAM_A, request, "all-foreign-leader"))
+                .isInstanceOf(OrganizationAssignmentAccessDeniedException.class);
+        assertThatThrownBy(() -> organizationDeputyService.assignForManager(kamC, KAM_A, request, "all-kam"))
+                .isInstanceOf(OrganizationAssignmentAccessDeniedException.class);
+        assertThatThrownBy(() -> organizationDeputyService.assignForManager(management, KAM_A, request, "all-management"))
+                .isInstanceOf(OrganizationAssignmentAccessDeniedException.class);
+        for (UUID wrongDeputy : List.of(KAM_B, KAM_A, LEADER_A)) {
+            assertThatThrownBy(() -> organizationDeputyService.assignForManager(
+                    leaderA, KAM_A, new OrganizationDeputyRequest(wrongDeputy, today, today.plusDays(3)), "all-wrong-" + wrongDeputy
+            )).isInstanceOfSatisfying(InteractionValidationException.class,
+                    exception -> assertThat(exception.field()).isEqualTo("deputyProfileId"));
+        }
+        assertThatThrownBy(() -> organizationDeputyService.assignForManager(
+                leaderA, KAM_C, new OrganizationDeputyRequest(KAM_A, today, today.plusDays(3)), "all-no-organizations"
+        )).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("managerId"));
+        assertThat(organizationDeputyService.list(leaderA, UNIVERSITY_A)).isEmpty();
+    }
+
+    @Test
+    void oneHandoverNoteOfABulkTransferGoesToTheHistoryOfEveryOrganization() {
+        OrganizationBulkAssignmentRequest request = new OrganizationBulkAssignmentRequest(List.of(
+                new OrganizationBulkAssignmentRequest.Item(UNIVERSITY_A, 0, KAM_C),
+                new OrganizationBulkAssignmentRequest.Item(UNIVERSITY_C, 0, KAM_C)
+        ), "  Договоры на подписании, проректор ждёт звонка до пятницы  ");
+
+        organizationAssignmentService.bulkAssign(leaderA, request, "bulk-note", REQUEST_ID);
+
+        for (UUID organizationId : List.of(UNIVERSITY_A, UNIVERSITY_C)) {
+            assertThat(organizationAssignmentService.events(leaderA, organizationId)).singleElement().satisfies(event ->
+                    assertThat(event.handoverNote()).isEqualTo("Договоры на подписании, проректор ждёт звонка до пятницы"));
+        }
+        assertThatThrownBy(() -> organizationAssignmentService.bulkAssign(
+                leaderA,
+                new OrganizationBulkAssignmentRequest(request.items(), "другая записка"),
+                "bulk-note",
+                REQUEST_ID
+        )).isInstanceOfSatisfying(InteractionConflictException.class,
+                exception -> assertThat(exception.code()).isEqualTo("IDEMPOTENCY_CONFLICT"));
     }
 
     private void assertRejected(OrganizationDeputyRequest request, UUID organizationId, String field) {
@@ -900,7 +1049,8 @@ class WorkControlTest {
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS interaction_stages (
-                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL, name VARCHAR(200) NOT NULL
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL, name VARCHAR(200) NOT NULL,
+                    template_stage_id UUID
                 )
                 """,
                 """
@@ -916,7 +1066,13 @@ class WorkControlTest {
                 """
                 CREATE TABLE IF NOT EXISTS agreements (
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, number VARCHAR(100) NOT NULL, valid_until DATE,
-                    planned_kind VARCHAR(16), planned_on DATE, status VARCHAR(16) NOT NULL
+                    planned_kind VARCHAR(16), planned_on DATE, status VARCHAR(16) NOT NULL,
+                    status_changed_at TIMESTAMP WITH TIME ZONE
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agreement_interactions (
+                    agreement_id UUID NOT NULL, interaction_id UUID NOT NULL, PRIMARY KEY (agreement_id, interaction_id)
                 )
                 """
         ).forEach(jdbcTemplate::execute);

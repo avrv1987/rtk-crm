@@ -21,7 +21,7 @@ export type AgreementTransitionInput = components['schemas']['AgreementTransitio
 export type WorkAgreements = components['schemas']['WorkAgreements']
 export type AgreementRegistryRow = components['schemas']['AgreementRegistryRow']
 export type AgreementPeriodReport = components['schemas']['AgreementPeriodReport']
-export type AgreementPeriodQuery = { from: string; to: string; reviewLongerThanDays: number }
+export type AgreementPeriodQuery = { from: string; to: string }
 
 export type ConfirmationQuery = {
   organizationId?: string
@@ -75,7 +75,7 @@ const confirmationSearch = (query: ConfirmationQuery) => {
 const path = (id: string) => encodeURIComponent(id)
 
 const periodSearch = (query: AgreementPeriodQuery, extra: Record<string, string> = {}) => (
-  `?${new URLSearchParams({ ...extra, from: query.from, to: query.to, reviewLongerThanDays: query.reviewLongerThanDays.toString() })}`
+  `?${new URLSearchParams({ ...extra, from: query.from, to: query.to })}`
 )
 
 export type AgreementFileUpload = { file: File; comment: string; supplementId?: string }

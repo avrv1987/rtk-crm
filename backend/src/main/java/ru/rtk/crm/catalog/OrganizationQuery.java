@@ -6,7 +6,8 @@ public record OrganizationQuery(
         OrganizationSort sort,
         String search,
         boolean requiresAssignment,
-        OrganizationListStatus status
+        OrganizationListStatus status,
+        boolean excludeService
 ) {
     private static final int MAX_SEARCH_LENGTH = 200;
 
@@ -34,8 +35,14 @@ public record OrganizationQuery(
         }
         return new OrganizationQuery(
                 page, size, OrganizationSort.parse(sort), normalizedSearch, requiresAssignment,
-                OrganizationListStatus.parse(status)
+                OrganizationListStatus.parse(status), false
         );
+    }
+
+    // Раздел «Вузы» не считает служебную организацию «Открытый набор (физлица)», как и «Контроль»; остальные списки
+    // (отборы отчётов, разбор записей источников) по-прежнему её получают.
+    public OrganizationQuery excludingService(boolean exclude) {
+        return new OrganizationQuery(page, size, sort, search, requiresAssignment, status, exclude);
     }
 
     public long offset() {

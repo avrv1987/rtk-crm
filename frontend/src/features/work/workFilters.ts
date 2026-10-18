@@ -19,7 +19,9 @@ export const unassigned = 'UNASSIGNED'
 export const dueOptions: { value: InteractionDue | ''; label: string }[] = [
   { value: '', label: 'Все' },
   { value: 'OVERDUE', label: 'Просрочено' },
+  { value: 'TODAY', label: 'Срок сегодня' },
   { value: 'THIS_WEEK', label: 'Срок на этой неделе' },
+  { value: 'LATER', label: 'Срок после этой недели' },
   { value: 'NO_NEXT_STEP', label: 'Без шага или срока' }
 ]
 

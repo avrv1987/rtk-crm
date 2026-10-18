@@ -85,7 +85,7 @@ export const navFor = (role: Role, enrolmentOperator: boolean, modules: Modules)
     items.push({ label: 'Настройки команды', href: '#/admin', sections: ['admin'], phone: false })
   }
   if (enrolmentVisible(enrolmentOperator, modules)) {
-    items.push({ label: 'Зачисление', href: '#/enrolment', sections: ['enrolment'], phone: false })
+    items.push({ label: 'Зачисление', href: '#/enrolment', sections: ['enrolment'], phone: true })
   }
   return items
 }

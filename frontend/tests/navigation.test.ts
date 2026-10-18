@@ -36,12 +36,13 @@ test('«Зачисление» появляется только у операт
   assert.ok(!sectionsFor('USER', true, off).includes('enrolment'))
 })
 
-test('нижняя панель телефона — четыре раздела, остальное уходит в меню под аватаром', () => {
+test('нижняя панель телефона — четыре раздела (у оператора зачисления пять), остальное уходит в меню под аватаром', () => {
   for (const role of ['USER', 'LEADER', 'MANAGEMENT'] as const) {
     const items = navFor(role, true, on)
-    assert.deepEqual(items.filter((item) => item.phone).map((item) => item.label), ['Работа', 'Вузы', 'Договоры', 'Отчёты'])
+    assert.deepEqual(items.filter((item) => item.phone).map((item) => item.label).slice(0, 4), ['Работа', 'Вузы', 'Договоры', 'Отчёты'])
   }
-  assert.deepEqual(navFor('LEADER', true, on).filter((item) => !item.phone).map((item) => item.label), ['Настройки команды', 'Зачисление'])
+  assert.deepEqual(navFor('LEADER', true, on).filter((item) => !item.phone).map((item) => item.label), ['Настройки команды'])
+  assert.deepEqual(navFor('USER', true, on).filter((item) => item.phone).map((item) => item.label), ['Работа', 'Вузы', 'Договоры', 'Отчёты', 'Зачисление'])
 })
 
 test('каждый пункт меню ведёт в раздел, доступный роли, и ни один прежний раздел не потерян', () => {

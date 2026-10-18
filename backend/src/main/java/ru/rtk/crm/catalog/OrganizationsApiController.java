@@ -46,11 +46,12 @@ public class OrganizationsApiController {
             @RequestParam(defaultValue = "updatedAt,desc") String sort,
             @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "false") boolean requiresAssignment,
-            @RequestParam(required = false) String status
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "false") boolean excludeService
     ) {
         return organizationRepository.findVisible(
                 currentProfileService.requireActiveProfile(user),
-                OrganizationQuery.from(page, size, sort, q, requiresAssignment, status)
+                OrganizationQuery.from(page, size, sort, q, requiresAssignment, status).excludingService(excludeService)
         );
     }
 

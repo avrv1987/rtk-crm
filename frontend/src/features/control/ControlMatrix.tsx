@@ -10,8 +10,8 @@ import type {
   WorkControlTotals
 } from '../../shared/api/client'
 import { formatMoscowDateTime } from '../../shared/format/datetime'
-import { agreementNoticeDays, agreementStatusLabels } from '../agreements/agreementModel'
-import { AgreementTermMark } from '../agreements/agreementUi'
+import { agreementNoticeDays, agreementStatusLabels, approvalDelayed } from '../agreements/agreementModel'
+import { AgreementTermMark, ApprovalMark } from '../agreements/agreementUi'
 import {
   changeNotes,
   type ControlTile,
@@ -78,6 +78,7 @@ const WorkRow = ({ item, withPeriod }: { item: WorkControlItem; withPeriod: bool
             <span className={`control-agreement control-agreement--${item.agreementStatus.toLowerCase()}`}>{agreementStatusLabels[item.agreementStatus]}</span>
             {item.agreementNumber && <span className="control-muted">№ {item.agreementNumber}</span>}
             <AgreementTermMark agreement={{ status: item.agreementStatus, validUntil: item.agreementValidUntil }} noticeDays={agreementNoticeDays} />
+            {approvalDelayed(item.agreementApproval) && <ApprovalMark approval={item.agreementApproval} prefix="согласование: " />}
           </>
         )}
       </td>

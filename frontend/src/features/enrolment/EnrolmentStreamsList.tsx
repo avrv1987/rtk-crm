@@ -53,11 +53,11 @@ type SearchState =
   | { kind: 'done'; results: LearnerSummary[] }
   | { kind: 'failed'; error: unknown }
 
-const searchKinds: Array<{ value: LearnerSearch['kind']; label: string }> = [
-  { value: 'EMAIL', label: 'Email' },
-  { value: 'PHONE', label: 'Телефон' },
-  { value: 'SNILS', label: 'СНИЛС' },
-  { value: 'LAST_NAME', label: 'Фамилия' }
+const searchFields: Array<{ value: LearnerSearch['kind']; label: string; example: string; type: 'email' | 'tel' | 'text'; inputMode: 'email' | 'tel' | 'numeric' | 'text' }> = [
+  { value: 'EMAIL', label: 'Email', example: 'name@example.ru', type: 'email', inputMode: 'email' },
+  { value: 'PHONE', label: 'Телефон', example: '+7 900 000-00-00', type: 'tel', inputMode: 'tel' },
+  { value: 'SNILS', label: 'СНИЛС', example: '11 цифр, без пробелов', type: 'text', inputMode: 'numeric' },
+  { value: 'LAST_NAME', label: 'Фамилия', example: 'Иванов', type: 'text', inputMode: 'text' }
 ]
 
 const streamsOf = (enrolments: LearnerSummary['enrolments']) => (
@@ -66,8 +66,7 @@ const streamsOf = (enrolments: LearnerSummary['enrolments']) => (
 
 export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessError }: EnrolmentStreamsListProps) => {
   const [state, setState] = useState<ListState>({ kind: 'loading' })
-  const [searchKind, setSearchKind] = useState<LearnerSearch['kind']>('EMAIL')
-  const [searchValue, setSearchValue] = useState('')
+  const [searchValues, setSearchValues] = useState<Record<LearnerSearch['kind'], string>>({ EMAIL: '', PHONE: '', SNILS: '', LAST_NAME: '' })
   const [search, setSearch] = useState<SearchState>({ kind: 'idle' })
   const [expanded, setExpanded] = useState<string | null>(null)
 
@@ -86,14 +85,15 @@ export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessErro
     void load()
   }, [load])
 
-  const runSearch = async (event: FormEvent<HTMLFormElement>) => {
+  const runSearch = async (event: FormEvent<HTMLFormElement>, kind: LearnerSearch['kind']) => {
     event.preventDefault()
-    if (searchValue.trim() === '' || search.kind === 'searching') {
+    const value = searchValues[kind].trim()
+    if (value === '' || search.kind === 'searching') {
       return
     }
     setSearch({ kind: 'searching' })
     try {
-      const results = await apiClient.searchLearners({ kind: searchKind, value: searchValue.trim() })
+      const results = await apiClient.searchLearners({ kind, value })
       setSearch({ kind: 'done', results })
     } catch (error) {
       if (onAccessError(error)) {
@@ -145,6 +145,9 @@ export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessErro
               <p>Потоков пока нет: загрузите файл оплат.</p>
             ) : (
               <>
+                <p className="enrolment__hint">
+                  «Выгружено в LMS» — файл для LMS сформирован. «Передано» — оператор нажал «Отметить переданными» после того, как файл попал в LMS.
+                </p>
                 <dl className="enrolment__funnel" aria-label="Итог по стадиям зачисления, все потоки">
                   {['Оплачено', 'Анкета заполнена', 'Выгружено в LMS', 'Передано'].map((label, index) => (
                     <div key={label}>
@@ -215,27 +218,25 @@ export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessErro
 
           <section className="enrolment__section" aria-labelledby="enrolment-search-title">
             <h3 id="enrolment-search-title">Поиск слушателя</h3>
-            <form className="enrolment__form" onSubmit={(event) => void runSearch(event)}>
-              <label>
-                Вид поиска
-                <select value={searchKind} onChange={(event) => setSearchKind(event.target.value as LearnerSearch['kind'])}>
-                  {searchKinds.map((kind) => <option key={kind.value} value={kind.value}>{kind.label}</option>)}
-                </select>
-              </label>
-              <label>
-                Значение
-                <input
-                  value={searchValue}
-                  maxLength={254}
-                  inputMode="text"
-                  autoComplete="off"
-                  onChange={(event) => setSearchValue(event.target.value)}
-                />
-              </label>
-              <button type="submit" disabled={searchValue.trim() === '' || search.kind === 'searching'}>
-                {search.kind === 'searching' ? 'Ищем…' : 'Найти'}
-              </button>
-            </form>
+            {searchFields.map((field) => (
+              <form key={field.value} className="enrolment__form" onSubmit={(event) => void runSearch(event, field.value)}>
+                <label>
+                  {field.label}
+                  <input
+                    type={field.type}
+                    value={searchValues[field.value]}
+                    maxLength={254}
+                    inputMode={field.inputMode}
+                    placeholder={field.example}
+                    autoComplete="off"
+                    onChange={(event) => setSearchValues({ ...searchValues, [field.value]: event.target.value })}
+                  />
+                </label>
+                <button type="submit" disabled={searchValues[field.value].trim() === '' || search.kind === 'searching'}>
+                  {search.kind === 'searching' ? 'Ищем…' : 'Найти'}
+                </button>
+              </form>
+            ))}
             <p className="enrolment__hint">Поиск точный: введите значение полностью.</p>
 
             {search.kind === 'failed' && (

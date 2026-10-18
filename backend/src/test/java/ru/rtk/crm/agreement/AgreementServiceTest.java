@@ -78,6 +78,7 @@ import ru.rtk.crm.module.ModuleProperties;
         AgreementRepository.class,
         AgreementService.class,
         AgreementStages.class,
+        AgreementApproval.class,
         AgreementFileService.class,
         AgreementRegistryService.class,
         ru.rtk.crm.attachment.AttachmentContentValidator.class,
@@ -134,6 +135,9 @@ class AgreementServiceTest {
 
     @Autowired
     private AgreementStages agreementStages;
+
+    @Autowired
+    private AgreementApproval agreementApproval;
 
     @Autowired
     private AgreementRepository agreementRepository;
@@ -818,24 +822,24 @@ class AgreementServiceTest {
         agreementService.transition(managerA, signed.id(), transition(0, AgreementStatus.TERMINATED, "Вуз отказался"), "t-2");
         agreementService.create(managerB, ORGANIZATION_B, contractRequest(null, "Б-1", null, List.of()), "c-3", "req");
 
-        assertThat(registryService.registry(managerA, new AgreementModels.RegistryQuery(null, null, null, null, null)))
+        assertThat(registryService.registry(managerA, new AgreementModels.RegistryQuery(null, null, null, null, null, false)))
                 .extracting(AgreementModels.RegistryRow::number).containsExactly("Р-1", "Р-2");
-        assertThat(registryService.registry(managerA, new AgreementModels.RegistryQuery(null, null, null, null, 30)))
+        assertThat(registryService.registry(managerA, new AgreementModels.RegistryQuery(null, null, null, null, 30, false)))
                 .singleElement().satisfies(row -> {
                     assertThat(row.number()).isEqualTo("Р-1");
                     assertThat(row.daysInStatus()).isGreaterThanOrEqualTo(39);
                     assertThat(row.managerName()).isEqualTo("Анна Смирнова");
                 });
         assertThat(registryService.registry(managerA, new AgreementModels.RegistryQuery(List.of(AgreementStatus.TERMINATED), null, null,
-                null, null))).extracting(AgreementModels.RegistryRow::number).containsExactly("Р-2");
+                null, null, false))).extracting(AgreementModels.RegistryRow::number).containsExactly("Р-2");
         assertThat(registryService.registry(leaderA, new AgreementModels.RegistryQuery(null, null, MANAGER_A,
-                LocalDate.now(AgreementService.ZONE).plusDays(30), null))).extracting(AgreementModels.RegistryRow::number)
+                LocalDate.now(AgreementService.ZONE).plusDays(30), null, false))).extracting(AgreementModels.RegistryRow::number)
                 .containsExactly("Р-2");
         assertThat(registryService.registry(new CrmProfile(uuid(16), UserRole.MANAGEMENT, null, 0),
-                new AgreementModels.RegistryQuery(null, null, null, null, null))).hasSize(3);
-        assertThatThrownBy(() -> registryService.registry(admin, new AgreementModels.RegistryQuery(null, null, null, null, null)))
+                new AgreementModels.RegistryQuery(null, null, null, null, null, false))).hasSize(3);
+        assertThatThrownBy(() -> registryService.registry(admin, new AgreementModels.RegistryQuery(null, null, null, null, null, false)))
                 .isInstanceOfSatisfying(AgreementException.class, exception -> assertThat(exception.status().value()).isEqualTo(403));
-        assertThatThrownBy(() -> registryService.registry(managerA, new AgreementModels.RegistryQuery(null, null, null, null, 0)))
+        assertThatThrownBy(() -> registryService.registry(managerA, new AgreementModels.RegistryQuery(null, null, null, null, 0, false)))
                 .isInstanceOf(InteractionValidationException.class);
 
         AgreementModels.PeriodReport report = registryService.period(managerA, null, null, 30);
@@ -851,6 +855,86 @@ class AgreementServiceTest {
         assertThatCode(() -> registryService.writePeriod(report, ru.rtk.crm.report.ReportFormat.PDF, pdf)).doesNotThrowAnyException();
         assertThat(new String(pdf.toByteArray(), 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
         assertThat(agreementRepository.findWorkStatuses(List.of(INTERACTION_A))).isEmpty();
+    }
+
+    @Test
+    void approvalSideRoundAndColorReachTheCardRegistryAndPeriodReport() {
+        LocalDate today = LocalDate.now(AgreementService.ZONE);
+        Agreement late = agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "С-1", null, List.of()), "c-1", "req");
+        agreementService.transition(managerA, late.id(), new AgreementModels.TransitionRequest(0, AgreementStatus.REVIEW, null, null, null,
+                today.minusDays(400), null), "t-1");
+        jdbc.update("UPDATE agreements SET status_changed_at = ? WHERE id = ?", OffsetDateTime.now().minusDays(40), late.id());
+        Agreement fresh = agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "С-2", null, List.of()), "c-2", "req");
+        Agreement review = agreementService.transition(managerA, fresh.id(), new AgreementModels.TransitionRequest(0, AgreementStatus.REVIEW,
+                null, null, null, today, null), "t-2");
+
+        assertThat(agreementService.get(managerA, late.id()).approval()).satisfies(approval -> {
+            assertThat(approval.side()).isEqualTo(AgreementModels.ApprovalSide.UNIVERSITY);
+            assertThat(approval.round()).isEqualTo(1);
+            assertThat(approval.sideLimitDays()).isEqualTo(42);
+            assertThat(approval.totalDays()).isEqualTo(agreementApproval.countedDays(today.minusDays(400), today));
+            assertThat(approval.color()).isEqualTo(AgreementModels.ApprovalColor.RED);
+        });
+        assertThat(review.approval().color()).isEqualTo(AgreementModels.ApprovalColor.NORMAL);
+        Agreement correction = agreementService.transition(managerA, fresh.id(), transition(review.version(), AgreementStatus.CORRECTION,
+                null), "t-3");
+        assertThat(correction.approval().side()).isEqualTo(AgreementModels.ApprovalSide.SCHOOL);
+        assertThat(correction.approval().sideLimitDays()).isEqualTo(7);
+        Agreement second = agreementService.transition(managerA, fresh.id(), transition(correction.version(), AgreementStatus.REVIEW,
+                "Вуз прислал новые замечания"), "t-4");
+        assertThat(second.approval().round()).isEqualTo(2);
+        assertThat(second.approval().sideLimitDays()).isEqualTo(21);
+        assertThat(agreementService.get(managerA, draftOf(managerA)).approval()).isNull();
+
+        assertThat(registryService.registry(managerA, new AgreementModels.RegistryQuery(null, null, null, null, null, false)))
+                .filteredOn(row -> row.number().equals("С-2")).singleElement()
+                .satisfies(row -> assertThat(row.approval().round()).isEqualTo(2));
+        assertThat(registryService.registry(managerA, new AgreementModels.RegistryQuery(null, null, null, null, null, true)))
+                .extracting(AgreementModels.RegistryRow::number).containsExactly("С-1");
+
+        AgreementModels.PeriodReport report = registryService.period(managerA, null, null, null);
+        assertThat(report.longerThanDays()).isNull();
+        assertThat(report.longReview()).extracting(AgreementModels.RegistryRow::number).containsExactly("С-1");
+        assertThat(report.notes()).anyMatch(note -> note.startsWith("Согласование затянулось") && note.contains("42 дн."));
+        assertThat(registryService.period(managerA, null, null, 30).longReview()).extracting(AgreementModels.RegistryRow::number)
+                .containsExactly("С-1");
+        java.io.ByteArrayOutputStream xlsx = new java.io.ByteArrayOutputStream();
+        assertThatCode(() -> registryService.writePeriod(report, ru.rtk.crm.report.ReportFormat.XLSX, xlsx)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void signedVersionIsTheLastCleanContractFileUploadedBeforeItBecameActive() throws IOException {
+        Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "П-1", null, List.of()), "c-1", "req");
+        agreementFileService.upload(managerA, agreement.id(), null, null, pdf("проект.pdf"), "f-1");
+        AgreementModels.AgreementFile agreed = agreementFileService.upload(managerA, agreement.id(), null, null, pdf("согласовано.pdf"), "f-2");
+        TestBeans.SCAN.set(ru.rtk.crm.attachment.AttachmentScanOutcome.REJECTED);
+        agreementFileService.upload(managerA, agreement.id(), null, null, pdf("с-вирусом.pdf"), "f-3");
+        TestBeans.SCAN.set(ru.rtk.crm.attachment.AttachmentScanOutcome.CLEAN);
+        assertThat(agreementService.get(managerA, agreement.id()).files()).noneMatch(AgreementModels.AgreementFile::signed);
+
+        Agreement review = agreementService.transition(managerA, agreement.id(), transition(0, AgreementStatus.REVIEW, null), "t-1");
+        Agreement signing = agreementService.transition(managerA, agreement.id(), transition(review.version(), AgreementStatus.SIGNING, null),
+                "t-2");
+        agreementService.transition(managerA, agreement.id(), new AgreementModels.TransitionRequest(signing.version(), AgreementStatus.ACTIVE,
+                null, LocalDate.parse("2026-03-01"), LocalDate.parse("2029-02-28"), null, null), "t-3");
+        AgreementModels.AgreementFile scan = agreementFileService.upload(managerA, agreement.id(), null, null, pdf("скан.pdf"), "f-4");
+        jdbc.update("UPDATE agreement_files SET created_at = ? WHERE id = ?", OffsetDateTime.now().plusMinutes(1), scan.id());
+
+        Agreement active = agreementService.get(leaderA, agreement.id());
+        assertThat(active.currentFile().id()).isEqualTo(scan.id());
+        assertThat(active.files()).filteredOn(AgreementModels.AgreementFile::signed).extracting(AgreementModels.AgreementFile::id)
+                .containsExactly(agreed.id());
+        AgreementFileService.DownloadedFile signedDownload = agreementFileService.download(leaderA, agreed.id());
+        signedDownload.content().close();
+        assertThat(signedDownload.fileName()).isEqualTo("согласовано (подписанная).pdf");
+        AgreementFileService.DownloadedFile scanDownload = agreementFileService.download(leaderA, scan.id());
+        scanDownload.content().close();
+        assertThat(scanDownload.fileName()).isEqualTo("скан.pdf");
+        assertThat(AgreementFileService.signedName("договор")).isEqualTo("договор (подписанная)");
+    }
+
+    private UUID draftOf(CrmProfile profile) {
+        return agreementService.create(profile, ORGANIZATION_A, contractRequest(null, "С-3", null, List.of()), "c-draft", "req").id();
     }
 
     private static AgreementModels.TransitionRequest transition(int version, AgreementStatus status, String comment) {

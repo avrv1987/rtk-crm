@@ -65,6 +65,8 @@ import ru.rtk.crm.catalog.CatalogQuery;
 import ru.rtk.crm.catalog.CatalogRepository;
 import ru.rtk.crm.catalog.OrganizationNotFoundException;
 import ru.rtk.crm.catalog.OrganizationRepository;
+import ru.rtk.crm.report.ManagerWorkDue;
+import ru.rtk.crm.report.ManagerWorkLine;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
@@ -684,7 +686,9 @@ class InteractionServiceTest {
         );
 
         assertThat(afterFirst.version()).isEqualTo(1);
-        assertThat(afterFirst.allowedTransitions()).allSatisfy(option -> assertThat(option.commentRequired()).isFalse());
+        // Вперёд по соседним этапам — без комментария, назад к первому этапу — только с причиной.
+        assertThat(afterFirst.allowedTransitions()).allSatisfy(option ->
+                assertThat(option.commentRequired()).isEqualTo(option.stageId().equals(created.stages().get(0).id())));
         assertThat(replayed).isEqualTo(afterFirst);
         assertThat(interactionService.events(profileA, created.id())).hasSize(2);
         assertThatThrownBy(() -> interactionService.transition(
@@ -715,7 +719,7 @@ class InteractionServiceTest {
                 .orElseThrow();
         assertThat(correctionSkip.commentRequired()).isTrue();
         assertThat(afterDocuments.allowedTransitions().stream()
-                .filter(option -> !option.stageId().equals(signing.id()))
+                .filter(option -> !option.stageId().equals(signing.id()) && !option.stageId().equals(stage2.id()))
                 .map(InteractionTransitionOption::commentRequired)
                 .toList()).containsOnly(false);
         assertThatThrownBy(() -> interactionService.transition(
@@ -1885,7 +1889,7 @@ class InteractionServiceTest {
         );
         Interaction thisWeek = interactionService.create(
                 profileA,
-                new InteractionCreateRequest(ORGANIZATION_A2, "Встреча 100 процентов", "Встретиться", weekStart.plusHours(1), List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A2, "Встреча 100 процентов", "Встретиться", weekStart.plusWeeks(1).minusMinutes(1), List.of()),
                 "work-this-week"
         );
         Interaction nextWeek = interactionService.create(
@@ -1945,36 +1949,62 @@ class InteractionServiceTest {
         );
         assertThat(secondPage.total()).isEqualTo(4);
         assertThat(secondPage.items()).extracting(InteractionSummary::id).containsExactly(withoutNextStep.id());
-        assertThatThrownBy(() -> InteractionFilter.from(null, null, "LATER", null, null))
+        assertThatThrownBy(() -> InteractionFilter.from(null, null, "NEXT_YEAR", null, null))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
                     assertThat(exception.field()).isEqualTo("due");
                 });
     }
 
     @Test
-    void anyPastDeadlineIsOverdueEvenWithoutNextActionText() {
-        OffsetDateTime weekStart = InteractionDue.weekStart(OffsetDateTime.now());
-        Interaction pastDeadline = interactionService.create(
-                profileA,
-                new InteractionCreateRequest(
-                        ORGANIZATION_A,
-                        "Срок прошёл, шага нет",
-                        null,
-                        OffsetDateTime.parse("2000-01-01T10:00:00+03:00"),
-                        List.of()
-                ),
-                "work-past-deadline-without-action"
+    void dueFiltersFollowOneRuleWithTheControlScreen() {
+        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime weekEnd = InteractionDue.weekStart(now).plusWeeks(1);
+        OffsetDateTime laterToday = now.plusSeconds(java.time.Duration.between(now, InteractionDue.dayEnd(now)).toSeconds() / 2);
+        List<InteractionCreateRequest> cases = List.of(
+                new InteractionCreateRequest(ORGANIZATION_A, "Просрочено давно", "Позвонить", now.minusDays(30), List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Просрочено на этой неделе", "Позвонить", now.minusMinutes(5), List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Срок прошёл, шага нет", null, now.minusDays(2), List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Сегодня позже", "Встретиться", laterToday, List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Конец недели", "Встретиться", weekEnd.minusMinutes(1), List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Следующая неделя", "Встретиться", weekEnd, List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Срок есть, шага нет", null, now.plusDays(1), List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Шаг без срока", "Позвонить", null, List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Ни шага, ни срока", null, null, List.of())
         );
-        Interaction weekDeadline = interactionService.create(
-                profileA,
-                new InteractionCreateRequest(ORGANIZATION_A, "Срок на неделе, шага нет", null, weekStart.plusDays(6), List.of()),
-                "work-week-deadline-without-action"
-        );
+        Map<UUID, InteractionCreateRequest> created = cases.stream().collect(Collectors.toMap(
+                request -> interactionService.create(profileA, request, "due-" + request.title()).id(),
+                Function.identity()
+        ));
 
-        assertThat(ids(profileA, InteractionFilter.from(null, null, "OVERDUE", null))).contains(pastDeadline.id());
-        assertThat(ids(profileA, InteractionFilter.from(null, null, "THIS_WEEK", null))).isEmpty();
-        assertThat(ids(profileA, InteractionFilter.from(null, null, "NO_NEXT_STEP", null)))
-                .containsExactlyInAnyOrder(pastDeadline.id(), weekDeadline.id());
+        for (InteractionDue due : InteractionDue.values()) {
+            List<UUID> expected = created.entrySet().stream()
+                    .filter(entry -> due.matches(entry.getValue().nextAction(), entry.getValue().nextActionAt(), OffsetDateTime.now()))
+                    .map(Map.Entry::getKey)
+                    .toList();
+            assertThat(ids(profileA, InteractionFilter.from(null, null, due.name(), null))).as(due.name())
+                    .containsExactlyInAnyOrderElementsOf(expected);
+        }
+        created.forEach((id, request) -> {
+            ManagerWorkDue control = controlDue(request.nextAction(), request.nextActionAt(), OffsetDateTime.now());
+            String listDue = control == ManagerWorkDue.IN_ORDER ? "LATER" : control.name();
+            assertThat(ids(profileA, InteractionFilter.from(null, null, listDue, null))).as(request.title()).contains(id);
+            assertThat(java.util.Arrays.stream(new String[] {"OVERDUE", "NO_NEXT_STEP", "THIS_WEEK", "LATER"})
+                    .filter(value -> ids(profileA, InteractionFilter.from(null, null, value, null)).contains(id)))
+                    .as(request.title()).hasSize(1);
+        });
+        UUID overdueThisWeek = created.entrySet().stream()
+                .filter(entry -> entry.getValue().title().equals("Просрочено на этой неделе"))
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElseThrow();
+        assertThat(ids(profileA, InteractionFilter.from(null, null, "THIS_WEEK", null))).doesNotContain(overdueThisWeek);
+        assertThat(ids(profileA, InteractionFilter.from(null, null, "TODAY", null))).doesNotContain(overdueThisWeek);
+        assertThat(ids(profileA, InteractionFilter.from(null, null, "OVERDUE", null))).contains(overdueThisWeek);
+    }
+
+    private static ManagerWorkDue controlDue(String nextAction, OffsetDateTime nextActionAt, OffsetDateTime now) {
+        return new ManagerWorkLine(null, null, null, null, null, null, null, null, null, null, null, 0, 0, null, null, null,
+                nextAction, nextActionAt, null, 0, false, false).due(now);
     }
 
     @Test
@@ -2162,7 +2192,7 @@ class InteractionServiceTest {
         Interaction completed = createA("Завершаемая работа", "status-completed");
         Interaction active = createA("Активная работа", "status-active");
         InteractionStatusRequest pause = new InteractionStatusRequest(
-                0, InteractionWorkStatus.PAUSED, "Вуз перенёс старт на следующий год"
+                0, InteractionWorkStatus.PAUSED, "Вуз перенёс старт на следующий год", LocalDate.now(InteractionDue.ZONE).plusMonths(3)
         );
 
         Interaction pausedResult = interactionService.changeStatus(profileA, paused.id(), pause, "pause");
@@ -2211,6 +2241,67 @@ class InteractionServiceTest {
         assertThat(resumed.marks().status()).isEqualTo(InteractionWorkStatus.ACTIVE);
         assertThat(ids(profileA, InteractionFilter.from(null, null, null, null)))
                 .containsExactlyInAnyOrder(active.id(), paused.id());
+    }
+
+    @Test
+    void pauseNeedsAResumeDateWhichBecomesTheNextStepWrittenToHistory() {
+        Interaction work = createA("Пауза с датой возврата", "pause-date");
+        LocalDate today = LocalDate.now(InteractionDue.ZONE);
+        int attempt = 0;
+        for (LocalDate wrong : java.util.Arrays.asList(null, today, today.minusDays(1), today.plusYears(2).plusDays(1))) {
+            String key = "pause-wrong-" + attempt++;
+            assertThatThrownBy(() -> interactionService.changeStatus(
+                    profileA, work.id(), new InteractionStatusRequest(0, InteractionWorkStatus.PAUSED, "Вуз на каникулах", wrong), key
+            )).isInstanceOfSatisfying(InteractionValidationException.class,
+                    exception -> assertThat(exception.field()).isEqualTo("resumeOn"));
+        }
+        LocalDate resumeOn = today.plusDays(30);
+
+        Interaction paused = interactionService.changeStatus(
+                profileA, work.id(), new InteractionStatusRequest(0, InteractionWorkStatus.PAUSED, "Вуз на каникулах", resumeOn), "pause-ok"
+        );
+
+        assertThat(paused.marks().status()).isEqualTo(InteractionWorkStatus.PAUSED);
+        assertThat(paused.nextAction()).isEqualTo("Вернуться к работе после приостановки");
+        assertThat(paused.nextActionAt().toInstant()).isEqualTo(resumeOn.atTime(9, 0).atZone(InteractionDue.ZONE).toInstant());
+        assertThat(interactionService.events(profileA, work.id()).getLast()).satisfies(event -> {
+            assertThat(event.type()).isEqualTo(InteractionEventType.STATUS_CHANGED);
+            assertThat(event.comment()).isEqualTo("Взаимодействие приостановлено до "
+                    + DateTimeFormatter.ofPattern("dd.MM.yyyy").format(resumeOn) + ". Причина: Вуз на каникулах");
+            assertThat(event.nextStep().nextAction()).isEqualTo("Вернуться к работе после приостановки");
+        });
+        assertThat(ids(profileA, InteractionFilter.from(null, null, null, null, "PAUSED", null))).containsExactly(work.id());
+    }
+
+    @Test
+    void returnToAnEarlierStageNeedsAReasonInAnyTemplateAndTheReasonGoesToHistory() {
+        Interaction created = createA("Возврат этапа", "return-create");
+        InteractionStage first = created.stages().get(0);
+        Interaction moved = interactionService.transition(
+                profileA, created.id(), new InteractionTransitionRequest(0, created.stages().get(1).id(), null), "return-forward"
+        );
+        assertThat(moved.allowedTransitions()).filteredOn(option -> option.stageId().equals(first.id()))
+                .singleElement()
+                .satisfies(option -> assertThat(option.commentRequired()).isTrue());
+
+        assertThatThrownBy(() -> interactionService.transition(
+                profileA, created.id(), new InteractionTransitionRequest(moved.version(), first.id(), " "), "return-silent"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
+            assertThat(exception.field()).isEqualTo("comment");
+            assertThat(exception).hasMessage("Укажите причину возврата на прежний этап");
+        });
+
+        Interaction returned = interactionService.transition(
+                profileA,
+                created.id(),
+                new InteractionTransitionRequest(moved.version(), first.id(), "Вуз сменил проректора, встречу повторяем"),
+                "return-with-reason"
+        );
+        assertThat(returned.currentStageId()).isEqualTo(first.id());
+        assertThat(interactionService.events(profileA, created.id()).getLast()).satisfies(event -> {
+            assertThat(event.type()).isEqualTo(InteractionEventType.TRANSITIONED);
+            assertThat(event.comment()).isEqualTo("Вуз сменил проректора, встречу повторяем");
+        });
     }
 
     @Test

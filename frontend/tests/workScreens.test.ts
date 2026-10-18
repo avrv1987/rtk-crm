@@ -13,8 +13,8 @@ import {
   tileCounts,
   tileMatches
 } from '../src/features/control/controlModel.ts'
-import { groupFeed } from '../src/features/work/deadlines.ts'
-import { feedGroupsFor, readKamView, saveKamView } from '../src/features/work/workView.ts'
+import { feedGroups, pausedGroups, shownOf } from '../src/features/work/deadlines.ts'
+import { feedGroupLinks, feedGroupsFor, readKamView, saveKamView } from '../src/features/work/workView.ts'
 import { enrolmentBack, enrolmentHref, enrolmentRoute } from '../src/features/enrolment/enrolmentRoute.ts'
 
 const totals = { organizations: 1, works: 1, overdue: 0, thisWeek: 0, noNextStep: 0, inOrder: 0, withIssues: 0, moved: 0, created: 0, completed: 0, idle: 0 }
@@ -138,22 +138,49 @@ test('«Моя работа» КАМ: переключатель видов за
   assert.equal(readKamView(null), 'deadlines')
 })
 
-test('плитки КАМ отбирают группы ленты; без шага или срока — только в своей группе', () => {
+test('плитки КАМ отбирают группы ленты', () => {
   assert.deepEqual(feedGroupsFor(null), ['overdue', 'today', 'week', 'later', 'noStep'])
   assert.deepEqual(feedGroupsFor('OVERDUE'), ['overdue'])
   assert.deepEqual(feedGroupsFor('THIS_WEEK'), ['today', 'week'])
   assert.deepEqual(feedGroupsFor('NO_NEXT_STEP'), ['noStep'])
   assert.deepEqual(feedGroupsFor('LICENSES'), ['overdue', 'today', 'week', 'later', 'noStep'])
   assert.deepEqual(feedGroupsFor('AGREEMENTS'), [])
+  assert.deepEqual(feedGroupsFor('ISSUES'), [])
+  assert.deepEqual(feedGroupsFor('RESUME'), [])
+})
+
+test('лента КАМ: группы с серверными итогами, 120 просроченных не вытесняют «Сегодня»', () => {
   const now = Date.parse('2026-10-14T09:00:00Z')
   const work = (id: string, nextAction: string | null, nextActionAt: string | null) => ({ id, nextAction, nextActionAt }) as never
-  const grouped = groupFeed(
-    [work('late', 'Позвонить', '2026-10-13T09:00:00Z'), work('soon', 'Встреча', '2026-10-30T09:00:00Z'), work('dateOnly', '', '2026-10-15T09:00:00Z')],
-    [work('dateOnly', '', '2026-10-15T09:00:00Z'), work('nothing', null, null)],
-    now
-  )
-  assert.deepEqual([...grouped.keys()], ['overdue', 'later', 'noStep'])
-  assert.deepEqual((grouped.get('noStep') ?? []).map((value: { id: string }) => value.id), ['dateOnly', 'nothing'])
+  const many = (prefix: string, count: number, at: string) => Array.from({ length: count }, (_, index) => work(`${prefix}${index}`, 'Позвонить', at))
+  const today = many('today', 20, '2026-10-14T15:00:00Z')
+  const feed = { overdue: 120, today: 20, thisWeek: 23, later: 0, noNextStep: 1, resumeDue: 0, resumeNoDate: 0 }
+  const groups = feedGroups({
+    overdue: { items: many('late', 100, '2026-10-13T09:00:00Z') },
+    today: { items: today },
+    week: { items: [...today, ...many('week', 3, '2026-10-16T09:00:00Z')] },
+    later: { items: [] },
+    noStep: { items: [work('dateOnly', null, '2026-10-15T09:00:00Z')] }
+  }, feed, now)
+  assert.deepEqual([...groups.keys()], ['overdue', 'today', 'week', 'noStep'])
+  assert.equal(groups.get('overdue')?.total, 120)
+  assert.equal(groups.get('overdue')?.items.length, 100)
+  assert.equal(groups.get('today')?.total, 20)
+  assert.deepEqual(groups.get('week')?.items.map((item: { id: string }) => item.id), ['week0', 'week1', 'week2'])
+  assert.equal(groups.get('week')?.total, 3)
+  assert.equal(shownOf(5, 120), 'Показано 5 из 120')
+  assert.equal(shownOf(100, 120), 'Показано 100 из 120')
+  assert.equal(shownOf(3, 3), null)
+})
+
+test('«Показать все в списке» ведёт на отбор своей группы: «Сегодня» — на сегодня, а не на неделю', () => {
+  assert.deepEqual(feedGroupLinks, {
+    overdue: '#/work?due=OVERDUE',
+    today: '#/work?due=TODAY',
+    week: '#/work?due=THIS_WEEK',
+    later: '#/work?due=LATER',
+    noStep: '#/work?due=NO_NEXT_STEP'
+  })
 })
 
 test('«Зачисление»: у внутренних экранов есть адреса, «Назад» ведёт на уровень выше', () => {
@@ -171,4 +198,15 @@ test('«Зачисление»: у внутренних экранов есть 
   assert.deepEqual(enrolmentBack({ kind: 'stream', streamId: 's-1' }), { href: '#/enrolment', label: '← Потоки' })
   assert.deepEqual(enrolmentBack({ kind: 'learner', learnerId: 'l', streamId: 's-1' }), { href: '#/enrolment/stream/s-1', label: '← Поток' })
   assert.deepEqual(enrolmentBack({ kind: 'learner', learnerId: 'l', streamId: null }), { href: '#/enrolment', label: '← Потоки' })
+})
+
+test('приостановленное возвращается в «Мою работу» в день повторного касания, без даты — в свою группу', () => {
+  const now = Date.parse('2026-10-18T08:00:00+03:00')
+  const work = (id: string, nextActionAt: string | null) => ({ id, nextActionAt }) as never
+  const groups = pausedGroups(
+    [work('past', '2026-10-10T09:00:00+03:00'), work('today', '2026-10-18T09:00:00+03:00'), work('later', '2026-10-19T09:00:00+03:00'), work('none', null)],
+    now
+  )
+  assert.deepEqual(groups.due.map((item: { id: string }) => item.id), ['past', 'today'])
+  assert.deepEqual(groups.noDate.map((item: { id: string }) => item.id), ['none'])
 })

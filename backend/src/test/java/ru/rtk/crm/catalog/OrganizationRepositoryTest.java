@@ -188,6 +188,24 @@ class OrganizationRepositoryTest {
     }
 
     @Test
+    void universityListCanLeaveOutTheOpenEnrolmentServiceOrganizationLikeTheControlScreen() {
+        UUID openEnrolment = UUID.randomUUID();
+        insert(openEnrolment, "Открытый набор (физлица)", teamB, null, 5);
+        jdbcTemplate.update("UPDATE organizations SET type = 'OPEN_ENROLLMENT' WHERE id = ?", openEnrolment);
+        CrmProfile management = new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0);
+        CrmProfile leaderB = new CrmProfile(UUID.randomUUID(), UserRole.LEADER, teamB, 0);
+
+        assertThat(organizationRepository.findVisible(management, query()).total()).isEqualTo(5);
+        OrganizationPage universities = organizationRepository.findVisible(management, query().excludingService(true));
+        assertThat(universities.total()).isEqualTo(4);
+        assertThat(universities.items()).extracting(Organization::id).doesNotContain(openEnrolment);
+        assertThat(organizationRepository.findVisible(leaderB, query().excludingService(true)).items())
+                .extracting(Organization::id).containsExactly(organizationB);
+        assertThat(organizationRepository.findVisible(leaderB, query()).items()).extracting(Organization::id).contains(openEnrolment);
+        assertThat(organizationRepository.findVisibleById(management, openEnrolment)).isPresent();
+    }
+
+    @Test
     void rejectsUnsupportedPaginationSortAndSearch() {
         assertThatThrownBy(() -> OrganizationQuery.from(-1, 25, "name,asc", null, false))
                 .isInstanceOf(InvalidOrganizationQueryException.class);

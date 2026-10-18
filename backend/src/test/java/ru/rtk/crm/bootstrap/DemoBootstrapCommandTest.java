@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -31,6 +32,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import ru.rtk.crm.access.UserProfileRepository;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.agreement.AgreementApproval;
+import ru.rtk.crm.agreement.AgreementModels;
 import org.springframework.web.multipart.MultipartFile;
 import ru.rtk.crm.attachment.AttachmentService;
 import ru.rtk.crm.catalog.Contact;
@@ -290,6 +293,88 @@ class DemoBootstrapCommandTest {
         command.run(null);
 
         verify(interactionService, times(6)).transition(any(), any(), any(InteractionTransitionRequest.class), anyString());
+    }
+
+    @Test
+    void demoAgreementsTakeStatusDatesFromTheirTermsAndAnOldStandIsRedatedWithoutDuplicates() {
+        DemoBootstrapCommand command = command(demo());
+        command.run(null);
+        UUID signed = agreementId("ДЕМО-А/3");
+        UUID draft = agreementId("ДЕМО-А/1");
+        UUID edited = agreementId("ДЕМО-Б/2");
+        // Давний стенд: единственное событие «создан» и смена статуса — в день заполнения.
+        for (UUID id : List.of(signed, edited)) {
+            jdbcTemplate.update("DELETE FROM agreement_status_events WHERE agreement_id = ? AND from_status IS NOT NULL", id);
+            jdbcTemplate.update("UPDATE agreement_status_events SET to_status = 'ACTIVE', occurred_at = CURRENT_TIMESTAMP"
+                    + " WHERE agreement_id = ?", id);
+            jdbcTemplate.update("UPDATE agreements SET status_changed_at = CURRENT_TIMESTAMP WHERE id = ?", id);
+        }
+        jdbcTemplate.update("UPDATE agreements SET version = 1 WHERE id = ?", edited);
+
+        command.run(null);
+        command.run(null);
+
+        LocalDate concludedOn = jdbcTemplate.queryForObject("SELECT concluded_on FROM agreements WHERE id = ?", LocalDate.class, signed);
+        assertThat(concludedOn).isBefore(LocalDate.now().minusYears(1));
+        assertThat(statusChangedOn(signed)).isEqualTo(concludedOn);
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT from_status, to_status, occurred_at FROM agreement_status_events WHERE agreement_id = ? ORDER BY occurred_at
+                """, signed)).extracting(row -> row.get("FROM_STATUS"), row -> row.get("TO_STATUS"))
+                .containsExactly(tuple(null, "DRAFT"), tuple("DRAFT", "REVIEW"), tuple("REVIEW", "SIGNING"), tuple("SIGNING", "ACTIVE"));
+        assertThat(jdbcTemplate.queryForObject("SELECT MAX(occurred_at) FROM agreement_status_events WHERE agreement_id = ?",
+                OffsetDateTime.class, signed).atZoneSameInstant(ZoneId.of("Europe/Moscow")).toLocalDate()).isEqualTo(concludedOn);
+        assertThat(jdbcTemplate.queryForObject("SELECT sent_on FROM agreements WHERE id = ?", LocalDate.class, signed))
+                .isEqualTo(concludedOn.minusDays(26));
+        LocalDate plannedOn = jdbcTemplate.queryForObject("SELECT planned_on FROM agreements WHERE id = ?", LocalDate.class, draft);
+        assertThat(statusChangedOn(draft)).isEqualTo(plannedOn.minusDays(30));
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM agreement_status_events WHERE agreement_id = ?", Integer.class, draft))
+                .isEqualTo(1);
+        assertThat(statusChangedOn(edited)).isEqualTo(LocalDate.now(ZoneId.of("Europe/Moscow")));
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM agreement_status_events WHERE agreement_id = ?", Integer.class, edited))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void agreementUnderReviewForFortyEightDaysShowsTheFirstRoundAtTheUniversityFromItsHistory() {
+        List<DemoBootstrapProperties.Identity> identities = new ArrayList<>(DEMO_IDENTITIES);
+        identities.add(identity("kam-g", "КАМ Ж", UserRole.USER, "team-a"));
+        List<DemoBootstrapProperties.Organization> organizations = new ArrayList<>(DEMO_ORGANIZATIONS);
+        organizations.add(new DemoBootstrapProperties.Organization("Колледж автоматики (демо)", "COLLEGE", "team-a", "kam-g"));
+        DemoBootstrapCommand command = command(new DemoBootstrapProperties(true, false, TEAMS, identities, organizations, null));
+
+        command.run(null);
+        command.run(null);
+
+        UUID review = agreementId("ДЕМО-КА/1");
+        ZoneId zone = ZoneId.of("Europe/Moscow");
+        LocalDate today = LocalDate.now(zone);
+        List<AgreementModels.StatusEntry> history = jdbcTemplate.query("""
+                SELECT to_status, occurred_at FROM agreement_status_events WHERE agreement_id = ? ORDER BY occurred_at
+                """, (resultSet, rowNumber) -> new AgreementModels.StatusEntry(
+                AgreementModels.AgreementStatus.valueOf(resultSet.getString("to_status")),
+                resultSet.getObject("occurred_at", OffsetDateTime.class)), review);
+        AgreementApproval rules = new AgreementApproval(42, 21, 7, 60, 90, List.of(7, 8));
+        var approval = rules.state(AgreementModels.AgreementStatus.REVIEW,
+                jdbcTemplate.queryForObject("SELECT status_changed_at FROM agreements WHERE id = ?", OffsetDateTime.class, review),
+                jdbcTemplate.queryForObject("SELECT sent_on FROM agreements WHERE id = ?", LocalDate.class, review), history, today);
+
+        assertThat(history).extracting(AgreementModels.StatusEntry::toStatus).containsExactly(
+                AgreementModels.AgreementStatus.DRAFT, AgreementModels.AgreementStatus.REVIEW);
+        assertThat(approval.round()).isEqualTo(1);
+        assertThat(approval.side()).isEqualTo(AgreementModels.ApprovalSide.UNIVERSITY);
+        long counted = rules.countedDays(today.minusDays(48), today);
+        assertThat(approval.sideDays()).isEqualTo(counted).isPositive();
+        assertThat(approval.color()).isEqualTo(counted > 42
+                ? AgreementModels.ApprovalColor.YELLOW : AgreementModels.ApprovalColor.NORMAL);
+    }
+
+    private UUID agreementId(String number) {
+        return jdbcTemplate.queryForObject("SELECT id FROM agreements WHERE number = ?", UUID.class, number);
+    }
+
+    private LocalDate statusChangedOn(UUID agreementId) {
+        return jdbcTemplate.queryForObject("SELECT status_changed_at FROM agreements WHERE id = ?", OffsetDateTime.class, agreementId)
+                .atZoneSameInstant(ZoneId.of("Europe/Moscow")).toLocalDate();
     }
 
     @Test

@@ -31,15 +31,13 @@ public record ManagerWorkLine(
         boolean completed
 ) {
     public ManagerWorkDue due(OffsetDateTime now) {
-        if (nextActionAt != null && nextActionAt.isBefore(now)) {
+        if (InteractionDue.OVERDUE.matches(nextAction, nextActionAt, now)) {
             return ManagerWorkDue.OVERDUE;
         }
-        if (nextAction == null || nextActionAt == null) {
+        if (InteractionDue.NO_NEXT_STEP.matches(nextAction, nextActionAt, now)) {
             return ManagerWorkDue.NO_NEXT_STEP;
         }
-        return nextActionAt.isBefore(InteractionDue.weekStart(now).plusWeeks(1))
-                ? ManagerWorkDue.THIS_WEEK
-                : ManagerWorkDue.IN_ORDER;
+        return InteractionDue.THIS_WEEK.matches(nextAction, nextActionAt, now) ? ManagerWorkDue.THIS_WEEK : ManagerWorkDue.IN_ORDER;
     }
 
     public boolean withIssues() {

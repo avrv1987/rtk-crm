@@ -5,13 +5,16 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 
 import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
+import ru.rtk.crm.agreement.AgreementModels.ApprovalColor;
 import ru.rtk.crm.agreement.AgreementRepository.WorkAgreementStatus;
 import ru.rtk.crm.interaction.InteractionWorkStatus;
 import ru.rtk.crm.work.LmsSignalModels.WorkLearning;
@@ -43,7 +46,9 @@ final class ManagerWorkReport {
             case ISSUES -> line.withIssues();
             case AGREEMENT -> agreement != null && AGREEMENT_IN_PROGRESS.contains(agreement.status());
             case UNASSIGNED -> line.managerId() == null;
-            case STUCK -> active(line) && line.daysOnStage() != null && line.daysOnStage() >= stuckDays;
+            // На этапе договора, пока договор на согласовании, действуют пороги согласования (AgreementApproval).
+            case STUCK -> active(line) && line.daysOnStage() != null && line.daysOnStage() >= stuckDays
+                    && (agreement == null || !agreement.stageUnderApproval());
             case LMS -> learning != null && (learning.signals() > 0 || learning.mismatch() != null && !learning.mismatch().isEmpty());
         };
     }
@@ -70,50 +75,77 @@ final class ManagerWorkReport {
     }
 
     // Итоги — отдельная таблица с числами в своих колонках: по менеджеру внутри команды («Требует назначения» —
-    // своя строка у каждой команды), «Итого по команде» и «Всего». Вузы считаются по уникальным идентификаторам.
-    static List<ManagerWorkTotal> totals(List<ManagerWorkLine> lines, OffsetDateTime now) {
-        List<ManagerWorkLine> sorted = lines.stream().sorted(ORDER).toList();
+    // своя строка у каждой команды), «Итого по команде» и «Всего». Вузы считаются по уникальным идентификаторам
+    // вместе с вузами без идущей работы (idle), как на экране «Контроля»: вуз без работы входит в строку своего КАМ,
+    // а вуз без КАМ — в строку «Требует назначения» своей команды.
+    static List<ManagerWorkTotal> totals(List<ManagerWorkLine> lines, List<ManagerWorkOrganization> idle, OffsetDateTime now) {
+        Map<TotalKey, TotalGroup> groups = new TreeMap<>(TOTAL_ORDER);
+        lines.forEach(line -> groups.computeIfAbsent(
+                new TotalKey(line.teamId(), line.teamName(), line.managerId(), managerName(line)), key -> new TotalGroup()
+        ).lines.add(line));
+        idle.forEach(organization -> groups.computeIfAbsent(
+                new TotalKey(organization.teamId(), organization.teamName(), organization.managerId(),
+                        organization.managerId() == null ? UNASSIGNED : organization.managerName()),
+                key -> new TotalGroup()
+        ).organizations.add(organization.id()));
         List<ManagerWorkTotal> totals = new ArrayList<>();
-        List<ManagerWorkLine> team = new ArrayList<>();
-        List<ManagerWorkLine> manager = new ArrayList<>();
-        for (ManagerWorkLine line : sorted) {
-            if (!team.isEmpty() && !Objects.equals(team.getFirst().teamId(), line.teamId())) {
-                totals.add(total(manager, managerName(manager.getFirst()), now));
-                totals.add(total(team, "Итого по команде", now));
-                team.clear();
-                manager.clear();
-            } else if (!manager.isEmpty() && !Objects.equals(manager.getFirst().managerId(), line.managerId())) {
-                totals.add(total(manager, managerName(manager.getFirst()), now));
-                manager.clear();
+        TotalGroup all = new TotalGroup();
+        TotalGroup team = new TotalGroup();
+        TotalKey teamKey = null;
+        for (Map.Entry<TotalKey, TotalGroup> entry : groups.entrySet()) {
+            if (teamKey != null && !Objects.equals(teamKey.teamId(), entry.getKey().teamId())) {
+                totals.add(team.total(teamKey.teamName(), "Итого по команде", now));
+                team = new TotalGroup();
             }
-            team.add(line);
-            manager.add(line);
+            teamKey = entry.getKey();
+            totals.add(entry.getValue().total(teamKey.teamName(), teamKey.managerName(), now));
+            team.add(entry.getValue());
+            all.add(entry.getValue());
         }
-        if (!team.isEmpty()) {
-            totals.add(total(manager, managerName(manager.getFirst()), now));
-            totals.add(total(team, "Итого по команде", now));
-            ManagerWorkTotal all = total(sorted, "Всего", now);
-            totals.add(new ManagerWorkTotal("Все команды", all.manager(), all.organizations(), all.works(), all.overdue(),
-                    all.thisWeek(), all.noNextStep(), all.transitions()));
+        if (teamKey != null) {
+            totals.add(team.total(teamKey.teamName(), "Итого по команде", now));
+            totals.add(all.total("Все команды", "Всего", now));
         }
         return totals;
     }
 
-    private static String managerName(ManagerWorkLine line) {
-        return line.managerName() == null ? UNASSIGNED : line.managerName();
+    private record TotalKey(UUID teamId, String teamName, UUID managerId, String managerName) {
     }
 
-    private static ManagerWorkTotal total(List<ManagerWorkLine> group, String manager, OffsetDateTime now) {
-        return new ManagerWorkTotal(
-                group.getFirst().teamName(),
-                manager,
-                group.stream().map(ManagerWorkLine::organizationId).distinct().count(),
-                group.size(),
-                group.stream().filter(line -> line.due(now) == ManagerWorkDue.OVERDUE).count(),
-                group.stream().filter(line -> line.due(now) == ManagerWorkDue.THIS_WEEK).count(),
-                group.stream().filter(line -> line.due(now) == ManagerWorkDue.NO_NEXT_STEP).count(),
-                group.stream().mapToLong(ManagerWorkLine::transitions).sum()
-        );
+    private static final Comparator<TotalKey> TOTAL_ORDER = Comparator
+            .comparing((TotalKey key) -> Objects.toString(key.teamName(), ""), String.CASE_INSENSITIVE_ORDER)
+            .thenComparing(key -> Objects.toString(key.teamId(), ""))
+            .thenComparing(key -> key.managerId() == null)
+            .thenComparing(key -> Objects.toString(key.managerName(), ""), String.CASE_INSENSITIVE_ORDER)
+            .thenComparing(key -> Objects.toString(key.managerId(), ""));
+
+    private static final class TotalGroup {
+        private final List<ManagerWorkLine> lines = new ArrayList<>();
+        private final Set<UUID> organizations = new HashSet<>();
+
+        private void add(TotalGroup other) {
+            lines.addAll(other.lines);
+            organizations.addAll(other.organizations);
+        }
+
+        private ManagerWorkTotal total(String team, String manager, OffsetDateTime now) {
+            Set<UUID> all = new HashSet<>(organizations);
+            lines.forEach(line -> all.add(line.organizationId()));
+            return new ManagerWorkTotal(
+                    team,
+                    manager,
+                    all.size(),
+                    lines.size(),
+                    lines.stream().filter(line -> line.due(now) == ManagerWorkDue.OVERDUE).count(),
+                    lines.stream().filter(line -> line.due(now) == ManagerWorkDue.THIS_WEEK).count(),
+                    lines.stream().filter(line -> line.due(now) == ManagerWorkDue.NO_NEXT_STEP).count(),
+                    lines.stream().mapToLong(ManagerWorkLine::transitions).sum()
+            );
+        }
+    }
+
+    private static String managerName(ManagerWorkLine line) {
+        return line.managerName() == null ? UNASSIGNED : line.managerName();
     }
 
     private static ReportRow row(ManagerWorkLine line, List<String> products, List<String> comments, WorkLearning learning,
@@ -153,11 +185,13 @@ final class ManagerWorkReport {
 
     // Колонки «Договор» и «Статус договора» показывают последний связанный с взаимодействием договор, как колонка
     // «Договор» на экране «Контроля».
-    // «Срок истёк» дописывается к статусу так же, как отметка на экране: статус по сроку не меняется.
+    // «Срок истёк» и затянувшееся согласование дописываются к статусу так же, как отметки на экране.
     private static ReportRow.AgreementLine agreement(WorkAgreementStatus agreement, OffsetDateTime now) {
         String status = agreement == null ? "Нет" : agreement.status().title()
                 + (agreement.status().expired(agreement.validUntil(), now.atZoneSameInstant(ReportRequest.ZONE).toLocalDate())
-                ? " · срок истёк" : "");
+                ? " · срок истёк" : "")
+                + (agreement != null && agreement.approval() != null && agreement.approval().delayed()
+                ? " · согласование: " + (agreement.approval().color() == ApprovalColor.RED ? "красный" : "жёлтый") : "");
         return new ReportRow.AgreementLine(null, null,
                 agreement == null ? null : "№ " + agreement.number(),
                 status,

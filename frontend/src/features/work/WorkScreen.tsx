@@ -12,6 +12,7 @@ import './workControl.css'
 
 type WorkScreenProps = {
   role: Me['role']
+  profileId: string
   initialQuery: string
   refreshSignal: number
   onSessionExpired: () => void
@@ -61,7 +62,7 @@ const KamSignals = ({ refreshKey, onSessionExpired, onProfileUnavailable }: Acce
   )
 }
 
-export const WorkScreen = ({ role, initialQuery, refreshSignal, onSessionExpired, onProfileUnavailable }: WorkScreenProps) => {
+export const WorkScreen = ({ role, profileId, initialQuery, refreshSignal, onSessionExpired, onProfileUnavailable }: WorkScreenProps) => {
   const [view, setView] = useState<KamView>(() => readKamView(browserStorage()))
   const [pulse, setPulse] = useState(0)
   const [total, setTotal] = useState<number | null>(null)
@@ -78,7 +79,8 @@ export const WorkScreen = ({ role, initialQuery, refreshSignal, onSessionExpired
         <HintButton label="Что на этом экране">
           Сроки ваших шагов: просроченные, сегодня, на этой неделе и позже. Плитка отбирает задачи, второе нажатие снимает
           отбор. «Шаг выполнен» записывает результат в историю и задаёт новый шаг. Сигналы LMS — во втором виде, выбор
-          запоминается. Ниже — все ваши взаимодействия с поиском и фильтрами.
+          запоминается. В ленте также ваши открытые проблемы и риски (просроченные сверху) и приостановленные
+          взаимодействия, к которым пора вернуться. Ниже — все ваши взаимодействия с поиском и фильтрами.
         </HintButton>
         <Segmented label="Что показать" options={viewOptions} value={view} onChange={changeView} />
         <button
@@ -96,6 +98,7 @@ export const WorkScreen = ({ role, initialQuery, refreshSignal, onSessionExpired
 
       {view === 'deadlines' ? (
         <KamDesk
+          profileId={profileId}
           refreshKey={refreshSignal}
           licenseActive={licenseActive}
           onChanged={() => setPulse((value) => value + 1)}

@@ -10,6 +10,7 @@ import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import ru.rtk.crm.catalog.OrganizationRepository;
 
 @Repository
 public class OrganizationDeputyRepository {
@@ -29,6 +30,21 @@ public class OrganizationDeputyRepository {
                 .param("organizationId", organizationId)
                 .query(UUID.class)
                 .optional();
+    }
+
+    public List<OwnedOrganization> findOwnedOrganizations(UUID teamId, UUID managerId) {
+        return jdbcClient.sql("""
+                SELECT o.id, o.name
+                FROM organizations o
+                WHERE o.team_id = :teamId AND o.owner_manager_id = :managerId AND %s AND NOT %s
+                ORDER BY o.name, o.id
+                """.formatted(OrganizationRepository.currentStatus("o"), OrganizationRepository.requiresAssignment("o")))
+                .param("teamId", teamId)
+                .param("managerId", managerId)
+                .query((resultSet, rowNumber) -> new OwnedOrganization(
+                        resultSet.getObject("id", UUID.class), resultSet.getString("name")
+                ))
+                .list();
     }
 
     public Optional<DeputyRow> findOpenForUpdate(UUID organizationId) {
@@ -132,6 +148,9 @@ public class OrganizationDeputyRepository {
                 resultSet.getObject("ended_by_profile_id", UUID.class),
                 resultSet.getString("ended_by_display_name")
         );
+    }
+
+    public record OwnedOrganization(UUID id, String name) {
     }
 
     public record DeputyRow(

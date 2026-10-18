@@ -103,7 +103,8 @@ export const OrganizationsScreen = ({
         sort: 'name,asc',
         q: current.q,
         requiresAssignment: current.requiresAssignment,
-        status: current.status
+        status: current.status,
+        excludeService: true
       })
       if (requestVersion !== listRequestVersion.current) {
         return

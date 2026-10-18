@@ -53,6 +53,9 @@ jobs:
           LOAD_REPORT_JOBS: "10"
           LOAD_REPORT_BURSTS: "25"
           LOAD_DURATION_S: "90"
+          LOAD_MIN_SESSIONS: "10"
+          LOAD_MIN_REPORTS: "10"
+          LOAD_MAX_P95_MS: "3000"
           LOAD_SUMMARY_FILE: ci-reports/load-summary.txt
         run: |
           bash scripts/load/seed-load-data.sh .env.local

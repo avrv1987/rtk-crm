@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiClient, type InteractionListItem, type InteractionListParams, type ReminderDigest } from '../../shared/api/client'
+import { apiClient, type InteractionIssue, type InteractionListParams, type ReminderDigest, type ReminderFeed } from '../../shared/api/client'
 import { StatTiles, type StatTile } from '../../shared/ui/StatTiles'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { ReminderAgreements } from './ReminderCenter'
 import { StepCompletion } from './StepCompletion'
-import { groupFeed } from './deadlines'
-import { type FeedGroup, feedGroupsFor, type KamTile } from './workView'
-import { type AccessHandlers, formatDateTime, handledAccessError, requestIdOf } from './workShared'
+import { isIssueOverdue, issueTitle, myIssueHref } from '../issues/issueModel'
+import { type FeedGroupData, feedGroups, type PausedGroups, pausedGroups, shownOf } from './deadlines'
+import { type FeedGroup, feedGroupLinks, feedGroupsFor, type KamTile } from './workView'
+import { type AccessHandlers, formatDate, formatDateTime, handledAccessError, requestIdOf, todayIso } from './workShared'
 import './workControl.css'
 
 type KamDeskProps = AccessHandlers & {
+  profileId: string
   refreshKey: number
   licenseActive: boolean
   onChanged: () => void
@@ -21,12 +23,15 @@ type DeskState =
   | { kind: 'loading' }
   | {
     kind: 'ready'
-    counts: { overdue: number; week: number; noStep: number; licenses: number; signals: number | null }
+    counts: { licenses: number; signals: number | null }
+    feed: ReminderFeed
     licenseYear: number
     agreements: ReminderDigest['expiringAgreements']
     agreementNoticeDays: number
-    dated: InteractionListItem[]
-    noStep: InteractionListItem[]
+    groups: Map<FeedGroup, FeedGroupData>
+    issues: InteractionIssue[]
+    issuesTotal: number
+    paused: PausedGroups
   }
   | { kind: 'failed'; requestId?: string }
 
@@ -40,17 +45,11 @@ const groupTitles: Record<FeedGroup, string> = {
   noStep: 'Без следующего шага'
 }
 
-const groupLinks: Record<FeedGroup, string> = {
-  overdue: '#/work?due=OVERDUE',
-  today: '#/work?due=THIS_WEEK',
-  week: '#/work?due=THIS_WEEK',
-  later: '#/work',
-  noStep: '#/work?due=NO_NEXT_STEP'
-}
-
 const total = async (query: InteractionListParams) => (await apiClient.listInteractions({ ...query, size: 1 })).total
 
-export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, onLicenses, onSessionExpired, onProfileUnavailable }: KamDeskProps) => {
+const page = (due: InteractionListParams['due']) => apiClient.listInteractions({ due, size: 100, sort: 'nextActionAt,asc' })
+
+export const KamDesk = ({ profileId, refreshKey, licenseActive, onChanged, onShowSignals, onLicenses, onSessionExpired, onProfileUnavailable }: KamDeskProps) => {
   const [state, setState] = useState<DeskState>({ kind: 'loading' })
   const [tile, setTile] = useState<KamTile | null>(null)
   const [expanded, setExpanded] = useState<ReadonlySet<FeedGroup>>(new Set())
@@ -61,13 +60,16 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
   const load = useCallback(async () => {
     const version = ++requestVersion.current
     try {
-      const [digest, overdue, week, dated, noStep, signals] = await Promise.all([
+      const [digest, overdue, todayPage, week, later, noStep, signals, issues, paused] = await Promise.all([
         apiClient.getReminders(),
-        total({ due: 'OVERDUE' }),
-        total({ due: 'THIS_WEEK' }),
-        apiClient.listInteractions({ size: 100, sort: 'nextActionAt,asc' }),
-        apiClient.listInteractions({ due: 'NO_NEXT_STEP', size: 100, sort: 'nextActionAt,asc' }),
-        apiClient.listLmsSignals().then((result) => result.items.length, () => null)
+        page('OVERDUE'),
+        page('TODAY'),
+        page('THIS_WEEK'),
+        page('LATER'),
+        page('NO_NEXT_STEP'),
+        apiClient.listLmsSignals().then((result) => result.items.length, () => null),
+        apiClient.listIssues({ responsible: profileId, size: 100 }),
+        apiClient.listInteractions({ status: 'PAUSED', size: 100, sort: 'nextActionAt,asc' })
       ])
       const licenses = await total({ licenseExpiresBy: digest.licenseExpiresBy, status: 'ALL' })
       if (version !== requestVersion.current) {
@@ -75,12 +77,15 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
       }
       setState({
         kind: 'ready',
-        counts: { overdue, week, noStep: noStep.total, licenses, signals },
+        counts: { licenses, signals },
+        feed: digest.feed,
         licenseYear: digest.licenseExpiresBy,
         agreements: digest.expiringAgreements,
         agreementNoticeDays: digest.agreementNoticeDays,
-        dated: dated.items,
-        noStep: noStep.items
+        groups: feedGroups({ overdue, today: todayPage, week, later, noStep }, digest.feed, Date.now()),
+        issues: issues.items,
+        issuesTotal: issues.total,
+        paused: pausedGroups(paused.items, Date.now())
       })
     } catch (error) {
       if (version !== requestVersion.current || handledAccessError(error, { onSessionExpired, onProfileUnavailable })) {
@@ -88,7 +93,7 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
       }
       setState({ kind: 'failed', requestId: requestIdOf(error) })
     }
-  }, [onProfileUnavailable, onSessionExpired])
+  }, [onProfileUnavailable, onSessionExpired, profileId])
 
   useEffect(() => {
     void load()
@@ -110,13 +115,21 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
     )
   }
 
+  const today = todayIso()
   const tiles: StatTile<KamTile>[] = [
-    { key: 'OVERDUE', label: 'Просрочено', value: state.counts.overdue, tone: 'danger' },
-    { key: 'THIS_WEEK', label: 'На этой неделе', value: state.counts.week, tone: 'warning' },
-    { key: 'NO_NEXT_STEP', label: 'Без следующего шага', value: state.counts.noStep, tone: 'warning' },
+    { key: 'OVERDUE', label: 'Просрочено', value: state.feed.overdue, tone: 'danger' },
+    { key: 'THIS_WEEK', label: 'На этой неделе', value: state.feed.thisWeek, tone: 'warning' },
+    { key: 'NO_NEXT_STEP', label: 'Без следующего шага', value: state.feed.noNextStep, tone: 'warning' },
     { key: 'LICENSES', label: `Лицензии истекают до ${state.licenseYear} года`, value: state.counts.licenses, tone: 'warning' },
     { key: 'AGREEMENTS', label: `Договоры истекают за ${state.agreementNoticeDays} дней`, value: state.agreements.length, tone: 'warning' },
-    { key: 'LMS', label: state.counts.signals === null ? 'Сигналы LMS недоступны' : 'Сигналы LMS', value: state.counts.signals ?? 0, tone: 'warning' }
+    { key: 'LMS', label: state.counts.signals === null ? 'Сигналы LMS недоступны' : 'Сигналы LMS', value: state.counts.signals, tone: 'warning' },
+    {
+      key: 'ISSUES',
+      label: 'Мои проблемы и риски',
+      value: state.issuesTotal,
+      tone: state.issues.some((issue) => isIssueOverdue(issue, today)) ? 'danger' : 'warning'
+    },
+    { key: 'RESUME', label: 'Вернуться к работе', value: state.feed.resumeDue + state.feed.resumeNoDate, tone: 'warning' }
   ]
   const selected: KamTile | null = tile ?? (licenseActive ? 'LICENSES' : null)
 
@@ -141,8 +154,7 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
     return next
   })
 
-  const grouped = groupFeed(state.dated, state.noStep, Date.now())
-  const visibleGroups = feedGroupsFor(tile).filter((key) => (grouped.get(key)?.length ?? 0) > 0)
+  const visibleGroups = feedGroupsFor(tile).filter((key) => state.groups.has(key))
 
   return (
     <>
@@ -151,18 +163,19 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
       <section className="desk-feed" aria-labelledby="desk-feed-title">
         <h2 id="desk-feed-title" className="desk-feed__heading">Задачи по срокам</h2>
         <p className="step-completion__done" role="status">{message}</p>
-        {visibleGroups.length === 0 && tile !== 'AGREEMENTS' && (
+        {visibleGroups.length === 0 && feedGroupsFor(tile).length > 0 && (
           <p className="work-control__message">
             {tile === null ? 'Шагов со сроком нет. Задайте следующий шаг в карточке взаимодействия.' : 'По этой плитке задач нет.'}
           </p>
         )}
         {visibleGroups.map((key) => {
-          const items = grouped.get(key) ?? []
+          const { items, total: groupTotal } = state.groups.get(key) ?? { items: [], total: 0 }
           const shown = expanded.has(key) ? items : items.slice(0, feedLimit)
+          const shownText = shownOf(shown.length, groupTotal)
           return (
             <section key={key} className="desk-feed__group" aria-labelledby={`desk-feed-${key}`}>
               <h3 id={`desk-feed-${key}`} className={key === 'overdue' ? 'desk-feed__title--overdue' : undefined}>
-                {groupTitles[key]} <span className="desk-feed__count">{items.length}</span>
+                {groupTitles[key]} <span className="desk-feed__count">{groupTotal}</span>
               </h3>
               <ul className="desk-feed__list">
                 {shown.map((item) => (
@@ -177,9 +190,9 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
                         {item.currentStageName}
                       </span>
                     </div>
-                    {key === 'noStep' ? (
+                    {key === 'noStep' || !item.nextAction?.trim() ? (
                       <>
-                        <span className="status status--missing">{item.nextActionAt === null ? 'Срок не задан' : formatDateTime(item.nextActionAt)}</span>
+                        <span className={`status status--${key === 'overdue' ? 'overdue' : 'missing'}`}>{item.nextActionAt === null ? 'Срок не задан' : formatDateTime(item.nextActionAt)}</span>
                         <a className="button-link desk-feed__action" href={`#/organizations/${item.organizationId}/${item.id}`}>Задать шаг</a>
                       </>
                     ) : (
@@ -219,17 +232,22 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
                   </li>
                 ))}
               </ul>
-              {items.length > feedLimit && (
+              {(items.length > feedLimit || shownText !== null) && (
                 <p className="desk-feed__more">
-                  <button type="button" className="button--secondary" onClick={() => toggleGroup(key)}>
-                    {expanded.has(key) ? 'Свернуть' : `Показать ещё ${items.length - feedLimit}`}
-                  </button>
-                  <a href={groupLinks[key]}>Показать все в списке</a>
+                  {shownText !== null && <span>{shownText}</span>}
+                  {items.length > feedLimit && (
+                    <button type="button" className="button--secondary" onClick={() => toggleGroup(key)}>
+                      {expanded.has(key) ? 'Свернуть' : `Показать ещё ${items.length - feedLimit}`}
+                    </button>
+                  )}
+                  <a href={feedGroupLinks[key]}>Показать все в списке</a>
                 </p>
               )}
             </section>
           )
         })}
+        {(tile === null || tile === 'ISSUES') && <MyIssues issues={state.issues} total={state.issuesTotal} profileId={profileId} today={today} />}
+        {(tile === null || tile === 'RESUME') && <PausedFeed paused={state.paused} feed={state.feed} />}
         {(tile === null || tile === 'AGREEMENTS') && state.agreements.length > 0 && (
           <section className="desk-feed__group" aria-labelledby="desk-feed-agreements">
             <h3 id="desk-feed-agreements">
@@ -242,3 +260,72 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
     </>
   )
 }
+
+const MyIssues = ({ issues, total, profileId, today }: { issues: InteractionIssue[]; total: number; profileId: string; today: string }) => {
+  if (issues.length === 0) {
+    return null
+  }
+  const shown = shownOf(Math.min(issues.length, feedLimit), total)
+  return (
+    <section className="desk-feed__group" aria-labelledby="desk-feed-issues">
+      <h3 id="desk-feed-issues">Мои проблемы и риски <span className="desk-feed__count">{total}</span></h3>
+      <ul className="desk-feed__list">
+        {issues.slice(0, feedLimit).map((issue) => (
+          <li key={issue.id} className="desk-feed__item">
+            <div className="desk-feed__step">
+              <strong><a href={myIssueHref(issue, profileId)}>{issue.description}</a></strong>
+              <span>{issueTitle(issue)} · {issue.organizationName} · {issue.interactionTitle}</span>
+            </div>
+            <span className={`status status--${isIssueOverdue(issue, today) ? 'overdue' : 'planned'}`}>
+              {issue.dueOn === null ? 'Срок не указан' : `${isIssueOverdue(issue, today) ? 'Просрочено: ' : 'До '}${formatDate(issue.dueOn)}`}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="desk-feed__more">
+        {shown !== null && <span>{shown}</span>}
+        <a href={`#/issues?${new URLSearchParams({ responsible: profileId }).toString()}`}>Все мои проблемы и риски в реестре</a>
+      </p>
+    </section>
+  )
+}
+
+// Строки приостановленных — из одного запроса до 100 штук, итоги — серверные (ReminderDigest.feed).
+const pausedSections = (paused: PausedGroups, feed: ReminderFeed) => [
+  { key: 'due', title: 'Вернуться к работе', items: paused.due, total: Math.max(feed.resumeDue, paused.due.length), action: 'Возобновить' },
+  { key: 'noDate', title: 'Без даты возврата', items: paused.noDate, total: Math.max(feed.resumeNoDate, paused.noDate.length), action: 'Открыть' }
+].filter((section) => section.total > 0)
+
+const PausedFeed = ({ paused, feed }: { paused: PausedGroups; feed: ReminderFeed }) => (
+  <>
+    {pausedSections(paused, feed).map((section) => (
+      <section key={section.key} className="desk-feed__group" aria-labelledby={`desk-feed-paused-${section.key}`}>
+        <h3 id={`desk-feed-paused-${section.key}`}>{section.title} <span className="desk-feed__count">{section.total}</span></h3>
+        <ul className="desk-feed__list">
+          {section.items.map((item) => (
+            <li key={item.id} className="desk-feed__item">
+              <div className="desk-feed__step">
+                <strong>Приостановлено: {item.marks.statusReason?.trim() || 'причина не указана'}</strong>
+                <span>
+                  <a href={`#/organizations/${item.organizationId}`}>{item.organizationName}</a>
+                  {' · '}
+                  <a href={`#/organizations/${item.organizationId}/${item.id}`}>{item.title}</a>
+                </span>
+              </div>
+              <span className={`status status--${section.key === 'due' ? 'overdue' : 'missing'}`}>
+                {item.nextActionAt === null ? 'Дата не задана' : `Вернуться ${formatDateTime(item.nextActionAt)}`}
+              </span>
+              <a className="button-link desk-feed__action" href={`#/organizations/${item.organizationId}/${item.id}`}>{section.action}</a>
+            </li>
+          ))}
+        </ul>
+        {shownOf(section.items.length, section.total) !== null && (
+          <p className="desk-feed__more">
+            <span>{shownOf(section.items.length, section.total)}</span>
+            <a href="#/work?status=PAUSED">Показать все в списке</a>
+          </p>
+        )}
+      </section>
+    ))}
+  </>
+)

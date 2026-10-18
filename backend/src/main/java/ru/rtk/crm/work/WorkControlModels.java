@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.UUID;
 
 import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
+import ru.rtk.crm.agreement.AgreementModels.Approval;
 import ru.rtk.crm.interaction.InteractionWorkStatus;
 import ru.rtk.crm.report.ManagerWorkDue;
 import ru.rtk.crm.report.ManagerWorkOrganization;
@@ -57,7 +58,9 @@ public final class WorkControlModels {
             AgreementStatus agreementStatus,
             String agreementNumber,
             LocalDate agreementValidUntil,
-            LmsSignalModels.WorkLearning learning
+            LmsSignalModels.WorkLearning learning,
+            Approval agreementApproval,
+            boolean stageUnderApproval
     ) {
     }
 

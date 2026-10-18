@@ -83,12 +83,11 @@ public class WorkControlService {
         Map<UUID, List<ManagerWorkLine>> byTeam = lines.stream().collect(Collectors.groupingBy(
                 ManagerWorkLine::teamId, LinkedHashMap::new, Collectors.toList()
         ));
-        // Вузы без идущего взаимодействия («Без работы» у КАМ и вузы без КАМ) входят в числа, только когда не заданы
-        // период и отборы по направлению, программе, продукту и этапу: у такого вуза нет ни этапа, ни продукта, а период
-        // показывает изменения, а не состояние. Тогда число вузов совпадает с разделом «Вузы».
-        List<ManagerWorkOrganization> withoutWork = withoutWorkCounted(filters, from, to)
+        // Вузы без идущего взаимодействия («Без работы» у КАМ и вузы без КАМ) входят в числа по общему правилу
+        // ManagerWorkOrganization.counted: тогда число вузов совпадает с разделом «Вузы».
+        List<ManagerWorkOrganization> withoutWork = ManagerWorkOrganization.counted(filters, from, to)
                 ? reportRepository.findOrganizationsWithoutActiveWork(profile).stream()
-                        .filter(organization -> selected(organization, filters))
+                        .filter(organization -> organization.selected(filters))
                         .toList()
                 : null;
         List<ManagerWorkOrganization> without = withoutWork == null ? List.of() : withoutWork;
@@ -130,24 +129,6 @@ public class WorkControlService {
         return filters.equals(ReportFilters.none().normalized()) && from == null && to == null;
     }
 
-    private static boolean withoutWorkCounted(ReportFilters filters, LocalDate from, LocalDate to) {
-        return from == null && to == null && filters.directionIds().isEmpty() && !filters.includeNoDirection()
-                && filters.programIds().isEmpty() && !filters.includeNoProgram() && filters.productIds().isEmpty()
-                && !filters.includeNoProduct() && filters.stages().isEmpty() && filters.change() == null;
-    }
-
-    private static boolean selected(ManagerWorkOrganization organization, ReportFilters filters) {
-        if (!filters.organizationIds().isEmpty() && !filters.organizationIds().contains(organization.id())) {
-            return false;
-        }
-        if (filters.managerIds().isEmpty() && !filters.includeNoManager()) {
-            return true;
-        }
-        return organization.managerId() == null
-                ? filters.includeNoManager()
-                : filters.managerIds().contains(organization.managerId());
-    }
-
     private TeamBlock team(
             UUID teamId,
             List<ManagerWorkLine> teamLines,
@@ -162,15 +143,17 @@ public class WorkControlService {
         Map<UUID, List<ManagerWorkLine>> byManager = teamLines.stream().collect(Collectors.groupingBy(
                 line -> Objects.requireNonNullElse(line.managerId(), UNASSIGNED_KEY), LinkedHashMap::new, Collectors.toList()
         ));
-        // Вузы «Без работы» входят в числа своего КАМ; КАМ, у которого есть только такие вузы, тоже получает строку.
+        // Вузы «Без работы» входят в числа своего КАМ, вузы без КАМ — в блок «не назначен», как в выгрузке;
+        // КАМ, у которого есть только такие вузы, тоже получает строку.
         Map<UUID, List<ManagerWorkOrganization>> idleByManager = teamWithout.stream()
-                .filter(organization -> organization.managerId() != null)
-                .collect(Collectors.groupingBy(ManagerWorkOrganization::managerId, LinkedHashMap::new, Collectors.toList()));
+                .collect(Collectors.groupingBy(organization -> Objects.requireNonNullElse(organization.managerId(), UNASSIGNED_KEY),
+                        LinkedHashMap::new, Collectors.toList()));
         List<ManagerBlock> managers = new ArrayList<>();
-        byManager.values().forEach(managerLines -> managers.add(manager(managerLines,
-                idleByManager.getOrDefault(managerLines.getFirst().managerId(), List.of()), products, agreements, learning, now)));
-        idleByManager.forEach((managerId, organizations) -> {
-            if (!byManager.containsKey(managerId)) {
+        byManager.forEach((key, managerLines) -> managers.add(manager(managerLines,
+                idleByManager.getOrDefault(key, List.of()), products, agreements, learning, now)));
+        idleByManager.forEach((key, organizations) -> {
+            if (!byManager.containsKey(key)) {
+                UUID managerId = UNASSIGNED_KEY.equals(key) ? null : key;
                 managers.add(idleBlock(new CandidateManager(managerId, organizations.getFirst().managerName()), organizations, now));
             }
         });
@@ -239,7 +222,9 @@ public class WorkControlService {
                 agreement == null ? null : agreement.status(),
                 agreement == null ? null : agreement.number(),
                 agreement == null ? null : agreement.validUntil(),
-                learning
+                learning,
+                agreement == null ? null : agreement.approval(),
+                agreement != null && agreement.stageUnderApproval()
         );
     }
 

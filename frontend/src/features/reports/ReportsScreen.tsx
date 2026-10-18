@@ -11,6 +11,7 @@ import {
 import { todayInMoscow } from '../../shared/format/datetime'
 import { Toast } from '../../shared/ui/Toast'
 import { AgreementConfirmationsPanel } from '../agreements/AgreementConfirmationsPanel'
+import { reportSelectionFromControl, skippedNotice } from '../control/controlModel'
 import { listReportVendors } from '../documents/documentsApi'
 import { loadReportSelection, saveReportSelection } from '../interactions/drafts'
 import { organizationTypeLabels } from '../organizations/OrganizationForm'
@@ -84,7 +85,12 @@ const withKnownFilters = (selection: ReportSelection, options: FilterOptions): R
 export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, onProfileUnavailable }: ReportsScreenProps) => {
   const found = reportViews.find((item) => item === view) ?? null
   const current = found === 'kam-review' && role === 'USER' ? null : found
-  const [selection, setSelection] = useState<ReportSelection>(() => normalizeSelection(loadReportSelection(profileId)))
+  // Переход «Все форматы — в отчёте» из «Контроля» приносит его отборы в адресе и заменяет ими сохранённый выбор.
+  const [selection, setSelection] = useState<ReportSelection>(() => {
+    const stored = normalizeSelection(loadReportSelection(profileId))
+    return (current === 'manager-work' ? reportSelectionFromControl(stored, query ?? '') : null) ?? stored
+  })
+  const [transferNotice] = useState(() => (current === 'manager-work' ? skippedNotice(query ?? '') : null))
   const [optionsState, setOptionsState] = useState<OptionsState>({ kind: 'loading' })
   const [jobsState, setJobsState] = useState<JobsState>({ kind: 'loading' })
   const [pollError, setPollError] = useState<unknown>(null)
@@ -336,6 +342,7 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
         : jobsState.jobs.find((job) => job.id === chartJobId)
       return (
         <div className="reports">
+          {current === 'manager-work' && transferNotice !== null && <p className="notice" role="status">{transferNotice}</p>}
           {synced && (
             <ReportBuilder
               key={current}

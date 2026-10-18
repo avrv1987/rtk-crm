@@ -439,6 +439,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/managers/{id}/deputies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Назначить заместителя на все вузы КАМ
+         * @description Отпуск или больничный КАМ: руководитель своей команды одной командой создаёт замещение на период по каждому действующему вузу КАМ. Правила те же, что у замещения по одному вузу. Вуз, где замещение уже есть, пропускается и возвращается в skipped с причиной. КАМ другой команды или вызов не руководителем — 403.
+         */
+        post: operations["assignManagerDeputy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/work/team-indicators": {
         parameters: {
             query?: never;
@@ -548,7 +568,7 @@ export interface paths {
         };
         /**
          * Отчёт по договорам с вузами за период
-         * @description Переходы статусов за период, подписанные (дата подписания в периоде) и расторгнутые договоры, среднее время согласования (от отправки на согласование до подписания) и договоры, которые сейчас на согласовании дольше N дней. Область данных как у реестра; администратор и представитель вуза получают 403.
+         * @description Переходы статусов за период, подписанные (дата подписания в периоде) и расторгнутые договоры, среднее время согласования (от отправки на согласование до подписания) и договоры, у которых согласование затянулось по порогам (AgreementApproval); с reviewLongerThanDays — договоры на согласовании дольше N дней. Область данных как у реестра; администратор и представитель вуза получают 403.
          */
         get: operations["getAgreementPeriodReport"];
         put?: never;
@@ -685,7 +705,7 @@ export interface paths {
         };
         /**
          * Сводка напоминаний на сегодня
-         * @description Для КАМ и руководителя в их области. Просроченные и наступающие (app.work.upcoming-days) шаги незавершённых работ, истекающие лицензии и следующий цикл повышения квалификации; списки ограничены app.work.reminder-list-limit, итоги считаются полностью.
+         * @description Для КАМ и руководителя в их области. Просроченные и наступающие (app.work.upcoming-days) шаги незавершённых работ, истекающие лицензии и следующий цикл повышения квалификации; списки ограничены app.work.reminder-list-limit, итоги считаются полностью. feed — итоги групп ленты «Моей работы».
          */
         get: operations["getReminders"];
         put?: never;
@@ -1271,7 +1291,7 @@ export interface paths {
         put?: never;
         /**
          * Изменить статус работы
-         * @description Приостанавливает, завершает или возобновляет работу. PAUSED требует причину, COMPLETED требует итог, ACTIVE принимает необязательный комментарий. Приостановленная и завершённая работа уходит из списка «Моя работа» по умолчанию, но сохраняет историю, остаётся в карточке организации и в отчётах. Пишет одно событие истории STATUS_CHANGED.
+         * @description Приостанавливает, завершает или возобновляет работу. PAUSED требует причину и дату возврата resumeOn (позже сегодняшней, не дальше двух лет): она записывается следующим шагом «Вернуться к работе после приостановки» на 9:00 по Москве этой даты. COMPLETED требует итог, ACTIVE принимает необязательный комментарий. Приостановленная и завершённая работа уходит из списка «Моя работа» по умолчанию, но сохраняет историю, остаётся в карточке организации и в отчётах. Пишет одно событие истории STATUS_CHANGED.
          */
         post: operations["changeInteractionStatus"];
         delete?: never;
@@ -4043,6 +4063,8 @@ export interface components {
             createdAt: string;
             /** @description Версия взята из документов этой работы */
             interactionTitle: string | null;
+            /** @description Подписанная версия — последняя скачиваемая версия файла договора, загруженная до перехода в «Действует»; скачивается с пометкой «(подписанная)» в имени файла */
+            signed: boolean;
         };
         AgreementSupplement: {
             /** Format: uuid */
@@ -4152,6 +4174,7 @@ export interface components {
             /** Format: uuid */
             managerId: string | null;
             managerName: string | null;
+            approval: components["schemas"]["AgreementApproval"] | null;
         };
         AgreementPeriodTransition: {
             /** Format: date-time */
@@ -4182,13 +4205,14 @@ export interface components {
             from: string;
             /** Format: date */
             to: string;
-            longerThanDays: number;
+            /** @description Задано в запросе — прежний отбор «На согласовании дольше N дней»; null — «Согласование затянулось» по порогам */
+            longerThanDays: number | null;
             notes: string[];
             totals: components["schemas"]["AgreementPeriodTotals"];
             transitions: components["schemas"]["AgreementPeriodTransition"][];
             signed: components["schemas"]["AgreementRegistryRow"][];
             terminated: components["schemas"]["AgreementRegistryRow"][];
-            /** @description Сейчас на согласовании дольше longerThanDays дней */
+            /** @description Согласование затянулось (цвет YELLOW или RED), а если задан longerThanDays — на согласовании дольше этого числа дней */
             longReview: components["schemas"]["AgreementRegistryRow"][];
         };
         /**
@@ -4335,6 +4359,28 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
             activities: components["schemas"]["AgreementActivity"][];
+            approval: components["schemas"]["AgreementApproval"] | null;
+        };
+        /** @description Согласование договора по порогам app.agreements.approval (по умолчанию у вуза 42 дня в первом круге и 21 в следующих, у школы 7 дней; общий срок — жёлтый с 60-го дня, красный с 90-го). Дни календарные, без исключённых месяцев (по умолчанию июль и август). Есть только у договоров «На согласовании», «На корректировке» и «На подписании». */
+        AgreementApproval: {
+            /**
+             * @description UNIVERSITY — «На согласовании» (сторона вуза), SCHOOL — «На корректировке» (сторона школы), SIGNING — на подписании
+             * @enum {string}
+             */
+            side: "UNIVERSITY" | "SCHOOL" | "SIGNING";
+            /** @description Номер прохода «На согласовании» по истории статусов */
+            round: number;
+            /** @description Дней на стороне с последней смены статуса */
+            sideDays: number;
+            /** @description Норма стороны; null на подписании */
+            sideLimitDays: number | null;
+            /** @description Дней от отправки на согласование */
+            totalDays: number;
+            /**
+             * @description YELLOW — дольше нормы стороны или общий срок с 60-го дня; RED — общий срок с 90-го дня
+             * @enum {string}
+             */
+            color: "NORMAL" | "YELLOW" | "RED";
         };
         AgreementActivity: {
             /** Format: uuid */
@@ -4486,9 +4532,11 @@ export interface components {
                 /** @enum {string} */
                 type: "UNIVERSITY" | "SCHOOL" | "COLLEGE" | "OPEN_ENROLLMENT";
             };
-            /** @description Ответственный КАМ; null, если не назначен. Почты и телефона в профиле CRM нет */
+            /** @description Ответственный КАМ этого вуза; null, если не назначен. Почта и телефон берутся из учётной записи Keycloak (атрибут phone_number или phone); если их нет или Keycloak недоступен — null */
             manager: {
                 name: string;
+                email: string | null;
+                phone: string | null;
             } | null;
             works: components["schemas"]["PartnerWork"][];
             documents: components["schemas"]["PartnerDocument"][];
@@ -4549,6 +4597,8 @@ export interface components {
              * @description Когда договор перешёл в текущий статус
              */
             statusChangedAt: string | null;
+            /** @description Круг согласования — номер прохода «На согласовании»; только для «На согласовании» (сторона вуза), «На корректировке» (сторона школы) и «На подписании» */
+            approvalRound: number | null;
         };
         Me: {
             /** Format: uuid */
@@ -4876,6 +4926,7 @@ export interface components {
             /** Format: uuid */
             stageId: string;
             stageName: string;
+            /** @description Комментарий обязателен по шаблону или потому что это возврат на прежний этап (для любого шаблона) */
             commentRequired: boolean;
         };
         InteractionStageTransition: {
@@ -5112,10 +5163,21 @@ export interface components {
                 /** Format: uuid */
                 ownerManagerId: string;
             }[];
+            /** @description Одна передаточная записка на всю передачу; пишется в историю назначений каждого вуза */
+            handoverNote?: string | null;
         };
         OrganizationBulkAssignmentResult: {
             assigned: components["schemas"]["OrganizationAssignmentResult"][];
             unchangedOrganizationIds: string[];
+        };
+        ManagerDeputyResult: {
+            assigned: components["schemas"]["OrganizationDeputy"][];
+            skipped: {
+                /** Format: uuid */
+                organizationId: string;
+                organizationName: string;
+                reason: string;
+            }[];
         };
         OrganizationDeputyCreate: {
             /** Format: uuid */
@@ -5273,6 +5335,10 @@ export interface components {
             agreementValidUntil?: string | null;
             /** @description Обучение по данным LMS; null — у работы нет потоков занятий студентов с датами */
             learning?: components["schemas"]["WorkLearning"] | null;
+            /** @description Согласование того же договора; null — договора нет или он не на согласовании */
+            agreementApproval?: components["schemas"]["AgreementApproval"] | null;
+            /** @description Текущий этап — этап договора, а договор на согласовании, корректировке или подписании. Такая работа не входит в «на этапе дольше N дней»: срок контролируют пороги согласования */
+            stageUnderApproval: boolean;
         };
         /** @description Последние снимки идущих потоков занятий студентов работы (без учёта периода отчёта) и действующие, не скрытые сигналы LMS. Персональных данных нет. */
         WorkLearning: {
@@ -5524,6 +5590,18 @@ export interface components {
             agreementNoticeDays: number;
             /** @description Договоры «Действует» области видимости со сроком не позже сегодня + agreementNoticeDays, включая истёкшие */
             expiringAgreements: components["schemas"]["ReminderAgreement"][];
+            feed: components["schemas"]["ReminderFeed"];
+        };
+        /** @description Итоги групп ленты «Моей работы» по всей области видимости, без ограничения длины списков. Группы активных работ считаются по правилу отбора due списка взаимодействий (OVERDUE, TODAY, THIS_WEEK, LATER, NO_NEXT_STEP), поэтому каждое число равно total списка с тем же отбором. Приостановленные работы: resumeDue — дата возврата сегодня или раньше по Москве, resumeNoDate — дата возврата не задана. */
+        ReminderFeed: {
+            overdue: number;
+            today: number;
+            /** @description Включая today */
+            thisWeek: number;
+            later: number;
+            noNextStep: number;
+            resumeDue: number;
+            resumeNoDate: number;
         };
         ReminderAgreement: {
             /** Format: uuid */
@@ -5654,6 +5732,11 @@ export interface components {
             /** @enum {string} */
             status: "ACTIVE" | "PAUSED" | "COMPLETED";
             reason?: string | null;
+            /**
+             * Format: date
+             * @description Дата повторного касания; обязательна для PAUSED, для других статусов не учитывается
+             */
+            resumeOn?: string | null;
         };
         InteractionFlagsUpdate: {
             version: number;
@@ -7648,7 +7731,9 @@ export interface components {
         AgreementRegistryManager: string;
         /** @description Срок действия истекает не позже этой даты */
         AgreementRegistryExpiresBefore: string;
-        /** @description Только договоры в статусе «На согласовании» дольше этого числа дней (в отчёте по умолчанию 30) */
+        /** @description Только договоры, у которых согласование затянулось (цвет YELLOW или RED) */
+        AgreementRegistryDelayed: boolean;
+        /** @description Только договоры в статусе «На согласовании» дольше этого числа дней */
         AgreementRegistryReviewLonger: number;
         /** @description Начало периода (по умолчанию 1 января текущего года, МСК) */
         AgreementPeriodFrom: string;
@@ -7878,6 +7963,8 @@ export interface operations {
                 requiresAssignment?: boolean;
                 /** @description Состояние организации; по умолчанию CURRENT — действующие и ожидающие подтверждения */
                 status?: "CURRENT" | "PENDING" | "ARCHIVED" | "ALL";
+                /** @description Без служебной организации «Открытый набор (физлица)», как в числах «Контроля»; так список запрашивает раздел «Вузы» */
+                excludeService?: boolean;
             };
             header?: never;
             path?: never;
@@ -8543,6 +8630,41 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    assignManagerDeputy: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationDeputyCreate"];
+            };
+        };
+        responses: {
+            /** @description Созданные замещения и пропущенные вузы */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagerDeputyResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     getTeamIndicators: {
         parameters: {
             query?: {
@@ -8705,7 +8827,7 @@ export interface operations {
                 from?: components["parameters"]["AgreementPeriodFrom"];
                 /** @description Конец периода включительно (по умолчанию сегодня, МСК) */
                 to?: components["parameters"]["AgreementPeriodTo"];
-                /** @description Только договоры в статусе «На согласовании» дольше этого числа дней (в отчёте по умолчанию 30) */
+                /** @description Только договоры в статусе «На согласовании» дольше этого числа дней */
                 reviewLongerThanDays?: components["parameters"]["AgreementRegistryReviewLonger"];
             };
             header?: never;
@@ -8737,7 +8859,7 @@ export interface operations {
                 from?: components["parameters"]["AgreementPeriodFrom"];
                 /** @description Конец периода включительно (по умолчанию сегодня, МСК) */
                 to?: components["parameters"]["AgreementPeriodTo"];
-                /** @description Только договоры в статусе «На согласовании» дольше этого числа дней (в отчёте по умолчанию 30) */
+                /** @description Только договоры в статусе «На согласовании» дольше этого числа дней */
                 reviewLongerThanDays?: components["parameters"]["AgreementRegistryReviewLonger"];
             };
             header?: never;
@@ -9199,8 +9321,8 @@ export interface operations {
                 sort?: components["parameters"]["InteractionSort"];
                 /** @description Часть названия взаимодействия или вуза без учёта регистра */
                 q?: string;
-                /** @description OVERDUE — срок следующего шага прошёл, даже если текст шага не задан; THIS_WEEK — шаг и срок заданы, срок на текущей неделе по Москве (понедельник–воскресенье); NO_NEXT_STEP — нет текста шага или его срока */
-                due?: "OVERDUE" | "THIS_WEEK" | "NO_NEXT_STEP";
+                /** @description Одна работа попадает ровно в одно из OVERDUE, NO_NEXT_STEP, THIS_WEEK, LATER — то же правило, что у «Контроля». OVERDUE — срок следующего шага прошёл, даже если текст шага не задан; TODAY — шаг и срок заданы, срок не прошёл и приходится на сегодня по Москве; THIS_WEEK — шаг и срок заданы, срок не прошёл и приходится на текущую неделю по Москве (понедельник–воскресенье), включая сегодня; LATER — шаг задан, срок после текущей недели; NO_NEXT_STEP — срок не прошёл, но нет текста шага или его срока */
+                due?: "OVERDUE" | "TODAY" | "THIS_WEEK" | "LATER" | "NO_NEXT_STEP";
                 /** @description Точное название текущего этапа */
                 stage?: string;
                 /** @description Статус работы; без параметра показываются только активные работы, ALL снимает отбор */
@@ -11066,8 +11188,10 @@ export interface operations {
                 managerId?: components["parameters"]["AgreementRegistryManager"];
                 /** @description Срок действия истекает не позже этой даты */
                 expiresBefore?: components["parameters"]["AgreementRegistryExpiresBefore"];
-                /** @description Только договоры в статусе «На согласовании» дольше этого числа дней (в отчёте по умолчанию 30) */
+                /** @description Только договоры в статусе «На согласовании» дольше этого числа дней */
                 reviewLongerThanDays?: components["parameters"]["AgreementRegistryReviewLonger"];
+                /** @description Только договоры, у которых согласование затянулось (цвет YELLOW или RED) */
+                delayed?: components["parameters"]["AgreementRegistryDelayed"];
             };
             header?: never;
             path?: never;
@@ -11100,8 +11224,10 @@ export interface operations {
                 managerId?: components["parameters"]["AgreementRegistryManager"];
                 /** @description Срок действия истекает не позже этой даты */
                 expiresBefore?: components["parameters"]["AgreementRegistryExpiresBefore"];
-                /** @description Только договоры в статусе «На согласовании» дольше этого числа дней (в отчёте по умолчанию 30) */
+                /** @description Только договоры в статусе «На согласовании» дольше этого числа дней */
                 reviewLongerThanDays?: components["parameters"]["AgreementRegistryReviewLonger"];
+                /** @description Только договоры, у которых согласование затянулось (цвет YELLOW или RED) */
+                delayed?: components["parameters"]["AgreementRegistryDelayed"];
             };
             header?: never;
             path?: never;

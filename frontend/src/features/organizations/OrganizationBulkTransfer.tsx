@@ -43,6 +43,7 @@ export const OrganizationBulkTransfer = ({
   const [commandState, setCommandState] = useState<CommandState>({ kind: 'idle' })
   const [targets, setTargets] = useState<Record<string, string>>({})
   const [common, setCommon] = useState('')
+  const [note, setNote] = useState('')
   const commandKey = useRef<string | null>(null)
   const dialogRef = useRef<HTMLDialogElement>(null)
   const titleId = useId()
@@ -117,13 +118,15 @@ export const OrganizationBulkTransfer = ({
             organizationId: organization.id,
             version: organization.version,
             ownerManagerId: targetOf(organization)
-          }))
+          })),
+          handoverNote: note.trim() || null
         },
         commandKey.current ?? (commandKey.current = createIdempotencyKey())
       )
       commandKey.current = null
       setTargets({})
       setCommon('')
+      setNote('')
       setCommandState({ kind: 'done', assigned: result.assigned.length, unchanged: result.unchangedOrganizationIds.length })
       await onTransferred()
     } catch (error) {
@@ -189,6 +192,17 @@ export const OrganizationBulkTransfer = ({
               </li>
             ))}
           </ul>
+          <label>
+            Передаточная записка
+            <textarea
+              value={note}
+              maxLength={2000}
+              disabled={saving}
+              placeholder="Этапы, договор, контакты, открытые проблемы, обещания вузу"
+              onChange={(event) => edit(() => setNote(event.target.value))}
+            />
+            <span className="interaction-field-hint">Необязательно. Одна записка на всю передачу попадёт в историю каждого вуза.</span>
+          </label>
           <button type="submit" disabled={!ready || saving}>{saving ? 'Передаём…' : 'Передать выбранные'}</button>
         </form>
       )}
@@ -221,6 +235,7 @@ export const OrganizationBulkTransfer = ({
             </li>
           ))}
         </ul>
+        {note.trim() !== '' && <p>Записка в историю каждого вуза: «{note.trim()}»</p>}
         <p>Новые ответственные получат доступ к вузам и всей истории, прежние — потеряют. Все передачи выполняются одной командой: если одна не пройдёт, не изменится ни один вуз.</p>
         <div className="confirm-dialog__actions">
           <button type="button" className="button--secondary" onClick={() => setCommandState({ kind: 'idle' })}>Отмена</button>

@@ -8,6 +8,7 @@ export type ControlOptions = {
   programs: FilterOption[]
   products: FilterOption[]
   managers: FilterOption[]
+  activeManagers: FilterOption[]
   stages: FilterOption[]
   organizationList: Organization[]
 }
@@ -50,6 +51,7 @@ export const loadControlOptions = async (): Promise<ControlOptions> => {
       id: manager.id,
       label: manager.active ? manager.displayName : `${manager.displayName} (неактивен)`
     })),
+    activeManagers: managers.filter((manager) => manager.active).map((manager) => ({ id: manager.id, label: manager.displayName })),
     stages: stages.map((stage) => ({ id: stage, label: stage })),
     organizationList: organizations
   }

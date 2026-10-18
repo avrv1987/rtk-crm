@@ -149,11 +149,11 @@ $dry_run || seeded=true
 
 if $dry_run; then
     printf '[dry-run] would write %s/night.env with PUBLIC_ORIGIN=%s\n' "$state_dir" "$public_origin"
-    printf '[dry-run] would run: docker run -d --name %s --network host -v %s:/opt/rtk-crm -w /opt/rtk-crm -e LOAD_HTTP_LOGIN=1 -e LOAD_USERS=%s -e LOAD_DURATION_S=%s -e LOAD_REPORT_BURSTS=%s -e LOAD_SUMMARY_FILE=%s %s node scripts/load/load-test.mjs .load-test/night.env\n' \
-        "$load_container" "$project_root" "$load_users" "$load_duration_s" "$load_report_bursts" "$generator_summary" "$node_image"
+    printf '[dry-run] would run: docker run -d --name %s --network host -v %s:/opt/rtk-crm -w /opt/rtk-crm -e LOAD_HTTP_LOGIN=1 -e LOAD_USERS=%s -e LOAD_DURATION_S=%s -e LOAD_REPORT_BURSTS=%s -e LOAD_MIN_SESSIONS=%s -e LOAD_SUMMARY_FILE=%s %s node scripts/load/load-test.mjs .load-test/night.env\n' \
+        "$load_container" "$project_root" "$load_users" "$load_duration_s" "$load_report_bursts" "$load_users" "$generator_summary" "$node_image"
     printf '[dry-run] would monitor the neighbor service (%s, max %ss) and host free memory (min %sMB) every %ss, stop the container early on breach\n' \
         "${neighbor_url:-none}" "$neighbor_max_s" "$min_free_mb" "$check_interval_s"
-    printf '[dry-run] would read %s and exit with code 1 when it is missing or starts with "ошибка генератора:"\n' "$generator_summary"
+    printf '[dry-run] would read %s and exit with code 1 when it is missing, starts with "ошибка генератора:" or reports unmet NFR limits\n' "$generator_summary"
     exit 0
 fi
 
@@ -167,6 +167,7 @@ docker run -d --name "$load_container" --network host \
     -e LOAD_USERS="$load_users" \
     -e LOAD_DURATION_S="$load_duration_s" \
     -e LOAD_REPORT_BURSTS="$load_report_bursts" \
+    -e LOAD_MIN_SESSIONS="$load_users" \
     -e LOAD_SUMMARY_FILE="$generator_summary" \
     "$node_image" \
     node scripts/load/load-test.mjs .load-test/night.env >/dev/null
@@ -186,6 +187,7 @@ if [[ -n $abort_reason ]]; then
 fi
 if [[ $generator_exit != 0 || -z $run_result || $run_result == "ошибка генератора:"* ]]; then
     exit_reason=${run_result%%$'\n'*}
-    [[ $exit_reason == "ошибка генератора:"* ]] || exit_reason="ошибка генератора: код $generator_exit, итога нет, см. $log_file"
+    [[ $exit_reason == "ошибка генератора:"* || $exit_reason == "пороги НФТ не выполнены:"* ]] \
+        || exit_reason="ошибка генератора: код $generator_exit, итога нет, см. $log_file"
     exit 1
 fi

@@ -115,7 +115,9 @@ public class OrganizationAssignmentService {
         List<OrganizationBulkAssignmentRequest.Item> items = validatedItems(request);
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
         String auditRequestId = requiredRequestId(requestId);
-        String fingerprint = CommandFingerprint.of(objectMapper, items);
+        // Одна записка на всю передачу попадает в историю каждого вуза.
+        String handoverNote = optionalHandoverNote(request.handoverNote());
+        String fingerprint = CommandFingerprint.of(objectMapper, new BulkAssignmentCommand(items, handoverNote));
         UUID commandId = UUID.randomUUID();
         OffsetDateTime now = OffsetDateTime.now();
         if (!commandIdempotencyRepository.reserve(
@@ -163,7 +165,7 @@ public class OrganizationAssignmentService {
                     organization,
                     item.version(),
                     item.ownerManagerId(),
-                    null,
+                    handoverNote,
                     commandId,
                     actorDisplayName,
                     auditRequestId,
@@ -450,6 +452,9 @@ public class OrganizationAssignmentService {
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Organization assignment command result cannot be stored", exception);
         }
+    }
+
+    private record BulkAssignmentCommand(List<OrganizationBulkAssignmentRequest.Item> items, String handoverNote) {
     }
 
     private record AssignmentCommand(UUID organizationId, int version, UUID ownerManagerId, String handoverNote) {

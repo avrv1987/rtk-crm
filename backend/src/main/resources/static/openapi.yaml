@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: CRM ИТ Школы РТК — REST API
-  version: 2.2.0
+  version: 2.3.0
   description: |
     API веб-клиента CRM и точка интеграции с корпоративными системами.
 
@@ -200,6 +200,13 @@ paths:
             type: string
             enum: [CURRENT, PENDING, ARCHIVED, ALL]
             default: CURRENT
+        - name: excludeService
+          in: query
+          required: false
+          description: Без служебной организации «Открытый набор (физлица)», как в числах «Контроля»; так список запрашивает раздел «Вузы»
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Организации, видимые в текущей серверной бизнес-области, отфильтрованные и подсчитанные на сервере
@@ -917,6 +924,42 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/managers/{id}/deputies:
+    post:
+      tags: [Catalog]
+      summary: Назначить заместителя на все вузы КАМ
+      operationId: assignManagerDeputy
+      description: >-
+        Отпуск или больничный КАМ: руководитель своей команды одной командой создаёт замещение на период по каждому
+        действующему вузу КАМ. Правила те же, что у замещения по одному вузу. Вуз, где замещение уже есть, пропускается
+        и возвращается в skipped с причиной. КАМ другой команды или вызов не руководителем — 403.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationDeputyCreate'
+      responses:
+        '200':
+          description: Созданные замещения и пропущенные вузы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagerDeputyResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/work/team-indicators:
     get:
       tags: [Work]
@@ -1150,7 +1193,8 @@ paths:
       operationId: getAgreementPeriodReport
       description: >-
         Переходы статусов за период, подписанные (дата подписания в периоде) и расторгнутые договоры, среднее время
-        согласования (от отправки на согласование до подписания) и договоры, которые сейчас на согласовании дольше N дней.
+        согласования (от отправки на согласование до подписания) и договоры, у которых согласование затянулось по порогам
+        (AgreementApproval); с reviewLongerThanDays — договоры на согласовании дольше N дней.
         Область данных как у реестра; администратор и представитель вуза получают 403.
       parameters:
         - $ref: '#/components/parameters/AgreementPeriodFrom'
@@ -1393,7 +1437,7 @@ paths:
       tags: [Work]
       summary: Сводка напоминаний на сегодня
       operationId: getReminders
-      description: Для КАМ и руководителя в их области. Просроченные и наступающие (app.work.upcoming-days) шаги незавершённых работ, истекающие лицензии и следующий цикл повышения квалификации; списки ограничены app.work.reminder-list-limit, итоги считаются полностью.
+      description: Для КАМ и руководителя в их области. Просроченные и наступающие (app.work.upcoming-days) шаги незавершённых работ, истекающие лицензии и следующий цикл повышения квалификации; списки ограничены app.work.reminder-list-limit, итоги считаются полностью. feed — итоги групп ленты «Моей работы».
       responses:
         '200':
           description: Дайджест напоминаний текущего профиля
@@ -1656,10 +1700,15 @@ paths:
         - name: due
           in: query
           required: false
-          description: OVERDUE — срок следующего шага прошёл, даже если текст шага не задан; THIS_WEEK — шаг и срок заданы, срок на текущей неделе по Москве (понедельник–воскресенье); NO_NEXT_STEP — нет текста шага или его срока
+          description: >-
+            Одна работа попадает ровно в одно из OVERDUE, NO_NEXT_STEP, THIS_WEEK, LATER — то же правило, что у «Контроля».
+            OVERDUE — срок следующего шага прошёл, даже если текст шага не задан; TODAY — шаг и срок заданы, срок не прошёл и
+            приходится на сегодня по Москве; THIS_WEEK — шаг и срок заданы, срок не прошёл и приходится на текущую неделю
+            по Москве (понедельник–воскресенье), включая сегодня; LATER — шаг задан, срок после текущей недели;
+            NO_NEXT_STEP — срок не прошёл, но нет текста шага или его срока
           schema:
             type: string
-            enum: [OVERDUE, THIS_WEEK, NO_NEXT_STEP]
+            enum: [OVERDUE, TODAY, THIS_WEEK, LATER, NO_NEXT_STEP]
         - name: stage
           in: query
           required: false
@@ -2546,7 +2595,9 @@ paths:
       operationId: changeInteractionStatus
       x-implementation-stage: 4
       description: >-
-        Приостанавливает, завершает или возобновляет работу. PAUSED требует причину, COMPLETED требует итог, ACTIVE
+        Приостанавливает, завершает или возобновляет работу. PAUSED требует причину и дату возврата resumeOn (позже
+        сегодняшней, не дальше двух лет): она записывается следующим шагом «Вернуться к работе после приостановки» на 9:00
+        по Москве этой даты. COMPLETED требует итог, ACTIVE
         принимает необязательный комментарий. Приостановленная и завершённая работа уходит из списка «Моя работа» по
         умолчанию, но сохраняет историю, остаётся в карточке организации и в отчётах. Пишет одно событие истории STATUS_CHANGED.
       parameters:
@@ -3599,6 +3650,7 @@ paths:
         - $ref: '#/components/parameters/AgreementRegistryManager'
         - $ref: '#/components/parameters/AgreementRegistryExpiresBefore'
         - $ref: '#/components/parameters/AgreementRegistryReviewLonger'
+        - $ref: '#/components/parameters/AgreementRegistryDelayed'
       responses:
         '200':
           description: Строки реестра, сначала дольше всего в текущем статусе
@@ -3628,6 +3680,7 @@ paths:
         - $ref: '#/components/parameters/AgreementRegistryManager'
         - $ref: '#/components/parameters/AgreementRegistryExpiresBefore'
         - $ref: '#/components/parameters/AgreementRegistryReviewLonger'
+        - $ref: '#/components/parameters/AgreementRegistryDelayed'
       responses:
         '200':
           description: Файл XLSX; Content-Disposition содержит имя файла в UTF-8 (filename*)
@@ -7516,11 +7569,19 @@ components:
       schema:
         type: string
         format: date
+    AgreementRegistryDelayed:
+      name: delayed
+      in: query
+      required: false
+      description: Только договоры, у которых согласование затянулось (цвет YELLOW или RED)
+      schema:
+        type: boolean
+        default: false
     AgreementRegistryReviewLonger:
       name: reviewLongerThanDays
       in: query
       required: false
-      description: Только договоры в статусе «На согласовании» дольше этого числа дней (в отчёте по умолчанию 30)
+      description: Только договоры в статусе «На согласовании» дольше этого числа дней
       schema:
         type: integer
         minimum: 1
@@ -8539,7 +8600,7 @@ components:
     AgreementFile:
       type: object
       required: [id, agreementId, supplementId, versionNumber, originalName, mediaType, sizeBytes, status, downloadable, comment,
-                 createdByName, createdAt, interactionTitle]
+                 createdByName, createdAt, interactionTitle, signed]
       properties:
         id:
           type: string
@@ -8577,6 +8638,11 @@ components:
         interactionTitle:
           type: [string, 'null']
           description: Версия взята из документов этой работы
+        signed:
+          type: boolean
+          description: >-
+            Подписанная версия — последняя скачиваемая версия файла договора, загруженная до перехода в «Действует»;
+            скачивается с пометкой «(подписанная)» в имени файла
     AgreementSupplement:
       type: object
       required: [id, agreementId, number, concludedOn, subject, status, version, currentFile, files]
@@ -8728,7 +8794,7 @@ components:
     AgreementRegistryRow:
       type: object
       required: [id, organizationId, organizationName, number, status, statusChangedAt, daysInStatus, sentOn, concludedOn, validUntil,
-                 subject, managerId, managerName]
+                 subject, managerId, managerName, approval]
       properties:
         id:
           type: string
@@ -8766,6 +8832,10 @@ components:
           format: uuid
         managerName:
           type: [string, 'null']
+        approval:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementApproval'
+            - type: 'null'
     AgreementPeriodTransition:
       type: object
       required: [occurredAt, agreementId, organizationName, number, fromStatus, toStatus, actorName, comment]
@@ -8827,8 +8897,9 @@ components:
           type: string
           format: date
         longerThanDays:
-          type: integer
+          type: [integer, 'null']
           minimum: 1
+          description: Задано в запросе — прежний отбор «На согласовании дольше N дней»; null — «Согласование затянулось» по порогам
         notes:
           type: array
           items:
@@ -8849,7 +8920,7 @@ components:
             $ref: '#/components/schemas/AgreementRegistryRow'
         longReview:
           type: array
-          description: Сейчас на согласовании дольше longerThanDays дней
+          description: Согласование затянулось (цвет YELLOW или RED), а если задан longerThanDays — на согласовании дольше этого числа дней
           items:
             $ref: '#/components/schemas/AgreementRegistryRow'
     AgreementPlanKind:
@@ -9034,7 +9105,7 @@ components:
       type: object
       required: [id, organizationId, organizationName, number, concludedOn, validUntil, sentOn, plannedKind, plannedOn, parties,
                  status, statusChangedAt, universitySigner, schoolSigner, interactions, programs, products, directions, currentFile,
-                 files, supplements, history, transitions, version, createdAt, updatedAt, activities]
+                 files, supplements, history, transitions, version, createdAt, updatedAt, activities, approval]
       properties:
         id:
           type: string
@@ -9129,6 +9200,41 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AgreementActivity'
+        approval:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementApproval'
+            - type: 'null'
+    AgreementApproval:
+      type: object
+      description: >-
+        Согласование договора по порогам app.agreements.approval (по умолчанию у вуза 42 дня в первом круге и 21 в следующих,
+        у школы 7 дней; общий срок — жёлтый с 60-го дня, красный с 90-го). Дни календарные, без исключённых месяцев
+        (по умолчанию июль и август). Есть только у договоров «На согласовании», «На корректировке» и «На подписании».
+      required: [side, round, sideDays, sideLimitDays, totalDays, color]
+      properties:
+        side:
+          type: string
+          enum: [UNIVERSITY, SCHOOL, SIGNING]
+          description: UNIVERSITY — «На согласовании» (сторона вуза), SCHOOL — «На корректировке» (сторона школы), SIGNING — на подписании
+        round:
+          type: integer
+          minimum: 1
+          description: Номер прохода «На согласовании» по истории статусов
+        sideDays:
+          type: integer
+          minimum: 0
+          description: Дней на стороне с последней смены статуса
+        sideLimitDays:
+          type: [integer, 'null']
+          description: Норма стороны; null на подписании
+        totalDays:
+          type: integer
+          minimum: 0
+          description: Дней от отправки на согласование
+        color:
+          type: string
+          enum: [NORMAL, YELLOW, RED]
+          description: YELLOW — дольше нормы стороны или общий срок с 60-го дня; RED — общий срок с 90-го дня
     AgreementActivity:
       type: object
       required: [id, agreementId, kindId, kindName, title, unit, plannedVolume, actualVolume, plannedStart, plannedEnd,
@@ -9420,13 +9526,19 @@ components:
               type: string
               enum: [UNIVERSITY, SCHOOL, COLLEGE, OPEN_ENROLLMENT]
         manager:
-          description: Ответственный КАМ; null, если не назначен. Почты и телефона в профиле CRM нет
+          description: >-
+            Ответственный КАМ этого вуза; null, если не назначен. Почта и телефон берутся из учётной записи Keycloak
+            (атрибут phone_number или phone); если их нет или Keycloak недоступен — null
           anyOf:
             - type: object
-              required: [name]
+              required: [name, email, phone]
               properties:
                 name:
                   type: string
+                email:
+                  type: [string, 'null']
+                phone:
+                  type: [string, 'null']
             - type: 'null'
         works:
           type: array
@@ -9514,7 +9626,7 @@ components:
     PartnerAgreement:
       type: object
       description: Договор вуза на любой стадии, кроме «Проект»; файлы договора вузу не показываются
-      required: [id, number, subject, concludedOn, validUntil, status, statusChangedAt]
+      required: [id, number, subject, concludedOn, validUntil, status, statusChangedAt, approvalRound]
       properties:
         id:
           type: string
@@ -9538,6 +9650,12 @@ components:
           type: [string, 'null']
           format: date-time
           description: Когда договор перешёл в текущий статус
+        approvalRound:
+          type: [integer, 'null']
+          minimum: 1
+          description: >-
+            Круг согласования — номер прохода «На согласовании»; только для «На согласовании» (сторона вуза),
+            «На корректировке» (сторона школы) и «На подписании»
     Me:
       type: object
       required: [id, role, teamId, teamName, accessRevision, enrolmentOperator]
@@ -10190,6 +10308,7 @@ components:
           type: string
         commentRequired:
           type: boolean
+          description: Комментарий обязателен по шаблону или потому что это возврат на прежний этап (для любого шаблона)
     InteractionStageTransition:
       type: object
       required: [fromStageId, toStageId, commentRequired]
@@ -10631,6 +10750,10 @@ components:
               ownerManagerId:
                 type: string
                 format: uuid
+        handoverNote:
+          type: [string, 'null']
+          maxLength: 2000
+          description: Одна передаточная записка на всю передачу; пишется в историю назначений каждого вуза
     OrganizationBulkAssignmentResult:
       type: object
       required: [assigned, unchangedOrganizationIds]
@@ -10644,6 +10767,27 @@ components:
           items:
             type: string
             format: uuid
+    ManagerDeputyResult:
+      type: object
+      required: [assigned, skipped]
+      properties:
+        assigned:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrganizationDeputy'
+        skipped:
+          type: array
+          items:
+            type: object
+            required: [organizationId, organizationName, reason]
+            properties:
+              organizationId:
+                type: string
+                format: uuid
+              organizationName:
+                type: string
+              reason:
+                type: string
     OrganizationDeputyCreate:
       type: object
       required: [deputyProfileId, startsOn, endsOn]
@@ -10864,7 +11008,7 @@ components:
           type: string
     WorkControlItem:
       type: object
-      required: [interactionId, organizationId, organizationName, title, products, stage, stagePosition, stageTotal, due, problems, risks, transitions, created, completed]
+      required: [interactionId, organizationId, organizationName, title, products, stage, stagePosition, stageTotal, due, problems, risks, transitions, created, completed, stageUnderApproval]
       properties:
         interactionId:
           type: string
@@ -10940,6 +11084,16 @@ components:
             - $ref: '#/components/schemas/WorkLearning'
             - type: 'null'
           description: Обучение по данным LMS; null — у работы нет потоков занятий студентов с датами
+        agreementApproval:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementApproval'
+            - type: 'null'
+          description: Согласование того же договора; null — договора нет или он не на согласовании
+        stageUnderApproval:
+          type: boolean
+          description: >-
+            Текущий этап — этап договора, а договор на согласовании, корректировке или подписании. Такая работа не входит
+            в «на этапе дольше N дней»: срок контролируют пороги согласования
     WorkLearning:
       type: object
       required: [runs, participants, signals, signalTitles]
@@ -11377,7 +11531,7 @@ components:
     ReminderDigest:
       type: object
       required: [enabled, generatedAt, upcomingDays, overdueTotal, dueTodayTotal, upcomingTotal, overdue, upcoming, expiringLicenses, trainingCycles, licenseExpiresBy,
-        qualificationDue, agreementNoticeDays, expiringAgreements]
+        qualificationDue, agreementNoticeDays, expiringAgreements, feed]
       properties:
         enabled:
           type: boolean
@@ -11429,6 +11583,39 @@ components:
           description: Договоры «Действует» области видимости со сроком не позже сегодня + agreementNoticeDays, включая истёкшие
           items:
             $ref: '#/components/schemas/ReminderAgreement'
+        feed:
+          $ref: '#/components/schemas/ReminderFeed'
+    ReminderFeed:
+      type: object
+      description: >-
+        Итоги групп ленты «Моей работы» по всей области видимости, без ограничения длины списков. Группы активных работ
+        считаются по правилу отбора due списка взаимодействий (OVERDUE, TODAY, THIS_WEEK, LATER, NO_NEXT_STEP), поэтому
+        каждое число равно total списка с тем же отбором. Приостановленные работы: resumeDue — дата возврата сегодня
+        или раньше по Москве, resumeNoDate — дата возврата не задана.
+      required: [overdue, today, thisWeek, later, noNextStep, resumeDue, resumeNoDate]
+      properties:
+        overdue:
+          type: integer
+          minimum: 0
+        today:
+          type: integer
+          minimum: 0
+        thisWeek:
+          type: integer
+          minimum: 0
+          description: Включая today
+        later:
+          type: integer
+          minimum: 0
+        noNextStep:
+          type: integer
+          minimum: 0
+        resumeDue:
+          type: integer
+          minimum: 0
+        resumeNoDate:
+          type: integer
+          minimum: 0
     ReminderAgreement:
       type: object
       required: [agreementId, organizationId, organizationName, number, validUntil, plannedKind, plannedOn, ownerManagerName]
@@ -11675,6 +11862,10 @@ components:
         reason:
           type: [string, 'null']
           maxLength: 1000
+        resumeOn:
+          type: [string, 'null']
+          format: date
+          description: Дата повторного касания; обязательна для PAUSED, для других статусов не учитывается
     InteractionFlagsUpdate:
       type: object
       required: [version]

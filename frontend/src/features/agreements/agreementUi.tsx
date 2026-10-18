@@ -2,7 +2,14 @@ import { useCallback, useRef } from 'react'
 import { ApiError, createIdempotencyKey } from '../../shared/api/client'
 import { todayInMoscow } from '../../shared/format/datetime'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
-import { agreementTerm, type AgreementStatus } from './agreementModel'
+import {
+  agreementTerm,
+  approvalColorClass,
+  approvalColorLabels,
+  approvalText,
+  type AgreementApproval,
+  type AgreementStatus
+} from './agreementModel'
 import { formatDate } from './agreementsApi'
 
 export const useAccessErrorHandler = (
@@ -110,6 +117,15 @@ export const CommandError = ({ error, fallback, onRetry, retryLabel = 'Повт�
     </div>
   )
 }
+
+// Цвет согласования по порогам: норма, жёлтый или красный; подсказка — сторона, круг и дни.
+export const ApprovalMark = ({ approval, prefix = '' }: { approval?: AgreementApproval | null; prefix?: string }) => (
+  approval ? (
+    <span className={approvalColorClass[approval.color]} title={approvalText(approval)}>
+      {prefix}{approvalColorLabels[approval.color]}
+    </span>
+  ) : null
+)
 
 type TermMarkProps = {
   agreement: { status: AgreementStatus; validUntil?: string | null }
