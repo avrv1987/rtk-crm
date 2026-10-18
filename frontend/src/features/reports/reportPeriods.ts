@@ -42,6 +42,24 @@ export const matchingPreset = (from: string, to: string, today: string): PeriodP
   periodPresets(today).find((preset) => preset.from === from && preset.to === to)?.id ?? null
 )
 
+// Если в отчёте выбран «Этот месяц» или другой готовый период, при сохранении по умолчанию предлагается он же:
+// иначе сохранённый отчёт навсегда остался бы на датах текущего месяца.
+export const suggestedPeriod = (
+  definition: { from?: string | null; to?: string | null },
+  today: string
+): 'CURRENT_MONTH' | 'PREVIOUS_MONTH' | 'CURRENT_QUARTER' | '' => {
+  switch (matchingPreset(definition.from ?? '', definition.to ?? '', today)) {
+    case 'MONTH':
+      return 'CURRENT_MONTH'
+    case 'PREVIOUS_MONTH':
+      return 'PREVIOUS_MONTH'
+    case 'QUARTER':
+      return 'CURRENT_QUARTER'
+    default:
+      return ''
+  }
+}
+
 type Period = { from: string; to: string }
 
 const noPeriod: Period = { from: '', to: '' }

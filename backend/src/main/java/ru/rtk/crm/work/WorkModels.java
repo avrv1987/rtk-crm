@@ -61,7 +61,21 @@ public final class WorkModels {
             List<ReminderLicense> expiringLicenses,
             List<ReminderTraining> trainingCycles,
             int licenseExpiresBy,
-            List<ReminderQualification> qualificationDue
+            List<ReminderQualification> qualificationDue,
+            int agreementNoticeDays,
+            List<ReminderAgreement> expiringAgreements
+    ) {
+    }
+
+    public record ReminderAgreement(
+            UUID agreementId,
+            UUID organizationId,
+            String organizationName,
+            String number,
+            LocalDate validUntil,
+            String plannedKind,
+            LocalDate plannedOn,
+            String ownerManagerName
     ) {
     }
 

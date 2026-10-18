@@ -1,5 +1,6 @@
 import { ApiError } from '../../shared/api/client'
 import { formatCalendarDate, formatMoscowDateTime, isoFromMoscowInput, todayInMoscow } from '../../shared/format/datetime'
+import { withCount } from '../../shared/format/plural'
 
 export type AccessHandlers = {
   onSessionExpired: () => void
@@ -47,17 +48,7 @@ export const daysSince = (value: string, now: number) => {
   return Number.isNaN(time) ? 0 : Math.max(0, Math.floor((now - time) / dayMilliseconds))
 }
 
-export const daysLabel = (days: number) => {
-  const lastTwo = days % 100
-  const last = days % 10
-  if (last === 1 && lastTwo !== 11) {
-    return `${days} день`
-  }
-  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
-    return `${days} дня`
-  }
-  return `${days} дней`
-}
+export const daysLabel = (days: number) => withCount(days, 'день', 'дня', 'дней')
 
 export const eventTypeLabel = (type: string | null) => {
   switch (type) {

@@ -50,6 +50,7 @@ public class PaidOrderParser {
         for (int index = 0; index < root.size(); index++) {
             int position = index + 1;
             JsonNode item = root.get(index);
+            int issuesBefore = issues.size();
             if (item.isNull()) {
                 emptyElements++;
                 issues.add(new PaidOrderIssue(position, null, "Пустой элемент пропущен"));
@@ -61,6 +62,11 @@ public class PaidOrderParser {
                     byNumber.computeIfAbsent(order.orderNumber(), key -> new ArrayList<>()).add(new Candidate(position, order));
                 }
             }
+            // Оператор ищет запись в файле по номеру заявки, а не по номеру элемента массива.
+            String number = orderNumberOf(item);
+            for (int issue = issuesBefore; number != null && issue < issues.size(); issue++) {
+                issues.set(issue, issues.get(issue).withOrderNumber(number));
+            }
         }
         List<PaidOrder> orders = new ArrayList<>();
         int duplicates = 0;
@@ -71,11 +77,13 @@ public class PaidOrderParser {
                 orders.add(first.order());
                 duplicates += candidates.size() - 1;
                 candidates.stream().skip(1).forEach(candidate -> issues.add(new PaidOrderIssue(
-                        candidate.position(), ORDER_NUMBER, "Повтор заявки с тем же содержимым пропущен"
+                        candidate.position(), ORDER_NUMBER, "Повтор заявки с тем же содержимым пропущен", false,
+                        candidate.order().orderNumber()
                 )));
             } else {
                 candidates.forEach(candidate -> issues.add(new PaidOrderIssue(
-                        candidate.position(), ORDER_NUMBER, "Номер заявки повторяется в файле с разным содержимым; запись не принята"
+                        candidate.position(), ORDER_NUMBER, "Номер заявки повторяется в файле с разным содержимым; запись не принята",
+                        false, candidate.order().orderNumber()
                 )));
             }
         }
@@ -156,6 +164,15 @@ public class PaidOrderParser {
             return null;
         }
         return text;
+    }
+
+    private static String orderNumberOf(JsonNode item) {
+        JsonNode value = item == null || !item.isObject() ? null : item.get(ORDER_NUMBER);
+        if (value == null || !value.isTextual() && !value.isIntegralNumber()) {
+            return null;
+        }
+        String text = LearnerRules.collapseSpaces(value.asText());
+        return text.isEmpty() || text.length() > 100 ? null : text;
     }
 
     private static Integer streamNumber(JsonNode item, int position, List<PaidOrderIssue> issues) {

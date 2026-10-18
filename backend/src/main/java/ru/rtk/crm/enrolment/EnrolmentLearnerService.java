@@ -11,6 +11,7 @@ import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -171,6 +172,12 @@ public class EnrolmentLearnerService {
         if (source.version() != request.version()) {
             throw InteractionConflictException.learnerVersion(source.version());
         }
+        // Перенос удаляет исходную анкету без отката, а опечатка в СНИЛС склеила бы двух разных людей. Поэтому при
+        // расхождении ФИО нужен явный ответ оператора: например, фамилия сменилась, а человек тот же.
+        if (!sameName(source.profile(), target.profile()) && !Boolean.TRUE.equals(request.confirmNameMismatch())) {
+            throw new InteractionValidationException("confirmNameMismatch", "ФИО в анкетах различаются. Проверьте СНИЛС:"
+                    + " перенос объединит анкеты и удалит текущую. Если это один человек, подтвердите перенос");
+        }
         Map<LearnerField, String> changes = new EnumMap<>(LearnerField.class);
         for (LearnerField field : LearnerField.values()) {
             if (target.profile().value(field) == null && source.profile().value(field) != null) {
@@ -208,6 +215,19 @@ public class EnrolmentLearnerService {
         LearnerMoveResult result = new LearnerMoveResult(target.id(), moved, dropped, fields);
         commands.complete(reservation, result);
         return result;
+    }
+
+    // Отчество сверяется, только если оно есть в обеих анкетах: в заявке с сайта его часто нет.
+    static boolean sameName(LearnerProfile source, LearnerProfile target) {
+        String sourceMiddle = nameKey(source.middleName());
+        String targetMiddle = nameKey(target.middleName());
+        return nameKey(source.lastName()).equals(nameKey(target.lastName()))
+                && nameKey(source.firstName()).equals(nameKey(target.firstName()))
+                && (sourceMiddle.isEmpty() || targetMiddle.isEmpty() || sourceMiddle.equals(targetMiddle));
+    }
+
+    private static String nameKey(String value) {
+        return value == null ? "" : LearnerRules.collapseSpaces(value).toLowerCase(Locale.ROOT).replace('ё', 'е');
     }
 
     List<LearnerHistoryEntry> history(CrmProfile actor, String id) {

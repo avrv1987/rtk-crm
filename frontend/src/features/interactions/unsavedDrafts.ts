@@ -16,16 +16,28 @@ const subscribe = (listener: () => void) => {
   }
 }
 
-export const useUnsavedDraft = (key: string, label: string, dirty: boolean) => {
-  useEffect(() => {
-    if (dirty && entries.get(key) !== label) {
-      entries.set(key, label)
-      publish()
-    }
-    if (!dirty && entries.delete(key)) {
-      publish()
-    }
-  }, [dirty, key, label])
+export const forgetUnsavedDraft = (key: string) => {
+  if (entries.delete(key)) {
+    publish()
+  }
+}
+
+export const markUnsavedDraft = (key: string, label: string, dirty: boolean) => {
+  if (!dirty) {
+    forgetUnsavedDraft(key)
+  } else if (entries.get(key) !== label) {
+    entries.set(key, label)
+    publish()
+  }
+}
+
+export const currentUnsavedLabels = () => labels
+
+// forgetOnUnmount: текст живёт только в состоянии компонента (в хранилище не пишется). Если панель закрылась
+// сразу после сохранения, эффект с dirty=false уже не успеет сработать, и метка осталась бы висеть.
+export const useUnsavedDraft = (key: string, label: string, dirty: boolean, forgetOnUnmount = false) => {
+  useEffect(() => markUnsavedDraft(key, label, dirty), [dirty, key, label])
+  useEffect(() => forgetOnUnmount ? () => forgetUnsavedDraft(key) : undefined, [forgetOnUnmount, key])
 }
 
 export const clearUnsavedDrafts = () => {

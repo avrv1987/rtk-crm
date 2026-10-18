@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.CrmProfile;
+import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
 import ru.rtk.crm.catalog.OrganizationHistoryRepository.StoredHistoryItem;
 
 @Service
@@ -42,7 +43,6 @@ public class OrganizationHistoryService {
     }
 
     private OrganizationHistoryItem item(StoredHistoryItem stored) {
-        boolean assignment = stored.kind() == OrganizationHistoryKind.ASSIGNMENT;
         return new OrganizationHistoryItem(
                 stored.id(),
                 stored.kind(),
@@ -52,7 +52,11 @@ public class OrganizationHistoryService {
                 stored.interactionTitle(),
                 stored.fromStageName(),
                 stored.stageName(),
-                assignment ? assignmentText(stored) : null,
+                switch (stored.kind()) {
+                    case ASSIGNMENT -> assignmentText(stored);
+                    case AGREEMENT_STATUS -> agreementText(stored);
+                    default -> null;
+                },
                 stored.comment(),
                 stored.contactId(),
                 stored.contactName(),
@@ -72,7 +76,14 @@ public class OrganizationHistoryService {
         return "Ответственный изменён: " + previous + " → " + next + ".";
     }
 
-    private static String manager(UUID id, String displayName) {
+    private static String agreementText(StoredHistoryItem stored) {
+        String to = AgreementStatus.valueOf(stored.toStatus()).title();
+        return stored.fromStatus() == null
+                ? "Договор № " + stored.agreementNumber() + " внесён: " + to + "."
+                : "Договор № " + stored.agreementNumber() + ": " + AgreementStatus.valueOf(stored.fromStatus()).title() + " → " + to + ".";
+    }
+
+        private static String manager(UUID id, String displayName) {
         if (displayName != null && !displayName.isBlank()) {
             return displayName;
         }

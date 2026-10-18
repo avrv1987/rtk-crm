@@ -89,6 +89,7 @@ class DemoBootstrapCommandTest {
     private final AttachmentService attachmentService = mock(AttachmentService.class);
     private final ProductAgreementService productAgreementService = mock(ProductAgreementService.class);
     private final ru.rtk.crm.agreement.AgreementFileService agreementFileService = mock(ru.rtk.crm.agreement.AgreementFileService.class);
+    private final Map<UUID, Interaction> interactions = new HashMap<>();
 
     @BeforeEach
     void setUp() {
@@ -110,15 +111,44 @@ class DemoBootstrapCommandTest {
         when(interactionService.create(any(), any(InteractionCreateRequest.class), anyString())).thenAnswer(invocation -> {
             InteractionCreateRequest request = invocation.getArgument(1);
             UUID id = UUID.randomUUID();
-            jdbcTemplate.update(
-                    "INSERT INTO interactions (id, organization_id, title, next_action, current_stage_id) VALUES (?, ?, ?, ?, ?)",
-                    id, request.organizationId(), request.title(), request.nextAction(), UUID.randomUUID());
+            List<InteractionStage> stages = new ArrayList<>();
+            for (int order = 0; order < 13; order++) {
+                stages.add(new InteractionStage(UUID.randomUUID(), order == 5 ? "Подписание" : "Этап " + order, order, false));
+            }
+            jdbcTemplate.update("""
+                    INSERT INTO interactions (id, organization_id, title, next_action, current_stage_id) VALUES (?, ?, ?, ?, ?)
+                    """, id, request.organizationId(), request.title(), request.nextAction(), stages.getFirst().id());
+            jdbcTemplate.update("""
+                    INSERT INTO interaction_events (id, interaction_id, type, version, occurred_at)
+                    VALUES (?, ?, 'CREATED', 0, CURRENT_TIMESTAMP)
+                    """, UUID.randomUUID(), id);
             for (UUID productId : request.productIds()) {
                 jdbcTemplate.update("INSERT INTO product_agreements (id, interaction_id, product_id) VALUES (?, ?, ?)",
                         UUID.randomUUID(), id, productId);
             }
-            return null;
+            Interaction created = interaction(id, request.organizationId(), request.title(), stages, 0);
+            interactions.put(id, created);
+            return created;
         });
+        when(interactionService.transition(any(), any(), any(InteractionTransitionRequest.class), anyString())).thenAnswer(invocation -> {
+            UUID id = invocation.getArgument(1);
+            InteractionTransitionRequest request = invocation.getArgument(2);
+            Interaction before = interactions.get(id);
+            assertThat(request.version()).isEqualTo(before.version());
+            jdbcTemplate.update("""
+                    INSERT INTO interaction_events (id, interaction_id, type, version, occurred_at)
+                    VALUES (?, ?, 'TRANSITIONED', ?, CURRENT_TIMESTAMP)
+                    """, UUID.randomUUID(), id, before.version() + 1);
+            jdbcTemplate.update("UPDATE interactions SET version = version + 1, current_stage_id = ? WHERE id = ?",
+                    request.toStageId(), id);
+            InteractionStage target = before.stages().stream().filter(stage -> stage.id().equals(request.toStageId())).findFirst().orElseThrow();
+            Interaction moved = new Interaction(id, before.organizationId(), before.title(), target.id(), target.name(), before.stages(),
+                    List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), List.of(), List.of(), null,
+                    before.version() + 1, UUID.randomUUID(), OffsetDateTime.now(), OffsetDateTime.now(), null, false, null);
+            interactions.put(id, moved);
+            return moved;
+        });
+        when(interactionService.get(any(), any())).thenAnswer(invocation -> interactions.get(invocation.<UUID>getArgument(1)));
         when(interactionIssueService.create(any(), any(), any(InteractionIssueRequest.class), anyString())).thenAnswer(invocation -> {
             InteractionIssueRequest request = invocation.getArgument(2);
             UUID interactionId = invocation.getArgument(1);
@@ -222,6 +252,30 @@ class DemoBootstrapCommandTest {
                 SELECT contract_number, license_expiry_year, transferred_kinds FROM product_agreements ORDER BY contract_number
                 """)).extracting(row -> tuple(row.get("CONTRACT_NUMBER"), row.get("LICENSE_EXPIRY_YEAR"), row.get("TRANSFERRED_KINDS")))
                 .containsExactly(tuple("ДЕМО-А/ЛС-1", 2026, 2), tuple("ДЕМО-А/ЛС-2", 2028, 1));
+    }
+
+    @Test
+    void mainDemoWorkStandsOnTheTransferStageAfterSigningWithTheActiveAgreementAndMovesOnlyOnce() {
+        DemoBootstrapCommand command = command(demo());
+
+        command.run(null);
+        command.run(null);
+
+        verify(interactionService, times(6)).transition(any(), any(), any(InteractionTransitionRequest.class), anyString());
+        Interaction main = interactions.values().iterator().next();
+        assertThat(main.currentStageName()).isEqualTo("Этап 6");
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT ag.number FROM agreements ag JOIN agreement_interactions ai ON ai.agreement_id = ag.id
+                WHERE ai.interaction_id = ?
+                """, String.class, main.id())).containsExactly("ДЕМО-А/2");
+        List<OffsetDateTime> moves = jdbcTemplate.queryForList("""
+                SELECT occurred_at FROM interaction_events WHERE interaction_id = ? AND type = 'TRANSITIONED' ORDER BY version
+                """, OffsetDateTime.class, main.id());
+        assertThat(moves).hasSize(6);
+        assertThat(ChronoUnit.DAYS.between(moves.getLast(), OffsetDateTime.now())).isBetween(30L, 31L);
+        OffsetDateTime created = jdbcTemplate.queryForObject("SELECT created_at FROM interactions WHERE id = ?",
+                OffsetDateTime.class, main.id());
+        assertThat(created).isBefore(moves.getFirst());
     }
 
     @Test
@@ -362,43 +416,6 @@ class DemoBootstrapCommandTest {
 
     @Test
     void controlScenarioAddsWorksOnDifferentStagesWithBackdatedMovesAndRepeatsWithoutDuplicates() {
-        Map<UUID, Interaction> interactions = new HashMap<>();
-        when(interactionService.create(any(), any(InteractionCreateRequest.class), anyString())).thenAnswer(invocation -> {
-            InteractionCreateRequest request = invocation.getArgument(1);
-            UUID id = UUID.randomUUID();
-            List<InteractionStage> stages = new ArrayList<>();
-            for (int order = 0; order < 13; order++) {
-                stages.add(new InteractionStage(UUID.randomUUID(), order == 5 ? "Подписание" : "Этап " + order, order, false));
-            }
-            jdbcTemplate.update("""
-                    INSERT INTO interactions (id, organization_id, title, next_action, current_stage_id) VALUES (?, ?, ?, ?, ?)
-                    """, id, request.organizationId(), request.title(), request.nextAction(), stages.getFirst().id());
-            jdbcTemplate.update("""
-                    INSERT INTO interaction_events (id, interaction_id, type, version, occurred_at)
-                    VALUES (?, ?, 'CREATED', 0, CURRENT_TIMESTAMP)
-                    """, UUID.randomUUID(), id);
-            Interaction created = interaction(id, request.organizationId(), request.title(), stages, 0);
-            interactions.put(id, created);
-            return created;
-        });
-        when(interactionService.transition(any(), any(), any(InteractionTransitionRequest.class), anyString())).thenAnswer(invocation -> {
-            UUID id = invocation.getArgument(1);
-            InteractionTransitionRequest request = invocation.getArgument(2);
-            Interaction before = interactions.get(id);
-            assertThat(request.version()).isEqualTo(before.version());
-            jdbcTemplate.update("""
-                    INSERT INTO interaction_events (id, interaction_id, type, version, occurred_at)
-                    VALUES (?, ?, 'TRANSITIONED', ?, CURRENT_TIMESTAMP)
-                    """, UUID.randomUUID(), id, before.version() + 1);
-            jdbcTemplate.update("UPDATE interactions SET version = version + 1, current_stage_id = ? WHERE id = ?",
-                    request.toStageId(), id);
-            InteractionStage target = before.stages().stream().filter(stage -> stage.id().equals(request.toStageId())).findFirst().orElseThrow();
-            Interaction moved = new Interaction(id, before.organizationId(), before.title(), target.id(), target.name(), before.stages(),
-                    List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), List.of(), List.of(), null,
-                    before.version() + 1, UUID.randomUUID(), OffsetDateTime.now(), OffsetDateTime.now(), null, false, null);
-            interactions.put(id, moved);
-            return moved;
-        });
         List<DemoBootstrapProperties.Identity> identities = new ArrayList<>(DEMO_IDENTITIES);
         identities.add(identity("leader-c", "Руководитель В", UserRole.LEADER, "team-c"));
         List<DemoBootstrapProperties.Team> teams = new ArrayList<>(TEAMS);
@@ -413,7 +430,7 @@ class DemoBootstrapCommandTest {
         command.run(null);
 
         verify(interactionService, times(8)).create(any(), any(InteractionCreateRequest.class), anyString());
-        verify(interactionService, times(33)).transition(any(), any(), any(InteractionTransitionRequest.class), anyString());
+        verify(interactionService, times(39)).transition(any(), any(), any(InteractionTransitionRequest.class), anyString());
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM interactions", Integer.class)).isEqualTo(8);
         assertThat(jdbcTemplate.queryForList("""
                 SELECT o.name, COUNT(*) AS total FROM interactions i JOIN organizations o ON o.id = i.organization_id

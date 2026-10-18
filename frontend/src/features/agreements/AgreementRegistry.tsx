@@ -18,7 +18,7 @@ import {
   type AgreementStatus,
   type RegistryFilters
 } from './agreementModel'
-import { CommandError, useAccessErrorHandler } from './agreementUi'
+import { AgreementTermMark, CommandError, useAccessErrorHandler } from './agreementUi'
 import '../reports/reports.css'
 import './agreements.css'
 
@@ -221,6 +221,7 @@ export const AgreementRegistry = ({ role, onSessionExpired, onProfileUnavailable
                     <td data-label="Вуз">{row.organizationName}</td>
                     <td data-label="Статус" className="agreement-registry__nowrap">
                       <span className={`agreements__status agreements__status--${row.status.toLowerCase()}`}>{agreementStatusLabels[row.status]}</span>
+                      {' '}<AgreementTermMark agreement={row} />
                     </td>
                     <td data-label="В статусе" className="agreement-registry__nowrap">{daysLabel(row.daysInStatus)}</td>
                     <td data-label="Подписан" className="agreement-registry__nowrap">{row.concludedOn ? formatDate(row.concludedOn) : '—'}</td>

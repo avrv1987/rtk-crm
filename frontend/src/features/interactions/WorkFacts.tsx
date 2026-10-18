@@ -1,6 +1,7 @@
 import type { Interaction, Organization } from '../../shared/api/client'
 import { agreementStatusLabels, daysInStatus } from '../agreements/agreementModel'
 import { formatDate, type AgreementSummary } from '../agreements/agreementsApi'
+import { AgreementTermMark } from '../agreements/agreementUi'
 import { formatMoscowDateTime } from './moscowTime'
 import { daysLabel } from './RouteDisclosure'
 import type { AgreementFact } from './workCardModel'
@@ -70,6 +71,7 @@ export const WorkFacts = ({ interaction, organization, stageNumber, daysOnStage,
               <span>
                 <a href={`#/organizations/${agreement.agreement.organizationId}?agreement=${agreement.agreement.id}`}>№ {agreement.agreement.number}</a>
                 {' · '}{agreementStatusLabels[agreement.agreement.status]}
+                {' '}<AgreementTermMark agreement={agreement.agreement} />
               </span>
               <span className="work-facts__sub">{daysLabel(daysInStatus(agreement.agreement.statusChangedAt, Date.now()))} в статусе</span>
             </>

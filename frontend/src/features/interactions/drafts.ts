@@ -1,4 +1,4 @@
-import { clearUnsavedDrafts } from './unsavedDrafts'
+import { clearUnsavedDrafts } from './unsavedDrafts.ts'
 
 export type InteractionStageEditType = 'RENAME' | 'ADD_AFTER' | 'MOVE_AFTER' | 'DELETE'
 
@@ -216,6 +216,16 @@ export const saveInteractionDraft = (profileId: string, organizationId: string, 
   }
   try {
     sessionStorage.setItem(keyFor(profileId, organizationId), JSON.stringify(draft))
+  } catch {
+    return
+  }
+}
+
+// После создания взаимодействия черновик формы удаляется сразу: эффект сохранения пустого состояния может не
+// успеть, если экран уже сменился, и повторное открытие формы подставило бы данные созданной записи.
+export const clearInteractionDraft = (profileId: string, organizationId: string) => {
+  try {
+    storage()?.removeItem(keyFor(profileId, organizationId))
   } catch {
     return
   }

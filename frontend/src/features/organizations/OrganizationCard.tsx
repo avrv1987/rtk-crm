@@ -8,10 +8,11 @@ import {
   type OrganizationStatusChange,
   type PageInteraction
 } from '../../shared/api/client'
+import { todayInMoscow } from '../../shared/format/datetime'
 import { ActionMenu, type ActionMenuItem } from '../../shared/ui/ActionMenu'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
-import { agreementStatusLabels } from '../agreements/agreementModel'
+import { agreementStatusLabels, agreementTerm } from '../agreements/agreementModel'
 import { agreementsApi, formatDate as formatAgreementDate, type AgreementSummary } from '../agreements/agreementsApi'
 import { CardDialog } from '../interactions/cardUi'
 import { formatMoscowDateTime } from '../interactions/moscowTime'
@@ -25,7 +26,6 @@ type StatusAction = OrganizationStatusChange['action']
 type OrganizationCardHeaderProps = {
   organization: Organization
   role: Me['role']
-  profileId: string
   headingRef: Ref<HTMLHeadingElement>
   onChanged: (organization: Organization, message: string) => void
   onOpenAssignment: (part: 'assignment' | 'deputy') => void
@@ -56,7 +56,6 @@ const statusChipClass: Record<Organization['status'], string> = {
 export const OrganizationCardHeader = ({
   organization,
   role,
-  profileId,
   headingRef,
   onChanged,
   onOpenAssignment,
@@ -68,7 +67,8 @@ export const OrganizationCardHeader = ({
   const [error, setError] = useState<unknown>(undefined)
   const statusKey = useRef<{ action: StatusAction; key: string } | null>(null)
   const isLeader = role === 'LEADER'
-  const canArchive = organization.status !== 'ARCHIVED' && (isLeader || organization.ownerManagerId === profileId)
+  // Архивирует руководитель: КАМ и заместитель вуз сами не архивируют (решение владельца, сервер отказывает так же).
+  const canArchive = organization.status !== 'ARCHIVED' && isLeader
   const canEdit = isLeader && organization.status !== 'ARCHIVED' && organization.type !== 'OPEN_ENROLLMENT'
   const deputy = deputyLabel(organization)
   const requisites = [
@@ -177,8 +177,8 @@ export const OrganizationCardHeader = ({
         <div className="org-card__banner" role="note">
           <p>
             {isLeader
-              ? 'КАМ завёл организацию и ждёт подтверждения. Проверьте название и реквизиты, затем подтвердите или отклоните заявку.'
-              : 'Организация ждёт подтверждения руководителем команды. Работу с ней можно вести уже сейчас.'}
+              ? 'КАМ завёл вуз и ждёт подтверждения. Проверьте название и реквизиты, затем подтвердите или отклоните заявку.'
+              : 'Вуз ждёт подтверждения руководителем команды. Работу с ним можно вести уже сейчас.'}
           </p>
           {isLeader && (
             <div className="org-card__banner-actions">
@@ -257,6 +257,9 @@ const agreementLine = (agreements: AgreementSummary[]) => {
   const active = agreements
     .filter((agreement) => agreement.status === 'ACTIVE')
     .sort((left, right) => (right.validUntil ?? '9999').localeCompare(left.validUntil ?? '9999'))[0]
+  if (active !== undefined && agreementTerm(active, todayInMoscow()) === 'expired') {
+    return `договор № ${active.number}: срок истёк ${formatAgreementDate(active.validUntil)}`
+  }
   if (active !== undefined) {
     return `договор № ${active.number}${active.validUntil ? ` действует до ${formatAgreementDate(active.validUntil)}` : ' действует'}`
   }

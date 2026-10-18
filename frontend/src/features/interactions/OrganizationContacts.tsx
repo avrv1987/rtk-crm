@@ -14,6 +14,8 @@ import { listPartnerAccess, type PartnerAccess } from '../partner/partnerApi'
 import { changedDraft, conflictKeys, keepDraftValues, mergedValues, parseBasedDraft, takeCurrentValues } from './draftBase'
 import { DraftConflictNotice } from './DraftConflictNotice'
 import { recordOf, textOf, useFormDraft } from './formDraft'
+import { ContactLink } from '../../shared/ui/ContactLink'
+import { emailHref, phoneHref } from '../../shared/format/links'
 import { useUnsavedDraft } from './unsavedDrafts'
 import { commandFailureMessage, contactRoleLabels, contactRoles, formatDateTime, handledAccessError } from './workMarks'
 import './workCard.css'
@@ -253,8 +255,8 @@ const ContactItem = ({
       </div>
       <dl className="contact-card__facts">
         {contact.position && <div><dt>Должность</dt><dd>{contact.position}</dd></div>}
-        {contact.email && <div><dt>Почта</dt><dd>{contact.email}</dd></div>}
-        {contact.phone && <div><dt>Телефон</dt><dd>{contact.phone}</dd></div>}
+        {contact.email && <div><dt>Почта</dt><dd><ContactLink href={emailHref(contact.email)} text={contact.email} /></dd></div>}
+        {contact.phone && <div><dt>Телефон</dt><dd><ContactLink href={phoneHref(contact.phone)} text={contact.phone} /></dd></div>}
         <div>
           <dt>Подтверждение</dt>
           <dd>
@@ -421,7 +423,7 @@ export const OrganizationContacts = ({ contacts, partnerAccess, ...props }: Orga
   }, [loadAccesses, partnerAccess !== undefined])
 
   return contacts.length === 0 ? null : (
-    <ul className="contact-list" aria-label="Контакты организации">
+    <ul className="contact-list" aria-label="Контакты вуза">
       {contacts.map((contact) => (
         <ContactItem
           key={contact.id}

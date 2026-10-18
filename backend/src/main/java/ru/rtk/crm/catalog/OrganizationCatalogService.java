@@ -55,8 +55,18 @@ public class OrganizationCatalogService {
 
     @Transactional(readOnly = true)
     public List<OrganizationDuplicate> findDuplicates(CrmProfile actor, String name, UUID exceptOrganizationId) {
+        return findDuplicates(actor, name, null, exceptOrganizationId);
+    }
+
+    // ИНН сравнивается во всём каталоге, как и точное название: филиал может делить ИНН с головным вузом, поэтому
+    // совпадение только предупреждает и создание не блокирует.
+    @Transactional(readOnly = true)
+    public List<OrganizationDuplicate> findDuplicates(CrmProfile actor, String name, String inn, UUID exceptOrganizationId) {
         String normalized = CatalogNames.normalized(name);
-        if (normalized.length() < 2) {
+        String normalizedInn = inn == null ? "" : inn.replaceAll("\\s", "");
+        boolean byName = normalized.length() >= 2;
+        boolean byInn = normalizedInn.matches("\\d{10}|\\d{12}");
+        if (!byName && !byInn) {
             return List.of();
         }
         List<OrganizationDuplicate> duplicates = new ArrayList<>();
@@ -65,18 +75,20 @@ public class OrganizationCatalogService {
                 continue;
             }
             String other = CatalogNames.normalized(row.name());
-            boolean exact = other.equals(normalized);
-            boolean similar = !exact && Math.min(other.length(), normalized.length()) >= SIMILAR_MIN_LENGTH
+            boolean exact = byName && other.equals(normalized);
+            boolean similar = byName && !exact && Math.min(other.length(), normalized.length()) >= SIMILAR_MIN_LENGTH
                     && (other.contains(normalized) || normalized.contains(other));
+            boolean sameInn = byInn && normalizedInn.equals(row.inn());
             boolean visible = visibleTo(actor, row);
-            if (exact || (similar && visible)) {
+            if (exact || sameInn || (similar && visible)) {
                 duplicates.add(new OrganizationDuplicate(
-                        visible ? row.id() : null, row.name(), row.type(), row.status(), row.teamName(), exact
+                        visible ? row.id() : null, row.name(), row.type(), row.status(), row.teamName(), exact, sameInn
                 ));
             }
         }
         return duplicates.stream()
                 .sorted(Comparator.comparing((OrganizationDuplicate duplicate) -> !duplicate.exact())
+                        .thenComparing((OrganizationDuplicate duplicate) -> !duplicate.sameInn())
                         .thenComparing(OrganizationDuplicate::name))
                 .limit(DUPLICATES_LIMIT)
                 .toList();
@@ -229,7 +241,7 @@ public class OrganizationCatalogService {
                     );
                     List<String> changes = details.changesFrom(previous);
                     if (changes.isEmpty()) {
-                        throw new InteractionValidationException("body", "Данные организации не изменились");
+                        throw new InteractionValidationException("body", "Данные вуза не изменились");
                     }
                     if (!CatalogNames.normalized(previous.name()).equals(CatalogNames.normalized(details.name()))) {
                         catalogChangeEventRepository.lockNames(CatalogEntityType.ORGANIZATION);
@@ -296,13 +308,16 @@ public class OrganizationCatalogService {
                     throw new CatalogChangeAccessDeniedException();
                 }
                 if (current.status() != OrganizationStatus.PENDING) {
-                    throw new InteractionValidationException("action", "Организация не ожидает подтверждения");
+                    throw new InteractionValidationException("action", "Вуз не ожидает подтверждения");
                 }
                 yield action == OrganizationStatusAction.APPROVE ? OrganizationStatus.ACTIVE : OrganizationStatus.ARCHIVED;
             }
             case ARCHIVE -> {
+                if (manager) {
+                    throw new CatalogChangeAccessDeniedException();
+                }
                 if (current.status() == OrganizationStatus.ARCHIVED) {
-                    throw new InteractionValidationException("action", "Организация уже в архиве");
+                    throw new InteractionValidationException("action", "Вуз уже в архиве");
                 }
                 yield OrganizationStatus.ARCHIVED;
             }
@@ -311,11 +326,11 @@ public class OrganizationCatalogService {
                     throw new CatalogChangeAccessDeniedException();
                 }
                 if (current.status() != OrganizationStatus.ARCHIVED) {
-                    throw new InteractionValidationException("action", "Организация не в архиве");
+                    throw new InteractionValidationException("action", "Вуз не в архиве");
                 }
                 if (!adminOrganizationRepository.activeTeamExists(current.teamId())) {
                     throw new InteractionValidationException(
-                            "action", "Команда организации в архиве: восстановите команду или перенесите организацию"
+                            "action", "Команда вуза в архиве: восстановите команду или перенесите вуз"
                     );
                 }
                 yield OrganizationStatus.ACTIVE;
@@ -334,7 +349,7 @@ public class OrganizationCatalogService {
 
     private AdminOrganization lockManageable(CrmProfile actor, UUID organizationId) {
         if (organizationId == null) {
-            throw new InteractionValidationException("id", "Укажите организацию");
+            throw new InteractionValidationException("id", "Укажите вуз");
         }
         if (actor.role() != UserRole.ADMIN && organizationRepository.findVisibleById(actor, organizationId).isEmpty()) {
             throw new OrganizationNotFoundException();
@@ -349,15 +364,15 @@ public class OrganizationCatalogService {
                 .findFirst()
                 .ifPresent(duplicate -> {
                     throw new InteractionValidationException("name", duplicate.id() == null
-                            ? "Организация «" + duplicate.name() + "» уже есть в CRM в команде «" + duplicate.teamName()
+                            ? "Вуз «" + duplicate.name() + "» уже есть в CRM в команде «" + duplicate.teamName()
                                     + "». Обратитесь к руководителю или администратору."
-                            : "Организация «" + duplicate.name() + "» уже есть в CRM"
+                            : "Вуз «" + duplicate.name() + "» уже есть в CRM"
                                     + (duplicate.status() == OrganizationStatus.ARCHIVED ? " (в архиве)" : "") + ".");
                 });
     }
 
     private static InteractionValidationException duplicateName(String name) {
-        return new InteractionValidationException("name", "Организация «" + name + "» уже есть в CRM.");
+        return new InteractionValidationException("name", "Вуз «" + name + "» уже есть в CRM.");
     }
 
     private static boolean visibleTo(CrmProfile actor, OrganizationCatalogRepository.NameRow row) {

@@ -28,7 +28,7 @@ import { AgreementFiles } from './AgreementFiles'
 import { AgreementForm } from './AgreementForm'
 import { AgreementSupplements } from './AgreementSupplements'
 import { AgreementTransitions } from './AgreementTransitions'
-import { CommandError, useAccessErrorHandler, useCommandKey } from './agreementUi'
+import { AgreementTermMark, CommandError, useAccessErrorHandler, useCommandKey } from './agreementUi'
 import './agreements.css'
 
 type AgreementsPanelProps = {
@@ -178,6 +178,7 @@ export const AgreementsPanel = ({ organizationId, role, initialAgreementId, onCh
                   <span className={`agreements__status agreements__status--${agreement.status.toLowerCase()}`}>
                     {agreementStatusLabels[agreement.status]}
                   </span>
+                  <AgreementTermMark agreement={agreement} />
                   <span className="agreements__item-meta">
                     {`${daysLabel(daysInStatus(agreement.statusChangedAt, now))} в статусе · `}
                     {agreement.validUntil ? `до ${formatDate(agreement.validUntil)} · ` : ''}
@@ -412,6 +413,7 @@ const AgreementDetail = ({
           <span className={`agreements__status agreements__status--${agreement.status.toLowerCase()}`}>
             {agreementStatusLabels[agreement.status]}
           </span>
+          <AgreementTermMark agreement={agreement} />
           <span className="agreement-activity__document-meta">
             {`${daysLabel(daysInStatus(agreement.statusChangedAt, Date.now()))} в статусе, с ${formatInstant(agreement.statusChangedAt)}`}
           </span>

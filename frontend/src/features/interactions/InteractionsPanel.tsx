@@ -25,6 +25,7 @@ import {
   loadInteractionDraft,
   saveInteractionCardDraft,
   saveInteractionDraft,
+  clearInteractionDraft,
   isEmptyPlanDraft,
   type InteractionDraft,
   type InteractionPlanDraft,
@@ -47,7 +48,10 @@ import { LmsSignalsCard } from '../work/LmsSignals'
 import { OrganizationContacts, type PartnerAccessRights } from './OrganizationContacts'
 import { PartnerStepToggle } from '../partner/PartnerStepToggle'
 import { getModules } from '../../shared/modules'
-import { useUnsavedDraft } from './unsavedDrafts'
+import { CameraInput } from '../../shared/ui/CameraInput'
+import { ContactLink } from '../../shared/ui/ContactLink'
+import { emailHref, phoneHref } from '../../shared/format/links'
+import { forgetUnsavedDraft, useUnsavedDraft } from './unsavedDrafts'
 import { contactRoleLabels, contactRoles, workStatusLabels } from './workMarks'
 import { AttachmentExtras } from '../documents/AttachmentExtras'
 import { ProductAgreementsSection } from '../documents/ProductAgreementsSection'
@@ -1157,6 +1161,8 @@ export const InteractionsPanel = ({
       setSelectedContactIds([])
       setCreateState({ kind: 'idle' })
       setDialog(null)
+      clearInteractionDraft(profileId, organizationId)
+      forgetUnsavedDraft(`organization:${organizationId}:create`)
       carriedNotice = { interactionId: interaction.id, text: `Взаимодействие «${interaction.title}» создано. Этап: ${interaction.currentStageName}.` }
       goToInteraction(interaction.id)
     } catch (error) {
@@ -1899,7 +1905,7 @@ export const InteractionsPanel = ({
     return (
       <section className="interaction-contacts" aria-labelledby="interaction-contacts-title">
         <div className="interactions-header">
-          <h4 id="interaction-contacts-title">Контакты организации</h4>
+          <h4 id="interaction-contacts-title">Контакты вуза</h4>
           {canManageDailyWork && (
             <button type="button" onClick={() => setDialog('contact')}>Добавить контакт</button>
           )}
@@ -1910,7 +1916,7 @@ export const InteractionsPanel = ({
         )}
         {contactsState.kind === 'failed' && (
           <div className="organizations-message organizations-message--error" role="alert">
-            <p>Не удалось загрузить контакты организации.</p>
+            <p>Не удалось загрузить контакты вуза.</p>
             <SupportDetails requestId={contactsState.requestId} />
             <button type="button" onClick={() => void loadContacts()}>Повторить</button>
           </div>
@@ -1980,7 +1986,7 @@ export const InteractionsPanel = ({
               {worksFilter === 'ACTIVE' ? 'Активных взаимодействий нет.' : 'У этого вуза пока нет взаимодействий.'}
             </p>
           ) : (
-            <ul className="interactions-list" aria-label="Взаимодействия организации" aria-busy={listState.refreshing}>
+            <ul className="interactions-list" aria-label="Взаимодействия вуза" aria-busy={listState.refreshing}>
               {listState.items.map((interaction) => {
                 const itemSchedule = nextActionSchedule(interaction)
                 const days = daysSince(interaction.stageEnteredAt)
@@ -2113,7 +2119,7 @@ export const InteractionsPanel = ({
                   )}
                   {contactsState.kind === 'ready' && (
                     !contactsState.contacts.some(offered) ? (
-                      <p>Сначала добавьте действующий контакт организации.</p>
+                      <p>Сначала добавьте действующий контакт вуза.</p>
                     ) : (
                       <ul>
                         {contactsState.contacts.filter(offered).map((contact) => (
@@ -2807,8 +2813,8 @@ export const InteractionsPanel = ({
                             {contact.role && <span>{contactRoleLabels[contact.role]}</span>}
                             {contact.inactive && <span>Не актуален</span>}
                             {contact.position && <span>{contact.position}</span>}
-                            {contact.email && <span>{contact.email}</span>}
-                            {contact.phone && <span>{contact.phone}</span>}
+                            {contact.email && <span><ContactLink href={emailHref(contact.email)} text={contact.email} /></span>}
+                            {contact.phone && <span><ContactLink href={phoneHref(contact.phone)} text={contact.phone} /></span>}
                           </>
                         )}
                       </li>
@@ -3051,6 +3057,7 @@ export const InteractionsPanel = ({
                     {uploadFile !== null && <span className="interaction-field-hint">Выбран файл: {uploadFile.name}</span>}
                     <FieldError id="interaction-upload-error" message={uploadFileError} />
                   </label>
+                  <CameraInput disabled={uploadState.kind === 'saving'} onFile={changeUploadFile} />
                   <button type="submit" disabled={uploadState.kind === 'saving' || uploadFile === null || uploadTooLarge || uploadStageId.length === 0}>
                     {uploadState.kind === 'saving' ? 'Загружаем…' : `Загрузить в этап «${uploadStage?.name ?? 'не выбран'}»`}
                   </button>

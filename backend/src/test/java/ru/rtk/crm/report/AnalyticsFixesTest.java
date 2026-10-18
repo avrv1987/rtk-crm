@@ -89,7 +89,7 @@ class AnalyticsFixesTest {
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS agreements (
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, number VARCHAR(100) NOT NULL, status VARCHAR(16) NOT NULL,
-                    status_changed_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    status_changed_at TIMESTAMP WITH TIME ZONE NOT NULL, valid_until DATE
                 )
                 """);
         jdbcTemplate.execute("""

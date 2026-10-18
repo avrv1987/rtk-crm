@@ -249,21 +249,41 @@ class EnrolmentServicesTest {
         assertThat(view.counters()).isEqualTo(new EnrolmentCountersView(6, 100_000, false, 2));
         EnrolmentStreamView prompt = view.streams().get(1);
 
-        EnrolmentStreamView dated = streams.update(OPERATOR, prompt.id().toString(),
-                new EnrolmentStreamUpdate(prompt.version(), LocalDate.of(2023, 9, 1)), "end-date", "rq-end");
+        LocalDate today = LocalDate.now(EnrolmentLearnerService.ZONE);
+        LocalDate past = today.minusYears(3).minusDays(1);
+        String stream = prompt.id().toString();
+        assertThatThrownBy(() -> streams.update(OPERATOR, stream, new EnrolmentStreamUpdate(0, LocalDate.of(1900, 1, 1), true),
+                "typo-year", "rq"))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.field()).isEqualTo("endsOn"));
+        assertThatThrownBy(() -> streams.update(OPERATOR, stream, new EnrolmentStreamUpdate(0, today.plusYears(5).plusDays(1), null),
+                "far-future", "rq"))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.field()).isEqualTo("endsOn"));
+        assertThatThrownBy(() -> streams.update(OPERATOR, stream, new EnrolmentStreamUpdate(0, past, null), "unconfirmed", "rq"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
+                    assertThat(exception.field()).isEqualTo("confirmPastDate");
+                    assertThat(exception.getMessage()).contains("обезличит анкеты");
+                });
+        assertThat(streams.update(OPERATOR, stream, new EnrolmentStreamUpdate(0, today.plusYears(5), null), "future", "rq").endsOn())
+                .isEqualTo(today.plusYears(5));
 
-        assertThat(dated.endsOn()).isEqualTo(LocalDate.of(2023, 9, 1));
-        assertThat(dated.keepUntil()).isEqualTo(LocalDate.of(2026, 9, 1));
-        assertThat(dated.version()).isEqualTo(1);
-        assertThat(streams.update(OPERATOR, prompt.id().toString(),
-                new EnrolmentStreamUpdate(prompt.version(), LocalDate.of(2023, 9, 1)), "end-date", "rq-end")).isEqualTo(dated);
-        assertThatThrownBy(() -> streams.update(OPERATOR, prompt.id().toString(), new EnrolmentStreamUpdate(0, null), "stale", "rq"))
+        EnrolmentStreamView dated = streams.update(OPERATOR, stream, new EnrolmentStreamUpdate(1, past, true), "end-date", "rq-end");
+
+        assertThat(dated.endsOn()).isEqualTo(past);
+        assertThat(dated.keepUntil()).isEqualTo(past.plusYears(3));
+        assertThat(dated.version()).isEqualTo(2);
+        assertThat(streams.update(OPERATOR, stream, new EnrolmentStreamUpdate(1, past, true), "end-date", "rq-end")).isEqualTo(dated);
+        assertThatThrownBy(() -> streams.update(OPERATOR, prompt.id().toString(), new EnrolmentStreamUpdate(0, null, null), "stale", "rq"))
                 .isInstanceOfSatisfying(InteractionConflictException.class, exception -> {
                     assertThat(exception.code()).isEqualTo("VERSION_CONFLICT");
-                    assertThat(exception.currentVersion()).isEqualTo(1);
+                    assertThat(exception.currentVersion()).isEqualTo(2);
                 });
-        assertThat(journal("STREAM_END_DATE_CHANGED")).containsExactly(
-                "STREAM|" + PROMPT + ", поток 3|дата окончания: не указана → 01.09.2023|Оператор зачисления");
+        java.time.format.DateTimeFormatter format = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy");
+        assertThat(journal("STREAM_END_DATE_CHANGED")).containsExactlyInAnyOrder(
+                "STREAM|" + PROMPT + ", поток 3|дата окончания: не указана → " + format.format(today.plusYears(5)) + "|Оператор зачисления",
+                "STREAM|" + PROMPT + ", поток 3|дата окончания: " + format.format(today.plusYears(5)) + " → " + format.format(past)
+                        + "|Оператор зачисления");
         assertThatThrownBy(() -> streams.learners(OPERATOR, UUID.randomUUID().toString(), "rq"))
                 .isInstanceOf(EnrolmentNotFoundException.class)
                 .hasMessage("Поток не найден");
@@ -387,18 +407,26 @@ class EnrolmentServicesTest {
         update(duplicate, Map.of("APARTMENT", "12"), "duplicate-apartment");
         Learner source = learner("Перова", "Анна");
 
-        assertThatThrownBy(() -> learners.move(OPERATOR, source.id().toString(), new LearnerMove("123", source.version()), "bad", "rq"))
+        assertThatThrownBy(() -> learners.move(OPERATOR, source.id().toString(), new LearnerMove("123", source.version(), null), "bad", "rq"))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("snils"));
-        assertThatThrownBy(() -> learners.move(OPERATOR, source.id().toString(), new LearnerMove("123-456-789 64", source.version()),
+        assertThatThrownBy(() -> learners.move(OPERATOR, source.id().toString(), new LearnerMove("123-456-789 64", source.version(), null),
                 "nobody", "rq"))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
                         assertThat(exception.getMessage()).isEqualTo("Слушателя с таким СНИЛС нет"));
 
+        assertThatThrownBy(() -> learners.move(OPERATOR, source.id().toString(),
+                new LearnerMove("112 233 445 95", source.version(), null), "move-unconfirmed", "rq"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
+                    assertThat(exception.field()).isEqualTo("confirmNameMismatch");
+                    assertThat(exception.getMessage()).startsWith("ФИО в анкетах различаются");
+                });
+        assertThat(learnerService.find(source.id())).isPresent();
+
         LearnerMoveResult result = learners.move(OPERATOR, source.id().toString(),
-                new LearnerMove("112 233 445 95", source.version()), "move", "rq-move");
+                new LearnerMove("112 233 445 95", source.version(), true), "move", "rq-move");
 
         assertThat(result).isEqualTo(new LearnerMoveResult(owner.id(), 1, 1, List.of(LearnerField.APARTMENT)));
-        assertThat(learners.move(OPERATOR, source.id().toString(), new LearnerMove("112 233 445 95", source.version()), "move", "rq"))
+        assertThat(learners.move(OPERATOR, source.id().toString(), new LearnerMove("112 233 445 95", source.version(), true), "move", "rq"))
                 .isEqualTo(result);
         assertThat(learnerService.find(source.id())).isEmpty();
         assertThat(enrolmentRepository.findByLearners(List.of(owner.id()))).extracting(LearnerEnrolment::orderNumber)
@@ -414,6 +442,23 @@ class EnrolmentServicesTest {
                 + "|из анкеты " + source.id() + ": зачислений перенесено 1, удалено повторных 1; поля: APARTMENT|Оператор зачисления");
         assertThat(learners.history(OPERATOR, owner.id().toString())).extracting(LearnerHistoryEntry::action)
                 .contains("LEARNER_ENROLMENTS_MOVED", "LEARNER_CHANGED");
+    }
+
+    @Test
+    void nameCheckBeforeMoveIgnoresCaseYoSpacesAndAMissingMiddleName() {
+        assertThat(EnrolmentLearnerService.sameName(name("Ёлкина", "Анна", null), name(" елкина ", "АННА", "Петровна"))).isTrue();
+        assertThat(EnrolmentLearnerService.sameName(name("Ёлкина", "Анна", "Ивановна"), name("Елкина", "Анна", "Петровна"))).isFalse();
+        assertThat(EnrolmentLearnerService.sameName(name("Иванова", "Анна", null), name("Петрова", "Анна", null))).isFalse();
+    }
+
+    private static LearnerProfile name(String lastName, String firstName, String middleName) {
+        Map<LearnerField, String> values = new java.util.EnumMap<>(LearnerField.class);
+        values.put(LearnerField.LAST_NAME, lastName);
+        values.put(LearnerField.FIRST_NAME, firstName);
+        if (middleName != null) {
+            values.put(LearnerField.MIDDLE_NAME, middleName);
+        }
+        return LearnerProfile.fromStored(values);
     }
 
     @Test
@@ -589,12 +634,12 @@ class EnrolmentServicesTest {
         List<Runnable> calls = List.of(
                 () -> streams.streams(KAM),
                 () -> streams.learners(KAM, stream, "rq"),
-                () -> streams.update(KAM, stream, new EnrolmentStreamUpdate(0, null), "k", "rq"),
+                () -> streams.update(KAM, stream, new EnrolmentStreamUpdate(0, null, null), "k", "rq"),
                 () -> learners.search(KAM, new LearnerSearch(LearnerSearchKind.LAST_NAME, "Второв"), "rq"),
                 () -> learners.card(KAM, boris.id().toString(), "rq"),
                 () -> learners.reveal(KAM, boris.id().toString(), new LearnerReveal(Set.of(LearnerFieldGroup.DOCUMENTS)), "rq"),
                 () -> learners.update(KAM, boris.id().toString(), new LearnerUpdate(0, Map.of("APARTMENT", "1")), "k", "rq"),
-                () -> learners.move(KAM, boris.id().toString(), new LearnerMove("11223344595", 0), "k", "rq"),
+                () -> learners.move(KAM, boris.id().toString(), new LearnerMove("11223344595", 0, null), "k", "rq"),
                 () -> learners.history(KAM, boris.id().toString()),
                 () -> rosters.export(KAM, stream, new LmsRosterRequest(RosterMode.ALL, IncompleteProfiles.INCLUDE), "rq"),
                 () -> rosters.markTransferred(KAM, UUID.randomUUID().toString(), "k", "rq")

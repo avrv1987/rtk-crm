@@ -229,12 +229,8 @@ public class AttachmentService {
             throw new AttachmentDeletionForbiddenException();
         }
         // Документ, на который ссылается договор или подтверждение передачи, удалять нельзя: ссылка осиротела бы.
-        attachmentRepository.findAgreementUsage(attachmentId).ifPresent(productName -> {
-            throw new AttachmentValidationException(
-                    "attachmentId",
-                    "Документ указан как скан договора или подтверждение передачи по продукту «" + productName
-                            + "»; сначала выберите там другой файл"
-            );
+        attachmentRepository.findAgreementUsage(attachmentId).ifPresent(usage -> {
+            throw new AttachmentValidationException("attachmentId", usage);
         });
         if (!interactionRepository.touchVersion(interactionId, request.version(), now)) {
             throw InteractionConflictException.version(interactionService.get(profile, interactionId).version());

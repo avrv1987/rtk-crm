@@ -187,7 +187,7 @@ record EnrolmentStreamView(
 record EnrolmentCountersView(long profiles, long profilesLimit, boolean nearLimit, long streamsWithoutEndDate) {
 }
 
-record EnrolmentStreamUpdate(Integer version, LocalDate endsOn) {
+record EnrolmentStreamUpdate(Integer version, LocalDate endsOn, Boolean confirmPastDate) {
 }
 
 record EnrolmentStreamLearners(
@@ -341,7 +341,7 @@ record LearnerUpdate(Integer version, Map<String, String> fields) {
     }
 }
 
-record LearnerMove(String snils, Integer version) {
+record LearnerMove(String snils, Integer version, Boolean confirmNameMismatch) {
     @Override
     public String toString() {
         return "LearnerMove[version=" + version + ", masked]";

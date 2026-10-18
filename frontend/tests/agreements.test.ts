@@ -3,11 +3,14 @@ import { test } from 'node:test'
 import {
   activeStageRole,
   agreementStatusLabels,
+  agreementTerm,
   agreementStatuses,
   daysInStatus,
   defaultSignerId,
   emptyRegistryFilters,
   inputFromAgreement,
+  linkCandidates,
+  linkInput,
   periodDefaults,
   registrySearch,
   registryTileCounts,
@@ -88,7 +91,7 @@ test('изменение из карточки сохраняет реквизи
   assert.equal(input.version, 4)
 })
 
-test('плитки реестра: счёт по статусам и «Истекает за 60 дней» только у действующих', () => {
+test('плитки реестра: счёт по статусам, «Истёк или истекает за 90 дней» считает так же, как отбирает', () => {
   const counts = registryTileCounts([
     { status: 'REVIEW' },
     { status: 'REVIEW' },
@@ -98,11 +101,49 @@ test('плитки реестра: счёт по статусам и «Исте�
     { status: 'ACTIVE', validUntil: '2026-10-01' },
     { status: 'COMPLETED', validUntil: '2026-11-01' }
   ], '2026-10-17')
-  assert.deepEqual(counts, { REVIEW: 2, CORRECTION: 0, SIGNING: 1, ACTIVE: 3, EXPIRING: 1 })
-  assert.deepEqual(registryTileFilters('EXPIRING', '2026-10-17'), { statuses: ['ACTIVE'], expiresBefore: '2026-12-16' })
+  assert.deepEqual(counts, { REVIEW: 2, CORRECTION: 0, SIGNING: 1, ACTIVE: 3, EXPIRING: 2 })
+  assert.deepEqual(registryTileFilters('EXPIRING', '2026-10-17'), { statuses: ['ACTIVE'], expiresBefore: '2027-01-15' })
   assert.deepEqual(registryTileFilters('SIGNING', '2026-10-17'), { statuses: ['SIGNING'], expiresBefore: '' })
   assert.deepEqual(registryTileFilters(null, '2026-10-17'), { statuses: [], expiresBefore: '' })
-  assert.equal(registryTileOf({ ...emptyRegistryFilters, statuses: ['ACTIVE'], expiresBefore: '2026-12-16' }, '2026-10-17'), 'EXPIRING')
+  assert.equal(registryTileOf({ ...emptyRegistryFilters, statuses: ['ACTIVE'], expiresBefore: '2027-01-15' }, '2026-10-17'), 'EXPIRING')
   assert.equal(registryTileOf({ ...emptyRegistryFilters, statuses: ['ACTIVE'] }, '2026-10-17'), 'ACTIVE')
   assert.equal(registryTileOf({ ...emptyRegistryFilters, statuses: ['ACTIVE', 'SIGNING'] }, '2026-10-17'), null)
+})
+
+test('отметка срока: «срок истёк» только у действующего с прошедшей датой, «истекает» — в горизонте предупреждения', () => {
+  const today = '2026-10-18'
+  assert.equal(agreementTerm({ status: 'ACTIVE', validUntil: '2026-10-14' }, today), 'expired')
+  assert.equal(agreementTerm({ status: 'ACTIVE', validUntil: '2026-10-18' }, today), null)
+  assert.equal(agreementTerm({ status: 'ACTIVE', validUntil: '2026-10-18' }, today, 90), 'expiring')
+  assert.equal(agreementTerm({ status: 'ACTIVE', validUntil: '2027-01-16' }, today, 90), 'expiring')
+  assert.equal(agreementTerm({ status: 'ACTIVE', validUntil: '2027-01-17' }, today, 90), null)
+  assert.equal(agreementTerm({ status: 'ACTIVE', validUntil: null }, today, 90), null)
+  assert.equal(agreementTerm({ status: 'COMPLETED', validUntil: '2026-10-14' }, today, 90), null)
+})
+
+test('привязка договора из взаимодействия: кандидаты без расторгнутых и уже связанных, связи договора сохраняются', () => {
+  const agreements = [
+    { id: 'a1', status: 'ACTIVE' as const },
+    { id: 'a2', status: 'TERMINATED' as const },
+    { id: 'a3', status: 'DRAFT' as const }
+  ]
+  assert.deepEqual(linkCandidates(agreements, ['a3']).map((agreement) => agreement.id), ['a1'])
+  const input = linkInput({
+    version: 3,
+    number: 'Д-2',
+    concludedOn: '2025-11-12',
+    validUntil: '2026-11-02',
+    sentOn: null,
+    parties: null,
+    plannedKind: 'RENEWAL',
+    plannedOn: '2026-10-28',
+    universitySigner: null,
+    schoolSigner: { id: 'p1' },
+    interactions: [{ id: 'w1' }, { id: 'w2' }]
+  }, 'w2')
+  assert.deepEqual(input.interactionIds, ['w1', 'w2'])
+  assert.equal(input.version, 3)
+  assert.equal(input.schoolSignerProfileId, 'p1')
+  assert.equal(input.programIds, null)
+  assert.equal(input.status, null)
 })

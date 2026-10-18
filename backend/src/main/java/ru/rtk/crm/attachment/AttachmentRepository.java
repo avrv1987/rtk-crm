@@ -145,8 +145,10 @@ public class AttachmentRepository {
                 .single() > 0;
     }
 
+    // Возвращает текст причины, по которой документ удалять нельзя: на него ссылается продукт или версия договора с вузом.
+    // Версия договора хранит ссылку на исходный документ взаимодействия, и после удаления файл версии перестал бы открываться.
     public Optional<String> findAgreementUsage(UUID attachmentId) {
-        return jdbcClient.sql("""
+        Optional<String> product = jdbcClient.sql("""
                 SELECT product.name
                 FROM product_agreements agreement
                 JOIN products product ON product.id = agreement.product_id
@@ -159,6 +161,23 @@ public class AttachmentRepository {
                 .list()
                 .stream()
                 .findFirst();
+        if (product.isPresent()) {
+            return product.map(name -> "Документ указан как скан договора или подтверждение передачи по продукту «" + name
+                    + "»; сначала выберите там другой файл");
+        }
+        return jdbcClient.sql("""
+                SELECT agreement.number
+                FROM agreement_files agreement_file
+                JOIN agreements agreement ON agreement.id = agreement_file.agreement_id
+                WHERE agreement_file.attachment_id = :attachmentId
+                ORDER BY agreement.number
+                """)
+                .param("attachmentId", attachmentId)
+                .query(String.class)
+                .list()
+                .stream()
+                .findFirst()
+                .map(number -> "Документ взят версией договора № " + number + " и хранится в договоре; удалить его нельзя");
     }
 
     public void bindCleanUnbound(

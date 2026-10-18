@@ -91,7 +91,7 @@ class WorkControlTest {
     void setUp() {
         createSchema();
         for (String table : List.of(
-                "interaction_stage_completions", "teacher_trainings", "interaction_stages", "reminder_settings", "learning_snapshots", "source_mappings", "source_records", "product_agreements", "products", "interaction_events", "interaction_issues",
+                "agreements", "interaction_stage_completions", "teacher_trainings", "interaction_stages", "reminder_settings", "learning_snapshots", "source_mappings", "source_records", "product_agreements", "products", "interaction_events", "interaction_issues",
                 "interactions", "organization_deputies", "organization_assignment_events", "command_idempotency_records",
                 "organizations", "crm_user_profiles", "teams"
         )) {
@@ -565,6 +565,32 @@ class WorkControlTest {
     }
 
     @Test
+    void remindersListActiveAgreementsExpiringWithinNinetyDaysIncludingExpiredOnesInTheOwnScope() {
+        LocalDate today = LocalDate.now(WorkProperties.ZONE);
+        insertUniversityAgreement(UNIVERSITY_A, "Истёк", "ACTIVE", today.minusDays(3));
+        insertUniversityAgreement(UNIVERSITY_A, "Через 90", "ACTIVE", today.plusDays(90));
+        insertUniversityAgreement(UNIVERSITY_A, "Через 91", "ACTIVE", today.plusDays(91));
+        insertUniversityAgreement(UNIVERSITY_A, "Завершён", "COMPLETED", today.minusDays(10));
+        insertUniversityAgreement(UNIVERSITY_A, "Без срока", "ACTIVE", null);
+        insertUniversityAgreement(UNIVERSITY_B, "Чужой", "ACTIVE", today.plusDays(5));
+
+        WorkModels.ReminderDigest digest = workService.reminders(kamA);
+
+        assertThat(digest.agreementNoticeDays()).isEqualTo(90);
+        assertThat(digest.expiringAgreements()).extracting(WorkModels.ReminderAgreement::number, WorkModels.ReminderAgreement::validUntil)
+                .containsExactly(tuple("Истёк", today.minusDays(3)), tuple("Через 90", today.plusDays(90)));
+        assertThat(digest.expiringAgreements().getFirst().ownerManagerName()).isEqualTo("КАМ А");
+        assertThat(workService.reminders(leaderA).expiringAgreements()).hasSize(2);
+        assertThat(workService.reminders(kamB).expiringAgreements()).extracting(WorkModels.ReminderAgreement::number)
+                .containsExactly("Чужой");
+    }
+
+    private void insertUniversityAgreement(UUID organizationId, String number, String status, LocalDate validUntil) {
+        jdbcTemplate.update("INSERT INTO agreements (id, organization_id, number, valid_until, status) VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(), organizationId, number, validUntil, status);
+    }
+
+    @Test
     void changingTheOwnerEndsTheDeputyPeriodSoNobodyStandsInForAnotherManager() {
         LocalDate today = LocalDate.now(WorkProperties.ZONE);
         OrganizationDeputy active = organizationDeputyService.assign(
@@ -886,6 +912,12 @@ class WorkControlTest {
                 CREATE TABLE IF NOT EXISTS interaction_stage_completions (
                     interaction_id UUID NOT NULL, stage_id UUID NOT NULL, PRIMARY KEY (interaction_id, stage_id)
                 )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agreements (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, number VARCHAR(100) NOT NULL, valid_until DATE,
+                    planned_kind VARCHAR(16), planned_on DATE, status VARCHAR(16) NOT NULL
+                )
                 """
         ).forEach(jdbcTemplate::execute);
     }
@@ -901,7 +933,7 @@ class WorkControlTest {
         @Bean
         WorkProperties workProperties() {
             return new WorkProperties(30, 7, 1, List.of("Обучение преподавателей", "Повышение квалификации"), 3, 90, 50,
-                    "Повышение квалификации", 12);
+                    "Повышение квалификации", 12, 90);
         }
     }
 }

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type {
   Organization,
   TeamSummary,
@@ -9,7 +10,8 @@ import type {
   WorkControlTotals
 } from '../../shared/api/client'
 import { formatMoscowDateTime } from '../../shared/format/datetime'
-import { agreementStatusLabels } from '../agreements/agreementModel'
+import { agreementNoticeDays, agreementStatusLabels } from '../agreements/agreementModel'
+import { AgreementTermMark } from '../agreements/agreementUi'
 import {
   changeNotes,
   type ControlTile,
@@ -39,6 +41,8 @@ export type MatrixOpenState = {
 }
 
 type PickHandler = (managerId: string | null, tile: ControlTile | null) => void
+
+type AssignHandler = (organizationId: string) => void
 
 const WorkRow = ({ item, withPeriod }: { item: WorkControlItem; withPeriod: boolean }) => {
   const notes = withPeriod ? changeNotes(item) : []
@@ -73,6 +77,7 @@ const WorkRow = ({ item, withPeriod }: { item: WorkControlItem; withPeriod: bool
           <>
             <span className={`control-agreement control-agreement--${item.agreementStatus.toLowerCase()}`}>{agreementStatusLabels[item.agreementStatus]}</span>
             {item.agreementNumber && <span className="control-muted">№ {item.agreementNumber}</span>}
+            <AgreementTermMark agreement={{ status: item.agreementStatus, validUntil: item.agreementValidUntil }} noticeDays={agreementNoticeDays} />
           </>
         )}
       </td>
@@ -144,12 +149,13 @@ const TotalsLine = ({ totals, withPeriod, stuck, lms, stuckDays, onPick }: {
     <Count label="без шага или срока" value={totals.noNextStep} onPick={onPick && (() => onPick('NO_NEXT_STEP'))} />
     {stuck !== undefined && stuck > 0 && <Count label={`на этапе дольше ${stuckDays} дн.`} value={stuck} onPick={onPick && (() => onPick('STUCK'))} />}
     {totals.withIssues > 0 && <Count label="проблемы и риски" value={totals.withIssues} tone="danger" onPick={onPick && (() => onPick('ISSUES'))} />}
-    {lms !== undefined && lms > 0 && <Count label="сигналы LMS" value={lms} onPick={onPick && (() => onPick('LMS'))} />}
+    {lms !== undefined && lms > 0 && <Count label="с сигналами LMS" value={lms} onPick={onPick && (() => onPick('LMS'))} />}
+    {totals.idle > 0 && <Count label="без работы" value={totals.idle} tone="danger" onPick={onPick && (() => onPick('IDLE'))} />}
     {withPeriod && <span>перешли этап {totals.moved}, новые {totals.created}, завершённые {totals.completed}</span>}
   </span>
 )
 
-const ManagerBlock = ({ teamId, manager, withPeriod, stuckDays, open, onPick, assignHref }: {
+const ManagerBlock = ({ teamId, manager, withPeriod, stuckDays, open, onPick, assignHref, onAssign }: {
   teamId: string | null | undefined
   manager: WorkControlManager
   withPeriod: boolean
@@ -157,6 +163,7 @@ const ManagerBlock = ({ teamId, manager, withPeriod, stuckDays, open, onPick, as
   open: MatrixOpenState
   onPick: PickHandler
   assignHref: string | null
+  onAssign?: AssignHandler
 }) => {
   const key = managerKey(teamId, manager.managerId)
   const counts = managerCounts(manager, stuckDays)
@@ -177,7 +184,14 @@ const ManagerBlock = ({ teamId, manager, withPeriod, stuckDays, open, onPick, as
           onPick={(tile) => onPick(manager.managerId, tile)}
         />
       </summary>
-      {manager.managerId === null && assignHref !== null && (
+      {manager.managerId === null && onAssign !== undefined && (
+        <p className="control-manager__assign">
+          {[...new Map(manager.works.map((item) => [item.organizationId, item.organizationName])).entries()].map(([id, name]) => (
+            <button key={id} type="button" className="button--secondary" onClick={() => onAssign(id)}>{`Назначить КАМ: ${name}`}</button>
+          ))}
+        </p>
+      )}
+      {manager.managerId === null && onAssign === undefined && assignHref !== null && (
         <p className="control-manager__assign"><a className="button-link" href={assignHref}>Назначить КАМ</a></p>
       )}
       {manager.works.length === 0 ? <p className="control-manager__empty">Взаимодействий нет.</p> : (
@@ -226,6 +240,7 @@ type MatrixProps = {
   open: MatrixOpenState
   onPick: PickHandler
   assignHref: string | null
+  onAssign?: AssignHandler
 }
 
 const TeamBlock = ({ team, props }: { team: WorkControlTeam; props: MatrixProps }) => {
@@ -239,6 +254,7 @@ const TeamBlock = ({ team, props }: { team: WorkControlTeam; props: MatrixProps 
       open={props.open}
       onPick={props.onPick}
       assignHref={props.assignHref}
+      onAssign={props.onAssign}
     />
   ))
   if (!props.control.byTeams) {
@@ -283,34 +299,42 @@ const unassignedReason = (organization: Organization) => (
     : `${organization.ownerManagerName} больше не может вести вуз`}${organization.status === 'PENDING' ? ', ожидает подтверждения' : ''}`
 )
 
-export const UnassignedOrganizations = ({ organizations, count, assignHref, open }: {
+export const UnassignedOrganizations = ({ organizations, count, assignHref, open, onAssign }: {
   organizations: Organization[]
   count: number
   assignHref: string | null
   open: MatrixOpenState
-}) => (
-  <details
-    className="control-manager control-manager--unassigned"
-    open={open.isOpen('unassigned-organizations', true)}
-    onToggle={(event) => open.onToggle('unassigned-organizations', event.currentTarget.open)}
-  >
-    <summary>
-      <span className="control-manager__name">Вузы без КАМ</span>
-      <span className="control-totals"><span className="control-totals__overdue">вузов {count}</span></span>
-    </summary>
-    <ul className="control-unassigned">
-      {organizations.slice(0, unassignedListLimit).map((organization) => (
-        <li key={organization.id}>
-          <a href={`#/organizations/${organization.id}`}>{organization.name}</a>
-          <span className="control-muted">{unassignedReason(organization)}</span>
-        </li>
-      ))}
-    </ul>
-    <p className="control-manager__assign">
-      {assignHref !== null && <a className="button-link" href={assignHref}>Назначить КАМ</a>}
-      {organizations.length > unassignedListLimit && (
-        <a href="#/organizations?requiresAssignment=true">{`Все ${organizations.length}${assignHref === null ? '' : ' и массовая передача'}`}</a>
-      )}
-    </p>
-  </details>
-)
+  onAssign?: AssignHandler
+}) => {
+  const [all, setAll] = useState(false)
+  return (
+    <details
+      className="control-manager control-manager--unassigned"
+      open={open.isOpen('unassigned-organizations', true)}
+      onToggle={(event) => open.onToggle('unassigned-organizations', event.currentTarget.open)}
+    >
+      <summary>
+        <span className="control-manager__name">Вузы без КАМ</span>
+        <span className="control-totals"><span className="control-totals__overdue">вузов {count}</span></span>
+      </summary>
+      <ul className="control-unassigned">
+        {(all ? organizations : organizations.slice(0, unassignedListLimit)).map((organization) => (
+          <li key={organization.id}>
+            <a href={`#/organizations/${organization.id}`}>{organization.name}</a>
+            <span className="control-muted">{unassignedReason(organization)}</span>
+            {onAssign !== undefined && (
+              <button type="button" className="control-totals__pick" onClick={() => onAssign(organization.id)}>Назначить КАМ</button>
+            )}
+          </li>
+        ))}
+      </ul>
+      <p className="control-manager__assign">
+        {onAssign === undefined && assignHref !== null && <a className="button-link" href={assignHref}>Назначить КАМ</a>}
+        {organizations.length > unassignedListLimit && (assignHref === null
+          // Отбор «требуют назначения» в разделе «Вузы» есть только у руководителя, поэтому «Руководство» раскрывает список здесь.
+          ? <button type="button" className="button--secondary" onClick={() => setAll((value) => !value)}>{all ? 'Свернуть список' : `Все ${organizations.length}`}</button>
+          : <a href="#/organizations?requiresAssignment=true">{`Все ${organizations.length} и массовая передача`}</a>)}
+      </p>
+    </details>
+  )
+}

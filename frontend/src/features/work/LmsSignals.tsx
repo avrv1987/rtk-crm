@@ -164,7 +164,7 @@ export const LmsSignalsCard = ({
 
   return (
     <section className="lms-signals" aria-labelledby="lms-signals-title">
-      <h6 id="lms-signals-title">Сигналы LMS{active.length > 0 && <span className="desk-feed__count">{active.length}</span>}</h6>
+      <h6 id="lms-signals-title">Сигналы LMS{active.length > 0 && <> <span className="desk-feed__count">{active.length}</span></>}</h6>
       {state.kind === 'loading' && <p role="status">Проверяем сигналы LMS…</p>}
       {state.kind === 'failed' && (
         <div role="alert">

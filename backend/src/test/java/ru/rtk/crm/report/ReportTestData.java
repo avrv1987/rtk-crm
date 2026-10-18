@@ -549,14 +549,14 @@ final class ReportTestData {
                 """, id, name, role, teamId);
     }
 
-    private static void organization(JdbcTemplate jdbc, UUID id, String name, UUID teamId, UUID ownerId) {
+    static void organization(JdbcTemplate jdbc, UUID id, String name, UUID teamId, UUID ownerId) {
         jdbc.update("""
                 INSERT INTO organizations (id, name, type, team_id, owner_manager_id)
                 VALUES (?, ?, 'UNIVERSITY', ?, ?)
                 """, id, name, teamId, ownerId);
     }
 
-    private static void interaction(
+    static void interaction(
             JdbcTemplate jdbc,
             UUID id,
             UUID organizationId,

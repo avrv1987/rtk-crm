@@ -43,10 +43,28 @@ const rememberShown = (profileId: string) => {
 
 const reminderCount = (digest: ReminderDigest) => (
   digest.overdueTotal + digest.upcomingTotal + digest.expiringLicenses.length + digest.trainingCycles.length
-  + digest.qualificationDue.length
+  + digest.qualificationDue.length + digest.expiringAgreements.length
 )
 
 const cardLink = (organizationId: string, interactionId: string) => `#/organizations/${organizationId}/${interactionId}`
+
+export const ReminderAgreements = ({ agreements }: { agreements: ReminderDigest['expiringAgreements'] }) => {
+  const today = todayIso()
+  return (
+    <ul className="reminder-center__list">
+      {agreements.map((agreement) => (
+        <li key={agreement.agreementId}>
+          <a href={`#/organizations/${agreement.organizationId}?agreement=${agreement.agreementId}`}>Договор № {agreement.number}</a>
+          <span>{agreement.organizationName}{agreement.ownerManagerName === null ? '' : `, ${agreement.ownerManagerName}`}</span>
+          <span className={`status status--${agreement.validUntil < today ? 'overdue' : 'missing'}`}>
+            {agreement.validUntil < today ? 'Срок истёк' : 'Действует до'} {formatDate(agreement.validUntil)}
+            {agreement.plannedKind === 'RENEWAL' && agreement.plannedOn ? `; продление запланировано на ${formatDate(agreement.plannedOn)}` : ''}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
 
 export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProfileUnavailable }: ReminderCenterProps) => {
   const [state, setState] = useState<DigestState>({ kind: 'loading' })
@@ -107,6 +125,12 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
     document.addEventListener('pointerdown', closeOutside)
     return () => document.removeEventListener('pointerdown', closeOutside)
   }, [open])
+
+  useEffect(() => {
+    const closeOnNavigation = () => setOpen(false)
+    window.addEventListener('hashchange', closeOnNavigation)
+    return () => window.removeEventListener('hashchange', closeOnNavigation)
+  }, [])
 
   const openPanel = () => {
     rememberShown(profileId)
@@ -227,6 +251,12 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
                   ))}
                 </ul>
               )}
+            </section>
+            <section aria-labelledby={`${titleId}-agreements`}>
+              <h3 id={`${titleId}-agreements`}>Договоры истекают</h3>
+              {state.digest.expiringAgreements.length === 0
+                ? <p>Договоров со сроком в ближайшие {state.digest.agreementNoticeDays} дней нет.</p>
+                : <ReminderAgreements agreements={state.digest.expiringAgreements} />}
             </section>
             <section aria-labelledby={`${titleId}-licenses`}>
               <h3 id={`${titleId}-licenses`}>Лицензии истекают</h3>

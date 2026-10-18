@@ -80,7 +80,7 @@ export const OrganizationAssignmentPanel = ({
   const optionsRequestVersion = useRef(0)
   const pendingAssignment = useRef<PendingAssignment | null>(null)
   const ownerManagerId = organization.ownerManagerId ?? null
-  useUnsavedDraft(`organization:${organization.id}:handover`, `комментарий к передаче вуза «${organization.name}»`, handoverNote.trim().length > 0)
+  useUnsavedDraft(`organization:${organization.id}:handover`, `комментарий к передаче вуза «${organization.name}»`, handoverNote.trim().length > 0, true)
 
   const loadOptions = useCallback(async () => {
     const requestVersion = ++optionsRequestVersion.current

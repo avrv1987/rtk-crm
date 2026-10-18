@@ -17,7 +17,7 @@ public class OrganizationCatalogRepository {
 
     public List<NameRow> findNames() {
         return jdbcClient.sql("""
-                SELECT org.id, org.name, org.type, org.status, org.team_id, team.name AS team_name, org.owner_manager_id
+                SELECT org.id, org.name, org.type, org.status, org.team_id, team.name AS team_name, org.owner_manager_id, org.inn
                 FROM organizations org
                 JOIN teams team ON team.id = org.team_id
                 """)
@@ -28,7 +28,8 @@ public class OrganizationCatalogRepository {
                         OrganizationStatus.valueOf(resultSet.getString("status")),
                         resultSet.getObject("team_id", UUID.class),
                         resultSet.getString("team_name"),
-                        resultSet.getObject("owner_manager_id", UUID.class)
+                        resultSet.getObject("owner_manager_id", UUID.class),
+                        resultSet.getString("inn")
                 ))
                 .list();
     }
@@ -99,7 +100,8 @@ public class OrganizationCatalogRepository {
             OrganizationStatus status,
             UUID teamId,
             String teamName,
-            UUID ownerManagerId
+            UUID ownerManagerId,
+            String inn
     ) {
     }
 }

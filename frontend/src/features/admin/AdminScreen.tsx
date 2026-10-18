@@ -15,7 +15,7 @@ import { RetentionPanel } from './RetentionPanel'
 import { SourcesPanel } from './SourcesPanel'
 import { WorkflowTemplatesPanel } from './WorkflowTemplatesPanel'
 import { handledSessionError, type SessionHandlers } from './adminShared'
-import { resolveAdminAddress, type AdminNavRole, type AdminSectionSlug } from './adminSections'
+import { canonicalAdminHash, resolveAdminAddress, type AdminNavRole, type AdminSectionSlug } from './adminSections'
 import { catalogTabFrom, type CatalogsTabSlug } from './catalogTabs'
 import { statusFromQuery } from './employeeFilters'
 
@@ -101,6 +101,13 @@ export const AdminScreen = ({ profile, slug, query = '', onSessionExpired, onPro
   const [showNotice, setShowNotice] = useState(() => role === 'ADMIN' && !noticeSeen(profile.id))
   const handlers = { onSessionExpired, onProfileUnavailable }
   const { summary, counts, reload } = useAdminSummary(role, `${section}:${sourcesRevision}`, handlers)
+
+  useEffect(() => {
+    const target = canonicalAdminHash(slug, query, role)
+    if (target !== null) {
+      window.history.replaceState(null, '', target)
+    }
+  }, [slug, query, role])
 
   const changeCatalogTab = (tab: CatalogsTabSlug) => {
     window.location.hash = `#/admin/catalogs?tab=${tab}`

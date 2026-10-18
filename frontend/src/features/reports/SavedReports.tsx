@@ -14,6 +14,8 @@ import { CardDialog } from '../interactions/cardUi'
 import { InfoTip } from './ReportControls'
 import { ErrorNotice } from './ReportErrorNotice'
 import { savedReportsHint } from './reportHints'
+import { todayInMoscow } from '../../shared/format/datetime'
+import { suggestedPeriod } from './reportPeriods'
 import { kindLabels } from './reportSelection'
 
 type ListState =
@@ -236,7 +238,6 @@ export const SavedReportsList = ({ saved, onOpen }: { saved: SavedReportsModel; 
           ))}
         </ul>
       )}
-      {saved.notice !== '' && <p className="saved-reports__notice" role="status">{saved.notice}</p>}
       <SavedError saved={saved} />
       <ConfirmDialog
         open={deleting !== null}
@@ -267,7 +268,8 @@ type SaveReportDialogProps = {
 
 export const SaveReportDialog = ({ open, onClose, saved, definition, disabled, current, onSaved }: SaveReportDialogProps) => {
   const [name, setName] = useState('')
-  const [period, setPeriod] = useState<Period | ''>(current?.period ?? '')
+  const initialPeriod = current === undefined ? suggestedPeriod(definition, todayInMoscow()) : current.period ?? ''
+  const [period, setPeriod] = useState<Period | ''>(initialPeriod)
   const nameId = useId()
   const periodId = useId()
   const snapshot = definition.kind === 'SNAPSHOT'
@@ -275,9 +277,9 @@ export const SaveReportDialog = ({ open, onClose, saved, definition, disabled, c
 
   useEffect(() => {
     if (open) {
-      setPeriod(current?.period ?? '')
+      setPeriod(initialPeriod)
     }
-  }, [current, open])
+  }, [initialPeriod, open])
 
   const finish = (result: SavedReport | null | undefined) => {
     if (result !== undefined) {

@@ -610,3 +610,12 @@
 .control-toolbar .action-menu__toggle {
   min-height: var(--control-height-compact);
 }
+
+.control-manager--idle {
+  border-left: 4px solid var(--color-warning);
+}
+
+.control-idle__note {
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-2);
+}

@@ -325,12 +325,17 @@ type LearnerMoveProposalProps = {
 const LearnerMoveProposal = ({ learnerId, version, current, snils, found, onCancel, onMoved, onAccessError }: LearnerMoveProposalProps) => {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
+  const nameMismatch = error instanceof ApiError && error.fieldErrors?.confirmNameMismatch !== undefined
 
   const move = async () => {
     setBusy(true)
     setError(null)
     try {
-      const result = await apiClient.moveLearnerEnrolments(learnerId, { snils, version }, createIdempotencyKey())
+      const result = await apiClient.moveLearnerEnrolments(
+        learnerId,
+        { snils, version, confirmNameMismatch: nameMismatch },
+        createIdempotencyKey()
+      )
       onMoved(result)
     } catch (exception) {
       if (onAccessError(exception)) {
@@ -374,7 +379,7 @@ const LearnerMoveProposal = ({ learnerId, version, current, snils, found, onCanc
       )}
       <div className="enrolment__dialog-actions">
         <button type="button" className="button--danger" disabled={busy} onClick={() => void move()}>
-          {busy ? 'Переносим…' : 'Перенести'}
+          {busy ? 'Переносим…' : nameMismatch ? 'Это один человек, перенести' : 'Перенести'}
         </button>
         <button type="button" className="button--secondary" disabled={busy} onClick={onCancel}>Отмена</button>
       </div>

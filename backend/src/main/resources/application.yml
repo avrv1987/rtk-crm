@@ -133,6 +133,7 @@ app:
     reminder-list-limit: 50
     qualification-stage-name: Повышение квалификации
     qualification-after-months: 12
+    agreement-notice-days: 90
     deputy-expiry-delay: PT5M
   lms-signals:
     classes-stage-name: Занятия

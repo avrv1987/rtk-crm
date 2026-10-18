@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: CRM ИТ Школы РТК — REST API
-  version: 1.4.0
+  version: 2.2.0
   description: |
     API веб-клиента CRM и точка интеграции с корпоративными системами.
 
@@ -258,7 +258,8 @@ paths:
       x-implementation-stage: 5
       description: >-
         Совпадение по нормализованному названию (регистр, пробелы, кавычки, ё) ищется во всём каталоге; похожие
-        названия — только в области видимости. Для организации вне области видимости id не возвращается.
+        названия — только в области видимости. Совпадение по ИНН (10 или 12 цифр) тоже ищется во всём каталоге и только
+        предупреждает: у филиала может быть общий ИНН. Для организации вне области видимости id не возвращается.
       parameters:
         - name: name
           in: query
@@ -266,6 +267,12 @@ paths:
           schema:
             type: string
             maxLength: 300
+        - name: inn
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 20
         - name: exceptId
           in: query
           required: false
@@ -356,8 +363,8 @@ paths:
       operationId: changeOrganizationStatus
       x-implementation-stage: 5
       description: >-
-        APPROVE и REJECT — руководитель для заявки PENDING; ARCHIVE — руководитель или КАМ-ответственный; RESTORE —
-        руководитель. Архивная организация скрыта из списков и не принимает новые взаимодействия, история сохраняется.
+        APPROVE и REJECT — руководитель для заявки PENDING; ARCHIVE и RESTORE —
+        руководитель (администратор — через административный раздел). КАМ и заместитель вуз не архивируют. Архивная организация скрыта из списков и не принимает новые взаимодействия, история сохраняется.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -6860,6 +6867,31 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/enrolment/paid-orders/last:
+    get:
+      tags: [Enrolment]
+      summary: Протокол последней загрузки оплат
+      operationId: getLastPaidOrderUpload
+      description: >-
+        Модуль «Слушатели» выключен — 404 всем; включён — только оператор зачисления, остальным 403. Протокол берётся
+        из сохранённого результата последней загрузки оплат любым оператором; без загрузок — 204.
+      responses:
+        '200':
+          description: Протокол последней загрузки и её время
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LastPaidOrderUpload'
+        '204':
+          description: Загрузок оплат ещё не было
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/enrolment/streams:
     get:
       tags: [Enrolment]
@@ -7827,7 +7859,7 @@ components:
     PaidOrderUpload:
       type: object
       required: [runId, received, emptyElements, created, updated, skipped, needsMapping, failed, message, streams, issues,
-                 learners]
+                 learners, unmappedCourses]
       properties:
         runId:
           type: string
@@ -7870,6 +7902,20 @@ components:
             $ref: '#/components/schemas/PaidOrderIssue'
         learners:
           $ref: '#/components/schemas/LearnerIntake'
+        unmappedCourses:
+          type: array
+          description: Курсы, заявки которых ждут сопоставления с программой (они в needsMapping, а не в created)
+          items:
+            type: string
+    LastPaidOrderUpload:
+      type: object
+      required: [uploadedAt, protocol]
+      properties:
+        uploadedAt:
+          type: string
+          format: date-time
+        protocol:
+          $ref: '#/components/schemas/PaidOrderUpload'
     PaidOrderStream:
       type: object
       required: [course, streamNo, orders]
@@ -7898,6 +7944,9 @@ components:
         warning:
           type: boolean
           description: true — запись принята (например, телефон не прошёл проверку и не сохранён)
+        orderNumber:
+          type: [string, 'null']
+          description: Номер заявки из элемента, если он есть; по нему оператор находит запись в файле
     LearnerIntake:
       type: object
       required: [newLearners, foundLearners, enrolled, repeatOrders, movedStreams, movedAfterLms, contactsDiffer]
@@ -8026,6 +8075,12 @@ components:
         endsOn:
           type: [string, 'null']
           format: date
+          description: Не раньше чем 5 лет назад и не позже чем через 5 лет (дата по МСК)
+        confirmPastDate:
+          type: [boolean, 'null']
+          description: >
+            Подтверждение прошедшей даты окончания. Без него прошедшая дата отклоняется с ошибкой поля confirmPastDate:
+            когда срок хранения истечёт, ночная задача необратимо обезличит анкеты потока
     EnrolmentStreamLearners:
       type: object
       required: [stream, learners, exports, roster]
@@ -8326,6 +8381,12 @@ components:
         version:
           type: integer
           minimum: 0
+        confirmNameMismatch:
+          type: [boolean, 'null']
+          description: >
+            Подтверждение оператора, что анкеты с разными ФИО принадлежат одному человеку. Без него при расхождении
+            фамилии, имени или отчества (если отчество есть в обеих анкетах) перенос отклоняется с ошибкой поля
+            confirmNameMismatch
     LearnerMoveResult:
       type: object
       required: [learnerId, enrolmentsMoved, enrolmentsDropped, fieldsMoved]
@@ -9452,7 +9513,8 @@ components:
           format: date-time
     PartnerAgreement:
       type: object
-      required: [id, number, subject, concludedOn, validUntil, status]
+      description: Договор вуза на любой стадии, кроме «Проект»; файлы договора вузу не показываются
+      required: [id, number, subject, concludedOn, validUntil, status, statusChangedAt]
       properties:
         id:
           type: string
@@ -9471,8 +9533,11 @@ components:
           type: [string, 'null']
           format: date
         status:
-          type: string
-          enum: [DRAFT, ACTIVE, COMPLETED, TERMINATED]
+          $ref: '#/components/schemas/AgreementStatus'
+        statusChangedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Когда договор перешёл в текущий статус
     Me:
       type: object
       required: [id, role, teamId, teamName, accessRevision, enrolmentOperator]
@@ -9578,6 +9643,7 @@ components:
             - PARTNER_ACCESS_EXISTS
             - PARTNER_ACCOUNT_CONFLICT
             - ACCOUNT_CONFLICT
+            - FILE_UNAVAILABLE
         message:
           type: string
         requestId:
@@ -9685,7 +9751,8 @@ components:
                 $ref: '#/components/schemas/Organization'
     OrganizationHistoryKind:
       type: string
-      enum: [CREATED, TRANSITIONED, COMMENTED, STAGES_EDITED, PLAN_UPDATED, DETAILS_UPDATED, STATUS_CHANGED, AGREEMENT_UPDATED, ATTACHMENT_DELETED, STAGE_COMPLETED, STAGE_COMPLETION_CLEARED, ASSIGNMENT, CONTACT]
+      enum: [CREATED, TRANSITIONED, COMMENTED, STAGES_EDITED, PLAN_UPDATED, DETAILS_UPDATED, STATUS_CHANGED, AGREEMENT_UPDATED, ATTACHMENT_DELETED, STAGE_COMPLETED, STAGE_COMPLETION_CLEARED, ASSIGNMENT, CONTACT, AGREEMENT_STATUS]
+      description: AGREEMENT_STATUS — переход договора с вузом по статусам (description — номер и статусы, comment — причина)
     OrganizationHistoryItem:
       type: object
       required: [id, kind, occurredAt, actorName, interactionId, interactionTitle, fromStageName, stageName, description, comment, contactId, contactName, changes]
@@ -10171,7 +10238,8 @@ components:
     InteractionIssue:
       type: object
       required: [id, interactionId, interactionTitle, organizationId, organizationName, ownerManagerName, kind, description, riskLevel,
-                 responsibleId, responsibleName, dueOn, status, resolution, createdBy, createdByName, createdAt, resolvedByName, resolvedAt]
+                 responsibleId, responsibleName, dueOn, status, resolution, createdBy, createdByName, createdAt, resolvedByName, resolvedAt,
+                 organizationAccessible]
       properties:
         id:
           type: string
@@ -10228,6 +10296,9 @@ components:
         resolvedAt:
           type: [string, 'null']
           format: date-time
+        organizationAccessible:
+          description: Открывается ли вуз записи текущему сотруднику. false у записи, назначенной ему в чужом вузе
+          type: boolean
     InteractionIssueList:
       type: object
       required: [items, responsibleOptions]
@@ -10732,11 +10803,14 @@ components:
       enum: [OVERDUE, THIS_WEEK, NO_NEXT_STEP, IN_ORDER]
     WorkControlTotals:
       type: object
-      required: [organizations, works, overdue, thisWeek, noNextStep, inOrder, withIssues, moved, created, completed]
+      required: [organizations, works, overdue, thisWeek, noNextStep, inOrder, withIssues, moved, created, completed, idle]
       properties:
         organizations:
           type: integer
           minimum: 0
+          description: >
+            Вузы со строками; без периода и отборов по направлению, программе, продукту и этапу — вместе с вузами без
+            идущего взаимодействия (как в разделе «Вузы», без служебной организации «Открытый набор»)
         works:
           type: integer
           minimum: 0
@@ -10765,6 +10839,29 @@ components:
         completed:
           type: integer
           minimum: 0
+        idle:
+          type: integer
+          minimum: 0
+          description: Вузы с КАМ без идущего взаимодействия («Без работы»); 0, если они не считаются
+    WorkControlIdleOrganization:
+      type: object
+      required: [id, name, teamId, teamName, managerId, managerName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        teamId:
+          type: string
+          format: uuid
+        teamName:
+          type: string
+        managerId:
+          type: string
+          format: uuid
+        managerName:
+          type: string
     WorkControlItem:
       type: object
       required: [interactionId, organizationId, organizationName, title, products, stage, stagePosition, stageTotal, due, problems, risks, transitions, created, completed]
@@ -10834,6 +10931,10 @@ components:
           description: Статус договора с вузом, связанного с работой (последний изменённый, если их несколько)
         agreementNumber:
           type: [string, 'null']
+        agreementValidUntil:
+          type: [string, 'null']
+          format: date
+          description: Срок действия того же договора; по нему экран показывает «срок истёк» и близкое истечение
         learning:
           oneOf:
             - $ref: '#/components/schemas/WorkLearning'
@@ -10920,6 +11021,13 @@ components:
             $ref: '#/components/schemas/WorkControlTeam'
         total:
           $ref: '#/components/schemas/WorkControlTotals'
+        idleOrganizations:
+          type: [array, 'null']
+          description: >
+            Группа «Без работы»: вузы с КАМ без идущего взаимодействия, с учётом отборов по вузу и менеджеру. null, если
+            задан период или отбор по направлению, программе, продукту или этапу
+          items:
+            $ref: '#/components/schemas/WorkControlIdleOrganization'
     TeamsSummary:
       type: object
       required: [calculatedAt, stuckDays, teams, total]
@@ -11269,7 +11377,7 @@ components:
     ReminderDigest:
       type: object
       required: [enabled, generatedAt, upcomingDays, overdueTotal, dueTodayTotal, upcomingTotal, overdue, upcoming, expiringLicenses, trainingCycles, licenseExpiresBy,
-        qualificationDue]
+        qualificationDue, agreementNoticeDays, expiringAgreements]
       properties:
         enabled:
           type: boolean
@@ -11312,6 +11420,41 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ReminderQualification'
+        agreementNoticeDays:
+          type: integer
+          minimum: 0
+          description: За сколько дней до окончания договор с вузом попадает в напоминания (app.work.agreement-notice-days)
+        expiringAgreements:
+          type: array
+          description: Договоры «Действует» области видимости со сроком не позже сегодня + agreementNoticeDays, включая истёкшие
+          items:
+            $ref: '#/components/schemas/ReminderAgreement'
+    ReminderAgreement:
+      type: object
+      required: [agreementId, organizationId, organizationName, number, validUntil, plannedKind, plannedOn, ownerManagerName]
+      properties:
+        agreementId:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        number:
+          type: string
+        validUntil:
+          type: string
+          format: date
+        plannedKind:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementPlanKind'
+            - type: 'null'
+        plannedOn:
+          type: [string, 'null']
+          format: date
+        ownerManagerName:
+          type: [string, 'null']
     ReminderQualification:
       type: object
       required: [interactionId, organizationId, title, organizationName, stageName, trainedOn, dueOn]
@@ -12466,7 +12609,7 @@ components:
           maxLength: 500
     OrganizationDuplicate:
       type: object
-      required: [id, name, type, status, teamName, exact]
+      required: [id, name, type, status, teamName, exact, sameInn]
       properties:
         id:
           type: [string, 'null']
@@ -12483,6 +12626,9 @@ components:
           type: string
         exact:
           type: boolean
+        sameInn:
+          type: boolean
+          description: Совпал ИНН; создание не блокируется
     CatalogKind:
       type: string
       enum: [directions, programs, vendors, products]
@@ -12958,7 +13104,8 @@ components:
         PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS. MANAGER_WORK допускает MANAGER, ORGANIZATION, PRODUCTS,
         PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS, NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS,
         LMS_LEARNING, LMS_CHECK, TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM,
-        RISK; LMS_LEARNING и LMS_CHECK — текущие данные LMS по идущим потокам и сверка этапа с ними.
+        RISK, AGREEMENT_STATUS, AGREEMENT; LMS_LEARNING и LMS_CHECK — текущие данные LMS по идущим потокам и сверка этапа с
+        ними, AGREEMENT_STATUS и AGREEMENT — статус и номер последнего связанного договора с вузом («Нет», если договора нет).
       enum: [ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK,
              MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, EVENT_AT, EVENT_TYPE, FROM_STAGE, COMMENT, AUTHOR,
              APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, PARALLEL_RUNS, MARKET_VACANCIES,
@@ -13046,7 +13193,14 @@ components:
           minimum: 1
           maximum: 3650
           description: >
-            Только PORTFOLIO; оставляет взаимодействия, чей последний вход в текущий этап произошёл не менее чем за столько дней до формирования отчёта — то же правило, что у DAYS_ON_STAGE и фильтра minDaysOnStage списка работ; другие виды отклоняют его с 400 VALIDATION_ERROR
+            Только PORTFOLIO; оставляет взаимодействия, чей последний вход в текущий этап произошёл не менее чем за столько дней до формирования отчёта — то же правило, что у DAYS_ON_STAGE и фильтра minDaysOnStage списка работ; другие виды отклоняют его с 400 VALIDATION_ERROR. В MANAGER_WORK с tile STUCK — порог «на этапе дольше» (по умолчанию 30)
+        tile:
+          type: [string, 'null']
+          enum: [OVERDUE, THIS_WEEK, NO_NEXT_STEP, ISSUES, AGREEMENT, UNASSIGNED, STUCK, LMS, null]
+          description: >
+            Только MANAGER_WORK; отбор плиткой «Контроля» — те же строки, что на экране: просрочено, срок на этой неделе,
+            без шага или срока, проблемы и риски, договор на согласовании, вузы без КАМ, на этапе дольше minDaysOnStage
+            дней, сигналы LMS. Итоги считаются по отобранным строкам; другие виды отклоняют его с 400 VALIDATION_ERROR
         change:
           oneOf:
             - $ref: '#/components/schemas/ManagerWorkChange'
@@ -13255,11 +13409,39 @@ components:
         groupTotals:
           type: array
           description: >
-            Итоги по менеджерам отчёта MANAGER_WORK (по одному объекту на менеджера, те же ключи, что у items); не входят в items и total и возвращаются на каждой странице целиком. Для других видов отчётов пусто или отсутствует
+            Итоги отчёта MANAGER_WORK числами: по менеджеру внутри команды («Требует назначения» — отдельно у каждой
+            команды), «Итого по команде» и последней строкой «Всего». Не входят в items и total и возвращаются на каждой
+            странице целиком. Для других видов отчётов пусто или отсутствует
           items:
-            type: object
-            additionalProperties:
-              type: [string, number, 'null']
+            $ref: '#/components/schemas/ManagerWorkTotal'
+    ManagerWorkTotal:
+      type: object
+      required: [team, manager, organizations, works, overdue, thisWeek, noNextStep, transitions]
+      properties:
+        team:
+          type: [string, 'null']
+          description: Команда; у строки «Всего» — «Все команды»
+        manager:
+          type: string
+          description: Менеджер, «Требует назначения», «Итого по команде» или «Всего»
+        organizations:
+          type: integer
+          minimum: 0
+        works:
+          type: integer
+          minimum: 0
+        overdue:
+          type: integer
+          minimum: 0
+        thisWeek:
+          type: integer
+          minimum: 0
+        noNextStep:
+          type: integer
+          minimum: 0
+        transitions:
+          type: integer
+          minimum: 0
     StatisticsGroupBy:
       type: string
       description: DEMAND суммирует заявки и принимает ORGANIZATION, DIRECTION, PROGRAM, MANAGER и MONTH (месяц подачи)

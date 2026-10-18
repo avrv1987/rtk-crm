@@ -1,5 +1,12 @@
-import { type ChangeEvent, type FormEvent, useState } from 'react'
-import { ApiError, apiClient, createIdempotencyKey, type PaidOrderUpload as PaidOrderUploadResult } from '../../shared/api/client'
+import { type ChangeEvent, type FormEvent, useEffect, useState } from 'react'
+import {
+  ApiError,
+  apiClient,
+  createIdempotencyKey,
+  type LastPaidOrderUpload,
+  type PaidOrderUpload as PaidOrderUploadResult
+} from '../../shared/api/client'
+import { formatMoscowDateTime } from '../../shared/format/datetime'
 import { HintButton } from '../../shared/ui/HintButton'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { type AccessErrorReporter, responseErrorMessage } from './enrolmentShared'
@@ -15,11 +22,125 @@ type UploadState =
   | { kind: 'done'; result: PaidOrderUploadResult }
   | { kind: 'failed'; error: unknown }
 
+// «У 1 слушателя», «у 5 слушателей»; «1 слушатель перенесён», «2 слушателя перенесены».
+const learnersGenitive = (count: number) => (count % 10 === 1 && count % 100 !== 11 ? 'слушателя' : 'слушателей')
+
+const learnersMoved = (count: number) => {
+  const last = count % 10
+  const lastTwo = count % 100
+  if (last === 1 && lastTwo !== 11) {
+    return `${count} слушатель перенесён`
+  }
+  return `${count} ${last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14) ? 'слушателя' : 'слушателей'} перенесены`
+}
+
+const Protocol = ({ result, uploadedAt }: { result: PaidOrderUploadResult; uploadedAt: string | null }) => (
+  <section className="enrolment__protocol" aria-labelledby="enrolment-protocol-title">
+    <h4 id="enrolment-protocol-title">
+      {uploadedAt === null ? 'Протокол загрузки' : `Протокол последней загрузки, ${formatMoscowDateTime(uploadedAt)}`}
+    </h4>
+    <dl className="enrolment__counters">
+      <div><dt>Получено заявок</dt><dd>{result.received}</dd></div>
+      <div><dt>Пустых элементов пропущено</dt><dd>{result.emptyElements}</dd></div>
+      <div>
+        <dt>Новых</dt>
+        <dd>{result.created}{result.needsMapping > 0 ? `, ещё ${result.needsMapping} ждут сопоставления курса` : ''}</dd>
+      </div>
+      <div><dt>Изменились курс или поток</dt><dd>{result.updated}</dd></div>
+      <div><dt>Без изменений</dt><dd>{result.skipped}</dd></div>
+      <div><dt>Курс не сопоставлен с программой</dt><dd>{result.needsMapping}</dd></div>
+      <div><dt>Не приняты</dt><dd>{result.failed}</dd></div>
+      <div><dt>Новых слушателей</dt><dd>{result.learners.newLearners}</dd></div>
+      <div><dt>Найдено существующих</dt><dd>{result.learners.foundLearners}</dd></div>
+      <div><dt>Зачислений</dt><dd>{result.learners.enrolled}</dd></div>
+      <div><dt>Повторных заявок в потоке</dt><dd>{result.learners.repeatOrders}</dd></div>
+      <div><dt>Перенесено в другой поток</dt><dd>{result.learners.movedStreams}</dd></div>
+    </dl>
+    {result.needsMapping > 0 && (
+      <p className="notice" role="status">
+        {result.unmappedCourses.length > 0
+          ? `Курс не сопоставлен с программой CRM: ${result.unmappedCourses.map((course) => `«${course}»`).join(', ')}. `
+          : ''}
+        Поэтому {result.needsMapping} заявок не считаются ни новыми, ни изменившимися. Курс сопоставляет администратор в
+        «Источники данных → Записи для разбора»; после этого заявки попадут в отчёт без повторной загрузки.
+      </p>
+    )}
+    {result.learners.contactsDiffer > 0 && (
+      <p className="notice" role="status">
+        У {result.learners.contactsDiffer} {learnersGenitive(result.learners.contactsDiffer)} контакты в оплате отличаются от анкеты: анкета не перезаписана.
+      </p>
+    )}
+    {result.learners.movedAfterLms > 0 && (
+      <p className="notice" role="status">
+        {learnersMoved(result.learners.movedAfterLms)} в другой поток после выгрузки в LMS: исключите их из прежнего потока в LMS вручную.
+      </p>
+    )}
+    {result.streams.length > 0 && (
+      <div className="catalog-import__table-scroll">
+        <table>
+          <caption>Потоки в файле</caption>
+          <thead>
+            <tr>
+              <th scope="col">Курс</th>
+              <th scope="col">Поток</th>
+              <th scope="col">Заявок в файле</th>
+            </tr>
+          </thead>
+          <tbody>
+            {result.streams.map((stream) => (
+              <tr key={`${stream.course}|${stream.streamNo}`}>
+                <td>{stream.course}</td>
+                <td>{stream.streamNo}</td>
+                <td>{stream.orders}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+    {result.issues.length > 0 && (
+      <>
+        <h4>Замечания к заявкам файла</h4>
+        <ul className="enrolment__issues">
+          {result.issues.map((issue, index) => (
+            <li key={`${issue.position}-${index}`} className={issue.warning ? 'enrolment__issue--warning' : undefined}>
+              {issue.orderNumber ? `Заявка ${issue.orderNumber}` : `Элемент ${issue.position} (номера заявки нет)`}
+              {issue.field === null ? '' : `, поле «${issue.field}»`}: {issue.message}
+              {issue.warning ? ' (запись принята)' : ''}
+            </li>
+          ))}
+        </ul>
+      </>
+    )}
+    <p className="enrolment__run">Запуск источника «Сайт» {result.runId}{result.message ? `: ${result.message}` : ''}.</p>
+  </section>
+)
+
 export const PaidOrdersUpload = ({ onUploaded, onAccessError }: PaidOrdersUploadProps) => {
   const [file, setFile] = useState<File | null>(null)
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null)
   const [state, setState] = useState<UploadState>({ kind: 'idle' })
   const [open, setOpen] = useState(false)
+  const [last, setLast] = useState<LastPaidOrderUpload | null>(null)
+
+  useEffect(() => {
+    let active = true
+    apiClient.getLastPaidOrderUpload()
+      .then((value) => {
+        if (active) {
+          setLast(value)
+        }
+      })
+      .catch((error: unknown) => {
+        // Протокол прошлой загрузки — справочный: без него экран работает, ошибку доступа обработает родитель.
+        if (active) {
+          onAccessError(error)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [onAccessError])
 
   const selectFile = (event: ChangeEvent<HTMLInputElement>) => {
     setFile(event.target.files?.[0] ?? null)
@@ -80,77 +201,8 @@ export const PaidOrdersUpload = ({ onUploaded, onAccessError }: PaidOrdersUpload
         </div>
       )}
 
-      {state.kind === 'done' && (
-        <section className="enrolment__protocol" aria-labelledby="enrolment-protocol-title">
-          <h4 id="enrolment-protocol-title">Протокол загрузки</h4>
-          <dl className="enrolment__counters">
-            <div><dt>Получено заявок</dt><dd>{state.result.received}</dd></div>
-            <div><dt>Пустых элементов пропущено</dt><dd>{state.result.emptyElements}</dd></div>
-            <div><dt>Новых</dt><dd>{state.result.created}</dd></div>
-            <div><dt>Изменились курс или поток</dt><dd>{state.result.updated}</dd></div>
-            <div><dt>Без изменений</dt><dd>{state.result.skipped}</dd></div>
-            <div><dt>Курс не сопоставлен с программой</dt><dd>{state.result.needsMapping}</dd></div>
-            <div><dt>Не приняты</dt><dd>{state.result.failed}</dd></div>
-            <div><dt>Новых слушателей</dt><dd>{state.result.learners.newLearners}</dd></div>
-            <div><dt>Найдено существующих</dt><dd>{state.result.learners.foundLearners}</dd></div>
-            <div><dt>Зачислений</dt><dd>{state.result.learners.enrolled}</dd></div>
-            <div><dt>Повторных заявок в потоке</dt><dd>{state.result.learners.repeatOrders}</dd></div>
-            <div><dt>Перенесено в другой поток</dt><dd>{state.result.learners.movedStreams}</dd></div>
-          </dl>
-          {state.result.needsMapping > 0 && (
-            <p className="notice" role="status">
-              Курсы без программы CRM сопоставляет администратор в «Источники данных → Записи для разбора»; после этого заявки попадут в отчёт без повторной загрузки.
-            </p>
-          )}
-          {state.result.learners.contactsDiffer > 0 && (
-            <p className="notice" role="status">
-              У {state.result.learners.contactsDiffer} слушателей контакты в оплате отличаются от анкеты: анкета не перезаписана.
-            </p>
-          )}
-          {state.result.learners.movedAfterLms > 0 && (
-            <p className="notice" role="status">
-              {state.result.learners.movedAfterLms} слушателей перенесены в другой поток после выгрузки в LMS: исключите их из прежнего потока в LMS вручную.
-            </p>
-          )}
-          {state.result.streams.length > 0 && (
-            <div className="catalog-import__table-scroll">
-              <table>
-                <caption>Потоки в файле</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">Курс</th>
-                    <th scope="col">Поток</th>
-                    <th scope="col">Заявок в файле</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {state.result.streams.map((stream) => (
-                    <tr key={`${stream.course}|${stream.streamNo}`}>
-                      <td>{stream.course}</td>
-                      <td>{stream.streamNo}</td>
-                      <td>{stream.orders}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {state.result.issues.length > 0 && (
-            <>
-              <h4>Замечания к элементам файла</h4>
-              <ul className="enrolment__issues">
-                {state.result.issues.map((issue, index) => (
-                  <li key={`${issue.position}-${index}`} className={issue.warning ? 'enrolment__issue--warning' : undefined}>
-                    Элемент {issue.position}{issue.field === null ? '' : `, поле «${issue.field}»`}: {issue.message}
-                    {issue.warning ? ' (запись принята)' : ''}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          <p className="enrolment__run">Запуск источника «Сайт» {state.result.runId}{state.result.message ? `: ${state.result.message}` : ''}.</p>
-        </section>
-      )}
+      {state.kind === 'done' && <Protocol result={state.result} uploadedAt={null} />}
+      {state.kind === 'idle' && last !== null && <Protocol result={last.protocol} uploadedAt={last.uploadedAt} />}
     </section>
   )
 }

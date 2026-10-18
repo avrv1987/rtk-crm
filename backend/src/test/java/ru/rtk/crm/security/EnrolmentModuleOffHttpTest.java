@@ -73,6 +73,7 @@ class EnrolmentModuleOffHttpTest {
         MockMultipartFile file = new MockMultipartFile("file", "learners.xlsx", null, "x".getBytes(StandardCharsets.UTF_8));
         List<RequestBuilder> requests = List.of(
                 get("/api/enrolment/streams").with(operator()),
+                get("/api/enrolment/paid-orders/last").with(operator()),
                 patch("/api/enrolment/streams/{id}", id).with(operator()).with(csrf()).header("Idempotency-Key", "k")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0,\"endsOn\":null}"),
                 get("/api/enrolment/streams/{id}/learners", id).with(operator()),

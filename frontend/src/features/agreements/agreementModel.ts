@@ -129,10 +129,11 @@ export const registryTiles: { key: RegistryTile; label: string; tone?: 'warning'
   { key: 'CORRECTION', label: 'На корректировке' },
   { key: 'SIGNING', label: 'На подписании' },
   { key: 'ACTIVE', label: 'Действует' },
-  { key: 'EXPIRING', label: 'Истекает за 60 дней', tone: 'warning' }
+  { key: 'EXPIRING', label: 'Истёк или истекает за 90 дней', tone: 'warning' }
 ]
 
-const expiringDays = 60
+// Тот же горизонт, что у напоминаний «Договоры истекают» (app.work.agreement-notice-days), чтобы числа совпадали.
+const expiringDays = 90
 
 const plusDays = (today: string, days: number) => {
   const [year, month, day] = today.split('-').map(Number)
@@ -149,7 +150,8 @@ export const registryTileCounts = (
     if (row.status === 'REVIEW' || row.status === 'CORRECTION' || row.status === 'SIGNING' || row.status === 'ACTIVE') {
       counts[row.status] += 1
     }
-    if (row.status === 'ACTIVE' && row.validUntil && row.validUntil >= today && row.validUntil <= limit) {
+    // Тот же отбор, что ставит плитка (registryTileFilters): «Действует» со сроком до границы, истёкшие включены.
+    if (row.status === 'ACTIVE' && row.validUntil && row.validUntil <= limit) {
       counts.EXPIRING += 1
     }
   }
@@ -174,3 +176,38 @@ export const registryTileOf = (filters: RegistryFilters, today: string): Registr
   })
   return tile?.key ?? null
 }
+
+export const agreementNoticeDays = 90
+
+export type AgreementTerm = 'expired' | 'expiring' | null
+
+// Статус по сроку не меняется (решение владельца): «срок истёк» вычисляется по дате окончания на сегодня по МСК,
+// так же как на сервере (AgreementStatus.expired). «Истекает» — только когда задан горизонт предупреждения.
+export const agreementTerm = (
+  agreement: { status: AgreementStatus; validUntil?: string | null },
+  today: string,
+  noticeDays = 0
+): AgreementTerm => {
+  if (agreement.status !== 'ACTIVE' || !agreement.validUntil) {
+    return null
+  }
+  if (agreement.validUntil < today) {
+    return 'expired'
+  }
+  return noticeDays > 0 && agreement.validUntil <= plusDays(today, noticeDays) ? 'expiring' : null
+}
+
+// Привязать можно любой договор вуза, кроме расторгнутого и уже связанного с этим взаимодействием.
+export const linkCandidates = <A extends { id: string; status: AgreementStatus }>(
+  agreements: readonly A[],
+  linkedIds: readonly string[]
+) => agreements.filter((agreement) => agreement.status !== 'TERMINATED' && !linkedIds.includes(agreement.id))
+
+// Правка реквизитов с полным списком связей: прежние взаимодействия договора сохраняются, текущее добавляется.
+export const linkInput = (
+  agreement: AgreementLike & { interactions: readonly { id: string }[] },
+  interactionId: string
+): Schemas['AgreementInput'] => ({
+  ...inputFromAgreement(agreement),
+  interactionIds: [...new Set([...agreement.interactions.map((item) => item.id), interactionId])]
+})

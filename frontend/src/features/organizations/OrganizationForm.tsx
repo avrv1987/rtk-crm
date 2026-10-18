@@ -8,6 +8,7 @@ import {
   type OrganizationDuplicate,
   type OrganizationStatus
 } from '../../shared/api/client'
+import { duplicateQuery } from './organizationDuplicates'
 
 export type OrganizationType = Organization['type']
 
@@ -66,13 +67,13 @@ export const organizationErrorMessage = (error: unknown) => {
     return 'Не удалось связаться с сервисом. Введённые данные сохранены; повторите попытку.'
   }
   if (error.code === 'VERSION_CONFLICT') {
-    return 'Организацию уже изменили. Обновите карточку и повторите.'
+    return 'Вуз уже изменили. Обновите карточку и повторите.'
   }
   if (error.code === 'IDEMPOTENCY_CONFLICT') {
     return 'Команда уже выполнялась с другими данными. Повторите действие.'
   }
   if (error.code === 'NOT_FOUND') {
-    return 'Организация не найдена или недоступна.'
+    return 'Вуз не найден или недоступен.'
   }
   const messages = Object.values(error.fieldErrors ?? {})
   if (messages.length > 0) {
@@ -104,16 +105,17 @@ export const OrganizationForm = ({
   const duplicateRequest = useRef(0)
   const titleId = useId()
   const initialName = initial?.name ?? ''
+  const initialInn = initial?.inn ?? ''
 
   useEffect(() => {
-    const name = values.name.trim()
+    const query = duplicateQuery({ name: values.name, inn: values.inn }, { name: initialName, inn: initialInn })
     const version = ++duplicateRequest.current
-    if (name.length < 2 || name === initialName.trim()) {
+    if (query === null) {
       setDuplicates([])
       return
     }
     const timer = window.setTimeout(() => {
-      apiClient.findOrganizationDuplicates(name, exceptId)
+      apiClient.findOrganizationDuplicates(query.name, exceptId, query.inn)
         .then((found) => {
           if (version === duplicateRequest.current) {
             setDuplicates(found)
@@ -126,7 +128,7 @@ export const OrganizationForm = ({
         })
     }, duplicateDelayMilliseconds)
     return () => window.clearTimeout(timer)
-  }, [exceptId, initialName, onSessionError, values.name])
+  }, [exceptId, initialInn, initialName, onSessionError, values.inn, values.name])
 
   const change = (field: keyof OrganizationFormValues, value: string) => {
     idempotencyKey.current = null
@@ -135,7 +137,8 @@ export const OrganizationForm = ({
   }
 
   const exact = duplicates.find((duplicate) => duplicate.exact)
-  const similar = duplicates.filter((duplicate) => !duplicate.exact)
+  const sameInn = duplicates.filter((duplicate) => duplicate.sameInn && !duplicate.exact)
+  const similar = duplicates.filter((duplicate) => !duplicate.exact && !duplicate.sameInn)
   const teamMissing = teams !== undefined && values.teamId.length === 0
   const canSubmit = !saving && values.name.trim().length > 0 && exact === undefined && !teamMissing
 
@@ -232,14 +235,27 @@ export const OrganizationForm = ({
       {exact !== undefined && (
         <div className="interaction-command-error" role="alert">
           <p>
-            Организация с таким названием уже есть: {duplicateName(exact)}
+            Вуз с таким названием уже есть: {duplicateName(exact)}
             {exact.status === 'ARCHIVED' ? ' (в архиве)' : ''}, команда «{exact.teamName}». Дубль не создаётся.
           </p>
         </div>
       )}
+      {sameInn.length > 0 && (
+        <div className="notice organization-form__similar" role="status">
+          <p>Вуз с таким ИНН уже есть. Если это не филиал, не создавайте дубль:</p>
+          <ul>
+            {sameInn.map((duplicate) => (
+              <li key={`inn:${duplicate.name}:${duplicate.teamName}`}>
+                {duplicateName(duplicate)}
+                {duplicate.status === 'ARCHIVED' ? ' (в архиве)' : ''} — команда «{duplicate.teamName}»
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {exact === undefined && similar.length > 0 && (
         <div className="notice organization-form__similar" role="status">
-          <p>Похожие организации — проверьте, нет ли среди них нужной:</p>
+          <p>Похожие вузы — проверьте, нет ли среди них нужного:</p>
           <ul>
             {similar.map((duplicate) => (
               <li key={`${duplicate.name}:${duplicate.teamName}`}>

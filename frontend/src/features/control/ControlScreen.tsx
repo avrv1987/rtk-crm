@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { withCount } from '../../shared/format/plural'
 import {
   ApiError,
   apiClient,
@@ -21,6 +22,7 @@ import { terms } from '../../shared/ui/terms'
 import { saveFile } from '../admin/saveFile'
 import { matchingPreset, periodPresets } from '../reports/reportPeriods'
 import { WorkList } from '../work/WorkList'
+import { AssignDialog, IdleOrganizations } from './ControlIdle'
 import { ControlMatrix, UnassignedOrganizations, type MatrixOpenState } from './ControlMatrix'
 import { ControlMore } from './ControlMore'
 import {
@@ -49,6 +51,7 @@ import './control.css'
 
 type ControlScreenProps = {
   role: Me['role']
+  profileId?: string
   initialQuery: string
   refreshSignal: number
   onSessionExpired: () => void
@@ -85,7 +88,8 @@ const tileLabels: Record<ControlTile, string> = {
   AGREEMENT: 'Договор на согласовании',
   UNASSIGNED: 'Вузов без КАМ',
   STUCK: 'На этапе дольше',
-  LMS: 'Сигналы LMS'
+  LMS: 'С сигналами LMS',
+  IDLE: 'Без работы'
 }
 
 const periodOptions: { value: PeriodChoice; label: string }[] = [
@@ -135,7 +139,7 @@ const ControlList = ({ role, initialQuery, refreshSignal, onSessionExpired, onPr
   </section>
 )
 
-const ControlBoard = ({ role, initialQuery, refreshSignal, onSessionExpired, onProfileUnavailable }: ControlScreenProps) => {
+const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionExpired, onProfileUnavailable }: ControlScreenProps) => {
   const [filters, setFilters] = useState<ControlFilters>(() => controlFiltersFromQuery(initialQuery))
   const [view, setView] = useState<ControlView>(() => controlViewFromQuery(initialQuery))
   const [dataState, setDataState] = useState<DataState>({ kind: 'loading' })
@@ -148,6 +152,8 @@ const ControlBoard = ({ role, initialQuery, refreshSignal, onSessionExpired, onP
   const [customPeriod, setCustomPeriod] = useState(false)
   const [overrides, setOverrides] = useState<Record<string, boolean>>({})
   const [bulk, setBulk] = useState<boolean | null>(null)
+  const [assigning, setAssigning] = useState<string | null>(null)
+  const [assignRevision, setAssignRevision] = useState(0)
   const requestVersion = useRef(0)
   const mounted = useRef(true)
   const management = role === 'MANAGEMENT'
@@ -260,7 +266,7 @@ const ControlBoard = ({ role, initialQuery, refreshSignal, onSessionExpired, onP
     return () => {
       active = false
     }
-  }, [handleAccessError, management, refreshSignal, view.stuckDays])
+  }, [handleAccessError, management, refreshSignal, view.stuckDays, assignRevision])
 
   const update = (patch: Partial<ControlFilters>) => setFilters((current) => ({ ...current, ...patch }))
 
@@ -308,7 +314,7 @@ const ControlBoard = ({ role, initialQuery, refreshSignal, onSessionExpired, onP
     setExporting(true)
     setMessage({ text: `Готовим файл ${format}…`, persistent: true })
     try {
-      const created = await apiClient.createReportJob(toExportRequest(filters, format, management), createIdempotencyKey())
+      const created = await apiClient.createReportJob(toExportRequest(filters, format, management, view), createIdempotencyKey())
       for (;;) {
         await pause(pollMilliseconds)
         if (!mounted.current) {
@@ -347,6 +353,9 @@ const ControlBoard = ({ role, initialQuery, refreshSignal, onSessionExpired, onP
   const unassignedOrganizations = options?.organizationList.filter((item) => item.requiresAssignment && item.status !== 'ARCHIVED') ?? []
   const showUnassigned = unassignedOrganizations.length > 0 && (view.tile === null || view.tile === 'UNASSIGNED') && filters.managerId.length === 0
   const assignHref = role === 'LEADER' ? '#/organizations?requiresAssignment=true' : null
+  const onAssign = role === 'LEADER' && profileId !== undefined ? setAssigning : undefined
+  const idleOrganizations = control?.idleOrganizations ?? null
+  const showIdle = idleOrganizations !== null && idleOrganizations.length > 0 && (view.tile === null || view.tile === 'IDLE')
   const selectedTile: TileKey | null = view.tile ?? (filters.change === '' ? null : filters.change)
 
   const open: MatrixOpenState = {
@@ -367,6 +376,9 @@ const ControlBoard = ({ role, initialQuery, refreshSignal, onSessionExpired, onP
     { key: 'UNASSIGNED', label: tileLabels.UNASSIGNED, value: unassignedCount ?? unassignedOrganizations.length, tone: 'danger' },
     { key: 'STUCK', label: `${tileLabels.STUCK} ${view.stuckDays} дн.`, value: counts.STUCK, tone: 'warning' },
     { key: 'LMS', label: tileLabels.LMS, value: counts.LMS, tone: 'warning' },
+    ...(control?.idleOrganizations !== null && control?.idleOrganizations !== undefined
+      ? [{ key: 'IDLE' as const, label: tileLabels.IDLE, value: counts.IDLE, tone: 'danger' as const }]
+      : []),
     ...(withPeriod && control !== null ? [
       { key: 'MOVED' as const, label: 'Перешли на другой этап', value: control.total.moved },
       { key: 'NEW' as const, label: 'Новые взаимодействия', value: control.total.created },
@@ -417,9 +429,11 @@ const ControlBoard = ({ role, initialQuery, refreshSignal, onSessionExpired, onP
       <div className="control-toolbar">
         <HintButton label="Что на этом экране">
           Кто, с каким вузом и на каком этапе. Плитка отбирает строки, второе нажатие снимает отбор. Число в строке
-          менеджера отбирает его взаимодействия. «Сигналы LMS» — взаимодействия с сигналами LMS или несверенным этапом.
-          Период показывает изменения: кто перешёл на другой этап, какие взаимодействия новые и какие завершены (даты
-          включительно, МСК). Выгрузка XLSX и PDF — по фильтрам, без отбора плиткой.
+          менеджера отбирает его взаимодействия. «С сигналами LMS» — взаимодействия с сигналами LMS или несверенным этапом.
+          «Без работы» — вузы, за которыми закреплён КАМ, но идущего взаимодействия нет; эта группа видна без периода и
+          без отборов по продукту, программе, направлению и этапу. Период показывает изменения: кто перешёл на другой
+          этап, какие взаимодействия новые и какие завершены (даты включительно, МСК). Выгрузка XLSX и PDF — по фильтрам
+          и выбранной плитке, с итогами по менеджерам, командам и всего.
         </HintButton>
         <Segmented label="Период" options={periodOptions} value={choice} onChange={choosePeriod} />
         <FilterButton count={panelFilterCount(filters)} onClick={() => setPanelOpen(true)} />
@@ -435,7 +449,7 @@ const ControlBoard = ({ role, initialQuery, refreshSignal, onSessionExpired, onP
       <FilterChips chips={chips} onReset={resetAll} />
       {control !== null && (
         <p className="control-status">
-          <span>{`${control.total.organizations} вузов · ${control.total.works} взаимодействий · данные на ${formatMoscowDateTime(control.calculatedAt)}`}</span>
+          <span>{`${withCount(control.total.organizations, 'вуз', 'вуза', 'вузов')} · ${withCount(control.total.works, 'взаимодействие', 'взаимодействия', 'взаимодействий')} · данные на ${formatMoscowDateTime(control.calculatedAt)}`}</span>
           <button type="button" className="button--secondary" onClick={() => void load(filters)}>{terms.refresh}</button>
         </p>
       )}
@@ -497,15 +511,18 @@ const ControlBoard = ({ role, initialQuery, refreshSignal, onSessionExpired, onP
       )}
       {shown !== null && control !== null && (
         <div className="control-board" aria-busy={dataState.kind === 'ready' && dataState.refreshing}>
-          {showUnassigned && (
+          {showUnassigned && view.tile !== 'IDLE' && (
             <UnassignedOrganizations
               organizations={unassignedOrganizations}
               count={unassignedCount ?? unassignedOrganizations.length}
               assignHref={assignHref}
               open={open}
+              onAssign={onAssign}
             />
           )}
-          {view.tile === 'UNASSIGNED' && shown.teams.length === 0
+          {showIdle && <IdleOrganizations organizations={idleOrganizations} byTeams={control.byTeams} open={open} />}
+          {view.tile === 'IDLE' && !showIdle && <p className="control-empty">Вузов без работы нет.</p>}
+          {view.tile === 'IDLE' ? null : view.tile === 'UNASSIGNED' && shown.teams.length === 0
             ? <p className="control-empty">Взаимодействий у вузов без КАМ нет.</p>
             : (
               <ControlMatrix
@@ -517,6 +534,7 @@ const ControlBoard = ({ role, initialQuery, refreshSignal, onSessionExpired, onP
                 open={open}
                 onPick={pickManager}
                 assignHref={showUnassigned ? null : assignHref}
+                onAssign={onAssign}
               />
             )}
         </div>
@@ -529,6 +547,23 @@ const ControlBoard = ({ role, initialQuery, refreshSignal, onSessionExpired, onP
         onSessionExpired={onSessionExpired}
         onProfileUnavailable={onProfileUnavailable}
       />
+      {profileId !== undefined && (
+        <AssignDialog
+          organization={options?.organizationList.find((item) => item.id === assigning) ?? null}
+          profileId={profileId}
+          onClose={() => setAssigning(null)}
+          onAssigned={() => {
+            setAssigning(null)
+            setMessage({ text: 'Назначение ответственного сохранено.', persistent: false })
+            setAssignRevision((value) => value + 1)
+            void load(filters)
+            void loadOptions()
+          }}
+          onReload={loadOptions}
+          onSessionExpired={onSessionExpired}
+          onProfileUnavailable={onProfileUnavailable}
+        />
+      )}
       <Toast message={message?.text ?? null} persistent={message?.persistent ?? false} onClose={() => setMessage(null)} />
     </section>
   )

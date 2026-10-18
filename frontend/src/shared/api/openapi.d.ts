@@ -162,7 +162,7 @@ export interface paths {
         };
         /**
          * Возможные дубли организации
-         * @description Совпадение по нормализованному названию (регистр, пробелы, кавычки, ё) ищется во всём каталоге; похожие названия — только в области видимости. Для организации вне области видимости id не возвращается.
+         * @description Совпадение по нормализованному названию (регистр, пробелы, кавычки, ё) ищется во всём каталоге; похожие названия — только в области видимости. Совпадение по ИНН (10 или 12 цифр) тоже ищется во всём каталоге и только предупреждает: у филиала может быть общий ИНН. Для организации вне области видимости id не возвращается.
          */
         get: operations["findOrganizationDuplicates"];
         put?: never;
@@ -205,7 +205,7 @@ export interface paths {
         put?: never;
         /**
          * Подтвердить, отклонить, архивировать или восстановить организацию
-         * @description APPROVE и REJECT — руководитель для заявки PENDING; ARCHIVE — руководитель или КАМ-ответственный; RESTORE — руководитель. Архивная организация скрыта из списков и не принимает новые взаимодействия, история сохраняется.
+         * @description APPROVE и REJECT — руководитель для заявки PENDING; ARCHIVE и RESTORE — руководитель (администратор — через административный раздел). КАМ и заместитель вуз не архивируют. Архивная организация скрыта из списков и не принимает новые взаимодействия, история сохраняется.
          */
         post: operations["changeOrganizationStatus"];
         delete?: never;
@@ -3361,6 +3361,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/enrolment/paid-orders/last": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Протокол последней загрузки оплат
+         * @description Модуль «Слушатели» выключен — 404 всем; включён — только оператор зачисления, остальным 403. Протокол берётся из сохранённого результата последней загрузки оплат любым оператором; без загрузок — 204.
+         */
+        get: operations["getLastPaidOrderUpload"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/enrolment/streams": {
         parameters: {
             query?: never;
@@ -3668,6 +3688,13 @@ export interface components {
             streams: components["schemas"]["PaidOrderStream"][];
             issues: components["schemas"]["PaidOrderIssue"][];
             learners: components["schemas"]["LearnerIntake"];
+            /** @description Курсы, заявки которых ждут сопоставления с программой (они в needsMapping, а не в created) */
+            unmappedCourses: string[];
+        };
+        LastPaidOrderUpload: {
+            /** Format: date-time */
+            uploadedAt: string;
+            protocol: components["schemas"]["PaidOrderUpload"];
         };
         PaidOrderStream: {
             course: string;
@@ -3682,6 +3709,8 @@ export interface components {
             message: string;
             /** @description true — запись принята (например, телефон не прошёл проверку и не сохранён) */
             warning: boolean;
+            /** @description Номер заявки из элемента, если он есть; по нему оператор находит запись в файле */
+            orderNumber?: string | null;
         };
         /** @description Приём оплат в модуль «Слушатели» — только числа, без персональных данных */
         LearnerIntake: {
@@ -3749,8 +3778,13 @@ export interface components {
         };
         EnrolmentStreamUpdate: {
             version: number;
-            /** Format: date */
+            /**
+             * Format: date
+             * @description Не раньше чем 5 лет назад и не позже чем через 5 лет (дата по МСК)
+             */
             endsOn: string | null;
+            /** @description Подтверждение прошедшей даты окончания. Без него прошедшая дата отклоняется с ошибкой поля confirmPastDate: когда срок хранения истечёт, ночная задача необратимо обезличит анкеты потока */
+            confirmPastDate?: boolean | null;
         };
         EnrolmentStreamLearners: {
             stream: components["schemas"]["EnrolmentStream"];
@@ -3901,6 +3935,8 @@ export interface components {
         LearnerMove: {
             snils: string;
             version: number;
+            /** @description Подтверждение оператора, что анкеты с разными ФИО принадлежат одному человеку. Без него при расхождении фамилии, имени или отчества (если отчество есть в обеих анкетах) перенос отклоняется с ошибкой поля confirmNameMismatch */
+            confirmNameMismatch?: boolean | null;
         };
         LearnerMoveResult: {
             /**
@@ -4496,6 +4532,7 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
+        /** @description Договор вуза на любой стадии, кроме «Проект»; файлы договора вузу не показываются */
         PartnerAgreement: {
             /** Format: uuid */
             id: string;
@@ -4506,8 +4543,12 @@ export interface components {
             concludedOn: string | null;
             /** Format: date */
             validUntil: string | null;
-            /** @enum {string} */
-            status: "DRAFT" | "ACTIVE" | "COMPLETED" | "TERMINATED";
+            status: components["schemas"]["AgreementStatus"];
+            /**
+             * Format: date-time
+             * @description Когда договор перешёл в текущий статус
+             */
+            statusChangedAt: string | null;
         };
         Me: {
             /** Format: uuid */
@@ -4548,7 +4589,7 @@ export interface components {
         };
         ApiError: {
             /** @enum {string} */
-            code: "VALIDATION_ERROR" | "BAD_REQUEST" | "UNAUTHENTICATED" | "FORBIDDEN" | "CSRF_INVALID" | "CRM_PROFILE_REQUIRED" | "CRM_PROFILE_PENDING" | "PARTNER_MODULE_DISABLED" | "LAST_ACTIVE_ADMIN" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "CONFLICT" | "VERSION_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "DEPENDENCY_UNAVAILABLE" | "REPORT_NOT_READY" | "REPORT_ACCESS_CHANGED" | "REPORT_RESULT_UNAVAILABLE" | "REPORT_CAPACITY_EXCEEDED" | "REPORT_ROW_LIMIT" | "SOURCE_NOT_CONFIGURED" | "CRM_EXCHANGE_FAILED" | "SYNC_ALREADY_RUNNING" | "SYNC_CAPACITY_EXCEEDED" | "LMS_NOT_MAPPED" | "LMS_SYNC_FAILED" | "ACCOUNT_SYNC_FAILED" | "PERSONAL_DATA_ANONYMIZED" | "PROFILE_ACTIVE" | "RETENTION_RUNNING" | "CONFIRMATION_LIMIT" | "PERSONAL_DATA_RESTRICTED" | "PARTNER_ACCESS_EXISTS" | "PARTNER_ACCOUNT_CONFLICT" | "ACCOUNT_CONFLICT";
+            code: "VALIDATION_ERROR" | "BAD_REQUEST" | "UNAUTHENTICATED" | "FORBIDDEN" | "CSRF_INVALID" | "CRM_PROFILE_REQUIRED" | "CRM_PROFILE_PENDING" | "PARTNER_MODULE_DISABLED" | "LAST_ACTIVE_ADMIN" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "CONFLICT" | "VERSION_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "DEPENDENCY_UNAVAILABLE" | "REPORT_NOT_READY" | "REPORT_ACCESS_CHANGED" | "REPORT_RESULT_UNAVAILABLE" | "REPORT_CAPACITY_EXCEEDED" | "REPORT_ROW_LIMIT" | "SOURCE_NOT_CONFIGURED" | "CRM_EXCHANGE_FAILED" | "SYNC_ALREADY_RUNNING" | "SYNC_CAPACITY_EXCEEDED" | "LMS_NOT_MAPPED" | "LMS_SYNC_FAILED" | "ACCOUNT_SYNC_FAILED" | "PERSONAL_DATA_ANONYMIZED" | "PROFILE_ACTIVE" | "RETENTION_RUNNING" | "CONFIRMATION_LIMIT" | "PERSONAL_DATA_RESTRICTED" | "PARTNER_ACCESS_EXISTS" | "PARTNER_ACCOUNT_CONFLICT" | "ACCOUNT_CONFLICT" | "FILE_UNAVAILABLE";
             message: string;
             /** Format: uuid */
             requestId: string;
@@ -4605,8 +4646,11 @@ export interface components {
         PageOrganization: components["schemas"]["PageMeta"] & {
             items: components["schemas"]["Organization"][];
         };
-        /** @enum {string} */
-        OrganizationHistoryKind: "CREATED" | "TRANSITIONED" | "COMMENTED" | "STAGES_EDITED" | "PLAN_UPDATED" | "DETAILS_UPDATED" | "STATUS_CHANGED" | "AGREEMENT_UPDATED" | "ATTACHMENT_DELETED" | "STAGE_COMPLETED" | "STAGE_COMPLETION_CLEARED" | "ASSIGNMENT" | "CONTACT";
+        /**
+         * @description AGREEMENT_STATUS — переход договора с вузом по статусам (description — номер и статусы, comment — причина)
+         * @enum {string}
+         */
+        OrganizationHistoryKind: "CREATED" | "TRANSITIONED" | "COMMENTED" | "STAGES_EDITED" | "PLAN_UPDATED" | "DETAILS_UPDATED" | "STATUS_CHANGED" | "AGREEMENT_UPDATED" | "ATTACHMENT_DELETED" | "STAGE_COMPLETED" | "STAGE_COMPLETION_CLEARED" | "ASSIGNMENT" | "CONTACT" | "AGREEMENT_STATUS";
         OrganizationHistoryItem: {
             /** Format: uuid */
             id: string;
@@ -4914,6 +4958,8 @@ export interface components {
             resolvedByName: string | null;
             /** Format: date-time */
             resolvedAt: string | null;
+            /** @description Открывается ли вуз записи текущему сотруднику. false у записи, назначенной ему в чужом вузе */
+            organizationAccessible: boolean;
         };
         InteractionIssueList: {
             items: components["schemas"]["InteractionIssue"][];
@@ -5162,6 +5208,7 @@ export interface components {
         /** @enum {string} */
         ManagerWorkDue: "OVERDUE" | "THIS_WEEK" | "NO_NEXT_STEP" | "IN_ORDER";
         WorkControlTotals: {
+            /** @description Вузы со строками; без периода и отборов по направлению, программе, продукту и этапу — вместе с вузами без идущего взаимодействия (как в разделе «Вузы», без служебной организации «Открытый набор») */
             organizations: number;
             works: number;
             overdue: number;
@@ -5173,6 +5220,19 @@ export interface components {
             moved: number;
             created: number;
             completed: number;
+            /** @description Вузы с КАМ без идущего взаимодействия («Без работы»); 0, если они не считаются */
+            idle: number;
+        };
+        WorkControlIdleOrganization: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: uuid */
+            teamId: string;
+            teamName: string;
+            /** Format: uuid */
+            managerId: string;
+            managerName: string;
         };
         WorkControlItem: {
             /** Format: uuid */
@@ -5206,6 +5266,11 @@ export interface components {
             /** @description Статус договора с вузом, связанного с работой (последний изменённый, если их несколько) */
             agreementStatus?: components["schemas"]["AgreementStatus"] | null;
             agreementNumber?: string | null;
+            /**
+             * Format: date
+             * @description Срок действия того же договора; по нему экран показывает «срок истёк» и близкое истечение
+             */
+            agreementValidUntil?: string | null;
             /** @description Обучение по данным LMS; null — у работы нет потоков занятий студентов с датами */
             learning?: components["schemas"]["WorkLearning"] | null;
         };
@@ -5249,6 +5314,8 @@ export interface components {
             byTeams: boolean;
             teams: components["schemas"]["WorkControlTeam"][];
             total: components["schemas"]["WorkControlTotals"];
+            /** @description Группа «Без работы»: вузы с КАМ без идущего взаимодействия, с учётом отборов по вузу и менеджеру. null, если задан период или отбор по направлению, программе, продукту или этапу */
+            idleOrganizations?: components["schemas"]["WorkControlIdleOrganization"][] | null;
         };
         TeamsSummary: {
             /** Format: date-time */
@@ -5453,6 +5520,24 @@ export interface components {
             /** @description Год, до которого включительно лицензия считается истекающей; тот же год принимает отбор licenseExpiresBy списка взаимодействий */
             licenseExpiresBy: number;
             qualificationDue: components["schemas"]["ReminderQualification"][];
+            /** @description За сколько дней до окончания договор с вузом попадает в напоминания (app.work.agreement-notice-days) */
+            agreementNoticeDays: number;
+            /** @description Договоры «Действует» области видимости со сроком не позже сегодня + agreementNoticeDays, включая истёкшие */
+            expiringAgreements: components["schemas"]["ReminderAgreement"][];
+        };
+        ReminderAgreement: {
+            /** Format: uuid */
+            agreementId: string;
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            number: string;
+            /** Format: date */
+            validUntil: string;
+            plannedKind: components["schemas"]["AgreementPlanKind"] | null;
+            /** Format: date */
+            plannedOn: string | null;
+            ownerManagerName: string | null;
         };
         /** @description Активная работа, у которой с последней записи «Обучение преподавателей» прошло не меньше app.work.qualification-after-months месяцев, а этап app.work.qualification-stage-name ещё впереди и не отмечен. */
         ReminderQualification: {
@@ -6062,6 +6147,8 @@ export interface components {
             status: components["schemas"]["OrganizationStatus"];
             teamName: string;
             exact: boolean;
+            /** @description Совпал ИНН; создание не блокируется */
+            sameInn: boolean;
         };
         /** @enum {string} */
         CatalogKind: "directions" | "programs" | "vendors" | "products";
@@ -6309,7 +6396,7 @@ export interface components {
          */
         InteractionFlag: "WAITING_UNIVERSITY" | "WAITING_RTK" | "PROBLEM" | "RISK" | "RISK_OR_PROBLEM";
         /**
-         * @description PORTFOLIO допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON; DAYS_ON_STAGE — число полных дней от последнего входа на текущий этап (от создания, если карточка ни разу не входила на него через переход) до момента формирования отчёта; колонки по договору показывают само значение для одного продукта и пары «продукт: значение» для нескольких. EVENTS допускает EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE, FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND допускает DIRECTION, PROGRAM, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND; заголовки колонок DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков. MARKET_VACANCIES — число открытых вакансий по ИТ-направлению программы в последнем месячном срезе периода, MARKET_TREND — изменение этого числа в процентах от последнего среза до начала периода (если его нет — от первого среза периода) до последнего среза периода; оба показателя считаются только для направлений с признаком «Учитывать спрос рынка труда», у остальных значение «не применяется», при отсутствии срезов — null («нет данных»); в общий показатель не входят. PAID_ORDERS считает различные номера оплаченных заказов, а PAID_STREAMS — различные пары «курс и поток» применённых записей paid_order сервисной организации «Открытый набор (физлица)», видимой каждому USER и LEADER; период отчёта к ним не применяется, поскольку сайт не передаёт дату оплаты. SNAPSHOT допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT. DURATION допускает TEAM, PROGRAM, STAGE, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; дни — десятичные числа с одним знаком после запятой. AGREEMENTS допускает ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS, PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS. MANAGER_WORK допускает MANAGER, ORGANIZATION, PRODUCTS, PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS, NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS, LMS_LEARNING, LMS_CHECK, TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM, RISK; LMS_LEARNING и LMS_CHECK — текущие данные LMS по идущим потокам и сверка этапа с ними.
+         * @description PORTFOLIO допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON; DAYS_ON_STAGE — число полных дней от последнего входа на текущий этап (от создания, если карточка ни разу не входила на него через переход) до момента формирования отчёта; колонки по договору показывают само значение для одного продукта и пары «продукт: значение» для нескольких. EVENTS допускает EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE, FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND допускает DIRECTION, PROGRAM, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND; заголовки колонок DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков. MARKET_VACANCIES — число открытых вакансий по ИТ-направлению программы в последнем месячном срезе периода, MARKET_TREND — изменение этого числа в процентах от последнего среза до начала периода (если его нет — от первого среза периода) до последнего среза периода; оба показателя считаются только для направлений с признаком «Учитывать спрос рынка труда», у остальных значение «не применяется», при отсутствии срезов — null («нет данных»); в общий показатель не входят. PAID_ORDERS считает различные номера оплаченных заказов, а PAID_STREAMS — различные пары «курс и поток» применённых записей paid_order сервисной организации «Открытый набор (физлица)», видимой каждому USER и LEADER; период отчёта к ним не применяется, поскольку сайт не передаёт дату оплаты. SNAPSHOT допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT. DURATION допускает TEAM, PROGRAM, STAGE, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; дни — десятичные числа с одним знаком после запятой. AGREEMENTS допускает ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS, PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS. MANAGER_WORK допускает MANAGER, ORGANIZATION, PRODUCTS, PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS, NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS, LMS_LEARNING, LMS_CHECK, TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM, RISK, AGREEMENT_STATUS, AGREEMENT; LMS_LEARNING и LMS_CHECK — текущие данные LMS по идущим потокам и сверка этапа с ними, AGREEMENT_STATUS и AGREEMENT — статус и номер последнего связанного договора с вузом («Нет», если договора нет).
          * @enum {string}
          */
         ReportColumn: "ORGANIZATION" | "INTERACTION" | "DIRECTION" | "PROGRAM" | "PRODUCTS" | "STAGE" | "DAYS_ON_STAGE" | "WORK_STATUS" | "WAITING" | "PROBLEM" | "RISK" | "MANAGER" | "CREATED_AT" | "LAST_EVENT_AT" | "NEXT_ACTION" | "NEXT_ACTION_AT" | "EVENT_AT" | "EVENT_TYPE" | "FROM_STAGE" | "COMMENT" | "AUTHOR" | "APPLICATIONS" | "PAID_ORDERS" | "PAID_STREAMS" | "PARTICIPANTS" | "LEARNERS_COMPLETED" | "COMPLETION_SHARE" | "PARALLEL_RUNS" | "MARKET_VACANCIES" | "MARKET_TREND" | "VENDORS" | "CONTRACT_NUMBER" | "LICENSE_SIGNED" | "LICENSE_EXPIRY_YEAR" | "TRANSFER_STATUS" | "MATERIALS_TRANSFERRED_ON" | "TEAM" | "COMPLETED" | "AVG_DAYS" | "MAX_DAYS" | "CURRENT" | "CURRENT_MAX_DAYS" | "AGREEMENT" | "AGREEMENT_STATUS" | "AGREEMENT_TERM" | "ACTIVITY_KIND" | "ACTIVITY" | "PLANNED_VOLUME" | "ACTUAL_VOLUME" | "VOLUME_UNIT" | "PLANNED_DATES" | "ACTUAL_DATES" | "ACTIVITY_STATUS" | "WORKS" | "CONFIRMATIONS" | "CONFIRMATION_LINKS" | "STAGE_AT_START" | "STAGE_AT_END" | "STAGE_POSITION" | "TRANSITIONS" | "PERIOD_COMMENTS" | "DUE_STATE" | "OVERDUE_DAYS" | "LMS_LEARNING" | "LMS_CHECK";
@@ -6334,8 +6421,13 @@ export interface components {
             agreement?: components["schemas"]["ReportAgreementFilters"];
             /** @description Только EVENTS; пусто означает все виды, включая назначения КАМ, другие виды отклоняют непустой список */
             eventTypes?: components["schemas"]["ReportEventType"][];
-            /** @description Только PORTFOLIO; оставляет взаимодействия, чей последний вход в текущий этап произошёл не менее чем за столько дней до формирования отчёта — то же правило, что у DAYS_ON_STAGE и фильтра minDaysOnStage списка работ; другие виды отклоняют его с 400 VALIDATION_ERROR */
+            /** @description Только PORTFOLIO; оставляет взаимодействия, чей последний вход в текущий этап произошёл не менее чем за столько дней до формирования отчёта — то же правило, что у DAYS_ON_STAGE и фильтра minDaysOnStage списка работ; другие виды отклоняют его с 400 VALIDATION_ERROR. В MANAGER_WORK с tile STUCK — порог «на этапе дольше» (по умолчанию 30) */
             minDaysOnStage?: number | null;
+            /**
+             * @description Только MANAGER_WORK; отбор плиткой «Контроля» — те же строки, что на экране: просрочено, срок на этой неделе, без шага или срока, проблемы и риски, договор на согласовании, вузы без КАМ, на этапе дольше minDaysOnStage дней, сигналы LMS. Итоги считаются по отобранным строкам; другие виды отклоняют его с 400 VALIDATION_ERROR
+             * @enum {string|null}
+             */
+            tile?: "OVERDUE" | "THIS_WEEK" | "NO_NEXT_STEP" | "ISSUES" | "AGREEMENT" | "UNASSIGNED" | "STUCK" | "LMS" | null;
             /** @description Только MANAGER_WORK; оставляет работы с переходами, новые или завершённые в периоде; другие виды отклоняют его с 400 VALIDATION_ERROR */
             change?: components["schemas"]["ManagerWorkChange"] | null;
         };
@@ -6427,10 +6519,20 @@ export interface components {
             size: number;
             /** @description Число строк отчёта; итоги по менеджерам отчёта MANAGER_WORK в него не входят */
             total: number;
-            /** @description Итоги по менеджерам отчёта MANAGER_WORK (по одному объекту на менеджера, те же ключи, что у items); не входят в items и total и возвращаются на каждой странице целиком. Для других видов отчётов пусто или отсутствует */
-            groupTotals?: {
-                [key: string]: string | number | null;
-            }[];
+            /** @description Итоги отчёта MANAGER_WORK числами: по менеджеру внутри команды («Требует назначения» — отдельно у каждой команды), «Итого по команде» и последней строкой «Всего». Не входят в items и total и возвращаются на каждой странице целиком. Для других видов отчётов пусто или отсутствует */
+            groupTotals?: components["schemas"]["ManagerWorkTotal"][];
+        };
+        ManagerWorkTotal: {
+            /** @description Команда; у строки «Всего» — «Все команды» */
+            team: string | null;
+            /** @description Менеджер, «Требует назначения», «Итого по команде» или «Всего» */
+            manager: string;
+            organizations: number;
+            works: number;
+            overdue: number;
+            thisWeek: number;
+            noNextStep: number;
+            transitions: number;
         };
         /**
          * @description DEMAND суммирует заявки и принимает ORGANIZATION, DIRECTION, PROGRAM, MANAGER и MONTH (месяц подачи)
@@ -7835,6 +7937,7 @@ export interface operations {
         parameters: {
             query?: {
                 name?: string;
+                inn?: string;
                 exceptId?: string;
             };
             header?: never;
@@ -14183,6 +14286,37 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getLastPaidOrderUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Протокол последней загрузки и её время */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LastPaidOrderUpload"];
+                };
+            };
+            /** @description Загрузок оплат ещё не было */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
     };

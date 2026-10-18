@@ -9,6 +9,7 @@ import {
   type Me
 } from '../../shared/api/client'
 import { ActionMenu, type ActionMenuItem } from '../../shared/ui/ActionMenu'
+import { CameraInput } from '../../shared/ui/CameraInput'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import {
   attachmentAccept,
@@ -206,17 +207,22 @@ export const AttachmentExtras = ({
             <span>Файл версии {attachment.revision + 1}<span className="required-mark" aria-hidden="true"> *</span></span>
             <input
               type="file"
-              required
+              required={versionFile === null}
               accept={attachmentAccept}
               onChange={(event) => {
                 commandKey.current = null
                 setVersionFile(event.target.files?.item(0) ?? null)
               }}
             />
+            {versionFile !== null && <span className="interaction-field-hint">Выбран файл: {versionFile.name}</span>}
             <span className="interaction-field-hint">
               Этап и вид документа сохранятся, прежняя версия останется в списке. После загрузки файл проверяется антивирусом.
             </span>
           </label>
+          <CameraInput disabled={busy} onFile={(file) => {
+            commandKey.current = null
+            setVersionFile(file)
+          }} />
           <div className="document-extras__buttons">
             <button type="submit" disabled={busy || versionFile === null}>{busy ? 'Загружаем…' : 'Загрузить новую версию'}</button>
             <button type="button" className="button--secondary" onClick={() => open('none')} disabled={busy}>Отмена</button>

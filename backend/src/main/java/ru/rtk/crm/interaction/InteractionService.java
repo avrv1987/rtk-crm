@@ -210,6 +210,7 @@ public class InteractionService {
             UUID programId,
             List<UUID> productIds,
             List<UUID> contactIds,
+            InteractionNextStep nextStep,
             UUID actorProfileId,
             UUID commandId,
             OffsetDateTime now
@@ -220,7 +221,9 @@ public class InteractionService {
                         "templateId", "Нет шаблона процесса по умолчанию; создайте его перед применением записей источника"
                 ));
         return startInteraction(
-                new InteractionStart(organizationId, ownerManagerId, title, null, null, programId, null, contactIds, productIds),
+                new InteractionStart(organizationId, ownerManagerId, title,
+                        nextStep == null ? null : nextStep.nextAction(), nextStep == null ? null : nextStep.nextActionAt(),
+                        programId, null, contactIds, productIds),
                 template,
                 actorProfileId,
                 commandId,

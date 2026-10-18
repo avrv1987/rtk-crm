@@ -26,7 +26,8 @@ public class SourceRepository {
     private static final String RUN_SELECT = """
             SELECT r.id, r.source, r.status, r.updated_since, r.fetched_count, r.created_count, r.updated_count,
                    r.skipped_count, r.needs_mapping_count, r.failed_count, r.error_code, r.error_message, r.created_at,
-                   r.started_at, r.finished_at, r.started_by, r.run_trigger, p.display_name AS started_by_name,
+                   r.started_at, r.finished_at, r.started_by, r.run_trigger,
+                   CASE WHEN r.run_trigger = 'SCHEDULE' THEN 'Система' ELSE p.display_name END AS started_by_name,
                    o.name AS organization_name
             FROM sync_runs r
             LEFT JOIN crm_user_profiles p ON p.id = r.started_by
@@ -1088,8 +1089,10 @@ public class SourceRepository {
 
     // Роль и активность проверяются сейчас: ушедший или разжалованный администратор автором запусков по расписанию не
     // станет.
+    // Профиль, на который записываются плановый запуск и созданные им записи (started_by и авторство обязательны):
+    // администратор, последним запускавший источник, а если источник ещё не запускали — любой действующий администратор.
     Optional<UUID> findScheduleActor(SourceCode source) {
-        return jdbcClient.sql("""
+        Optional<UUID> lastStarter = jdbcClient.sql("""
                 SELECT r.started_by
                 FROM sync_runs r
                 JOIN crm_user_profiles p ON p.id = r.started_by
@@ -1098,6 +1101,14 @@ public class SourceRepository {
                 LIMIT 1
                 """)
                 .param("source", source.name())
+                .query(UUID.class)
+                .optional();
+        if (lastStarter.isPresent()) {
+            return lastStarter;
+        }
+        return jdbcClient.sql("""
+                SELECT id FROM crm_user_profiles WHERE role = 'ADMIN' AND active = TRUE ORDER BY id LIMIT 1
+                """)
                 .query(UUID.class)
                 .optional();
     }

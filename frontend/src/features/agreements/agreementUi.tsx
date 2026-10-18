@@ -1,6 +1,9 @@
 import { useCallback, useRef } from 'react'
 import { ApiError, createIdempotencyKey } from '../../shared/api/client'
+import { todayInMoscow } from '../../shared/format/datetime'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { agreementTerm, type AgreementStatus } from './agreementModel'
+import { formatDate } from './agreementsApi'
 
 export const useAccessErrorHandler = (
   onSessionExpired: () => void,
@@ -106,4 +109,17 @@ export const CommandError = ({ error, fallback, onRetry, retryLabel = 'Повт�
       {onRetry && <button type="button" className="button--secondary" onClick={onRetry}>{retryLabel}</button>}
     </div>
   )
+}
+
+type TermMarkProps = {
+  agreement: { status: AgreementStatus; validUntil?: string | null }
+  noticeDays?: number
+}
+
+export const AgreementTermMark = ({ agreement, noticeDays }: TermMarkProps) => {
+  const term = agreementTerm(agreement, todayInMoscow(), noticeDays)
+  if (term === 'expired') {
+    return <span className="status status--overdue">срок истёк</span>
+  }
+  return term === 'expiring' ? <span className="status status--missing">до {formatDate(agreement.validUntil)}</span> : null
 }

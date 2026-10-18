@@ -14,6 +14,7 @@ import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -43,6 +44,7 @@ import ru.rtk.crm.interaction.InteractionIssueKind;
 import ru.rtk.crm.interaction.InteractionIssueRequest;
 import ru.rtk.crm.interaction.InteractionIssueResolution;
 import ru.rtk.crm.interaction.InteractionIssueService;
+import ru.rtk.crm.interaction.InteractionNextStep;
 import ru.rtk.crm.interaction.InteractionRiskLevel;
 import ru.rtk.crm.interaction.InteractionService;
 import ru.rtk.crm.interaction.InteractionStage;
@@ -65,6 +67,10 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     private static final String DEMO_ORGANIZATION_NAME = "Университет А";
     private static final String DEMO_INTERACTION_TITLE = "Демо: внедрение цифрового университета";
     private static final String DEMO_RESOLVED_PROBLEM = "У преподавателей нет доступа к учебному стенду";
+    private static final String DEMO_SCENARIO_AGREEMENT = "ДЕМО-А/2";
+    private static final int DEMO_SCENARIO_STAGE = 6;
+    private static final int DEMO_SCENARIO_DAYS_ON_STAGE = 31;
+    private static final int DEMO_SCENARIO_STAGE_GAP_DAYS = 14;
     private static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
     private static final String CONTROL_DEMO_LEADER = "leader-c";
     private static final int CONTROL_STAGE_GAP_DAYS = 6;
@@ -204,6 +210,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
         createDemoScenario(identitiesByKey, organizationIds, catalog);
         createDemoMarks(identitiesByKey, organizationIds.get(DEMO_ORGANIZATION_NAME));
         createDemoAgreements(organizationIds, profileIds);
+        advanceDemoScenario(identitiesByKey, organizationIds.get(DEMO_ORGANIZATION_NAME));
         createControlScenario(identitiesByKey, organizationIds, catalog);
         createAgreementLifecycle(identitiesByKey, organizationIds, catalog);
         createPartners(identities, identitiesByKey, organizationIds);
@@ -694,6 +701,81 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             UUID agreementId = stableId("agreement:" + agreement.organization() + "\u0000" + agreement.number());
             statusEvent(agreementId, null, agreement.status(), createdBy, now, "created");
         }
+    }
+
+    // Главная демо-работа КАМ согласуется с остальными данными: лицензии подписаны и переданы, поэтому она стоит
+    // на этапе передачи, прошла «Подписание» с действующим ДЕМО-А/2 и вошла в этап за месяц до показа. Двигается
+    // только работа без переходов, чтобы повторный запуск не трогал работу, которую уже вёл пользователь.
+    private void advanceDemoScenario(Map<String, DemoBootstrapProperties.Identity> identitiesByKey, UUID organizationId) {
+        DemoBootstrapProperties.Identity kamIdentity = identitiesByKey.get("kam-a");
+        if (organizationId == null || kamIdentity == null) {
+            return;
+        }
+        Optional<UUID> found = jdbcClient.sql("""
+                SELECT i.id FROM interactions i
+                WHERE i.organization_id = :organizationId AND i.title = :title
+                  AND NOT EXISTS (SELECT 1 FROM interaction_events e WHERE e.interaction_id = i.id AND e.type = 'TRANSITIONED')
+                ORDER BY i.created_at, i.id
+                LIMIT 1
+                """)
+                .param("organizationId", organizationId)
+                .param("title", DEMO_INTERACTION_TITLE)
+                .query(UUID.class)
+                .optional();
+        if (found.isEmpty()) {
+            return;
+        }
+        UUID interactionId = found.get();
+        CrmProfile kam = userProfileRepository.findActiveByIdentity(kamIdentity.issuer(), kamIdentity.subject())
+                .orElseThrow(() -> new IllegalStateException("Demo bootstrap requires active kam-a profile"));
+        jdbcClient.sql("""
+                INSERT INTO agreement_interactions (agreement_id, interaction_id) VALUES (:agreementId, :interactionId)
+                ON CONFLICT DO NOTHING
+                """)
+                .param("agreementId", stableId("agreement:" + DEMO_ORGANIZATION_NAME + "\u0000" + DEMO_SCENARIO_AGREEMENT))
+                .param("interactionId", interactionId)
+                .update();
+        OffsetDateTime now = OffsetDateTime.now();
+        Interaction current = interactionService.get(kam, interactionId);
+        for (int step = 1; step <= DEMO_SCENARIO_STAGE; step++) {
+            int order = step;
+            UUID target = current.stages().stream()
+                    .filter(stage -> stage.order() == order)
+                    .map(InteractionStage::id)
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("Demo workflow has no stage " + order));
+            InteractionNextStep nextStep = step == DEMO_SCENARIO_STAGE
+                    ? new InteractionNextStep("Получить от вуза подписанный акт передачи лицензий", now.minusDays(2))
+                    : null;
+            current = interactionService.transition(
+                    kam,
+                    interactionId,
+                    new InteractionTransitionRequest(current.version(), target, null, List.of(), nextStep),
+                    "demo-bootstrap/v1/interaction:university-a:move:" + step
+            );
+        }
+        OffsetDateTime enteredAt = now.minusDays(DEMO_SCENARIO_DAYS_ON_STAGE);
+        List<UUID> moves = jdbcClient.sql("""
+                SELECT id FROM interaction_events WHERE interaction_id = :id AND type = 'TRANSITIONED' ORDER BY version
+                """)
+                .param("id", interactionId)
+                .query(UUID.class)
+                .list();
+        for (int index = 0; index < moves.size(); index++) {
+            jdbcClient.sql("UPDATE interaction_events SET occurred_at = :at WHERE id = :id")
+                    .param("at", enteredAt.minusDays((long) (moves.size() - 1 - index) * DEMO_SCENARIO_STAGE_GAP_DAYS))
+                    .param("id", moves.get(index))
+                    .update();
+        }
+        OffsetDateTime createdAt = enteredAt.minusDays((long) moves.size() * DEMO_SCENARIO_STAGE_GAP_DAYS);
+        jdbcClient.sql("UPDATE interaction_events SET occurred_at = :at WHERE interaction_id = :id AND type = 'CREATED'")
+                .param("at", createdAt)
+                .param("id", interactionId)
+                .update();
+        jdbcClient.sql("UPDATE interactions SET created_at = :at WHERE id = :id")
+                .param("at", createdAt)
+                .param("id", interactionId)
+                .update();
     }
 
     private void createAgreementLifecycle(

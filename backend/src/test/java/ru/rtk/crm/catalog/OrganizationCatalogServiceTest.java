@@ -162,6 +162,30 @@ class OrganizationCatalogServiceTest {
     }
 
     @Test
+    void sameInnIsReportedAsAWarningAcrossTheCatalogWithoutBlockingCreation() {
+        service.update(leaderA, UNIVERSITY_A, request("Университет «А»", OrganizationType.UNIVERSITY,
+                null, null, "7700000011", 0), "set-inn", REQUEST_ID);
+
+        assertThat(service.findDuplicates(userB, null, "7700 000011", null))
+                .singleElement()
+                .satisfies(duplicate -> {
+                    assertThat(duplicate.sameInn()).isTrue();
+                    assertThat(duplicate.exact()).isFalse();
+                    assertThat(duplicate.id()).isNull();
+                    assertThat(duplicate.teamName()).isEqualTo("team-a");
+                });
+        assertThat(service.findDuplicates(leaderA, "Другое название", "7700000011", null))
+                .singleElement().satisfies(duplicate -> assertThat(duplicate.id()).isEqualTo(UNIVERSITY_A));
+        assertThat(service.findDuplicates(leaderA, null, "7700000011", UNIVERSITY_A)).isEmpty();
+        assertThat(service.findDuplicates(leaderA, null, "770000001", null)).isEmpty();
+        assertThat(service.findDuplicates(leaderA, null, "7700000012", null)).isEmpty();
+
+        OrganizationCommandResult created = service.create(userB, request("Филиал колледжа", OrganizationType.COLLEGE,
+                null, null, "7700000011"), "same-inn", REQUEST_ID);
+        assertThat(created.id()).isNotNull();
+    }
+
+    @Test
     void leaderEditsDetailsWithVersionCheckAndManagerCannot() {
         assertThatThrownBy(() -> service.update(userA, UNIVERSITY_A, request("Университет А (испр.)",
                 OrganizationType.UNIVERSITY, null, null, null, 0), "manager-edit", REQUEST_ID))
@@ -250,9 +274,14 @@ class OrganizationCatalogServiceTest {
 
         assertThat(organizationRepository.findVisibleById(userA, created.id()).orElseThrow().status())
                 .isEqualTo(OrganizationStatus.ACTIVE);
-        service.changeStatus(userA, created.id(), new OrganizationStatusRequest(OrganizationStatusAction.ARCHIVE, 0, null),
-                "manager-archive", REQUEST_ID);
+        assertThatThrownBy(() -> service.changeStatus(userA, created.id(),
+                new OrganizationStatusRequest(OrganizationStatusAction.ARCHIVE, 0, null), "manager-archive", REQUEST_ID))
+                .isInstanceOf(CatalogChangeAccessDeniedException.class);
         assertThat(organizationRepository.findVisibleById(userA, created.id()).orElseThrow().status())
+                .isEqualTo(OrganizationStatus.ACTIVE);
+        service.changeStatus(leaderA, created.id(), new OrganizationStatusRequest(OrganizationStatusAction.ARCHIVE, 0, null),
+                "leader-archive", REQUEST_ID);
+        assertThat(organizationRepository.findVisibleById(leaderA, created.id()).orElseThrow().status())
                 .isEqualTo(OrganizationStatus.ARCHIVED);
     }
 

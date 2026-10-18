@@ -392,6 +392,7 @@ public class MoodleSnapshotApplier {
                     target.programId(),
                     List.of(),
                     List.of(),
+                    null,
                     actorProfileId,
                     commandId,
                     now

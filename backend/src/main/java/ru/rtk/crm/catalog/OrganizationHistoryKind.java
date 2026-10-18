@@ -16,7 +16,8 @@ public enum OrganizationHistoryKind {
     STAGE_COMPLETED,
     STAGE_COMPLETION_CLEARED,
     ASSIGNMENT,
-    CONTACT;
+    CONTACT,
+    AGREEMENT_STATUS;
 
     static final Set<OrganizationHistoryKind> WORK_KINDS = EnumSet.range(CREATED, STAGE_COMPLETION_CLEARED);
 }

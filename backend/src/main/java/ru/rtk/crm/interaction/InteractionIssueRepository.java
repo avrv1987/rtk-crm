@@ -34,12 +34,16 @@ public class InteractionIssueRepository {
              FROM interaction_issues mark WHERE mark.interaction_id = i.id
                AND mark.status = 'OPEN' AND mark.kind = 'RISK') AS risks""";
 
-    private static final String SELECT = """
+    private static final String SELECT = select("TRUE");
+
+    private static String select(String organizationAccessible) {
+        return """
             SELECT ii.id, ii.interaction_id, ii.kind, ii.description, ii.risk_level, ii.responsible_profile_id,
                    ii.due_on, ii.status, ii.resolution, ii.created_by, ii.created_at, ii.resolved_at,
                    i.title AS interaction_title, i.organization_id, o.name AS organization_name,
                    owner_profile.display_name AS owner_manager_name, responsible.display_name AS responsible_name,
-                   creator.display_name AS created_by_name, resolver.display_name AS resolved_by_name
+                   creator.display_name AS created_by_name, resolver.display_name AS resolved_by_name,
+                   %s AS organization_accessible
             FROM interaction_issues ii
             JOIN interactions i ON i.id = ii.interaction_id
             JOIN organizations o ON o.id = i.organization_id
@@ -47,7 +51,8 @@ public class InteractionIssueRepository {
             JOIN crm_user_profiles responsible ON responsible.id = ii.responsible_profile_id
             JOIN crm_user_profiles creator ON creator.id = ii.created_by
             LEFT JOIN crm_user_profiles resolver ON resolver.id = ii.resolved_by
-            """;
+            """.formatted(organizationAccessible);
+    }
 
     private final JdbcClient jdbcClient;
 
@@ -73,9 +78,11 @@ public class InteractionIssueRepository {
                 .optional();
     }
 
-    public List<InteractionIssue> findVisible(VisibilityScope scope, InteractionIssueFilter filter, LocalDate today, int limit, int offset) {
-        Selection selection = selection(scope, filter, today);
-        return jdbcClient.sql(SELECT + "WHERE " + selection.where() + """
+    public List<InteractionIssue> findVisible(
+            VisibilityScope scope, UUID viewerId, InteractionIssueFilter filter, LocalDate today, int limit, int offset
+    ) {
+        Selection selection = selection(scope, viewerId, filter, today);
+        return jdbcClient.sql(select(inScope(scope)) + "WHERE " + selection.where() + """
 
                 ORDER BY CASE WHEN ii.due_on IS NULL THEN 1 ELSE 0 END, ii.due_on, ii.created_at, ii.id
                 LIMIT :limit OFFSET :offset
@@ -87,8 +94,8 @@ public class InteractionIssueRepository {
                 .list();
     }
 
-    public long countVisible(VisibilityScope scope, InteractionIssueFilter filter, LocalDate today) {
-        Selection selection = selection(scope, filter, today);
+    public long countVisible(VisibilityScope scope, UUID viewerId, InteractionIssueFilter filter, LocalDate today) {
+        Selection selection = selection(scope, viewerId, filter, today);
         return jdbcClient.sql("""
                 SELECT COUNT(*)
                 FROM interaction_issues ii
@@ -178,10 +185,20 @@ public class InteractionIssueRepository {
                 .update();
     }
 
-    private Selection selection(VisibilityScope scope, InteractionIssueFilter filter, LocalDate today) {
+    private static String inScope(VisibilityScope scope) {
+        return "CASE WHEN i.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition()
+                + ") THEN TRUE ELSE FALSE END";
+    }
+
+    // Ответственный видит назначенные ему записи и вне области своих вузов: иначе назначенный коллегой риск
+    // терялся бы. Больше ничего из чужого вуза этим условием не открывается: карточки и список вузов
+    // по-прежнему фильтруются областью видимости.
+    private Selection selection(VisibilityScope scope, UUID viewerId, InteractionIssueFilter filter, LocalDate today) {
         List<String> conditions = new ArrayList<>();
         Map<String, Object> parameters = new HashMap<>(scope.parameters());
-        conditions.add("i.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition() + ")");
+        parameters.put("viewerId", viewerId);
+        conditions.add("(i.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition()
+                + ") OR ii.responsible_profile_id = :viewerId)");
         if (filter.status() != null) {
             conditions.add("ii.status = :status");
             parameters.put("status", filter.status().name());
@@ -230,7 +247,8 @@ public class InteractionIssueRepository {
                 resultSet.getString("created_by_name"),
                 resultSet.getObject("created_at", OffsetDateTime.class),
                 resultSet.getString("resolved_by_name"),
-                resultSet.getObject("resolved_at", OffsetDateTime.class)
+                resultSet.getObject("resolved_at", OffsetDateTime.class),
+                resultSet.getBoolean("organization_accessible")
         );
     }
 

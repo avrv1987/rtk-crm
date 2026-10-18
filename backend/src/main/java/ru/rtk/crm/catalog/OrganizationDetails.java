@@ -15,14 +15,14 @@ public record OrganizationDetails(String name, OrganizationType type, String cit
 
     public static OrganizationDetails from(OrganizationDetailsRequest request) {
         if (request == null) {
-            throw new InteractionValidationException("body", "Не переданы данные организации");
+            throw new InteractionValidationException("body", "Не переданы данные вуза");
         }
         String name = CatalogNames.clean(request.name());
         if (name.isEmpty() || name.length() > NAME_LIMIT) {
             throw new InteractionValidationException("name", "Название должно содержать от 1 до 300 символов");
         }
         if (request.type() == null) {
-            throw new InteractionValidationException("type", "Выберите тип организации");
+            throw new InteractionValidationException("type", "Выберите тип: вуз, колледж или школа");
         }
         if (request.type() == OrganizationType.OPEN_ENROLLMENT) {
             throw new InteractionValidationException("type", "Служебный тип «Открытый набор» создаётся системой; выберите вуз, колледж или школу");

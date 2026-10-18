@@ -94,25 +94,33 @@ public class ExcelReportWriter {
         }
     }
 
-    // Итоги лежат на отдельном листе: в диапазон автофильтра и сумм листа данных они не попадают.
+    // Итоги лежат на отдельном листе: в диапазон автофильтра и сумм листа данных они не попадают. Числа пишутся
+    // числовыми ячейками в своих колонках, чтобы их можно было сложить и взять в сводную таблицу.
     private void fillTotals(Workbook workbook, ReportDocument document, Styles styles) {
         Sheet sheet = workbook.createSheet(TOTALS_SHEET);
-        List<ReportColumn> columns = document.columns();
         text(sheet.createRow(0).createCell(0), document.title() + ": " + TOTALS_SHEET.toLowerCase(Locale.ROOT), styles.title);
         Row header = sheet.createRow(2);
-        for (int column = 0; column < columns.size(); column++) {
-            ReportColumn reportColumn = columns.get(column);
-            text(header.createCell(column), document.columnTitle(reportColumn), styles.header);
-            sheet.setColumnWidth(column, Math.min(reportColumn.width(), 80) * 256);
+        for (int column = 0; column < ManagerWorkTotal.TITLES.size(); column++) {
+            text(header.createCell(column), ManagerWorkTotal.TITLES.get(column), styles.header);
+            sheet.setColumnWidth(column, ManagerWorkTotal.WIDTHS[column] * 256);
         }
         int rowIndex = 3;
-        for (ReportRow reportRow : document.groupTotals()) {
+        for (ManagerWorkTotal total : document.groupTotals()) {
             Row row = sheet.createRow(rowIndex++);
-            for (int column = 0; column < columns.size(); column++) {
-                value(row.createCell(column), columns.get(column), reportRow, styles);
+            List<Object> values = total.values();
+            for (int column = 0; column < values.size(); column++) {
+                Cell cell = row.createCell(column);
+                if (values.get(column) instanceof Number number) {
+                    cell.setCellValue(number.doubleValue());
+                    cell.setCellStyle(styles.body);
+                } else {
+                    String text = values.get(column) == null ? "" : values.get(column).toString();
+                    text(cell, text, isFormulaLike(text) ? styles.quoted : styles.body);
+                }
             }
         }
         sheet.createFreezePane(0, 3);
+        sheet.setAutoFilter(new CellRangeAddress(2, Math.max(2, rowIndex - 1), 0, ManagerWorkTotal.TITLES.size() - 1));
     }
 
     private void value(Cell cell, ReportColumn column, ReportRow row, Styles styles) {
@@ -127,7 +135,7 @@ public class ExcelReportWriter {
             cell.setCellStyle(styles.body);
             return;
         }
-        String text = value == null ? column.emptyText(row) : value.toString();
+        String text = value == null ? column.emptyText() : value.toString();
         text(cell, text, isFormulaLike(text) ? styles.quoted : styles.body);
     }
 

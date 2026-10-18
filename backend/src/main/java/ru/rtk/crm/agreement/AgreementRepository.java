@@ -284,8 +284,8 @@ public class AgreementRepository {
         return jdbcClient.sql("""
                 UPDATE agreements
                 SET number = :number, concluded_on = :concludedOn, valid_until = :validUntil, sent_on = :sentOn, parties = :parties,
-                    // База плана продления: срок действия на момент, когда план был задан или изменён. Продление считается
-                    // выполненным, когда срок стал позже этой базы (SigningPlanService.row); при неизменном плане база остаётся.
+                    -- База плана продления: срок действия на момент, когда план был задан или изменён. Продление считается
+                    -- выполненным, когда срок стал позже этой базы (SigningPlanService.row); при неизменном плане база остаётся.
                     planned_base_until = CASE
                         WHEN planned_kind IS DISTINCT FROM CAST(:plannedKind AS VARCHAR(16))
                              OR planned_on IS DISTINCT FROM CAST(:plannedOn AS DATE) THEN CAST(:validUntil AS DATE)
@@ -824,7 +824,7 @@ public class AgreementRepository {
             return statuses;
         }
         jdbcClient.sql("""
-                SELECT ai.interaction_id, ag.status, ag.number
+                SELECT ai.interaction_id, ag.status, ag.number, ag.valid_until
                 FROM agreement_interactions ai
                 JOIN agreements ag ON ag.id = ai.agreement_id
                 WHERE ai.interaction_id IN (:ids)
@@ -834,7 +834,8 @@ public class AgreementRepository {
                 .query((ResultSet resultSet) -> {
                     statuses.putIfAbsent(resultSet.getObject("interaction_id", UUID.class), new WorkAgreementStatus(
                             AgreementStatus.valueOf(resultSet.getString("status")),
-                            resultSet.getString("number")
+                            resultSet.getString("number"),
+                            resultSet.getObject("valid_until", LocalDate.class)
                     ));
                 });
         return statuses;
@@ -1246,7 +1247,7 @@ public class AgreementRepository {
     ) {
     }
 
-    public record WorkAgreementStatus(AgreementStatus status, String number) {
+    public record WorkAgreementStatus(AgreementStatus status, String number, LocalDate validUntil) {
     }
 
     public record NewFile(

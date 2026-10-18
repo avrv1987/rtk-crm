@@ -125,6 +125,25 @@ public class CommandIdempotencyRepository {
         }
     }
 
+    public Optional<StoredResult> findLatestResult(CommandOperation operation) {
+        return jdbcClient.sql("""
+                SELECT created_at, result_json
+                FROM command_idempotency_records
+                WHERE operation = :operation AND result_json IS NOT NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """)
+                .param("operation", operation.name())
+                .query((resultSet, rowNumber) -> new StoredResult(
+                        resultSet.getObject("created_at", OffsetDateTime.class),
+                        resultSet.getString("result_json")
+                ))
+                .optional();
+    }
+
+    public record StoredResult(OffsetDateTime createdAt, String resultJson) {
+    }
+
     public record CommandRecord(UUID id, String requestFingerprint, String resultJson) {
     }
 

@@ -56,9 +56,7 @@ public class JsonReportWriter {
             totals.put("interactions", document.interactionCount());
         }
         if (!document.groupTotals().isEmpty()) {
-            totals.put("managers", document.groupTotals().stream()
-                    .map(row -> ReportService.values(request.columns(), row))
-                    .toList());
+            totals.put("managers", document.groupTotals());
         }
 
         Map<String, Object> quality = new LinkedHashMap<>();

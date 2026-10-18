@@ -7,6 +7,8 @@ import {
   type RosterExport,
   type StreamLearner
 } from '../../shared/api/client'
+import { todayInMoscow } from '../../shared/format/datetime'
+import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { LmsRosterDialog } from './LmsRosterDialog'
 import { QuestionnaireImportDialog } from './QuestionnaireImportDialog'
@@ -34,6 +36,7 @@ type StreamState =
 
 type EndDateState =
   | { kind: 'idle' }
+  | { kind: 'confirming' }
   | { kind: 'saving' }
   | { kind: 'failed'; error: unknown }
 
@@ -41,6 +44,9 @@ type MarkState =
   | { exportId: string; kind: 'busy' }
   | { exportId: string; kind: 'done'; marked: number }
   | { exportId: string; kind: 'failed'; error: unknown }
+
+// Границы дат совпадают с серверной проверкой: не раньше 5 лет назад и не позже чем через 5 лет.
+const shiftYears = (isoDate: string, years: number) => `${Number(isoDate.slice(0, 4)) + years}${isoDate.slice(4)}`
 
 const learnerNotes = (learner: StreamLearner): string[] => {
   const notes: string[] = []
@@ -83,8 +89,14 @@ export const EnrolmentStreamView = ({ streamId, onOpenLearner, onAccessError }: 
     void load()
   }, [load])
 
-  const saveEndDate = async () => {
+  const today = todayInMoscow()
+
+  const saveEndDate = async (confirmPastDate: boolean) => {
     if (state.kind !== 'ready' || endDateState.kind === 'saving') {
+      return
+    }
+    if (!confirmPastDate && endsOnDraft !== '' && endsOnDraft < today) {
+      setEndDateState({ kind: 'confirming' })
       return
     }
     const key = endDateKey ?? createIdempotencyKey()
@@ -93,7 +105,7 @@ export const EnrolmentStreamView = ({ streamId, onOpenLearner, onAccessError }: 
     try {
       const stream = await apiClient.updateEnrolmentStream(
         streamId,
-        { version: state.data.stream.version, endsOn: endsOnDraft === '' ? null : endsOnDraft },
+        { version: state.data.stream.version, endsOn: endsOnDraft === '' ? null : endsOnDraft, confirmPastDate },
         key
       )
       setEndDateKey(null)
@@ -164,6 +176,8 @@ export const EnrolmentStreamView = ({ streamId, onOpenLearner, onAccessError }: 
           <input
             type="date"
             value={endsOnDraft}
+            min={shiftYears(today, -5)}
+            max={shiftYears(today, 5)}
             disabled={endDateState.kind === 'saving'}
             onChange={(event) => {
               setEndsOnDraft(event.target.value)
@@ -172,11 +186,19 @@ export const EnrolmentStreamView = ({ streamId, onOpenLearner, onAccessError }: 
             }}
           />
         </label>
-        <button type="button" disabled={endDateState.kind === 'saving'} onClick={() => void saveEndDate()}>
+        <button type="button" disabled={endDateState.kind === 'saving'} onClick={() => void saveEndDate(false)}>
           {endDateState.kind === 'saving' ? 'Сохраняем…' : 'Сохранить'}
         </button>
         <p>Хранить до: {stream.keepUntil === null ? 'срок не определён' : formatIsoDate(stream.keepUntil)}</p>
       </div>
+      <ConfirmDialog
+        open={endDateState.kind === 'confirming'}
+        title="Дата окончания уже прошла"
+        description={`Срок хранения анкет считается от даты окончания потока. Если он уже истёк, ближайшей ночью анкеты слушателей потока будут обезличены без возможности восстановления. Сохранить дату ${endsOnDraft === '' ? '' : formatIsoDate(endsOnDraft)}?`}
+        confirmLabel="Сохранить прошедшую дату"
+        onConfirm={() => void saveEndDate(true)}
+        onCancel={() => setEndDateState({ kind: 'idle' })}
+      />
       {endDateConflict && <p className="notice" role="status">Поток уже изменили, данные обновлены.</p>}
       {endDateState.kind === 'failed' && (
         <div className="interaction-command-error" role="alert">

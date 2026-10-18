@@ -35,6 +35,11 @@ export const isSameSectionClick = (clickedHref: string | null, currentHash: stri
   clickedHref !== null && clickedHref.startsWith('#') && parseRoute(clickedHref).section === parseRoute(currentHash).section
 )
 
+// Раздел, недоступный роли, показывает первый доступный; адрес приводится к нему, чтобы закладка не вводила в заблуждение.
+export const canonicalAddress = (route: Route, sections: readonly string[]): string | null => (
+  route.section === '' || sections.includes(route.section) ? null : `#/${sections[0]}`
+)
+
 export const parseRoute = (hash: string): Route => {
   const [path, query = ''] = hash.replace(/^#\/?/, '').split('?')
   const [section = '', organizationId, interactionId] = path.split('/')

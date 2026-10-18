@@ -27,12 +27,9 @@ public class PdfReportWriter {
             if (!document.groupTotals().isEmpty()) {
                 layout.gap(PdfLayout.NOTE_SIZE);
                 layout.paragraph(ExcelReportWriter.TOTALS_SHEET, PdfLayout.NOTE_SIZE);
-                layout.table(
-                        columns.stream().map(document::columnTitle).toList(),
-                        columns.stream().mapToInt(ReportColumn::width).toArray()
-                );
-                for (ReportRow row : document.groupTotals()) {
-                    layout.row(columns.stream().map(column -> column.text(row)).toList());
+                layout.table(ManagerWorkTotal.TITLES, ManagerWorkTotal.WIDTHS);
+                for (ManagerWorkTotal total : document.groupTotals()) {
+                    layout.row(total.values().stream().map(value -> value == null ? "" : value.toString()).toList());
                 }
             }
         });

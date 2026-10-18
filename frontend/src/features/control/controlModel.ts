@@ -184,6 +184,8 @@ export const exportColumns = (filters: ControlFilters, withTeams: boolean): Repo
   'DUE_STATE',
   'NEXT_ACTION',
   'NEXT_ACTION_AT',
+  'AGREEMENT_STATUS',
+  'AGREEMENT',
   'PROBLEM',
   'RISK',
   'LMS_LEARNING',
@@ -191,7 +193,14 @@ export const exportColumns = (filters: ControlFilters, withTeams: boolean): Repo
   ...(hasPeriod(filters) ? ['STAGE_AT_START' as const, 'TRANSITIONS' as const, 'PERIOD_COMMENTS' as const] : [])
 ]
 
-export const toExportRequest = (filters: ControlFilters, format: ReportFormat, withTeams: boolean): ReportRequest => ({
+// Плитка уходит в выгрузку отбором tile: файл содержит те же строки, что экран. «Без работы» строк взаимодействий не
+// имеет, поэтому с этой плиткой выгружается всё по фильтрам.
+export const toExportRequest = (
+  filters: ControlFilters,
+  format: ReportFormat,
+  withTeams: boolean,
+  view: ControlView = { tile: null, stuckDays: defaultStuckDays }
+): ReportRequest => ({
   kind: 'MANAGER_WORK',
   from: filters.from === '' ? null : filters.from,
   to: filters.to === '' ? null : filters.to,
@@ -204,12 +213,14 @@ export const toExportRequest = (filters: ControlFilters, format: ReportFormat, w
     managerIds: filters.managerId.filter((id) => id !== managerUnassigned),
     includeNoManager: filters.managerId.includes(managerUnassigned),
     stages: filters.stage,
-    change: filters.change === '' ? null : filters.change
+    change: filters.change === '' ? null : filters.change,
+    tile: view.tile === null || view.tile === 'IDLE' ? null : view.tile,
+    minDaysOnStage: view.tile === 'STUCK' ? view.stuckDays : null
   },
   columns: exportColumns(filters, withTeams)
 })
 
-export type ControlTile = 'OVERDUE' | 'THIS_WEEK' | 'NO_NEXT_STEP' | 'ISSUES' | 'AGREEMENT' | 'UNASSIGNED' | 'STUCK' | 'LMS'
+export type ControlTile = 'OVERDUE' | 'THIS_WEEK' | 'NO_NEXT_STEP' | 'ISSUES' | 'AGREEMENT' | 'UNASSIGNED' | 'STUCK' | 'LMS' | 'IDLE'
 
 export type PeriodTile = ManagerWorkChange
 
@@ -217,7 +228,7 @@ export const defaultStuckDays = 30
 
 export const stuckDayOptions = [7, 14, 30, 60, 90]
 
-const controlTileKeys: readonly ControlTile[] = ['OVERDUE', 'THIS_WEEK', 'NO_NEXT_STEP', 'ISSUES', 'AGREEMENT', 'UNASSIGNED', 'STUCK', 'LMS']
+const controlTileKeys: readonly ControlTile[] = ['OVERDUE', 'THIS_WEEK', 'NO_NEXT_STEP', 'ISSUES', 'AGREEMENT', 'UNASSIGNED', 'STUCK', 'LMS', 'IDLE']
 
 const agreementInProgress: ReadonlySet<string> = new Set(['REVIEW', 'CORRECTION', 'SIGNING'])
 
@@ -281,6 +292,8 @@ export const tileMatches = (item: WorkControlItem, managerId: string | null, til
       return isStuck(item, stuckDays)
     case 'LMS':
       return (item.learning?.signals ?? 0) > 0 || Boolean(item.learning?.mismatch)
+    case 'IDLE':
+      return false
   }
 }
 
@@ -298,7 +311,8 @@ export const tileCounts = (control: WorkControl, stuckDays: number): Record<Excl
     ISSUES: control.total.withIssues,
     AGREEMENT: count('AGREEMENT'),
     STUCK: count('STUCK'),
-    LMS: count('LMS')
+    LMS: count('LMS'),
+    IDLE: control.total.idle
   }
 }
 

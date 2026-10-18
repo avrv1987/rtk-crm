@@ -150,7 +150,9 @@ public class WorkService {
                         today.minusMonths(properties.qualificationAfterMonths()),
                         properties.qualificationAfterMonths(),
                         limit
-                )
+                ),
+                properties.agreementNoticeDays(),
+                workRepository.findExpiringAgreements(scope, today.plusDays(properties.agreementNoticeDays()), limit)
         );
     }
 

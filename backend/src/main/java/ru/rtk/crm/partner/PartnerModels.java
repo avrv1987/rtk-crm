@@ -84,7 +84,8 @@ public final class PartnerModels {
             List<String> subject,
             LocalDate concludedOn,
             LocalDate validUntil,
-            AgreementStatus status
+            AgreementStatus status,
+            OffsetDateTime statusChangedAt
     ) {
     }
 }

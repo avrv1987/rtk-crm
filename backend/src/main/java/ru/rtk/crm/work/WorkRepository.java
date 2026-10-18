@@ -14,6 +14,7 @@ import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
 import ru.rtk.crm.interaction.InteractionFlag;
 import ru.rtk.crm.interaction.InteractionRepository;
+import ru.rtk.crm.work.WorkModels.ReminderAgreement;
 import ru.rtk.crm.work.WorkModels.ReminderLicense;
 import ru.rtk.crm.work.WorkModels.ReminderStep;
 import ru.rtk.crm.work.WorkModels.ReminderQualification;
@@ -223,6 +224,37 @@ public class WorkRepository {
                         resultSet.getString("vendor_name"),
                         resultSet.getString("contract_number"),
                         resultSet.getInt("license_expiry_year")
+                ))
+                .list();
+    }
+
+    // Истёкшие «Действует» тоже попадают в список (нижней границы нет): они уходят из него, только когда КАМ продлит
+    // срок или переведёт договор в «Завершён».
+    public List<ReminderAgreement> findExpiringAgreements(VisibilityScope scope, LocalDate until, int limit) {
+        return jdbcClient.sql("""
+                SELECT ag.id, ag.organization_id, o.name AS organization_name, ag.number, ag.valid_until, ag.planned_kind,
+                       ag.planned_on,
+                       (SELECT owner_profile.display_name FROM crm_user_profiles owner_profile
+                        WHERE owner_profile.id = o.owner_manager_id) AS owner_manager_name
+                FROM agreements ag
+                JOIN organizations o ON o.id = ag.organization_id
+                WHERE ag.organization_id IN (SELECT id FROM organizations WHERE %s)
+                  AND ag.status = 'ACTIVE' AND ag.valid_until IS NOT NULL AND ag.valid_until <= :until
+                ORDER BY ag.valid_until, o.name, ag.number, ag.id
+                LIMIT :limit
+                """.formatted(scope.condition()))
+                .params(scope.parameters())
+                .param("until", until)
+                .param("limit", limit)
+                .query((resultSet, rowNumber) -> new ReminderAgreement(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getObject("organization_id", UUID.class),
+                        resultSet.getString("organization_name"),
+                        resultSet.getString("number"),
+                        resultSet.getObject("valid_until", LocalDate.class),
+                        resultSet.getString("planned_kind"),
+                        resultSet.getObject("planned_on", LocalDate.class),
+                        resultSet.getString("owner_manager_name")
                 ))
                 .list();
     }

@@ -44,7 +44,7 @@ const KamSignals = ({ refreshKey, onSessionExpired, onProfileUnavailable }: Acce
   return (
     <section className="desk-feed" aria-labelledby="desk-signals-title">
       <h2 id="desk-signals-title" className="desk-feed__heading">
-        Сигналы LMS{state.kind === 'ready' && state.signals.length > 0 && <span className="desk-feed__count">{state.signals.length}</span>}
+        Сигналы LMS{state.kind === 'ready' && state.signals.length > 0 && <> <span className="desk-feed__count">{state.signals.length}</span></>}
       </h2>
       {state.kind === 'loading' && <p className="work-control__message" role="status">Проверяем сигналы LMS…</p>}
       {state.kind === 'failed' && (

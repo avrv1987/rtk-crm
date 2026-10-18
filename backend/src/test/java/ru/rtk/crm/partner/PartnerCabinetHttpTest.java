@@ -158,8 +158,12 @@ class PartnerCabinetHttpTest {
                 .andExpect(jsonPath("$.manager.name").value("Ирина КАМ"))
                 .andExpect(jsonPath("$.works", hasSize(2)))
                 .andExpect(jsonPath("$.documents", hasSize(2)))
-                .andExpect(jsonPath("$.agreements", hasSize(1)))
+                .andExpect(jsonPath("$.agreements", hasSize(2)))
+                .andExpect(jsonPath("$.agreements[0].number").value("С-1/2026"))
                 .andExpect(jsonPath("$.agreements[0].subject[0]").value("Стажировки студентов"))
+                .andExpect(jsonPath("$.agreements[1].number").value("С-2/2026"))
+                .andExpect(jsonPath("$.agreements[1].status").value("REVIEW"))
+                .andExpect(jsonPath("$.agreements[1].statusChangedAt").value(containsString("2026-10-03")))
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         JsonNode cabinet = objectMapper.readTree(body);
         JsonNode work = findById(cabinet.path("works"), WORK_A);
@@ -506,11 +510,13 @@ class PartnerCabinetHttpTest {
         insertDocument(FOREIGN_DOCUMENT, WORK_B, "Документ вуза Б.pdf", "CLEAN", true, UUID.randomUUID());
         UUID agreementA = UUID.randomUUID();
         jdbcTemplate.update("""
-                INSERT INTO agreements (id, organization_id, number, concluded_on, valid_until, status)
-                VALUES (?, ?, 'С-1/2026', DATE '2026-01-15', DATE '2028-12-31', 'ACTIVE'),
-                       (?, ?, 'С-2/2026', NULL, NULL, 'REVIEW'),
-                       (?, ?, 'С-Б', NULL, NULL, 'DRAFT')
-                """, agreementA, ORGANIZATION_A, UUID.randomUUID(), ORGANIZATION_A, UUID.randomUUID(), ORGANIZATION_B);
+                INSERT INTO agreements (id, organization_id, number, concluded_on, valid_until, status, status_changed_at)
+                VALUES (?, ?, 'С-1/2026', DATE '2026-01-15', DATE '2028-12-31', 'ACTIVE', TIMESTAMP WITH TIME ZONE '2026-01-15 11:00:00+03:00'),
+                       (?, ?, 'С-2/2026', NULL, NULL, 'REVIEW', TIMESTAMP WITH TIME ZONE '2026-10-03 11:00:00+03:00'),
+                       (?, ?, 'С-3/2026', NULL, NULL, 'DRAFT', TIMESTAMP WITH TIME ZONE '2026-10-01 11:00:00+03:00'),
+                       (?, ?, 'С-Б', NULL, NULL, 'SIGNING', TIMESTAMP WITH TIME ZONE '2026-10-01 11:00:00+03:00')
+                """, agreementA, ORGANIZATION_A, UUID.randomUUID(), ORGANIZATION_A, UUID.randomUUID(), ORGANIZATION_A,
+                UUID.randomUUID(), ORGANIZATION_B);
         jdbcTemplate.update("""
                 INSERT INTO agreement_activities (id, agreement_id, title, status) VALUES (?, ?, 'Стажировки студентов', 'PLANNED'),
                 (?, ?, 'Отменённое мероприятие', 'CANCELLED')
@@ -689,7 +695,7 @@ class PartnerCabinetHttpTest {
                 """
                 CREATE TABLE IF NOT EXISTS agreements (
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, number VARCHAR(100) NOT NULL, concluded_on DATE,
-                    valid_until DATE, status VARCHAR(16) NOT NULL
+                    valid_until DATE, status VARCHAR(16) NOT NULL, status_changed_at TIMESTAMP WITH TIME ZONE
                 )
                 """,
                 """

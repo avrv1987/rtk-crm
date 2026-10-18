@@ -166,6 +166,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
         TrainingRepository.class,
         ReportRepository.class,
         ReportService.class,
+        ru.rtk.crm.agreement.AgreementRepository.class,
         ru.rtk.crm.work.LmsLearningTestBeans.class,
         SourceSyncServiceTest.SourceTestConfiguration.class
 })
@@ -580,6 +581,16 @@ class SourceSyncServiceTest {
     }
 
     @Test
+    void siteRequestAnswerIsDueInTwoWorkingDaysSkippingTheWeekend() {
+        assertThat(SiteRecordApplier.leadResponseDue(OffsetDateTime.parse("2026-10-14T15:30:00+03:00")))
+                .isEqualTo(OffsetDateTime.parse("2026-10-16T15:30:00+03:00"));
+        assertThat(SiteRecordApplier.leadResponseDue(OffsetDateTime.parse("2026-10-16T18:00:00+03:00")))
+                .isEqualTo(OffsetDateTime.parse("2026-10-20T18:00:00+03:00"));
+        assertThat(SiteRecordApplier.leadResponseDue(OffsetDateTime.parse("2026-10-17T21:00:00Z")))
+                .isEqualTo(OffsetDateTime.parse("2026-10-20T00:00:00+03:00"));
+    }
+
+    @Test
     void syncAddsToExistingOrNewInteractionAndRepeatDoesNotDuplicate() {
         SyncRunView first = sync();
 
@@ -601,6 +612,12 @@ class SourceSyncServiceTest {
         assertThat(jdbcTemplate.queryForMap("SELECT title, program_id FROM interactions WHERE id = ?", interactionsB.getFirst()))
                 .containsEntry("title", "Заявка с сайта: Java-разработчик")
                 .containsEntry("program_id", PROGRAM_JAVA);
+        assertThat(jdbcTemplate.queryForObject("SELECT next_action FROM interactions WHERE id = ?", String.class,
+                interactionsB.getFirst())).isEqualTo("Ответить на заявку");
+        assertThat(jdbcTemplate.queryForObject("SELECT next_action_at FROM interactions WHERE id = ?", OffsetDateTime.class,
+                interactionsB.getFirst())).isAfter(OffsetDateTime.now().plusDays(1));
+        assertThat(jdbcTemplate.queryForObject("SELECT next_action FROM interactions WHERE id = ?", String.class,
+                existingInteractionA)).isNull();
         assertThat(events(interactionsB.getFirst())).containsExactly("CREATED", "COMMENTED");
         assertThat(linkedContactNames(interactionsB.getFirst())).containsExactly("Пётр Сидоров");
 
@@ -1333,25 +1350,25 @@ class SourceSyncServiceTest {
     }
 
     @Test
-    void scheduleStartsSourcesOnBehalfOfLastActiveAdministratorAndDemoFirstSyncRunsOnce() {
-        service.startScheduled();
-
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sync_runs", Integer.class)).isZero();
-
-        assertThat(service.synchronizeIfNeverSucceeded(ADMIN, SourceCode.MOODLE)).get()
-                .extracting(SyncRunView::status).isEqualTo(SyncRunStatus.SUCCEEDED);
-        assertThat(service.synchronizeIfNeverSucceeded(ADMIN, SourceCode.MOODLE)).isEmpty();
-
+    void scheduleRunsConfiguredSourcesAsSystemWithoutAFirstManualRunAndDemoFirstSyncRunsOnce() {
         service.startScheduled();
 
         assertThat(jdbcTemplate.queryForList("SELECT started_by FROM sync_runs WHERE source = 'MOODLE'", UUID.class))
-                .containsExactly(ADMIN, ADMIN);
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sync_runs WHERE source = 'WEBSITE'", Integer.class)).isZero();
+                .containsExactly(ADMIN);
+        assertThat(jdbcTemplate.queryForList("SELECT DISTINCT run_trigger FROM sync_runs", String.class)).containsExactly("SCHEDULE");
+        assertThat(service.runs(admin, SourceCode.MOODLE)).singleElement().satisfies(run -> {
+            assertThat(run.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+            assertThat(run.startedByName()).isEqualTo("Система");
+        });
+        assertThat(jdbcTemplate.queryForList("SELECT source FROM sync_runs ORDER BY source", String.class))
+                .containsExactly("CUSTOMER_CRM", "LABOR_MARKET", "MOODLE", "WEBSITE");
+        assertThat(service.synchronizeIfNeverSucceeded(ADMIN, SourceCode.MOODLE)).isEmpty();
+        int runs = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sync_runs", Integer.class);
 
-        jdbcTemplate.update("UPDATE crm_user_profiles SET active = FALSE WHERE id = ?", ADMIN);
+        jdbcTemplate.update("UPDATE crm_user_profiles SET active = FALSE WHERE role = 'ADMIN'");
         service.startScheduled();
 
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sync_runs", Integer.class)).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sync_runs", Integer.class)).isEqualTo(runs);
     }
 
     @Test
@@ -1784,11 +1801,13 @@ class SourceSyncServiceTest {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_records WHERE record_type = 'paid_order'", Integer.class))
                 .isZero();
 
+        assertThat(paidOrderUploadService.last(operatorProfile)).isEmpty();
         PaidOrderUpload first = paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-1", "rq-upload-1");
 
         assertThat(paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-1", "rq-upload-1")).isEqualTo(first);
         assertThat(List.of(first.received(), first.emptyElements(), first.created(), first.updated(), first.skipped(),
                 first.needsMapping(), first.failed())).containsExactly(6, 1, 5, 0, 0, 1, 0);
+        assertThat(first.unmappedCourses()).containsExactly(LONG_COURSE);
         assertThat(first.streams())
                 .extracting(PaidOrderUpload.Stream::course, PaidOrderUpload.Stream::streamNo, PaidOrderUpload.Stream::orders)
                 .containsExactly(tuple("Инженер-тестировщик", 1, 2), tuple("Промпт-инжиниринг", 3, 3), tuple(LONG_COURSE, 2, 1));
@@ -1846,6 +1865,8 @@ class SourceSyncServiceTest {
                   "Телефон": "7 (900) 000-00-02", "Email": "boris@example.test", "Номер потока": 4}]
                 """), "upload-3", "rq-upload-3");
         assertThat(moved.updated()).isEqualTo(1);
+        assertThat(paidOrderUploadService.last(operatorProfile)).hasValueSatisfying(last -> assertThat(last.protocol()).isEqualTo(moved));
+        assertThatThrownBy(() -> paidOrderUploadService.last(admin)).isInstanceOf(EnrolmentAccessDeniedException.class);
         assertThat(jdbcTemplate.queryForMap("""
                 SELECT stream_no, submitted_at FROM source_records WHERE external_id = 'ORD-20260901000002-DEMO02'
                 """)).containsEntry("STREAM_NO", 4);
@@ -2197,7 +2218,7 @@ class SourceSyncServiceTest {
         assertThat(failed.snapshots()).hasSize(1);
         List<SourceView> sources = service.sources(admin);
         assertThat(sources).extracting(SourceView::schedule).containsOnly("0 0 * * * *");
-        assertThat(sources.getFirst().nextRunAt()).isNull();
+        assertThat(sources.getFirst().nextRunAt()).isAfter(OffsetDateTime.now());
         assertThat(sourceView(SourceCode.MOODLE).nextRunAt()).isAfter(OffsetDateTime.now());
 
         jdbcTemplate.update("UPDATE sync_runs SET finished_at = ? WHERE status = 'SUCCEEDED'", OffsetDateTime.now().minusHours(30));

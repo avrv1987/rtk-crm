@@ -14,7 +14,8 @@ import {
   learningText,
   routeLabel,
   routeShare,
-  toExportRequest
+  toExportRequest,
+  controlViewFromQuery
 } from '../src/features/control/controlModel.ts'
 
 test('отборы экрана «Контроль» переживают круг через адрес', () => {
@@ -122,4 +123,18 @@ test('колонка «Обучение (LMS)» пишет числа идущи
   assert.equal(learningText({ runs: 1, participants: 6, active7d: null, signals: 0, signalTitles: [] }), 'Обучающихся 6')
   assert.ok(exportColumns(emptyControlFilters, false).includes('LMS_LEARNING'))
   assert.ok(exportColumns(emptyControlFilters, false).includes('LMS_CHECK'))
+})
+
+test('выгрузка «Контроля» берёт выбранную плитку и колонку «Договор»', () => {
+  const overdue = toExportRequest(emptyControlFilters, 'XLSX', true, { tile: 'OVERDUE', stuckDays: 30 })
+  assert.equal(overdue.filters?.tile, 'OVERDUE')
+  assert.equal(overdue.filters?.minDaysOnStage, null)
+  const stuck = toExportRequest(emptyControlFilters, 'PDF', false, { tile: 'STUCK', stuckDays: 14 })
+  assert.equal(stuck.filters?.tile, 'STUCK')
+  assert.equal(stuck.filters?.minDaysOnStage, 14)
+  assert.equal(toExportRequest(emptyControlFilters, 'XLSX', false, { tile: 'IDLE', stuckDays: 30 }).filters?.tile, null)
+  assert.equal(toExportRequest(emptyControlFilters, 'XLSX', false).filters?.tile, null)
+  assert.ok(overdue.columns?.includes('AGREEMENT'))
+  assert.ok(overdue.columns?.includes('AGREEMENT_STATUS'))
+  assert.equal(controlViewFromQuery('tile=IDLE').tile, 'IDLE')
 })

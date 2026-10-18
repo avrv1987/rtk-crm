@@ -8,6 +8,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -108,22 +110,35 @@ public class SourceSyncService {
         return enqueue(source, profile.id(), SyncTrigger.MANUAL);
     }
 
+    // Все источники расписания идут одной задачей и по очереди: у исполнителя один поток и очередь на один запуск,
+    // поэтому четыре отдельные задачи отклонялись бы, и третий и четвёртый источник не запускались никогда.
     public void startScheduled() {
+        try {
+            executor.execute(this::runScheduled);
+        } catch (TaskRejectedException exception) {
+            log.info("Scheduled sync skipped: the source sync queue is full");
+        }
+    }
+
+    void runScheduled() {
         for (SourceCode source : SourceCode.values()) {
+            // Ненастроенный источник (нет адреса или ключа) пропускается: запрашивать его не у кого.
             if (!configured(source)) {
                 continue;
             }
-            // Запуск по расписанию идёт от администратора, который уже запускал источник вручную: записи и карточки
-            // создаются от имени действующего пользователя. Пока такого нет, расписание источник пропускает.
+            // Записи и карточки создаются от имени действующего профиля, поэтому без действующего администратора
+            // запуск пропускается. В журнале и на экране источников плановый запуск подписан «Система».
             Optional<UUID> actor = repository.findScheduleActor(source);
             if (actor.isEmpty()) {
-                log.info("Scheduled sync of {} skipped: no active administrator has started it manually yet", source);
+                log.info("Scheduled sync of {} skipped: there is no active administrator profile", source);
                 continue;
             }
             try {
-                enqueue(source, actor.get(), SyncTrigger.SCHEDULE);
+                run(insertRun(source, actor.get(), SyncTrigger.SCHEDULE, null));
             } catch (SourceException exception) {
                 log.info("Scheduled sync of {} skipped: {}", source, exception.code());
+            } catch (RuntimeException exception) {
+                log.error("Scheduled sync of {} failed", source, exception);
             }
         }
     }
@@ -253,7 +268,7 @@ public class SourceSyncService {
         }
         SyncRunView run = repository.findRun(runId).map(StoredRun::run).orElseThrow(SourceException::recordNotFound);
         return PaidOrderUpload.of(run.id(), run.createdCount(), run.updatedCount(), run.skippedCount(), run.needsMappingCount(),
-                run.failedCount(), run.errorMessage(), batch, applied.intake());
+                run.failedCount(), run.errorMessage(), batch, applied.intake(), applied.unmappedCourses());
     }
 
     public List<SourceRecordView> problemRecords(CrmProfile profile) {
@@ -568,15 +583,19 @@ public class SourceSyncService {
         OffsetDateTime receivedAt = OffsetDateTime.now();
         int[] counts = new int[SyncOutcome.values().length];
         LearnerIntake intake = LearnerIntake.NONE;
+        Set<String> unmappedCourses = new TreeSet<>();
         for (PaidOrder order : batch.orders()) {
             SiteRecord item = SiteRecord.paidOrder(order.orderNumber(), order.course(), order.streamNumber(), order.version(), receivedAt);
             PaidOrderApplied applied = applyPaidOrder(item, order, runId, actorProfileId, learnerActorId);
             counts[applied.outcome().ordinal()]++;
             intake = intake.plus(applied.intake());
+            if (applied.outcome() == SyncOutcome.NEEDS_MAPPING) {
+                unmappedCourses.add(order.course());
+            }
         }
         counts[SyncOutcome.SKIPPED.ordinal()] += batch.duplicates();
         counts[SyncOutcome.FAILED.ordinal()] += batch.rejected();
-        return new PaidOrdersApplied(totals(batch.received(), counts), intake);
+        return new PaidOrdersApplied(totals(batch.received(), counts), intake, List.copyOf(unmappedCourses));
     }
 
     private PaidOrderApplied applyPaidOrder(SiteRecord item, PaidOrder order, UUID runId, UUID actorProfileId, UUID learnerActorId) {
@@ -718,7 +737,7 @@ public class SourceSyncService {
         );
     }
 
-    private record PaidOrdersApplied(SyncTotals totals, LearnerIntake intake) {
+    private record PaidOrdersApplied(SyncTotals totals, LearnerIntake intake, List<String> unmappedCourses) {
     }
 
     private record LearningScope(UUID organizationId, UUID programId, List<Long> courseIds) {

@@ -23,7 +23,8 @@ const item = (patch: Partial<OrganizationHistoryItem>): OrganizationHistoryItem 
 test('группы фильтра покрывают каждый вид события ровно один раз', () => {
   const kinds = historyGroups.flatMap((group) => group.kinds)
   assert.equal(new Set(kinds).size, kinds.length)
-  assert.equal(kinds.length, 13)
+  assert.equal(kinds.length, 14)
+  assert.deepEqual(kindsOfGroup('DOCUMENTS'), ['AGREEMENT_STATUS', 'AGREEMENT_UPDATED', 'ATTACHMENT_DELETED'])
   assert.deepEqual(kindsOfGroup('ALL'), [])
   assert.deepEqual(kindsOfGroup('ASSIGNMENT'), ['ASSIGNMENT'])
 })
@@ -40,4 +41,9 @@ test('заголовок события назван по виду и подро
     'Назначен ответственный: Ирина.'
   )
   assert.equal(historyTitle(item({ kind: 'CONTACT', contactName: 'Проректор' })), 'Изменён контакт: Проректор')
+  assert.equal(
+    historyTitle(item({ kind: 'AGREEMENT_STATUS', description: 'Договор № Д-12: Проект → На согласовании.' })),
+    'Договор № Д-12: Проект → На согласовании.'
+  )
+  assert.equal(historyTitle(item({ kind: 'AGREEMENT_STATUS' })), 'Изменён статус договора с вузом')
 })

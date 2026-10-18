@@ -38,6 +38,7 @@ import ru.rtk.crm.enrolment.EnrolmentNotFoundException;
 import ru.rtk.crm.enrolment.LearnerValidationException;
 import ru.rtk.crm.attachment.AttachmentBindingException;
 import ru.rtk.crm.attachment.AttachmentDeletionForbiddenException;
+import ru.rtk.crm.attachment.AttachmentFileMissingException;
 import ru.rtk.crm.attachment.AttachmentNotFoundException;
 import ru.rtk.crm.attachment.AttachmentTooLargeException;
 import ru.rtk.crm.attachment.AttachmentValidationException;
@@ -171,6 +172,13 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiError> attachmentNotFound(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiError.of("NOT_FOUND", "Файл не найден или недоступен", RequestId.from(request)));
+    }
+
+    @ExceptionHandler(AttachmentFileMissingException.class)
+    public ResponseEntity<ApiError> attachmentFileMissing(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiError.of(
+                "FILE_UNAVAILABLE", "Файл недоступен: его нет в хранилище. Сообщите администратору CRM", RequestId.from(request)
+        ));
     }
 
     @ExceptionHandler({CatalogImportNotFoundException.class, CatalogImportJobNotFoundException.class})

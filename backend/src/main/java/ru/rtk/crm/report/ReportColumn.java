@@ -120,10 +120,6 @@ public enum ReportColumn {
         return emptyText;
     }
 
-    public String emptyText(ReportRow row) {
-        return row.managerWorkTotal() ? "" : emptyText;
-    }
-
     public int width() {
         return width;
     }
@@ -138,7 +134,7 @@ public enum ReportColumn {
 
     public String text(ReportRow row) {
         return switch (value(row)) {
-            case null -> emptyText(row);
+            case null -> emptyText;
             case OffsetDateTime dateTime -> DATE_TIME.format(dateTime.atZoneSameInstant(ReportRequest.ZONE));
             case BigDecimal decimal -> decimal.toPlainString().replace('.', ',');
             case Object other -> other.toString();

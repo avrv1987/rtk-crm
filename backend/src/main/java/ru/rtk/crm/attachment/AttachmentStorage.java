@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
@@ -74,9 +75,13 @@ public class AttachmentStorage {
         }
     }
 
+    // Строка документа есть, а файла нет (том потерян, восстановление из копии без файлов): это не сбой сервера,
+    // а недоступный файл, поэтому отдельное исключение превращается в 404 с понятным текстом.
     public InputStream open(UUID storageKey) {
         try {
             return Files.newInputStream(pathFor(storageKey), StandardOpenOption.READ);
+        } catch (NoSuchFileException exception) {
+            throw new AttachmentFileMissingException(exception);
         } catch (IOException exception) {
             throw new AttachmentStorageException("Attachment storage cannot be read", exception);
         }

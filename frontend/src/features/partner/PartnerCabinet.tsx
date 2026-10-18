@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../../shared/api/client'
-import { formatCalendarDate, formatMoscowDateTime } from '../../shared/format/datetime'
+import { formatCalendarDate, formatMoscowDateTime, todayInMoscow } from '../../shared/format/datetime'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { saveFile } from '../admin/saveFile'
+import { daysInStatus } from '../agreements/agreementModel'
+import { AgreementTermMark } from '../agreements/agreementUi'
 import { attachmentKindLabels } from '../documents/documentsApi'
 import { handledAccessError, workStatusLabels } from '../interactions/workMarks'
 import {
@@ -41,6 +43,11 @@ const term = (from: string | null, to: string | null) => {
   return [from === null ? null : `с ${formatCalendarDate(from)}`, to === null ? null : `по ${formatCalendarDate(to)}`]
     .filter((part) => part !== null)
     .join(' ')
+}
+
+const statusSince = (changedAt: string) => {
+  const days = daysInStatus(changedAt, Date.now())
+  return `В этом статусе с ${formatCalendarDate(todayInMoscow(new Date(changedAt)))} (${days} дн.)`
 }
 
 export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: PartnerCabinetProps) => {
@@ -182,7 +189,9 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
               )}
               {download.kind === 'failed' && download.id === document.id && (
                 <div className="interaction-command-error" role="alert">
-                  <p>Не удалось скачать файл. Обновите страницу и повторите.</p>
+                  <p>{download.error instanceof ApiError && download.error.code === 'FILE_UNAVAILABLE'
+                    ? download.error.message
+                    : 'Не удалось скачать файл. Обновите страницу и повторите.'}</p>
                   {download.error instanceof ApiError && <SupportDetails requestId={download.error.requestId} code={download.error.code} />}
                 </div>
               )}
@@ -199,8 +208,12 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
             <li key={agreement.id} className="partner-card">
               <div className="partner-card__header">
                 <strong>Договор № {agreement.number}</strong>
-                <span className="status status--planned">{agreementStatusLabels[agreement.status]}</span>
+                <span>
+                  <span className="status status--planned">{agreementStatusLabels[agreement.status]}</span>
+                  {' '}<AgreementTermMark agreement={agreement} />
+                </span>
               </div>
+              {agreement.statusChangedAt && <p className="partner-card__meta">{statusSince(agreement.statusChangedAt)}</p>}
               <p className="partner-card__meta">Срок: {term(agreement.concludedOn, agreement.validUntil)}</p>
               {agreement.subject.length > 0 && (
                 <div className="partner-card__stages">

@@ -24,7 +24,9 @@ public class OrganizationHistoryRepository {
                    CAST(NULL AS UUID) AS contact_id, CAST(NULL AS VARCHAR(200)) AS contact_name,
                    CAST(NULL AS VARCHAR(10000)) AS changes,
                    CAST(NULL AS UUID) AS previous_owner_id, CAST(NULL AS VARCHAR(200)) AS previous_owner_name,
-                   CAST(NULL AS UUID) AS owner_id, CAST(NULL AS VARCHAR(200)) AS owner_name
+                   CAST(NULL AS UUID) AS owner_id, CAST(NULL AS VARCHAR(200)) AS owner_name,
+                   CAST(NULL AS VARCHAR(100)) AS agreement_number, CAST(NULL AS VARCHAR(16)) AS from_status,
+                   CAST(NULL AS VARCHAR(16)) AS to_status
             """.formatted(InteractionRepository.EVENT_COMMENT);
 
     private static final String WORK_FROM = """
@@ -43,7 +45,9 @@ public class OrganizationHistoryRepository {
                    CAST(NULL AS VARCHAR(10000)) AS changes,
                    ae.previous_owner_manager_id AS previous_owner_id,
                    ae.previous_owner_manager_display_name AS previous_owner_name,
-                   ae.owner_manager_id AS owner_id, ae.new_owner_manager_display_name AS owner_name
+                   ae.owner_manager_id AS owner_id, ae.new_owner_manager_display_name AS owner_name,
+                   CAST(NULL AS VARCHAR(100)) AS agreement_number, CAST(NULL AS VARCHAR(16)) AS from_status,
+                   CAST(NULL AS VARCHAR(16)) AS to_status
             """;
 
     private static final String ASSIGNMENT_FROM = """
@@ -58,7 +62,9 @@ public class OrganizationHistoryRepository {
                    CAST(NULL AS VARCHAR(2000)) AS comment,
                    c.id AS contact_id, c.name AS contact_name, ce.changes AS changes,
                    CAST(NULL AS UUID) AS previous_owner_id, CAST(NULL AS VARCHAR(200)) AS previous_owner_name,
-                   CAST(NULL AS UUID) AS owner_id, CAST(NULL AS VARCHAR(200)) AS owner_name
+                   CAST(NULL AS UUID) AS owner_id, CAST(NULL AS VARCHAR(200)) AS owner_name,
+                   CAST(NULL AS VARCHAR(100)) AS agreement_number, CAST(NULL AS VARCHAR(16)) AS from_status,
+                   CAST(NULL AS VARCHAR(16)) AS to_status
             """;
 
     private static final String CONTACT_FROM = """
@@ -66,6 +72,27 @@ public class OrganizationHistoryRepository {
             JOIN contacts c ON c.id = ce.contact_id
             JOIN crm_user_profiles a ON a.id = ce.actor_profile_id
             WHERE c.organization_id = :organizationId
+            """;
+
+    // Переходы договора с вузом: запись о создании (from_status IS NULL) тоже показывается — это начало истории договора.
+    private static final String AGREEMENT_SELECT = """
+            SELECT se.id AS id, 'AGREEMENT_STATUS' AS kind, se.occurred_at AS occurred_at, a.display_name AS actor_name,
+                   i.id AS interaction_id, i.title AS interaction_title,
+                   CAST(NULL AS VARCHAR(200)) AS from_stage_name, CAST(NULL AS VARCHAR(200)) AS stage_name,
+                   se.comment AS comment,
+                   CAST(NULL AS UUID) AS contact_id, CAST(NULL AS VARCHAR(200)) AS contact_name,
+                   CAST(NULL AS VARCHAR(10000)) AS changes,
+                   CAST(NULL AS UUID) AS previous_owner_id, CAST(NULL AS VARCHAR(200)) AS previous_owner_name,
+                   CAST(NULL AS UUID) AS owner_id, CAST(NULL AS VARCHAR(200)) AS owner_name,
+                   ag.number AS agreement_number, se.from_status AS from_status, se.to_status AS to_status
+            """;
+
+    private static final String AGREEMENT_FROM = """
+            FROM agreement_status_events se
+            JOIN agreements ag ON ag.id = se.agreement_id
+            LEFT JOIN crm_user_profiles a ON a.id = se.actor_profile_id
+            LEFT JOIN interactions i ON i.id = se.interaction_id
+            WHERE ag.organization_id = :organizationId
             """;
 
     private final JdbcClient jdbcClient;
@@ -139,6 +166,9 @@ public class OrganizationHistoryRepository {
         if (query.includes(Set.of(OrganizationHistoryKind.CONTACT))) {
             branches.add(new Branch(CONTACT_SELECT, CONTACT_FROM + period("ce.occurred_at", query)));
         }
+        if (query.includes(Set.of(OrganizationHistoryKind.AGREEMENT_STATUS))) {
+            branches.add(new Branch(AGREEMENT_SELECT, AGREEMENT_FROM + period("se.occurred_at", query)));
+        }
         return branches;
     }
 
@@ -164,7 +194,10 @@ public class OrganizationHistoryRepository {
                 resultSet.getObject("previous_owner_id", UUID.class),
                 resultSet.getString("previous_owner_name"),
                 resultSet.getObject("owner_id", UUID.class),
-                resultSet.getString("owner_name")
+                resultSet.getString("owner_name"),
+                resultSet.getString("agreement_number"),
+                resultSet.getString("from_status"),
+                resultSet.getString("to_status")
         );
     }
 
@@ -187,7 +220,10 @@ public class OrganizationHistoryRepository {
             UUID previousOwnerId,
             String previousOwnerName,
             UUID ownerId,
-            String ownerName
+            String ownerName,
+            String agreementNumber,
+            String fromStatus,
+            String toStatus
     ) {
     }
 }

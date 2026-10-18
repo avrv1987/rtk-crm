@@ -37,6 +37,12 @@ public final class AgreementModels {
             return this == ACTIVE || this == COMPLETED || this == TERMINATED;
         }
 
+        // Статус по сроку не меняется (решение владельца): истёкший договор остаётся «Действует» до перехода КАМ,
+        // а признак «срок истёк» вычисляется по дате окончания на сегодня по МСК.
+        public boolean expired(LocalDate validUntil, LocalDate today) {
+            return this == ACTIVE && validUntil != null && validUntil.isBefore(today);
+        }
+
         public List<TransitionOption> transitions() {
             return switch (this) {
                 case DRAFT -> List.of(TransitionOption.forward(REVIEW));

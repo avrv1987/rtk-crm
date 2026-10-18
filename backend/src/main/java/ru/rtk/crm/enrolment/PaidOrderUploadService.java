@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.OffsetDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -66,6 +67,17 @@ public class PaidOrderUploadService {
         paidOrderEnrolment.journalUpload(profile.id(), result, requestId);
         commandIdempotencyRepository.complete(commandId, write(result));
         return result;
+    }
+
+    // Отдельного журнала загрузок нет: протокол последней загрузки берётся из уже сохранённого результата команды,
+    // который хранится для повторов по ключу идемпотентности.
+    public Optional<LastPaidOrderUpload> last(CrmProfile profile) {
+        enrolmentAccess.requireOperator(profile);
+        return commandIdempotencyRepository.findLatestResult(CommandOperation.UPLOAD_PAID_ORDERS)
+                .map(stored -> new LastPaidOrderUpload(stored.createdAt(), read(stored.resultJson())));
+    }
+
+    public record LastPaidOrderUpload(OffsetDateTime uploadedAt, PaidOrderUpload protocol) {
     }
 
     private static byte[] content(MultipartFile file) {

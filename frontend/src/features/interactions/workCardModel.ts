@@ -10,6 +10,7 @@ export type WorkAgreementLike = {
   number: string
   status: AgreementStatus
   concludedOn?: string | null
+  validUntil?: string | null
   statusChangedAt: string
 }
 
@@ -68,9 +69,20 @@ export const primaryAction = (context: PrimaryContext): PrimaryAction | null => 
   return { kind: 'transition', label: 'Перейти на следующий этап', disabled: false }
 }
 
-export const isSignedAgreement = (agreement: WorkAgreementLike) => (
-  (agreement.status === 'ACTIVE' || agreement.status === 'COMPLETED') && Boolean(agreement.concludedOn)
+// «Действует» с истёкшим сроком не засчитывается, «Завершён» засчитывается — как на сервере (AgreementStages).
+// Модуль без зависимостей времени выполнения (его проверяют node-тесты), поэтому «сегодня по МСК» и признак
+// «срок истёк» записаны здесь, а не взяты из shared/format и agreementModel.
+const moscowToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date())
+
+const expiredOn = (agreement: WorkAgreementLike, today: string) => (
+  agreement.status === 'ACTIVE' && Boolean(agreement.validUntil) && (agreement.validUntil ?? '') < today
 )
+
+const signedOn = (agreement: WorkAgreementLike, today: string) => (
+  (agreement.status === 'ACTIVE' || agreement.status === 'COMPLETED') && Boolean(agreement.concludedOn) && !expiredOn(agreement, today)
+)
+
+export const isSignedAgreement = (agreement: WorkAgreementLike) => signedOn(agreement, moscowToday())
 
 const byStatusChangeDesc = <A extends WorkAgreementLike>(left: A, right: A) => (
   new Date(right.statusChangedAt).getTime() - new Date(left.statusChangedAt).getTime()
@@ -82,7 +94,8 @@ export const signingBlock = (
   work: WorkAgreementsLike | null,
   stages: readonly { id: string; order: number }[],
   fromStageId: string,
-  toStageId: string
+  toStageId: string,
+  today: string = moscowToday()
 ): string | null => {
   if (work === null || !work.signingRuleEnabled) {
     return null
@@ -97,8 +110,13 @@ export const signingBlock = (
     const order = orderOf.get(stage.stageId)
     return stage.role === 'SIGNING' && order !== undefined && order >= from && order < to
   })
-  if (!passesSigning || work.agreements.some(isSignedAgreement)) {
+  if (!passesSigning || work.agreements.some((agreement) => signedOn(agreement, today))) {
     return null
+  }
+  const expired = [...work.agreements].sort(byStatusChangeDesc).find((agreement) => expiredOn(agreement, today))
+  if (expired?.validUntil) {
+    return `Этап «Подписание» завершится только с действующим договором. Срок договора № ${expired.number} истёк `
+      + `${expired.validUntil.split('-').reverse().join('.')}: продлите срок в реквизитах договора или оформите новый договор.`
   }
   if (work.agreements.length === 0) {
     return 'Этап «Подписание» завершится только с подписанным договором. Создайте договор с вузом.'

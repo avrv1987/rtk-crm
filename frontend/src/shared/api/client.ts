@@ -104,6 +104,7 @@ export type WorkControlTeam = components['schemas']['WorkControlTeam']
 export type WorkControlManager = components['schemas']['WorkControlManager']
 export type WorkControlItem = components['schemas']['WorkControlItem']
 export type WorkControlTotals = components['schemas']['WorkControlTotals']
+export type WorkControlIdleOrganization = components['schemas']['WorkControlIdleOrganization']
 export type ManagerWorkDue = components['schemas']['ManagerWorkDue']
 export type ManagerWorkChange = components['schemas']['ManagerWorkChange']
 
@@ -342,6 +343,7 @@ export type VendorContactList = components['schemas']['VendorContactList']
 export type VendorContactChange = components['schemas']['VendorContactChange']
 export type VendorContactCard = components['schemas']['VendorContactCard']
 export type PaidOrderUpload = components['schemas']['PaidOrderUpload']
+export type LastPaidOrderUpload = components['schemas']['LastPaidOrderUpload']
 export type LearnerIntake = components['schemas']['LearnerIntake']
 export type LearnerFieldCode = components['schemas']['LearnerFieldCode']
 export type LearnerFieldGroup = components['schemas']['LearnerFieldGroup']
@@ -665,6 +667,10 @@ export class ApiClient {
       },
       body: formData
     })
+  }
+
+  async getLastPaidOrderUpload(): Promise<LastPaidOrderUpload | null> {
+    return (await this.request<LastPaidOrderUpload | undefined>('/api/enrolment/paid-orders/last')) ?? null
   }
 
   async listEnrolmentStreams(): Promise<EnrolmentStreams> {
@@ -1280,8 +1286,11 @@ export class ApiClient {
     return this.command<Organization>(`/api/organizations/${encodeURIComponent(id)}/status`, payload, idempotencyKey)
   }
 
-  async findOrganizationDuplicates(name: string, exceptId?: string): Promise<OrganizationDuplicate[]> {
+  async findOrganizationDuplicates(name: string, exceptId?: string, inn?: string): Promise<OrganizationDuplicate[]> {
     const searchParams = new URLSearchParams({ name })
+    if (inn !== undefined && inn !== '') {
+      searchParams.set('inn', inn)
+    }
     if (exceptId !== undefined) {
       searchParams.set('exceptId', exceptId)
     }

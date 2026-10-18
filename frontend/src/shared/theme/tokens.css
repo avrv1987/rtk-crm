@@ -3792,3 +3792,31 @@ label.segmented__option input:focus-visible + span {
   color: var(--color-text-body);
   overflow-wrap: anywhere;
 }
+
+.camera-input {
+  display: none;
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control-height);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-5);
+  color: var(--color-text-label);
+  background: var(--color-surface);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.camera-input input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .camera-input {
+    display: inline-flex;
+  }
+}

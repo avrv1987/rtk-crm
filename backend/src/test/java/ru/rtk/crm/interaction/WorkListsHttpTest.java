@@ -309,7 +309,8 @@ class WorkListsHttpTest {
                 "Анна Смирнова",
                 markedAt,
                 null,
-                null
+                null,
+                true
         );
         InteractionIssueFilter filter = new InteractionIssueFilter(
                 InteractionIssueKind.RISK, InteractionRiskLevel.HIGH, responsibleId, organizationId, true, null

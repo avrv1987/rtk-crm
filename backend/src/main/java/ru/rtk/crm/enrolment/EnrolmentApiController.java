@@ -64,6 +64,13 @@ public class EnrolmentApiController {
                 RequestId.from(request));
     }
 
+    @GetMapping("/paid-orders/last")
+    public ResponseEntity<PaidOrderUploadService.LastPaidOrderUpload> lastPaidOrderUpload(@AuthenticationPrincipal OidcUser user) {
+        return paidOrderUploadService.last(currentProfileService.requireActiveProfile(user))
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
     @GetMapping("/streams")
     public EnrolmentStreamsView streams(@AuthenticationPrincipal OidcUser user) {
         return streamService.streams(currentProfileService.requireActiveProfile(user));

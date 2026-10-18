@@ -159,11 +159,6 @@
   width: auto;
 }
 
-.saved-reports__notice {
-  color: var(--color-success);
-  font-weight: 600;
-}
-
 .save-report {
   display: grid;
   gap: var(--space-4);

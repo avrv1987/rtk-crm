@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { CardDialog } from '../interactions/cardUi'
-import { agreementsApi, formatDate, type AgreementOptions, type WorkAgreements } from './agreementsApi'
-import { activeStageRole, agreementStatusLabels } from './agreementModel'
+import { todayInMoscow } from '../../shared/format/datetime'
+import { agreementsApi, formatDate, type AgreementOptions, type AgreementSummary, type WorkAgreements } from './agreementsApi'
+import { activeStageRole, agreementStatusLabels, agreementTerm, linkCandidates, linkInput } from './agreementModel'
 import { AgreementForm } from './AgreementForm'
 import { AgreementTransitions } from './AgreementTransitions'
-import { CommandError, useAccessErrorHandler } from './agreementUi'
+import { AgreementTermMark, CommandError, useAccessErrorHandler, useCommandKey } from './agreementUi'
 import './agreements.css'
 
 type WorkAgreementBlockProps = {
@@ -41,6 +42,12 @@ export const WorkAgreementBlock = ({
   const [state, setState] = useState<Load<WorkAgreements>>({ kind: 'loading' })
   const [creating, setCreating] = useState(false)
   const [options, setOptions] = useState<Load<AgreementOptions> | null>(null)
+  const [linking, setLinking] = useState(false)
+  const [organizationAgreements, setOrganizationAgreements] = useState<Load<AgreementSummary[]> | null>(null)
+  const [linkId, setLinkId] = useState('')
+  const [linkSaving, setLinkSaving] = useState(false)
+  const [linkError, setLinkError] = useState<unknown>(null)
+  const linkKey = useCommandKey()
 
   const load = useCallback(async () => {
     try {
@@ -73,6 +80,20 @@ export const WorkAgreementBlock = ({
     }
   }, [handleAccessError, organizationId])
 
+  const openLink = useCallback(async () => {
+    setCreating(false)
+    setLinking(true)
+    setLinkError(null)
+    setOrganizationAgreements({ kind: 'loading' })
+    try {
+      setOrganizationAgreements({ kind: 'ready', value: await agreementsApi.list(organizationId) })
+    } catch (error) {
+      if (!handleAccessError(error)) {
+        setOrganizationAgreements({ kind: 'failed', error })
+      }
+    }
+  }, [handleAccessError, organizationId])
+
   useEffect(() => {
     if (startCreate && canEdit) {
       onCreateStarted?.()
@@ -93,6 +114,30 @@ export const WorkAgreementBlock = ({
   const work = state.value
   const role = activeStageRole(work.stages, currentStageId)
   const hasSigningStage = work.stages.some((stage) => stage.role === 'SIGNING')
+  const candidates = organizationAgreements?.kind === 'ready'
+    ? linkCandidates(organizationAgreements.value, work.agreements.map((agreement) => agreement.id))
+    : []
+  const selectedLink = candidates.some((agreement) => agreement.id === linkId) ? linkId : candidates[0]?.id ?? ''
+  const today = todayInMoscow()
+
+  const link = async () => {
+    setLinkSaving(true)
+    setLinkError(null)
+    try {
+      const payload = linkInput(await agreementsApi.get(selectedLink), interactionId)
+      await agreementsApi.update(selectedLink, payload, linkKey.keyFor({ agreementId: selectedLink, payload }))
+      linkKey.settle()
+      setLinking(false)
+      changed()
+    } catch (error) {
+      linkKey.settle(error)
+      if (!handleAccessError(error)) {
+        setLinkError(error)
+      }
+    } finally {
+      setLinkSaving(false)
+    }
+  }
 
   return (
     <section className="work-agreement" aria-labelledby="work-agreement-title">
@@ -108,6 +153,7 @@ export const WorkAgreementBlock = ({
         <div className="work-agreement__empty">
           <p>{role === null ? 'Договор с вузом не привязан.' : 'Создайте договор с вузом и привяжите его к этому взаимодействию.'}</p>
           {canEdit && <button type="button" onClick={() => void openCreate()}>Создать договор</button>}
+          {canEdit && <button type="button" className="button--secondary" onClick={() => void openLink()}>Привязать договор вуза</button>}
         </div>
       ) : (
         <ul className="work-agreement__list">
@@ -120,6 +166,7 @@ export const WorkAgreementBlock = ({
                 <span className={`agreements__status agreements__status--${agreement.status.toLowerCase()}`}>
                   {agreementStatusLabels[agreement.status]}
                 </span>
+                <AgreementTermMark agreement={agreement} />
               </span>
               {canEdit && (
                 <AgreementTransitions
@@ -133,7 +180,50 @@ export const WorkAgreementBlock = ({
           ))}
         </ul>
       )}
+      {canEdit && work.agreements.length > 0 && (
+        <p>
+          <button type="button" className="button--secondary" onClick={() => void openLink()}>Привязать ещё договор вуза</button>
+        </p>
+      )}
+      <CardDialog open={linking} title="Привязать договор вуза" onClose={() => setLinking(false)}>
+        {organizationAgreements?.kind === 'loading' && <p role="status">Загружаем договоры вуза…</p>}
+        {organizationAgreements?.kind === 'failed' && (
+          <CommandError error={organizationAgreements.error} fallback="Не удалось загрузить договоры вуза." onRetry={() => void openLink()} />
+        )}
+        {organizationAgreements?.kind === 'ready' && candidates.length === 0 && (
+          <p>Других договоров у вуза нет. Создайте новый договор.</p>
+        )}
+        {organizationAgreements?.kind === 'ready' && candidates.length > 0 && (
+          <form className="agreement-form" onSubmit={(event) => { event.preventDefault(); void link() }} aria-label="Привязать договор вуза">
+            <label>
+              <span>Договор вуза</span>
+              <select value={selectedLink} onChange={(event) => setLinkId(event.target.value)}>
+                {candidates.map((agreement) => (
+                  <option key={agreement.id} value={agreement.id}>
+                    {[
+                      `№ ${agreement.number}`,
+                      agreementStatusLabels[agreement.status].toLowerCase(),
+                      agreementTerm(agreement, today) === 'expired' ? 'срок истёк' : '',
+                      agreement.validUntil ? `до ${formatDate(agreement.validUntil)}` : ''
+                    ].filter((part) => part !== '').join(' · ')}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="agreement-form__hint">Договор свяжется с этим взаимодействием, прежние связи договора сохранятся.</p>
+            {linkError !== null && <CommandError error={linkError} fallback="Договор не привязан." />}
+            <div className="agreement-form__actions">
+              <button type="submit" disabled={linkSaving}>{linkSaving ? 'Привязываем…' : 'Привязать'}</button>
+              <button type="button" className="button--secondary" onClick={() => setLinking(false)} disabled={linkSaving}>Отмена</button>
+            </div>
+          </form>
+        )}
+      </CardDialog>
       <CardDialog open={creating} title="Новый договор с вузом" onClose={() => setCreating(false)}>
+        <p className="agreement-form__hint">
+          Договор с вузом уже заключён?{' '}
+          <button type="button" className="button--secondary" onClick={() => void openLink()}>Привязать договор вуза</button>
+        </p>
         {options?.kind === 'loading' && <p role="status">Загружаем справочники…</p>}
         {options?.kind === 'failed' && (
           <CommandError error={options.error} fallback="Не удалось загрузить справочники." onRetry={() => void openCreate()} />

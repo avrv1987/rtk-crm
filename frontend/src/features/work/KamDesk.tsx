@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiClient, type InteractionListItem, type InteractionListParams } from '../../shared/api/client'
+import { apiClient, type InteractionListItem, type InteractionListParams, type ReminderDigest } from '../../shared/api/client'
 import { StatTiles, type StatTile } from '../../shared/ui/StatTiles'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { ReminderAgreements } from './ReminderCenter'
 import { StepCompletion } from './StepCompletion'
 import { groupFeed } from './deadlines'
 import { type FeedGroup, feedGroupsFor, type KamTile } from './workView'
@@ -22,6 +23,8 @@ type DeskState =
     kind: 'ready'
     counts: { overdue: number; week: number; noStep: number; licenses: number; signals: number | null }
     licenseYear: number
+    agreements: ReminderDigest['expiringAgreements']
+    agreementNoticeDays: number
     dated: InteractionListItem[]
     noStep: InteractionListItem[]
   }
@@ -74,6 +77,8 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
         kind: 'ready',
         counts: { overdue, week, noStep: noStep.total, licenses, signals },
         licenseYear: digest.licenseExpiresBy,
+        agreements: digest.expiringAgreements,
+        agreementNoticeDays: digest.agreementNoticeDays,
         dated: dated.items,
         noStep: noStep.items
       })
@@ -110,6 +115,7 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
     { key: 'THIS_WEEK', label: 'На этой неделе', value: state.counts.week, tone: 'warning' },
     { key: 'NO_NEXT_STEP', label: 'Без следующего шага', value: state.counts.noStep, tone: 'warning' },
     { key: 'LICENSES', label: `Лицензии истекают до ${state.licenseYear} года`, value: state.counts.licenses, tone: 'warning' },
+    { key: 'AGREEMENTS', label: `Договоры истекают за ${state.agreementNoticeDays} дней`, value: state.agreements.length, tone: 'warning' },
     { key: 'LMS', label: state.counts.signals === null ? 'Сигналы LMS недоступны' : 'Сигналы LMS', value: state.counts.signals ?? 0, tone: 'warning' }
   ]
   const selected: KamTile | null = tile ?? (licenseActive ? 'LICENSES' : null)
@@ -145,7 +151,7 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
       <section className="desk-feed" aria-labelledby="desk-feed-title">
         <h2 id="desk-feed-title" className="desk-feed__heading">Задачи по срокам</h2>
         <p className="step-completion__done" role="status">{message}</p>
-        {visibleGroups.length === 0 && (
+        {visibleGroups.length === 0 && tile !== 'AGREEMENTS' && (
           <p className="work-control__message">
             {tile === null ? 'Шагов со сроком нет. Задайте следующий шаг в карточке взаимодействия.' : 'По этой плитке задач нет.'}
           </p>
@@ -224,6 +230,14 @@ export const KamDesk = ({ refreshKey, licenseActive, onChanged, onShowSignals, o
             </section>
           )
         })}
+        {(tile === null || tile === 'AGREEMENTS') && state.agreements.length > 0 && (
+          <section className="desk-feed__group" aria-labelledby="desk-feed-agreements">
+            <h3 id="desk-feed-agreements">
+              Договоры истекают <span className="desk-feed__count">{state.agreements.length}</span>
+            </h3>
+            <ReminderAgreements agreements={state.agreements} />
+          </section>
+        )}
       </section>
     </>
   )

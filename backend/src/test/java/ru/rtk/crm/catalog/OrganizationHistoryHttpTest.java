@@ -59,7 +59,8 @@ class OrganizationHistoryHttpTest {
     @BeforeEach
     void setUp() {
         createSchema();
-        for (String table : List.of("interaction_event_contacts", "contact_events", "organization_assignment_events",
+        for (String table : List.of("agreement_status_events", "agreements", "interaction_event_contacts", "contact_events",
+                "organization_assignment_events",
                 "interaction_events", "interactions", "contacts", "organizations", "crm_user_profiles", "teams")) {
             jdbcTemplate.update("DELETE FROM " + table);
         }
@@ -120,6 +121,41 @@ class OrganizationHistoryHttpTest {
                 .andExpect(jsonPath("$.items[3].comment").value("Передаём вуз с открытыми договорами"))
                 .andExpect(jsonPath("$.items[3].actorName").value("Руководитель А"))
                 .andExpect(jsonPath("$.items[4].kind").value("CREATED"));
+    }
+
+    @Test
+    void agreementTransitionsJoinTheFeedWithStatusesWorkAndCommentInTheOwnScope() throws Exception {
+        UUID agreementA = UUID.randomUUID();
+        UUID agreementB = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO agreements (id, organization_id, number) VALUES (?, ?, 'Д-12'), (?, ?, 'Б-1')",
+                agreementA, ORGANIZATION_A, agreementB, ORGANIZATION_B);
+        agreementEvent(agreementA, null, "DRAFT", null, null, "2026-09-15T10:00:00+03:00");
+        agreementEvent(agreementA, "DRAFT", "REVIEW", "Отправили проректору", WORK_A, "2026-09-16T10:00:00+03:00");
+        agreementEvent(agreementB, null, "SIGNING", null, null, "2026-09-16T11:00:00+03:00");
+
+        mockMvc.perform(get(url(ORGANIZATION_A)).param("kinds", "AGREEMENT_STATUS").with(login(KAM_A)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.items[0].kind").value("AGREEMENT_STATUS"))
+                .andExpect(jsonPath("$.items[0].description").value("Договор № Д-12: Проект → На согласовании."))
+                .andExpect(jsonPath("$.items[0].comment").value("Отправили проректору"))
+                .andExpect(jsonPath("$.items[0].interactionTitle").value("Внедрение платформы"))
+                .andExpect(jsonPath("$.items[0].actorName").value("Ирина КАМ"))
+                .andExpect(jsonPath("$.items[1].description").value("Договор № Д-12 внесён: Проект."));
+        mockMvc.perform(get(url(ORGANIZATION_A)).with(login(LEADER_A)))
+                .andExpect(jsonPath("$.total").value(7))
+                .andExpect(jsonPath("$.items[0].kind").value("AGREEMENT_STATUS"));
+        mockMvc.perform(get(url(ORGANIZATION_A)).param("from", "2026-09-16").param("kinds", "AGREEMENT_STATUS").with(login(KAM_A)))
+                .andExpect(jsonPath("$.total").value(1));
+        expectTotal(LEADER_B, ORGANIZATION_B, 2);
+    }
+
+    private void agreementEvent(UUID agreementId, String from, String to, String comment, UUID workId, String at) {
+        jdbcTemplate.update("""
+                INSERT INTO agreement_status_events (id, agreement_id, from_status, to_status, comment, actor_profile_id, interaction_id,
+                    occurred_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, UUID.randomUUID(), agreementId, from, to, comment, KAM_A, workId, OffsetDateTime.parse(at));
     }
 
     @Test
@@ -323,6 +359,17 @@ class OrganizationHistoryHttpTest {
                 CREATE TABLE IF NOT EXISTS interaction_event_contacts (
                     event_id UUID NOT NULL, contact_id UUID NOT NULL, change_type VARCHAR(16) NOT NULL,
                     PRIMARY KEY (event_id, contact_id)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agreements (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, number VARCHAR(100) NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agreement_status_events (
+                    id UUID PRIMARY KEY, agreement_id UUID NOT NULL, from_status VARCHAR(16), to_status VARCHAR(16) NOT NULL,
+                    comment VARCHAR(2000), actor_profile_id UUID, interaction_id UUID, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """
         };

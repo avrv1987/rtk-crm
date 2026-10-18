@@ -23,6 +23,7 @@ public record InteractionIssue(
         String createdByName,
         OffsetDateTime createdAt,
         String resolvedByName,
-        OffsetDateTime resolvedAt
+        OffsetDateTime resolvedAt,
+        boolean organizationAccessible
 ) {
 }

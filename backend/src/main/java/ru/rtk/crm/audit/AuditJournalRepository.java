@@ -21,6 +21,8 @@ public class AuditJournalRepository {
     private static final String ROLE_LABEL = """
             CASE %s WHEN 'USER' THEN 'КАМ' WHEN 'LEADER' THEN 'руководитель' WHEN 'MANAGEMENT' THEN 'руководство' WHEN 'PARTNER' THEN 'представитель вуза' ELSE 'администратор' END""";
 
+    // Плановые запуски источников идут от имени «Система» и попадают в журнал, только если что-то изменили или
+    // завершились ошибкой: иначе ежечасные пустые запуски вытесняли бы записи о входах, ролях и ПДн.
     private static final String JOURNAL = """
             SELECT a.id, a.occurred_at, a.category, a.action, a.actor_profile_id, a.actor_display_name,
                    a.object_type, a.object_id, a.object_name, a.details, a.request_id
@@ -69,10 +71,13 @@ public class AuditJournalRepository {
             JOIN teams pt ON pt.id = e.previous_team_id
             JOIN teams t ON t.id = e.team_id
             UNION ALL
-            SELECT r.id, r.created_at, 'SYNC', 'SYNC_STARTED', r.started_by, p.display_name,
+            SELECT r.id, r.created_at, 'SYNC', 'SYNC_STARTED',
+                   CASE WHEN r.run_trigger = 'SCHEDULE' THEN CAST(NULL AS UUID) ELSE r.started_by END,
+                   CASE WHEN r.run_trigger = 'SCHEDULE' THEN '%3$s' ELSE p.display_name END,
                    'SOURCE', CAST(NULL AS UUID),
                    CASE WHEN r.run_trigger = 'UPLOAD' THEN 'Сайт: загрузка файла оплат'
-                        WHEN r.source = 'WEBSITE' THEN 'Сайт' ELSE 'Moodle' END,
+                        WHEN r.source = 'WEBSITE' THEN 'Сайт' WHEN r.source = 'MOODLE' THEN 'Moodle'
+                        WHEN r.source = 'CUSTOMER_CRM' THEN 'CRM заказчика' ELSE 'Рынок труда' END,
                    CASE r.status WHEN 'SUCCEEDED' THEN 'выполнена' WHEN 'FAILED' THEN 'завершилась ошибкой'
                                  WHEN 'RUNNING' THEN 'выполняется' ELSE 'в очереди' END
                        || '; получено: ' || CAST(r.fetched_count AS VARCHAR(12))
@@ -82,7 +87,9 @@ public class AuditJournalRepository {
                    CAST(NULL AS VARCHAR(64))
             FROM sync_runs r
             JOIN crm_user_profiles p ON p.id = r.started_by
-            """.formatted(ROLE_LABEL.formatted("e.previous_role"), ROLE_LABEL.formatted("e.role"));
+            WHERE r.run_trigger <> 'SCHEDULE' OR r.status = 'FAILED'
+               OR r.status = 'SUCCEEDED' AND r.created_count + r.updated_count + r.needs_mapping_count + r.failed_count > 0
+            """.formatted(ROLE_LABEL.formatted("e.previous_role"), ROLE_LABEL.formatted("e.role"), SYSTEM_ACTOR);
 
     private final JdbcClient jdbcClient;
 

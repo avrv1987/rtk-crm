@@ -53,7 +53,7 @@ export const SourceSyncCard = ({
               {source.schedule ? `Плановая синхронизация: ${scheduleLabel(source.schedule)} (МСК)` : 'Плановая синхронизация выключена'}
               {source.schedule && (source.nextRunAt
                 ? `; следующий запуск — ${formatDateTime(source.nextRunAt)}`
-                : '; начнётся после первого ручного запуска администратором')}
+                : '; не начнётся, пока в CRM нет действующего администратора')}
             </p>
           )}
         </>

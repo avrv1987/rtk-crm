@@ -2,7 +2,7 @@ import type { DeadlineGroup } from './deadlines'
 
 export type KamView = 'deadlines' | 'signals'
 
-export type KamTile = 'OVERDUE' | 'THIS_WEEK' | 'NO_NEXT_STEP' | 'LICENSES' | 'LMS'
+export type KamTile = 'OVERDUE' | 'THIS_WEEK' | 'NO_NEXT_STEP' | 'LICENSES' | 'LMS' | 'AGREEMENTS'
 
 export type FeedGroup = DeadlineGroup | 'noStep'
 
@@ -39,8 +39,11 @@ const tileGroups: Record<'OVERDUE' | 'THIS_WEEK' | 'NO_NEXT_STEP', FeedGroup[]> 
   NO_NEXT_STEP: ['noStep']
 }
 
-export const feedGroupsFor = (tile: KamTile | null): FeedGroup[] => (
-  tile === 'OVERDUE' || tile === 'THIS_WEEK' || tile === 'NO_NEXT_STEP'
+export const feedGroupsFor = (tile: KamTile | null): FeedGroup[] => {
+  if (tile === 'AGREEMENTS') {
+    return []
+  }
+  return tile === 'OVERDUE' || tile === 'THIS_WEEK' || tile === 'NO_NEXT_STEP'
     ? tileGroups[tile]
     : ['overdue', 'today', 'week', 'later', 'noStep']
-)
+}

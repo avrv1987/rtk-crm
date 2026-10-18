@@ -34,6 +34,7 @@ public class EnrolmentStreamService {
     static final Comparator<String> RUSSIAN = Comparator.nullsLast(Collator.getInstance(Locale.forLanguageTag("ru"))::compare);
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+    private static final int END_DATE_YEARS = 5;
 
     private final EnrolmentAccess enrolmentAccess;
     private final EnrolmentRepository enrolmentRepository;
@@ -81,6 +82,7 @@ public class EnrolmentStreamService {
         if (request == null || request.version() == null || request.version() < 0) {
             throw new InteractionValidationException("version", "Укажите версию потока");
         }
+        checkEndDate(request);
         EnrolmentCommands.Reservation reservation = commands.reserve(actor.id(), CommandOperation.UPDATE_ENROLMENT_STREAM,
                 idempotencyKey, commands.fingerprint(Arrays.asList(streamId, request.version(), request.endsOn())));
         if (reservation.repeated()) {
@@ -100,6 +102,25 @@ public class EnrolmentStreamService {
         EnrolmentStreamView view = view(streamId);
         commands.complete(reservation, view);
         return view;
+    }
+
+    // От даты окончания считается срок хранения анкет, а ночная задача обезличивает их необратимо. Поэтому год с
+    // опечаткой не принимается, а прошедшая дата сохраняется только с явным подтверждением оператора.
+    private static void checkEndDate(EnrolmentStreamUpdate request) {
+        if (request.endsOn() == null) {
+            return;
+        }
+        LocalDate today = LocalDate.now(EnrolmentLearnerService.ZONE);
+        LocalDate earliest = today.minusYears(END_DATE_YEARS);
+        LocalDate latest = today.plusYears(END_DATE_YEARS);
+        if (request.endsOn().isBefore(earliest) || request.endsOn().isAfter(latest)) {
+            throw new InteractionValidationException("endsOn",
+                    "Дата окончания потока — не раньше " + date(earliest) + " и не позже " + date(latest));
+        }
+        if (request.endsOn().isBefore(today) && !Boolean.TRUE.equals(request.confirmPastDate())) {
+            throw new InteractionValidationException("confirmPastDate", "Дата окончания уже прошла. Подтвердите её: когда срок"
+                    + " хранения истечёт, ночная задача обезличит анкеты слушателей потока без возможности восстановления");
+        }
     }
 
     @Transactional

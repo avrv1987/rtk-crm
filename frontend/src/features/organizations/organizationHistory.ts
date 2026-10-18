@@ -9,7 +9,7 @@ export const historyGroups: Array<{ id: HistoryGroup; label: string; kinds: Orga
   { id: 'COMMENTS', label: 'Комментарии', kinds: ['COMMENTED'] },
   { id: 'PLANS', label: 'Планы и шаги', kinds: ['PLAN_UPDATED'] },
   { id: 'MARKS', label: 'Статус и данные взаимодействия', kinds: ['STATUS_CHANGED', 'DETAILS_UPDATED'] },
-  { id: 'DOCUMENTS', label: 'Договоры и документы', kinds: ['AGREEMENT_UPDATED', 'ATTACHMENT_DELETED'] },
+  { id: 'DOCUMENTS', label: 'Договоры и документы', kinds: ['AGREEMENT_STATUS', 'AGREEMENT_UPDATED', 'ATTACHMENT_DELETED'] },
   { id: 'ASSIGNMENT', label: 'Назначения и передачи', kinds: ['ASSIGNMENT'] },
   { id: 'CONTACTS', label: 'Контакты', kinds: ['CONTACT'] }
 ]
@@ -31,7 +31,8 @@ const kindTitles: Record<OrganizationHistoryKind, string> = {
   STAGE_COMPLETED: 'Этап отмечен выполненным',
   STAGE_COMPLETION_CLEARED: 'Снята отметка выполнения этапа',
   ASSIGNMENT: 'Назначение ответственного',
-  CONTACT: 'Изменён контакт'
+  CONTACT: 'Изменён контакт',
+  AGREEMENT_STATUS: 'Изменён статус договора с вузом'
 }
 
 export const historyTitle = (item: OrganizationHistoryItem): string => {
@@ -44,7 +45,8 @@ export const historyTitle = (item: OrganizationHistoryItem): string => {
     case 'STAGE_COMPLETION_CLEARED':
       return item.stageName ? `${kindTitles[item.kind]}: ${item.stageName}` : kindTitles[item.kind]
     case 'ASSIGNMENT':
-      return item.description ?? kindTitles.ASSIGNMENT
+    case 'AGREEMENT_STATUS':
+      return item.description ?? kindTitles[item.kind]
     case 'CONTACT':
       return item.contactName ? `${kindTitles.CONTACT}: ${item.contactName}` : kindTitles.CONTACT
     default:

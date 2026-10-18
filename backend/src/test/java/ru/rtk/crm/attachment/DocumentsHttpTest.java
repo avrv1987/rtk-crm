@@ -1,6 +1,7 @@
 package ru.rtk.crm.attachment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.startsWith;
 import static org.mockito.ArgumentMatchers.any;
@@ -17,6 +18,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.io.ByteArrayInputStream;
+import java.nio.file.Path;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -31,6 +34,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.util.unit.DataSize;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.CurrentProfileService;
 import ru.rtk.crm.access.UserRole;
@@ -103,6 +107,22 @@ class DocumentsHttpTest {
                 .andExpect(header().string("Cache-Control", containsString("no-store")));
         verify(auditJournalRepository)
                 .recordAttachmentAccess(eq(AuditAction.ATTACHMENT_PREVIEWED), eq(PROFILE.id()), eq(ATTACHMENT_ID), any());
+    }
+
+    @Test
+    void missingStoredFileIsNotFoundWithReadableReasonInsteadOfServerError() throws Exception {
+        AttachmentStorage storage = new AttachmentStorage(new AttachmentProperties(
+                Path.of(System.getProperty("java.io.tmpdir"), "rtk-crm-documents-missing-file"), "localhost", 1,
+                Duration.ofSeconds(1), Duration.ofSeconds(1), DataSize.ofMegabytes(1)
+        ));
+        storage.initialize();
+        assertThatThrownBy(() -> storage.open(UUID.randomUUID())).isInstanceOf(AttachmentFileMissingException.class);
+        when(attachmentService.download(PROFILE, ATTACHMENT_ID)).thenThrow(new AttachmentFileMissingException(null));
+
+        mockMvc.perform(get("/api/attachments/{id}/download", ATTACHMENT_ID).with(oidcLogin()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("FILE_UNAVAILABLE"))
+                .andExpect(jsonPath("$.message").value(startsWith("Файл недоступен")));
     }
 
     @Test

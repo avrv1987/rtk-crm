@@ -23,6 +23,7 @@ import ru.rtk.crm.interaction.InteractionMarks;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.report.ManagerWorkDue;
 import ru.rtk.crm.report.ManagerWorkLine;
+import ru.rtk.crm.report.ManagerWorkOrganization;
 import ru.rtk.crm.report.ReportFilters;
 import ru.rtk.crm.report.ReportRepository;
 import ru.rtk.crm.work.LmsSignalModels.WorkLearning;
@@ -82,25 +83,46 @@ public class WorkControlService {
         Map<UUID, List<ManagerWorkLine>> byTeam = lines.stream().collect(Collectors.groupingBy(
                 ManagerWorkLine::teamId, LinkedHashMap::new, Collectors.toList()
         ));
+        // Вузы без идущего взаимодействия («Без работы» у КАМ и вузы без КАМ) входят в числа, только когда не заданы
+        // период и отборы по направлению, программе, продукту и этапу: у такого вуза нет ни этапа, ни продукта, а период
+        // показывает изменения, а не состояние. Тогда число вузов совпадает с разделом «Вузы».
+        List<ManagerWorkOrganization> withoutWork = withoutWorkCounted(filters, from, to)
+                ? reportRepository.findOrganizationsWithoutActiveWork(profile).stream()
+                        .filter(organization -> selected(organization, filters))
+                        .toList()
+                : null;
+        List<ManagerWorkOrganization> without = withoutWork == null ? List.of() : withoutWork;
+        Map<UUID, List<ManagerWorkOrganization>> withoutByTeam = without.stream().collect(Collectors.groupingBy(
+                ManagerWorkOrganization::teamId, LinkedHashMap::new, Collectors.toList()
+        ));
+        withoutByTeam.keySet().forEach(teamId -> byTeam.putIfAbsent(teamId, List.of()));
         // Менеджеры команды без работ показываются, только когда руководитель смотрит всё без отборов и периода:
         // при любом отборе пустая строка менеджера выглядела бы как «у него нет работ», хотя их скрыл отбор.
-        List<ManagerBlock> idle = leader && unrestricted(filters, from, to)
-                ? idleManagers(profile, lines, now)
+        List<CandidateManager> idle = leader && unrestricted(filters, from, to)
+                ? idleManagers(profile, lines)
                 : List.of();
         List<TeamBlock> teams = new ArrayList<>();
-        byTeam.values().forEach(teamLines -> teams.add(team(teamLines, products, agreements, learning, now, idle)));
+        byTeam.forEach((teamId, teamLines) -> teams.add(team(teamId, teamLines, withoutByTeam.getOrDefault(teamId, List.of()),
+                products, agreements, learning, now, idle)));
         if (teams.isEmpty() && !idle.isEmpty()) {
-            teams.add(new TeamBlock(profile.teamId(), null, totals(List.of(), now), idle));
+            teams.add(new TeamBlock(profile.teamId(), null, totals(List.of(), List.of(), now),
+                    idle.stream().map(candidate -> idleBlock(candidate, List.of(), now)).toList()));
         }
         teams.sort(Comparator.comparing(team -> Objects.toString(team.teamName(), ""), String.CASE_INSENSITIVE_ORDER));
-        return new Control(now, from, to, !leader, teams, totals(lines, now));
+        List<ManagerWorkOrganization> idleOrganizations = withoutWork == null
+                ? null
+                : without.stream().filter(organization -> organization.managerId() != null).toList();
+        return new Control(now, from, to, !leader, teams, totals(lines, without, now), idleOrganizations);
     }
 
-    private List<ManagerBlock> idleManagers(CrmProfile leader, List<ManagerWorkLine> lines, OffsetDateTime now) {
+    private record CandidateManager(UUID id, String displayName) {
+    }
+
+    private List<CandidateManager> idleManagers(CrmProfile leader, List<ManagerWorkLine> lines) {
         return organizationAssignmentRepository.findCandidates(leader.teamId(), leader.id()).stream()
                 .filter(candidate -> !candidate.id().equals(leader.id()))
                 .filter(candidate -> lines.stream().noneMatch(line -> candidate.id().equals(line.managerId())))
-                .map(candidate -> new ManagerBlock(candidate.id(), candidate.displayName(), totals(List.of(), now), List.of()))
+                .map(candidate -> new CandidateManager(candidate.id(), candidate.displayName()))
                 .toList();
     }
 
@@ -108,28 +130,66 @@ public class WorkControlService {
         return filters.equals(ReportFilters.none().normalized()) && from == null && to == null;
     }
 
+    private static boolean withoutWorkCounted(ReportFilters filters, LocalDate from, LocalDate to) {
+        return from == null && to == null && filters.directionIds().isEmpty() && !filters.includeNoDirection()
+                && filters.programIds().isEmpty() && !filters.includeNoProgram() && filters.productIds().isEmpty()
+                && !filters.includeNoProduct() && filters.stages().isEmpty() && filters.change() == null;
+    }
+
+    private static boolean selected(ManagerWorkOrganization organization, ReportFilters filters) {
+        if (!filters.organizationIds().isEmpty() && !filters.organizationIds().contains(organization.id())) {
+            return false;
+        }
+        if (filters.managerIds().isEmpty() && !filters.includeNoManager()) {
+            return true;
+        }
+        return organization.managerId() == null
+                ? filters.includeNoManager()
+                : filters.managerIds().contains(organization.managerId());
+    }
+
     private TeamBlock team(
+            UUID teamId,
             List<ManagerWorkLine> teamLines,
+            List<ManagerWorkOrganization> teamWithout,
             Map<UUID, List<String>> products,
             Map<UUID, WorkAgreementStatus> agreements,
             Map<UUID, WorkLearning> learning,
             OffsetDateTime now,
-            List<ManagerBlock> idle
+            List<CandidateManager> idle
     ) {
         // Работы вузов без действующего КАМ собираются в отдельный блок «не назначен» и идут после менеджеров.
         Map<UUID, List<ManagerWorkLine>> byManager = teamLines.stream().collect(Collectors.groupingBy(
                 line -> Objects.requireNonNullElse(line.managerId(), UNASSIGNED_KEY), LinkedHashMap::new, Collectors.toList()
         ));
-        List<ManagerBlock> managers = new ArrayList<>(idle);
-        byManager.values().forEach(managerLines -> managers.add(manager(managerLines, products, agreements, learning, now)));
+        // Вузы «Без работы» входят в числа своего КАМ; КАМ, у которого есть только такие вузы, тоже получает строку.
+        Map<UUID, List<ManagerWorkOrganization>> idleByManager = teamWithout.stream()
+                .filter(organization -> organization.managerId() != null)
+                .collect(Collectors.groupingBy(ManagerWorkOrganization::managerId, LinkedHashMap::new, Collectors.toList()));
+        List<ManagerBlock> managers = new ArrayList<>();
+        byManager.values().forEach(managerLines -> managers.add(manager(managerLines,
+                idleByManager.getOrDefault(managerLines.getFirst().managerId(), List.of()), products, agreements, learning, now)));
+        idleByManager.forEach((managerId, organizations) -> {
+            if (!byManager.containsKey(managerId)) {
+                managers.add(idleBlock(new CandidateManager(managerId, organizations.getFirst().managerName()), organizations, now));
+            }
+        });
+        idle.stream()
+                .filter(candidate -> !byManager.containsKey(candidate.id()) && !idleByManager.containsKey(candidate.id()))
+                .forEach(candidate -> managers.add(idleBlock(candidate, List.of(), now)));
         managers.sort(Comparator.comparing((ManagerBlock block) -> block.managerId() == null)
                 .thenComparing(block -> Objects.toString(block.managerName(), ""), String.CASE_INSENSITIVE_ORDER));
-        ManagerWorkLine first = teamLines.getFirst();
-        return new TeamBlock(first.teamId(), first.teamName(), totals(teamLines, now), managers);
+        String teamName = teamLines.isEmpty() ? teamWithout.getFirst().teamName() : teamLines.getFirst().teamName();
+        return new TeamBlock(teamId, teamName, totals(teamLines, teamWithout, now), managers);
+    }
+
+    private static ManagerBlock idleBlock(CandidateManager manager, List<ManagerWorkOrganization> idle, OffsetDateTime now) {
+        return new ManagerBlock(manager.id(), manager.displayName(), totals(List.of(), idle, now), List.of());
     }
 
     private ManagerBlock manager(
             List<ManagerWorkLine> managerLines,
+            List<ManagerWorkOrganization> idle,
             Map<UUID, List<String>> products,
             Map<UUID, WorkAgreementStatus> agreements,
             Map<UUID, WorkLearning> learning,
@@ -139,7 +199,7 @@ public class WorkControlService {
         return new ManagerBlock(
                 first.managerId(),
                 first.managerName(),
-                totals(managerLines, now),
+                totals(managerLines, idle, now),
                 managerLines.stream()
                         .map(line -> item(line, products.getOrDefault(line.interactionId(), List.of()),
                                 agreements.get(line.interactionId()), learning.get(line.interactionId()), now))
@@ -178,15 +238,17 @@ public class WorkControlService {
                 line.completed(),
                 agreement == null ? null : agreement.status(),
                 agreement == null ? null : agreement.number(),
+                agreement == null ? null : agreement.validUntil(),
                 learning
         );
     }
 
     // Каждая работа попадает ровно в одну из групп срока (просрочено, на этой неделе, без шага, в порядке),
-    // поэтому сумма групп равна числу работ; вузы считаются по уникальным идентификаторам.
-    private static Totals totals(List<ManagerWorkLine> lines, OffsetDateTime now) {
+    // поэтому сумма групп равна числу работ; вузы считаются по уникальным идентификаторам вместе с вузами без работы.
+    private static Totals totals(List<ManagerWorkLine> lines, List<ManagerWorkOrganization> without, OffsetDateTime now) {
         return new Totals(
-                lines.stream().map(ManagerWorkLine::organizationId).distinct().count(),
+                Stream.concat(lines.stream().map(ManagerWorkLine::organizationId), without.stream().map(ManagerWorkOrganization::id))
+                        .distinct().count(),
                 lines.size(),
                 lines.stream().filter(line -> line.due(now) == ManagerWorkDue.OVERDUE).count(),
                 lines.stream().filter(line -> line.due(now) == ManagerWorkDue.THIS_WEEK).count(),
@@ -195,7 +257,8 @@ public class WorkControlService {
                 lines.stream().filter(ManagerWorkLine::withIssues).count(),
                 lines.stream().filter(line -> line.transitions() > 0).count(),
                 lines.stream().filter(ManagerWorkLine::created).count(),
-                lines.stream().filter(ManagerWorkLine::completed).count()
+                lines.stream().filter(ManagerWorkLine::completed).count(),
+                without.stream().filter(organization -> organization.managerId() != null).count()
         );
     }
 }

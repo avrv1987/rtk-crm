@@ -19,6 +19,7 @@ import { HelpScreen } from '../features/help/HelpScreen'
 import { IssuesScreen } from '../features/issues/IssuesScreen'
 import {
   activeWorkTab,
+  canonicalAddress,
   isListView,
   isSameRouteClick,
   isSameSectionClick,
@@ -85,6 +86,18 @@ export const App = () => {
       setHash(redirect)
     }
   }, [redirect])
+
+  useEffect(() => {
+    if (state.kind !== 'profile') {
+      return
+    }
+    const sections = sectionsFor(state.profile.role, state.profile.enrolmentOperator, getModules())
+    const target = canonicalAddress(route, sections)
+    if (target !== null) {
+      window.history.replaceState(null, '', target)
+      setHash(target)
+    }
+  }, [route.section, state])
 
   useEffect(() => (
     watchedProfileId === null ? undefined : watchSessionElsewhere(watchedProfileId, () => window.location.assign('/'))
@@ -313,6 +326,7 @@ export const App = () => {
             <ControlScreen
               key={isListView(route.query) ? 'list' : 'board'}
               role={profile.role}
+              profileId={profile.id}
               initialQuery={route.query}
               refreshSignal={routePulse}
               onSessionExpired={handleSessionExpired}

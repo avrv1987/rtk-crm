@@ -15,6 +15,7 @@ import { OrganizationStatusBadge } from './OrganizationCatalogPanel'
 import { OrganizationCardHeader, OrganizationSummary, deputyLabel, type OrganizationCounts } from './OrganizationCard'
 import { OrganizationForm, organizationTypeLabels } from './OrganizationForm'
 import { OrganizationBulkTransfer } from './OrganizationBulkTransfer'
+import { filtersFromQuery, listStatuses, queryFromFilters, type ListFilters, type ListStatus } from './organizationFilters'
 
 type OrganizationsScreenProps = {
   profileId: string
@@ -26,21 +27,12 @@ type OrganizationsScreenProps = {
   onProfileUnavailable: (requestId: string) => void
 }
 
-type ListStatus = 'CURRENT' | 'PENDING' | 'ARCHIVED'
-
 type OrganizationTab = 'works' | 'contacts' | 'documents' | 'timeline'
 
 const listStatusOf: Record<Organization['status'], ListStatus> = {
   ACTIVE: 'CURRENT',
   PENDING: 'PENDING',
   ARCHIVED: 'ARCHIVED'
-}
-
-type ListFilters = {
-  q: string
-  requiresAssignment: boolean
-  status: ListStatus
-  page: number
 }
 
 type ListState =
@@ -58,41 +50,6 @@ const pageSize = 25
 const searchDelayMilliseconds = 300
 
 const organizationTypeLabel = (type: Organization['type']) => organizationTypeLabels[type]
-
-const listStatuses: Array<{ value: ListStatus; label: string }> = [
-  { value: 'CURRENT', label: 'Действующие' },
-  { value: 'PENDING', label: 'Ожидают подтверждения' },
-  { value: 'ARCHIVED', label: 'Архив' }
-]
-
-const filtersFromQuery = (query: string, role: Me['role']): ListFilters => {
-  const params = new URLSearchParams(query)
-  const page = Number(params.get('page') ?? '0')
-  const status = listStatuses.find((item) => item.value === params.get('status'))?.value ?? 'CURRENT'
-  return {
-    q: params.get('q') ?? '',
-    requiresAssignment: role === 'LEADER' && params.get('requiresAssignment') === 'true',
-    status,
-    page: Number.isInteger(page) && page > 0 ? page : 0
-  }
-}
-
-const queryFromFilters = (filters: ListFilters) => {
-  const params = new URLSearchParams()
-  if (filters.q.trim().length > 0) {
-    params.set('q', filters.q.trim())
-  }
-  if (filters.requiresAssignment) {
-    params.set('requiresAssignment', 'true')
-  }
-  if (filters.status !== 'CURRENT') {
-    params.set('status', filters.status)
-  }
-  if (filters.page > 0) {
-    params.set('page', filters.page.toString())
-  }
-  return params.toString()
-}
 
 const requestIdOf = (error: unknown) => (
   error instanceof ApiError ? error.requestId : undefined
@@ -212,6 +169,17 @@ export const OrganizationsScreen = ({
   useEffect(() => {
     void loadOrganizations(filters)
   }, [filters, loadOrganizations])
+
+  // Переход на другой адрес раздела (закладка, ручной ввод) сменяет отбор; replaceState самого экрана
+  // `query` не меняет, поэтому собственные отборы сюда не возвращаются.
+  useEffect(() => {
+    const next = filtersFromQuery(query, role)
+    setFilters((current) => queryFromFilters(current) === queryFromFilters(next) ? current : next)
+  }, [query, role])
+
+  useEffect(() => {
+    setSearchText((current) => current.trim() === filters.q ? current : filters.q)
+  }, [filters.q])
 
   const listQuery = queryFromFilters(filters)
   const listSuffix = listQuery.length > 0 ? `?${listQuery}` : ''
@@ -472,7 +440,7 @@ export const OrganizationsScreen = ({
           )}
 
           {listState.kind === 'ready' && listState.page.items.length > 0 && (
-            <ul className="organizations-list" aria-label="Список организаций" aria-busy={listState.refreshing}>
+            <ul className="organizations-list" aria-label="Список вузов" aria-busy={listState.refreshing}>
               {listState.page.items.map((organization) => {
                 const isSelected = organization.id === selectedOrganizationId
                 const deputy = deputyLabel(organization)
@@ -556,7 +524,7 @@ export const OrganizationsScreen = ({
             <>
               <h3 id="organization-detail-title">Карточка вуза</h3>
               <div className="notice notice--error" role="alert">
-                <p>Не удалось открыть карточку вуза. Возможно, организация передана другому КАМ; обновите список или повторите попытку.</p>
+                <p>Не удалось открыть карточку вуза. Возможно, вуз передан другому КАМ; обновите список или повторите попытку.</p>
                 <SupportDetails requestId={detailState.requestId} />
                 <button type="button" onClick={() => void loadOrganization(detailState.id)}>Повторить</button>
               </div>
@@ -583,7 +551,6 @@ export const OrganizationsScreen = ({
                 key={`header:${detailState.organization.id}`}
                 organization={detailState.organization}
                 role={role}
-                profileId={profileId}
                 headingRef={detailHeading}
                 onChanged={organizationChanged}
                 onOpenAssignment={setAssignmentDialog}

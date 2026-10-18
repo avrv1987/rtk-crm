@@ -48,6 +48,7 @@ import ru.rtk.crm.module.ModuleProperties;
         OrganizationRepository.class,
         ReportRepository.class,
         ReportService.class,
+        ru.rtk.crm.agreement.AgreementRepository.class,
         ru.rtk.crm.work.LmsLearningTestBeans.class,
         ReportViewsTest.PropertiesConfiguration.class
 })

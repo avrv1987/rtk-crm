@@ -167,9 +167,9 @@ public class PartnerCabinetRepository {
 
     public List<AgreementRow> findAgreements(UUID organizationId) {
         return jdbcClient.sql("""
-                SELECT id, number, concluded_on, valid_until, status
+                SELECT id, number, concluded_on, valid_until, status, status_changed_at
                 FROM agreements
-                WHERE organization_id = :organizationId AND status = 'ACTIVE'
+                WHERE organization_id = :organizationId AND status <> 'DRAFT'
                 ORDER BY concluded_on DESC NULLS LAST, number, id
                 """)
                 .param("organizationId", organizationId)
@@ -178,7 +178,8 @@ public class PartnerCabinetRepository {
                         resultSet.getString("number"),
                         resultSet.getObject("concluded_on", LocalDate.class),
                         resultSet.getObject("valid_until", LocalDate.class),
-                        AgreementStatus.valueOf(resultSet.getString("status"))
+                        AgreementStatus.valueOf(resultSet.getString("status")),
+                        resultSet.getObject("status_changed_at", OffsetDateTime.class)
                 ))
                 .list();
     }
@@ -223,7 +224,14 @@ public class PartnerCabinetRepository {
     public record DownloadRow(UUID id, String originalName, String mediaType, long sizeBytes, UUID storageKey) {
     }
 
-    public record AgreementRow(UUID id, String number, LocalDate concludedOn, LocalDate validUntil, AgreementStatus status) {
+    public record AgreementRow(
+            UUID id,
+            String number,
+            LocalDate concludedOn,
+            LocalDate validUntil,
+            AgreementStatus status,
+            OffsetDateTime statusChangedAt
+    ) {
     }
 
     public record ActivityRow(UUID agreementId, String title) {

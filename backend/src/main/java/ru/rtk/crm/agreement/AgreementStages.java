@@ -1,5 +1,7 @@
 package ru.rtk.crm.agreement;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -9,6 +11,7 @@ import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
+import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
 import ru.rtk.crm.agreement.AgreementModels.StageRole;
 import ru.rtk.crm.agreement.AgreementModels.WorkStage;
 import ru.rtk.crm.interaction.InteractionStage;
@@ -24,6 +27,8 @@ public class AgreementStages {
             UUID.fromString("00000000-0000-0000-0000-000000000815"), StageRole.CORRECTION,
             UUID.fromString("00000000-0000-0000-0000-000000000816"), StageRole.SIGNING
     );
+
+    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
 
     private final JdbcClient jdbcClient;
     private final boolean signingRule;
@@ -100,24 +105,45 @@ public class AgreementStages {
     // «Подписан» — статус «Действует» или «Завершён» с заполненной датой подписания. Достаточно одного такого
     // договора среди связанных с работой; иначе в сообщении называется самый свежий по смене статуса договор,
     // чтобы пользователь знал, какой именно перевести в «Действует».
+    // «Действует» с истёкшим сроком не засчитывается: новый проход подписания по нему скрыл бы упущенное продление.
+    // «Завершён» засчитывается, как и раньше: его закрывает КАМ сознательно, после исполнения договора.
     private void requireSignedAgreement(UUID interactionId) {
-        List<String> numbers = jdbcClient.sql("""
-                SELECT ag.number, CASE WHEN ag.status IN ('ACTIVE', 'COMPLETED') AND ag.concluded_on IS NOT NULL THEN 1 ELSE 0 END AS signed
+        LocalDate today = LocalDate.now(AgreementService.ZONE);
+        List<LinkedAgreement> agreements = jdbcClient.sql("""
+                SELECT ag.number, ag.status, ag.valid_until,
+                       CASE WHEN ag.status IN ('ACTIVE', 'COMPLETED') AND ag.concluded_on IS NOT NULL THEN 1 ELSE 0 END AS signed
                 FROM agreement_interactions ai
                 JOIN agreements ag ON ag.id = ai.agreement_id
                 WHERE ai.interaction_id = :interactionId
                 ORDER BY ag.status_changed_at DESC, ag.id
                 """)
                 .param("interactionId", interactionId)
-                .query((resultSet, rowNumber) -> resultSet.getInt("signed") == 1 ? "" : resultSet.getString("number"))
+                .query((resultSet, rowNumber) -> new LinkedAgreement(
+                        resultSet.getString("number"),
+                        resultSet.getInt("signed") == 1,
+                        AgreementStatus.valueOf(resultSet.getString("status")),
+                        resultSet.getObject("valid_until", LocalDate.class)
+                ))
                 .list();
-        if (numbers.contains("")) {
+        if (agreements.stream().anyMatch(agreement -> agreement.signed() && !agreement.expired(today))) {
             return;
         }
-        throw new InteractionValidationException("agreement", numbers.isEmpty()
+        Optional<LinkedAgreement> expired = agreements.stream().filter(agreement -> agreement.expired(today)).findFirst();
+        if (expired.isPresent()) {
+            throw new InteractionValidationException("agreement", "Этап «Подписание» завершается действующим договором. Срок договора № "
+                    + expired.get().number() + " истёк " + DATE.format(expired.get().validUntil())
+                    + ": продлите срок в реквизитах договора или оформите новый договор");
+        }
+        throw new InteractionValidationException("agreement", agreements.isEmpty()
                 ? "Этап «Подписание» завершается подписанным договором. Создайте договор с вузом в этом взаимодействии"
-                : "Этап «Подписание» завершается подписанным договором. Переведите договор № " + numbers.getFirst()
+                : "Этап «Подписание» завершается подписанным договором. Переведите договор № " + agreements.getFirst().number()
                         + " в статус «Действует» с датой подписания");
+    }
+
+    private record LinkedAgreement(String number, boolean signed, AgreementStatus status, LocalDate validUntil) {
+        boolean expired(LocalDate today) {
+            return status.expired(validUntil, today);
+        }
     }
 
     private Optional<StageRole> role(UUID templateStageId, String name) {

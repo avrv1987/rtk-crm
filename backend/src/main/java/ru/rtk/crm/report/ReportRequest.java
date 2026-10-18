@@ -74,7 +74,13 @@ public record ReportRequest(
                     "filters.change", "Отбор по изменениям за период доступен только в отчёте «Работа менеджеров за период»"
             );
         }
-        if (kind != ReportKind.PORTFOLIO && normalizedFilters.minDaysOnStage() != null) {
+        if (kind != ReportKind.MANAGER_WORK && normalizedFilters.tile() != null) {
+            throw new InteractionValidationException(
+                    "filters.tile", "Отбор плиткой «Контроля» доступен только в отчёте «Работа менеджеров за период»"
+            );
+        }
+        boolean stuckTile = kind == ReportKind.MANAGER_WORK && normalizedFilters.tile() == ManagerWorkTile.STUCK;
+        if (kind != ReportKind.PORTFOLIO && !stuckTile && normalizedFilters.minDaysOnStage() != null) {
             throw new InteractionValidationException(
                     "filters.minDaysOnStage", "Отбор «На этапе дольше N дней» доступен только в отчёте «Портфель взаимодействий»"
             );

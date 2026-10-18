@@ -13,7 +13,7 @@ public record ReportPreview(
         int page,
         int size,
         long total,
-        List<Map<String, Object>> groupTotals
+        List<ManagerWorkTotal> groupTotals
 ) {
     public ReportPreview(
             ReportKind kind,

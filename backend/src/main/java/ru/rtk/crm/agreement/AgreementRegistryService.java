@@ -188,7 +188,9 @@ public class AgreementRegistryService {
     }
 
     private static List<String> registryValues(RegistryRow row) {
-        return List.of(row.number(), row.organizationName(), row.status().title(), Long.toString(row.daysInStatus()), date(row.sentOn()),
+        String status = row.status().title()
+                + (row.status().expired(row.validUntil(), LocalDate.now(AgreementService.ZONE)) ? " · срок истёк" : "");
+        return List.of(row.number(), row.organizationName(), status, Long.toString(row.daysInStatus()), date(row.sentOn()),
                 date(row.concludedOn()), date(row.validUntil()), row.subject() == null ? "" : row.subject(),
                 row.managerName() == null ? "Не назначен" : row.managerName());
     }

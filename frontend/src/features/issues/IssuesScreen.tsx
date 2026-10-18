@@ -284,16 +284,24 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
               {listState.items.map((issue) => (
                 <tr key={issue.id}>
                   <td data-label="Взаимодействие">
-                    <a href={issuesHref(issue.organizationId, issue.interactionId)}>{issue.interactionTitle}</a>
+                    {issue.organizationAccessible
+                      ? <a href={issuesHref(issue.organizationId, issue.interactionId)}>{issue.interactionTitle}</a>
+                      : issue.interactionTitle}
                   </td>
-                  <td data-label="Вуз"><a href={`#/organizations/${issue.organizationId}`}>{issue.organizationName}</a></td>
+                  <td data-label="Вуз">
+                    {issue.organizationAccessible
+                      ? <a href={`#/organizations/${issue.organizationId}`}>{issue.organizationName}</a>
+                      : <>{issue.organizationName}<span className="work-control__hint">вуз ведёт коллега, карточка вам недоступна</span></>}
+                  </td>
                   <td data-label="КАМ вуза">{issue.ownerManagerName ?? 'Требует назначения'}</td>
                   <td data-label="Вид">
                     {issueTitle(issue)}
                     {issue.status === 'RESOLVED' && <span className="work-control__hint">решена</span>}
                   </td>
                   <td data-label="Описание" className="issues-page__description">
-                    <a className="issues-page__open" href={issuesHref(issue.organizationId, issue.interactionId)}>{issue.description}</a>
+                    {issue.organizationAccessible
+                      ? <a className="issues-page__open" href={issuesHref(issue.organizationId, issue.interactionId)}>{issue.description}</a>
+                      : issue.description}
                   </td>
                   <td data-label="Кто решает">{issue.responsibleName}</td>
                   <td data-label="Срок" className={`issues-page__due${isIssueOverdue(issue, today) ? ' issues-page__overdue' : ''}`}>

@@ -159,6 +159,8 @@ class InteractionServiceTest {
         jdbcTemplate.update("DELETE FROM interaction_events");
         jdbcTemplate.update("DELETE FROM command_idempotency_records");
         jdbcTemplate.update("DELETE FROM interaction_contacts");
+        jdbcTemplate.update("DELETE FROM agreement_files");
+        jdbcTemplate.update("DELETE FROM agreements");
         jdbcTemplate.update("DELETE FROM product_transfers");
         jdbcTemplate.update("DELETE FROM product_agreements");
         jdbcTemplate.update("DELETE FROM interaction_stage_transitions");
@@ -342,7 +344,7 @@ class InteractionServiceTest {
         )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
                 assertThat(exception.field()).isEqualTo("organizationId"));
         assertThatThrownBy(() -> interactionService.createSourceInteraction(
-                ORGANIZATION_A, profileA.id(), "Заявка сайта", null, List.of(), List.of(), profileA.id(), UUID.randomUUID(),
+                ORGANIZATION_A, profileA.id(), "Заявка сайта", null, List.of(), List.of(), null, profileA.id(), UUID.randomUUID(),
                 OffsetDateTime.now()
         )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
                 assertThat(exception.field()).isEqualTo("organizationId"));
@@ -2380,6 +2382,40 @@ class InteractionServiceTest {
                 .isInstanceOf(InteractionValidationException.class);
     }
 
+    @Test
+    void colleagueSeesOnlyTheRisksAssignedToHimAndNothingElseOfAnotherCamsUniversity() {
+        UUID colleagueId = UUID.fromString("00000000-0000-0000-0000-000000000015");
+        insertProfile(colleagueId, "Дмитрий Колеге");
+        jdbcTemplate.update("UPDATE crm_user_profiles SET team_id = ?, role = 'USER', active = TRUE WHERE id IN (?, ?)",
+                TEAM_A, MANAGER_A, colleagueId);
+        jdbcTemplate.update("UPDATE crm_user_profiles SET team_id = ?, role = 'LEADER', active = TRUE WHERE id = ?", TEAM_A, LEADER_A);
+        CrmProfile colleague = new CrmProfile(colleagueId, UserRole.USER, TEAM_A, 0);
+        Interaction work = createA("Внедрение", "colleague-work");
+        interactionIssueService.create(profileA, work.id(), new InteractionIssueRequest(
+                0, InteractionIssueKind.RISK, "Назначен коллеге", InteractionRiskLevel.HIGH, colleagueId, null
+        ), "colleague-assigned");
+        interactionIssueService.create(profileA, work.id(), new InteractionIssueRequest(
+                1, InteractionIssueKind.RISK, "Остался у владельца", InteractionRiskLevel.MEDIUM, MANAGER_A, null
+        ), "colleague-own");
+        InteractionIssueFilter open = InteractionIssueFilter.from(null, null, null, null, false, null);
+
+        assertThat(registry(colleague, open)).extracting(InteractionIssue::description, InteractionIssue::organizationAccessible)
+                .containsExactly(tuple("Назначен коллеге", false));
+        assertThat(interactionIssueService.registry(colleague, open, 0, 25).total()).isEqualTo(1);
+        assertThat(registry(profileA, open)).extracting(InteractionIssue::description, InteractionIssue::organizationAccessible)
+                .containsExactlyInAnyOrder(tuple("Назначен коллеге", true), tuple("Остался у владельца", true));
+        assertThat(interactionIssueService.registryRows(colleague, open, 100)).hasSize(1);
+
+        assertThatThrownBy(() -> interactionIssueService.list(colleague, work.id())).isInstanceOf(InteractionNotFoundException.class);
+        assertThatThrownBy(() -> interactionService.get(colleague, work.id())).isInstanceOf(InteractionNotFoundException.class);
+        assertThat(organizationRepository.findVisibleById(colleague, ORGANIZATION_A)).isEmpty();
+        assertThatThrownBy(() -> interactionIssueService.create(colleague, work.id(), new InteractionIssueRequest(
+                2, InteractionIssueKind.PROBLEM, "Чужое", null, null, null
+        ), "colleague-write")).isInstanceOf(InteractionNotFoundException.class);
+        CrmProfile otherTeam = new CrmProfile(MANAGER_B, UserRole.USER, TEAM_B, 0);
+        assertThat(registry(otherTeam, open)).isEmpty();
+    }
+
     private List<InteractionIssue> registry(CrmProfile profile, InteractionIssueFilter filter) {
         return interactionIssueService.registry(profile, filter, 0, 100).items();
     }
@@ -2468,6 +2504,16 @@ class InteractionServiceTest {
                 new AttachmentDeletionRequest(1, null), "leader-deletes-kam-file");
         assertThat(afterLeaderDeletion.version()).isEqualTo(2);
         assertThat(afterLeaderDeletion.attachments()).extracting(Attachment::id).containsExactly(leaderAct.id());
+
+        UUID agreementId = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO agreements (id, number) VALUES (?, 'ДОГ-7')", agreementId);
+        jdbcTemplate.update("INSERT INTO agreement_files (id, agreement_id, attachment_id) VALUES (?, ?, ?)",
+                UUID.randomUUID(), agreementId, leaderAct.id());
+        assertThatThrownBy(() -> attachments.delete(leaderA, created.id(), leaderAct.id(),
+                new AttachmentDeletionRequest(2, null), "delete-agreement-version-file"))
+                .isInstanceOfSatisfying(AttachmentValidationException.class,
+                        exception -> assertThat(exception.getMessage()).contains("версией договора № ДОГ-7"));
+        assertThat(attachments.get(leaderA, leaderAct.id()).id()).isEqualTo(leaderAct.id());
     }
 
     @Test
@@ -3260,6 +3306,10 @@ class InteractionServiceTest {
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL, archived_at TIMESTAMP WITH TIME ZONE
                 )
+                """);
+        jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS agreements (id UUID PRIMARY KEY, number VARCHAR(100) NOT NULL)");
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_files (id UUID PRIMARY KEY, agreement_id UUID NOT NULL, attachment_id UUID)
                 """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS product_transfers (

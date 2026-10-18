@@ -58,14 +58,19 @@ public class OrganizationsApiController {
     public List<OrganizationDuplicate> duplicates(
             @AuthenticationPrincipal OidcUser user,
             @RequestParam(required = false) String name,
+            @RequestParam(required = false) String inn,
             @RequestParam(required = false) String exceptId
     ) {
         if (name != null && name.length() > 300) {
             throw new InvalidOrganizationQueryException("name", "Название длиннее 300 символов");
         }
+        if (inn != null && inn.length() > 20) {
+            throw new InvalidOrganizationQueryException("inn", "ИНН длиннее 20 символов");
+        }
         return organizationCatalogService.findDuplicates(
                 currentProfileService.requireActiveProfile(user),
                 name,
+                inn,
                 exceptId == null || exceptId.isBlank() ? null : parseId(exceptId)
         );
     }

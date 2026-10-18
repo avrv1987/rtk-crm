@@ -8,6 +8,7 @@ public record OrganizationDuplicate(
         OrganizationType type,
         OrganizationStatus status,
         String teamName,
-        boolean exact
+        boolean exact,
+        boolean sameInn
 ) {
 }

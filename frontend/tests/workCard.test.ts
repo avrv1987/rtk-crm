@@ -48,7 +48,7 @@ const stages = [
   { id: 's4', order: 3 },
   { id: 's5', order: 4 }
 ]
-const work = (agreements: { number: string; status: 'DRAFT' | 'SIGNING' | 'ACTIVE' | 'COMPLETED'; concludedOn?: string | null; statusChangedAt: string }[], signingRuleEnabled = true) => ({
+const work = (agreements: { number: string; status: 'DRAFT' | 'SIGNING' | 'ACTIVE' | 'COMPLETED'; concludedOn?: string | null; validUntil?: string | null; statusChangedAt: string }[], signingRuleEnabled = true) => ({
   signingRuleEnabled,
   stages: [{ stageId: 's2', role: 'EXCHANGE' as const }, { stageId: 'sign', role: 'SIGNING' as const }],
   agreements
@@ -62,6 +62,14 @@ test('правило «Подписание»: уход вперёд с подп
     { number: 'Д-2', status: 'SIGNING', statusChangedAt: '2026-10-05T10:00:00Z' }
   ])
   assert.match(signingBlock(pending, stages, 'sign', 's4') ?? '', /договор № Д-2 в статус «Действует»/)
+})
+
+test('правило «Подписание»: «Действует» с истёкшим сроком не пускает дальше, «Завершён» пускает', () => {
+  const signed = { number: 'Д-5', concludedOn: '2025-10-01', statusChangedAt: '2025-10-01T10:00:00Z' }
+  const expired = work([{ ...signed, status: 'ACTIVE', validUntil: '2026-10-14' }])
+  assert.match(signingBlock(expired, stages, 'sign', 's4', '2026-10-18') ?? '', /Срок договора № Д-5 истёк 14\.10\.2026: продлите срок/)
+  assert.equal(signingBlock(expired, stages, 'sign', 's4', '2026-10-14'), null)
+  assert.equal(signingBlock(work([{ ...signed, status: 'COMPLETED', validUntil: '2026-10-14' }]), stages, 'sign', 's4', '2026-10-18'), null)
 })
 
 test('правило «Подписание» не мешает возврату, переходу до подписания, подписанному договору и выключенной настройке', () => {

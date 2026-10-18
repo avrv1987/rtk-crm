@@ -74,6 +74,18 @@ export const resolveAdminAddress = (slug: string | undefined, query: string, rol
   return { section: section.slug, query: joinQuery(query, legacy?.params) }
 }
 
+// Устаревший или недоступный адрес подраздела заменяется настоящим; без подраздела адрес не трогаем.
+export const canonicalAdminHash = (slug: string | undefined, query: string, role: AdminNavRole): string | null => {
+  if (slug === undefined) {
+    return null
+  }
+  const address = resolveAdminAddress(slug, query, role)
+  if (address.section === slug && address.query === query) {
+    return null
+  }
+  return `#/admin/${address.section}${address.query === '' ? '' : `?${address.query}`}`
+}
+
 export const resolveAdminSection = (slug: string | undefined, role: AdminNavRole): AdminSectionSlug => (
   resolveAdminAddress(slug, '', role).section
 )

@@ -74,17 +74,17 @@ public class InteractionIssueService {
         }
         LocalDate today = LocalDate.now(ZONE);
         return new InteractionIssuePage(
-                issueRepository.findVisible(scope.get(), filter, today, size, page * size),
+                issueRepository.findVisible(scope.get(), profile.id(), filter, today, size, page * size),
                 page,
                 size,
-                issueRepository.countVisible(scope.get(), filter, today)
+                issueRepository.countVisible(scope.get(), profile.id(), filter, today)
         );
     }
 
     @Transactional(readOnly = true)
     public List<InteractionIssue> registryRows(CrmProfile profile, InteractionIssueFilter filter, int limit) {
         return organizationRepository.visibilityScope(profile)
-                .map(scope -> issueRepository.findVisible(scope, filter, LocalDate.now(ZONE), limit, 0))
+                .map(scope -> issueRepository.findVisible(scope, profile.id(), filter, LocalDate.now(ZONE), limit, 0))
                 .orElse(List.of());
     }
 

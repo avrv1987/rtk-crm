@@ -16,7 +16,8 @@ public record WorkProperties(
         int trainingNoticeDays,
         int reminderListLimit,
         String qualificationStageName,
-        int qualificationAfterMonths
+        int qualificationAfterMonths,
+        int agreementNoticeDays
 ) {
     public static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
 

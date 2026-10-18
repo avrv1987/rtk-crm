@@ -591,6 +591,35 @@ public class ReportRepository {
                 .list();
     }
 
+    // Действующие вузы области без идущего взаимодействия — для группы «Без работы» и чисел «Контроля», которые должны
+    // совпасть с разделом «Вузы». Ответственный — по тому же правилу, что в строках «Контроля»: без действующего КАМ
+    // своей команды вуз считается требующим назначения.
+    public List<ManagerWorkOrganization> findOrganizationsWithoutActiveWork(CrmProfile profile) {
+        Optional<VisibilityScope> scope = organizationRepository.visibilityScope(profile);
+        if (scope.isEmpty()) {
+            return List.of();
+        }
+        String unassigned = OrganizationRepository.requiresAssignment("o");
+        return jdbcClient.sql("SELECT o.id, o.name, t.id AS team_id, t.name AS team_name,"
+                        + " CASE WHEN " + unassigned + " THEN NULL ELSE o.owner_manager_id END AS manager_id,"
+                        + " CASE WHEN " + unassigned + " THEN NULL ELSE m.display_name END AS manager_name"
+                        + " FROM organizations o JOIN teams t ON t.id = o.team_id"
+                        + " LEFT JOIN crm_user_profiles m ON m.id = o.owner_manager_id"
+                        + " WHERE o.id IN (" + scope.get().currentOrganizations() + ") AND o.type <> 'OPEN_ENROLLMENT'"
+                        + " AND NOT EXISTS (SELECT 1 FROM interactions i WHERE i.organization_id = o.id AND i.work_status = 'ACTIVE')"
+                        + " ORDER BY o.name, o.id")
+                .params(scope.get().parameters())
+                .query((resultSet, rowNumber) -> new ManagerWorkOrganization(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getString("name"),
+                        resultSet.getObject("team_id", UUID.class),
+                        resultSet.getString("team_name"),
+                        resultSet.getObject("manager_id", UUID.class),
+                        resultSet.getString("manager_name")
+                ))
+                .list();
+    }
+
     public Map<UUID, List<String>> findManagerWorkProducts(List<UUID> interactionIds) {
         Map<UUID, List<String>> products = new HashMap<>();
         for (int start = 0; start < interactionIds.size(); start += PRODUCT_BATCH_SIZE) {

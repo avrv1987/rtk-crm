@@ -17,7 +17,7 @@ import { groupFeed } from '../src/features/work/deadlines.ts'
 import { feedGroupsFor, readKamView, saveKamView } from '../src/features/work/workView.ts'
 import { enrolmentBack, enrolmentHref, enrolmentRoute } from '../src/features/enrolment/enrolmentRoute.ts'
 
-const totals = { organizations: 1, works: 1, overdue: 0, thisWeek: 0, noNextStep: 0, inOrder: 0, withIssues: 0, moved: 0, created: 0, completed: 0 }
+const totals = { organizations: 1, works: 1, overdue: 0, thisWeek: 0, noNextStep: 0, inOrder: 0, withIssues: 0, moved: 0, created: 0, completed: 0, idle: 0 }
 
 const item = (id: string, patch: Partial<WorkControlItem> = {}): WorkControlItem => ({
   interactionId: id,
@@ -100,7 +100,7 @@ test('отбор плиткой скрывает пустые группы, а �
 })
 
 test('числа на плитках: сроки и проблемы — из итогов сервера, остальное — по строкам', () => {
-  assert.deepEqual(tileCounts(control, 30), { OVERDUE: 2, THIS_WEEK: 1, NO_NEXT_STEP: 1, ISSUES: 1, AGREEMENT: 1, STUCK: 1, LMS: 2 })
+  assert.deepEqual(tileCounts(control, 30), { OVERDUE: 2, THIS_WEEK: 1, NO_NEXT_STEP: 1, ISSUES: 1, AGREEMENT: 1, STUCK: 1, LMS: 2, IDLE: 0 })
   assert.equal(tileMatches(item('x', { daysOnStage: 30 }), 'm', 'STUCK', 30), true)
   assert.equal(tileMatches(item('x', { daysOnStage: 29 }), 'm', 'STUCK', 30), false)
   assert.equal(tileMatches(item('x', { daysOnStage: 99, status: 'PAUSED' }), 'm', 'STUCK', 30), false)
@@ -144,6 +144,7 @@ test('плитки КАМ отбирают группы ленты; без ша�
   assert.deepEqual(feedGroupsFor('THIS_WEEK'), ['today', 'week'])
   assert.deepEqual(feedGroupsFor('NO_NEXT_STEP'), ['noStep'])
   assert.deepEqual(feedGroupsFor('LICENSES'), ['overdue', 'today', 'week', 'later', 'noStep'])
+  assert.deepEqual(feedGroupsFor('AGREEMENTS'), [])
   const now = Date.parse('2026-10-14T09:00:00Z')
   const work = (id: string, nextAction: string | null, nextActionAt: string | null) => ({ id, nextAction, nextActionAt }) as never
   const grouped = groupFeed(

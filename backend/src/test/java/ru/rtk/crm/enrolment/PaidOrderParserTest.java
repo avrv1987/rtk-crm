@@ -30,7 +30,7 @@ class PaidOrderParserTest {
         assertThat(batch.issues()).containsExactly(
                 new PaidOrderIssue(1, null, "Пустой элемент пропущен"),
                 new PaidOrderIssue(3, "Номер заявки",
-                        "Номер заявки не соответствует шаблону ORD-<цифры>-<латинские буквы и цифры>; запись принята", true)
+                        "Номер заявки не соответствует шаблону ORD-<цифры>-<латинские буквы и цифры>; запись принята", true, "ORD-2")
         );
         assertThat(batch.orders()).hasSize(2);
         PaidOrder first = batch.orders().get(0);
@@ -64,14 +64,14 @@ class PaidOrderParserTest {
         assertThat(batch.orders()).isEmpty();
         assertThat(batch.issues()).containsExactly(
                 new PaidOrderIssue(1, "Номер заявки", "Нет поля «Номер заявки»"),
-                new PaidOrderIssue(2, "Имя", "Поле «Имя» пустое; поле не сохранено", true),
-                new PaidOrderIssue(2, "Телефон", "Телефон должен содержать 10 цифр после +7 или 8; поле не сохранено", true),
-                new PaidOrderIssue(2, "Email", "Email указан неверно; поле не сохранено", true),
-                new PaidOrderIssue(2, "Номер потока", "Номер потока должен быть целым числом больше 0"),
+                new PaidOrderIssue(2, "Имя", "Поле «Имя» пустое; поле не сохранено", true, "ORD-3"),
+                new PaidOrderIssue(2, "Телефон", "Телефон должен содержать 10 цифр после +7 или 8; поле не сохранено", true, "ORD-3"),
+                new PaidOrderIssue(2, "Email", "Email указан неверно; поле не сохранено", true, "ORD-3"),
+                new PaidOrderIssue(2, "Номер потока", "Номер потока должен быть целым числом больше 0", false, "ORD-3"),
                 new PaidOrderIssue(3, null, "Элемент не является объектом с полями заявки"),
-                new PaidOrderIssue(4, "Курс", "Поле «Курс» должно быть строкой"),
-                new PaidOrderIssue(4, "Номер потока", "Номер потока должен быть целым числом больше 0"),
-                new PaidOrderIssue(5, "Номер потока", "Номер потока должен быть целым числом больше 0")
+                new PaidOrderIssue(4, "Курс", "Поле «Курс» должно быть строкой", false, "ORD-4"),
+                new PaidOrderIssue(4, "Номер потока", "Номер потока должен быть целым числом больше 0", false, "ORD-4"),
+                new PaidOrderIssue(5, "Номер потока", "Номер потока должен быть целым числом больше 0", false, "ORD-5")
         );
         assertThat(batch.issues()).extracting(PaidOrderIssue::message)
                 .noneMatch(message -> message.contains("12345") || message.contains("ivan-at-example"));
@@ -111,9 +111,11 @@ class PaidOrderParserTest {
         assertThat(batch.duplicates()).isEqualTo(1);
         assertThat(batch.rejected()).isEqualTo(2);
         assertThat(batch.issues()).containsExactly(
-                new PaidOrderIssue(2, "Номер заявки", "Повтор заявки с тем же содержимым пропущен"),
-                new PaidOrderIssue(3, "Номер заявки", "Номер заявки повторяется в файле с разным содержимым; запись не принята"),
-                new PaidOrderIssue(4, "Номер заявки", "Номер заявки повторяется в файле с разным содержимым; запись не принята")
+                new PaidOrderIssue(2, "Номер заявки", "Повтор заявки с тем же содержимым пропущен", false, "ORD-6-TST"),
+                new PaidOrderIssue(3, "Номер заявки", "Номер заявки повторяется в файле с разным содержимым; запись не принята", false,
+                        "ORD-7-TST"),
+                new PaidOrderIssue(4, "Номер заявки", "Номер заявки повторяется в файле с разным содержимым; запись не принята", false,
+                        "ORD-7-TST")
         );
     }
 

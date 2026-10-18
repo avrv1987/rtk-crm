@@ -93,10 +93,6 @@ public record ReportRow(
                 duration, completed, agreement, paidOrders, paidStreams, completedBase, managerWork, null);
     }
 
-    public boolean managerWorkTotal() {
-        return managerWork != null && interactionId == null;
-    }
-
     public ReportRow(
             UUID interactionId,
             String interactionTitle,

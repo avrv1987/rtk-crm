@@ -29,6 +29,9 @@ import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.interaction.InteractionWorkStatus;
 import ru.rtk.crm.module.ModuleProperties;
+import ru.rtk.crm.agreement.AgreementRepository;
+import ru.rtk.crm.agreement.AgreementRepository.WorkAgreementStatus;
+import ru.rtk.crm.work.LmsSignalModels.WorkLearning;
 import ru.rtk.crm.work.LmsWorkLearningService;
 import ru.rtk.crm.report.ReportRepository.CatalogTable;
 
@@ -67,8 +70,18 @@ public class ReportService {
 
     private static final String MANAGER_WORK_NOTE = "Строка — взаимодействие с вузом. Менеджер — %s; «Требует назначения» — вуз без"
             + " действующего КАМ. Этап на начало и конец периода — по истории переходов. Комментарии — только людей."
-            + " Итоги по менеджерам — отдельной таблицей и листом, в число строк не входят."
+            + " Итоги по менеджерам, командам и всего — отдельной таблицей и листом, в число строк не входят."
             + " «Обучение (LMS)» — последние данные Moodle по идущим потокам на момент формирования";
+    private static final Map<ManagerWorkTile, String> TILE_NOTES = Map.of(
+            ManagerWorkTile.OVERDUE, "просрочено",
+            ManagerWorkTile.THIS_WEEK, "срок на этой неделе",
+            ManagerWorkTile.NO_NEXT_STEP, "без шага или срока",
+            ManagerWorkTile.ISSUES, "проблемы и риски",
+            ManagerWorkTile.AGREEMENT, "договор на согласовании",
+            ManagerWorkTile.UNASSIGNED, "вузы без КАМ",
+            ManagerWorkTile.STUCK, "на этапе дольше %d дн.",
+            ManagerWorkTile.LMS, "сигналы LMS"
+    );
     private static final String AGREEMENTS_NOTE = "Строка — мероприятие плана договора (договор без мероприятий — одна строка);"
             + " объёмы — числа без ФИО. Обучающиеся — участия в потоках Moodle связанных взаимодействий, пересекающихся с мероприятием"
             + " и периодом, по наблюдению на конец периода; подтверждения — проверенные документы";
@@ -77,13 +90,15 @@ public class ReportService {
     private final ReportProperties properties;
     private final ModuleProperties modules;
     private final LmsWorkLearningService lmsWorkLearningService;
+    private final AgreementRepository agreementRepository;
 
     public ReportService(ReportRepository repository, ReportProperties properties, ModuleProperties modules,
-                         LmsWorkLearningService lmsWorkLearningService) {
+                         LmsWorkLearningService lmsWorkLearningService, AgreementRepository agreementRepository) {
         this.repository = repository;
         this.properties = properties;
         this.modules = modules;
         this.lmsWorkLearningService = lmsWorkLearningService;
+        this.agreementRepository = agreementRepository;
     }
 
     ReportRequest normalize(ReportRequest request) {
@@ -101,7 +116,7 @@ public class ReportService {
         ReportRequest normalized = normalize(request);
         OffsetDateTime generatedAt = OffsetDateTime.now();
         List<ReportRow> rows;
-        List<ReportRow> groupTotals = List.of();
+        List<ManagerWorkTotal> groupTotals = List.of();
         long total;
         if (normalized.kind() == ReportKind.DURATION || normalized.kind() == ReportKind.MANAGER_WORK) {
             List<ReportRow> all;
@@ -120,7 +135,6 @@ public class ReportService {
             total = repository.countRows(profile, normalized, generatedAt);
         }
         Map<ReportColumn, String> titles = columnTitles(normalized, generatedAt);
-        List<Map<String, Object>> totalItems = groupTotals.stream().map(row -> values(normalized.columns(), row)).toList();
         return new ReportPreview(
                 normalized.kind(),
                 generatedAt,
@@ -132,7 +146,7 @@ public class ReportService {
                 page,
                 size,
                 total,
-                totalItems
+                groupTotals
         );
     }
 
@@ -140,7 +154,7 @@ public class ReportService {
     public ReportDocument document(CrmProfile profile, ReportRequest request) {
         ReportRequest normalized = normalize(request);
         OffsetDateTime generatedAt = OffsetDateTime.now();
-        List<ReportRow> groupTotals = List.of();
+        List<ManagerWorkTotal> groupTotals = List.of();
         List<ReportRow> rows;
         switch (normalized.kind()) {
             case DURATION -> rows = durationRows(profile, normalized, generatedAt);
@@ -276,22 +290,36 @@ public class ReportService {
         );
     }
 
-    private record ManagerWorkRows(List<ReportRow> rows, List<ReportRow> totals) {
+    private record ManagerWorkRows(List<ReportRow> rows, List<ManagerWorkTotal> totals) {
     }
 
     private ManagerWorkRows managerWorkRows(CrmProfile profile, ReportRequest request, OffsetDateTime generatedAt) {
-        List<ManagerWorkLine> lines = repository.findManagerWork(
+        List<ManagerWorkLine> found = repository.findManagerWork(
                 profile, request.filters(), request.from(), request.to(), generatedAt, true
         );
+        List<UUID> foundIds = found.stream().map(ManagerWorkLine::interactionId).toList();
+        ManagerWorkTile tile = request.filters().tile();
+        boolean withLearning = tile == ManagerWorkTile.LMS
+                || request.columns().contains(ReportColumn.LMS_LEARNING) || request.columns().contains(ReportColumn.LMS_CHECK);
+        boolean withAgreements = tile == ManagerWorkTile.AGREEMENT
+                || request.columns().contains(ReportColumn.AGREEMENT) || request.columns().contains(ReportColumn.AGREEMENT_STATUS);
+        Map<UUID, WorkLearning> learning = withLearning ? lmsWorkLearningService.byWork(profile, foundIds) : Map.of();
+        Map<UUID, WorkAgreementStatus> agreements = withAgreements ? agreementRepository.findWorkStatuses(foundIds) : null;
+        int stuckDays = Objects.requireNonNullElse(request.filters().minDaysOnStage(), ManagerWorkReport.DEFAULT_STUCK_DAYS);
+        List<ManagerWorkLine> lines = tile == null ? found : found.stream()
+                .filter(line -> ManagerWorkReport.matches(line, tile, stuckDays,
+                        agreements == null ? null : agreements.get(line.interactionId()), learning.get(line.interactionId()),
+                        generatedAt))
+                .toList();
         List<UUID> ids = lines.stream().map(ManagerWorkLine::interactionId).toList();
         return new ManagerWorkRows(
                 ManagerWorkReport.rows(
                         lines,
                         repository.findManagerWorkProducts(ids),
                         repository.findManagerWorkComments(ids, request.from(), request.to()),
-                        request.columns().contains(ReportColumn.LMS_LEARNING) || request.columns().contains(ReportColumn.LMS_CHECK)
-                                ? lmsWorkLearningService.byWork(profile, ids)
-                                : Map.of(),
+                        learning,
+                        request.columns().contains(ReportColumn.AGREEMENT) || request.columns().contains(ReportColumn.AGREEMENT_STATUS)
+                                ? agreements : null,
                         generatedAt
                 ),
                 ManagerWorkReport.totals(lines, generatedAt)
@@ -429,6 +457,10 @@ public class ReportService {
                 },
                 "Фильтры: " + filterDescription(profile, request.filters()) + "; архивные вузы не входят"
         ));
+        if (request.filters().tile() != null) {
+            notes.add("Отбор плиткой «Контроля»: " + TILE_NOTES.get(request.filters().tile()).formatted(
+                    Objects.requireNonNullElse(request.filters().minDaysOnStage(), ManagerWorkReport.DEFAULT_STUCK_DAYS)));
+        }
         if (request.kind() == ReportKind.DEMAND) {
             notes.add(2, learningNote(profile, request));
             if (request.columns().contains(ReportColumn.MARKET_VACANCIES) || request.columns().contains(ReportColumn.MARKET_TREND)) {

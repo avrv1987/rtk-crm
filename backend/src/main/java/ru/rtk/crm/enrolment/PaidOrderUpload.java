@@ -18,10 +18,12 @@ public record PaidOrderUpload(
         String message,
         List<Stream> streams,
         List<PaidOrderIssue> issues,
-        LearnerIntake learners
+        LearnerIntake learners,
+        List<String> unmappedCourses
 ) {
     public PaidOrderUpload {
         learners = learners == null ? LearnerIntake.NONE : learners;
+        unmappedCourses = unmappedCourses == null ? List.of() : unmappedCourses;
     }
 
     public static PaidOrderUpload of(
@@ -33,7 +35,8 @@ public record PaidOrderUpload(
             int failed,
             String message,
             PaidOrderBatch batch,
-            LearnerIntake learners
+            LearnerIntake learners,
+            List<String> unmappedCourses
     ) {
         Map<Stream, Long> streams = batch.orders().stream()
                 .collect(Collectors.groupingBy(order -> new Stream(order.course(), order.streamNumber(), 0), Collectors.counting()));
@@ -52,7 +55,8 @@ public record PaidOrderUpload(
                         .sorted(Comparator.comparing(Stream::course).thenComparingInt(Stream::streamNo))
                         .toList(),
                 batch.issues(),
-                learners
+                learners,
+                unmappedCourses
         );
     }
 

@@ -78,9 +78,9 @@ export const ControlMore = ({ management, organizations, refreshKey, onSessionEx
         <li>
           {signals.kind === 'ready' ? (
             <button type="button" className="control-more__toggle" aria-expanded={panel === 'signals'} onClick={() => toggle('signals')}>
-              Сигналы LMS: {signals.value.length}
+              Все сигналы LMS: {signals.value.length}
             </button>
-          ) : <span>{signals.kind === 'loading' ? 'Сигналы LMS: …' : 'Сигналы LMS недоступны'}</span>}
+          ) : <span>{signals.kind === 'loading' ? 'Все сигналы LMS: …' : 'Сигналы LMS недоступны'}</span>}
         </li>
         <li>
           {deputies === null ? <span>Заместители: …</span> : (

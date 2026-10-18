@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { defaultPeriod, matchingPreset, periodOnKindChange, periodPresets, previousMonthEnd } from '../src/features/reports/reportPeriods.ts'
+import { defaultPeriod, matchingPreset, periodOnKindChange, periodPresets, previousMonthEnd, suggestedPeriod } from '../src/features/reports/reportPeriods.ts'
 
 const ranges = (today: string) => Object.fromEntries(periodPresets(today).map((preset) => [preset.id, [preset.from, preset.to]]))
 
@@ -46,4 +46,12 @@ test('при смене вида подменяется только нетро�
   assert.deepEqual(periodOnKindChange(custom, 'PORTFOLIO', 'DEMAND', today), custom)
   assert.deepEqual(periodOnKindChange(empty, 'EVENTS', 'DEMAND', today), empty)
   assert.deepEqual(periodOnKindChange(month, 'PORTFOLIO', 'PORTFOLIO', today), month)
+})
+
+test('сохранение отчёта предлагает выбранный готовый период, а не даты', () => {
+  assert.equal(suggestedPeriod({ from: '2026-10-01', to: '2026-10-31' }, '2026-10-18'), 'CURRENT_MONTH')
+  assert.equal(suggestedPeriod({ from: '2026-09-01', to: '2026-09-30' }, '2026-10-18'), 'PREVIOUS_MONTH')
+  assert.equal(suggestedPeriod({ from: '2026-10-01', to: '2026-12-31' }, '2026-10-18'), 'CURRENT_QUARTER')
+  assert.equal(suggestedPeriod({ from: '2026-10-02', to: '2026-10-31' }, '2026-10-18'), '')
+  assert.equal(suggestedPeriod({ from: null, to: null }, '2026-10-18'), '')
 })

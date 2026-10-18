@@ -84,7 +84,8 @@ public class PartnerCabinetService {
                         subjects.getOrDefault(agreement.id(), List.of()),
                         agreement.concludedOn(),
                         agreement.validUntil(),
-                        agreement.status()
+                        agreement.status(),
+                        agreement.statusChangedAt()
                 ))
                 .toList();
         return new PartnerCabinet(

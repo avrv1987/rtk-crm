@@ -4,8 +4,10 @@ import static ru.rtk.crm.source.SiteRecord.LEARNING_APPLICATION;
 import static ru.rtk.crm.source.SiteRecord.PARTNERSHIP_REQUEST;
 import static ru.rtk.crm.source.SiteRecord.WITHDRAWN;
 
+import java.time.DayOfWeek;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +29,7 @@ import ru.rtk.crm.enrolment.PaidOrderEnrolment;
 import ru.rtk.crm.interaction.CommandFingerprint;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
 import ru.rtk.crm.interaction.CommandOperation;
+import ru.rtk.crm.interaction.InteractionNextStep;
 import ru.rtk.crm.interaction.InteractionService;
 import ru.rtk.crm.source.SourceRepository.ApplyResult;
 import ru.rtk.crm.source.SourceRepository.SourceOrganization;
@@ -39,6 +42,8 @@ public class SiteRecordApplier implements SourceRecordApplier {
     private static final int MAX_TITLE_LENGTH = 200;
     private static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
     private static final DateTimeFormatter MOSCOW_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
+    static final String LEAD_RESPONSE_ACTION = "Ответить на заявку";
+    private static final int LEAD_RESPONSE_WORKING_DAYS = 2;
     private static final String RESTRICTED_CONTACT =
             "Контакт заявки не привязан: обработка его персональных данных ограничена";
 
@@ -304,6 +309,7 @@ public class SiteRecordApplier implements SourceRecordApplier {
                     programId,
                     productId == null ? List.of() : List.of(productId),
                     contactIds,
+                    new InteractionNextStep(LEAD_RESPONSE_ACTION, leadResponseDue(now)),
                     actorProfileId,
                     commandId,
                     now
@@ -377,6 +383,19 @@ public class SiteRecordApplier implements SourceRecordApplier {
         String name = item.organizationName() == null ? "без названия" : "«" + item.organizationName() + "»";
         String externalId = item.organizationExternalId() == null ? "" : " (внешний ID " + item.organizationExternalId() + ")";
         return "Вуз " + name + externalId + " не сопоставлен с организацией CRM; выберите вуз";
+    }
+
+    // Срок ответа считается в рабочих днях по МСК с той же минуты: заявка в пятницу вечером ждёт до вечера вторника.
+    // Праздники не учитываются: для них нужен производственный календарь.
+    static OffsetDateTime leadResponseDue(OffsetDateTime now) {
+        ZonedDateTime due = now.atZoneSameInstant(ZONE);
+        for (int left = LEAD_RESPONSE_WORKING_DAYS; left > 0; ) {
+            due = due.plusDays(1);
+            if (due.getDayOfWeek() != DayOfWeek.SATURDAY && due.getDayOfWeek() != DayOfWeek.SUNDAY) {
+                left--;
+            }
+        }
+        return due.toOffsetDateTime();
     }
 
     private static String title(SiteRecord item) {

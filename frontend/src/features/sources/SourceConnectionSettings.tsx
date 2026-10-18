@@ -63,6 +63,11 @@ export const SourceConnectionSettings = ({
     void load()
   }, [load])
 
+  // Результат проверки относится к источнику, у которого её запустили, и не должен переходить на соседнюю вкладку.
+  useEffect(() => {
+    setCheck(null)
+  }, [source])
+
   if (loadError !== null) {
     return (
       <div role="alert">

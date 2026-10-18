@@ -773,11 +773,36 @@ class AgreementServiceTest {
         agreementStages.requireSignedToLeave(INTERACTION_A, stages, stages.get(2), stages.get(3));
         agreementStages.requireSignedToComplete(INTERACTION_A, stages.get(2));
 
+        LocalDate today = LocalDate.now(AgreementService.ZONE);
+        jdbc.update("UPDATE agreements SET valid_until = ? WHERE id = ?", today, draft.id());
+        agreementStages.requireSignedToLeave(INTERACTION_A, stages, stages.get(2), stages.get(3));
+        jdbc.update("UPDATE agreements SET valid_until = ? WHERE id = ?", today.minusDays(1), draft.id());
+        assertThatThrownBy(() -> agreementStages.requireSignedToLeave(INTERACTION_A, stages, stages.get(2), stages.get(3)))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> {
+                    assertThat(exception.field()).isEqualTo("agreement");
+                    assertThat(exception.getMessage()).contains("Срок договора № Д-7 истёк").contains("продлите срок");
+                });
+        assertThatThrownBy(() -> agreementStages.requireSignedToComplete(INTERACTION_A, stages.get(2)))
+                .isInstanceOf(InteractionValidationException.class);
+        jdbc.update("UPDATE agreements SET status = 'COMPLETED' WHERE id = ?", draft.id());
+        agreementStages.requireSignedToLeave(INTERACTION_A, stages, stages.get(2), stages.get(3));
+        jdbc.update("UPDATE agreements SET status = 'ACTIVE', valid_until = NULL WHERE id = ?", draft.id());
+
         jdbc.update("UPDATE agreements SET status = 'DRAFT' WHERE id = ?", draft.id());
         new AgreementStages(org.springframework.jdbc.core.simple.JdbcClient.create(jdbc), false, List.of(), List.of(), List.of("Подписание"))
                 .requireSignedToLeave(INTERACTION_A, stages, stages.get(2), stages.get(3));
         assertThat(agreementService.workAgreements(managerA, INTERACTION_A).agreements()).singleElement()
                 .satisfies(summary -> assertThat(summary.number()).isEqualTo("Д-7"));
+    }
+
+    @Test
+    void onlyAnActiveAgreementWithAPastEndDateIsExpired() {
+        LocalDate today = LocalDate.parse("2026-10-18");
+        assertThat(AgreementStatus.ACTIVE.expired(today.minusDays(1), today)).isTrue();
+        assertThat(AgreementStatus.ACTIVE.expired(today, today)).isFalse();
+        assertThat(AgreementStatus.ACTIVE.expired(null, today)).isFalse();
+        assertThat(AgreementStatus.COMPLETED.expired(today.minusDays(1), today)).isFalse();
+        assertThat(AgreementStatus.SIGNING.expired(today.minusDays(1), today)).isFalse();
     }
 
     @Test

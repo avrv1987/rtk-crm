@@ -52,6 +52,8 @@ export type { FilterOptions, OptionsState }
 
 export type OrderTarget = 'report' | 'chart'
 
+const totalTitles = ['Команда', 'Менеджер', 'Вузов', 'Взаимодействий', 'Просрочено', 'На этой неделе', 'Без шага или срока', 'Переходов за период']
+
 type PreviewState =
   | { kind: 'idle' }
   | { kind: 'loading'; request: ReportPreviewRequest }
@@ -419,21 +421,25 @@ export const ReportBuilder = ({
                         </table>
                       </div>
                       {previewState.preview.groupTotals !== undefined && previewState.preview.groupTotals.length > 0 && (
-                        <div className="reports__table-scroll" role="region" aria-label="Итоги по менеджерам" tabIndex={0}>
+                        <div className="reports__table-scroll" role="region" aria-label="Итоги" tabIndex={0}>
                           <table>
-                            <caption>Итоги по менеджерам</caption>
+                            <caption>Итоги по менеджерам и командам</caption>
                             <thead>
                               <tr>
-                                {previewState.preview.columns.map((column) => <th key={column.id} scope="col">{column.title}</th>)}
+                                {totalTitles.map((title) => <th key={title} scope="col">{title}</th>)}
                               </tr>
                             </thead>
                             <tbody>
                               {previewState.preview.groupTotals.map((row, index) => (
                                 <tr key={index}>
-                                  {previewState.preview.columns.map((column) => {
-                                    const value = row[column.id]
-                                    return <td key={column.id}>{value === null || value === undefined ? '' : cellText(value, column.id)}</td>
-                                  })}
+                                  <td>{row.team ?? ''}</td>
+                                  <td>{row.manager}</td>
+                                  <td>{row.organizations}</td>
+                                  <td>{row.works}</td>
+                                  <td>{row.overdue}</td>
+                                  <td>{row.thisWeek}</td>
+                                  <td>{row.noNextStep}</td>
+                                  <td>{row.transitions}</td>
                                 </tr>
                               ))}
                             </tbody>

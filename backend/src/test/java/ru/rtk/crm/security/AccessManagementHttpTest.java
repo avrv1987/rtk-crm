@@ -327,6 +327,10 @@ class AccessManagementHttpTest {
                     needs_mapping_count, created_at)
                 VALUES (?, 'MOODLE', 'SUCCEEDED', ?, 4, 1, 2, 1, ?)
                 """, UUID.randomUUID(), ADMIN, now.minusMinutes(2));
+        jdbcTemplate.update("""
+                INSERT INTO sync_runs (id, source, status, started_by, fetched_count, created_count, run_trigger, created_at)
+                VALUES (?, 'CUSTOMER_CRM', 'SUCCEEDED', ?, 3, 2, 'SCHEDULE', ?), (?, 'LABOR_MARKET', 'SUCCEEDED', ?, 5, 0, 'SCHEDULE', ?)
+                """, UUID.randomUUID(), ADMIN, now.minusMinutes(3), UUID.randomUUID(), ADMIN, now.minusMinutes(4));
 
         mockMvc.perform(get("/api/admin/audit-events")
                         .param("from", today).param("to", today).param("object", "университет а")
@@ -344,9 +348,11 @@ class AccessManagementHttpTest {
                 .andExpect(jsonPath("$.items[0].actorDisplayName").value("Руководитель А"));
         mockMvc.perform(get("/api/admin/audit-events").param("category", "SYNC").with(login(ADMIN)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.total").value(2))
                 .andExpect(jsonPath("$.items[0].objectName").value("Moodle"))
-                .andExpect(jsonPath("$.items[0].actorDisplayName").value("Администратор"));
+                .andExpect(jsonPath("$.items[0].actorDisplayName").value("Администратор"))
+                .andExpect(jsonPath("$.items[1].objectName").value("CRM заказчика"))
+                .andExpect(jsonPath("$.items[1].actorDisplayName").value("Система"));
         mockMvc.perform(get("/api/admin/audit-events")
                         .param("to", LocalDate.now(ZoneId.of("Europe/Moscow")).minusDays(1).toString())
                         .with(login(ADMIN)))
@@ -746,6 +752,7 @@ class AccessManagementHttpTest {
                     created_count INTEGER NOT NULL DEFAULT 0,
                     updated_count INTEGER NOT NULL DEFAULT 0,
                     needs_mapping_count INTEGER NOT NULL DEFAULT 0,
+                    failed_count INTEGER NOT NULL DEFAULT 0,
                     run_trigger VARCHAR(16) NOT NULL DEFAULT 'MANUAL',
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )

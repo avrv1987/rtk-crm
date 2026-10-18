@@ -8,6 +8,7 @@ import java.util.UUID;
 import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
 import ru.rtk.crm.interaction.InteractionWorkStatus;
 import ru.rtk.crm.report.ManagerWorkDue;
+import ru.rtk.crm.report.ManagerWorkOrganization;
 
 public final class WorkControlModels {
     private WorkControlModels() {
@@ -19,7 +20,8 @@ public final class WorkControlModels {
             LocalDate to,
             boolean byTeams,
             List<TeamBlock> teams,
-            Totals total
+            Totals total,
+            List<ManagerWorkOrganization> idleOrganizations
     ) {
     }
 
@@ -54,6 +56,7 @@ public final class WorkControlModels {
             boolean completed,
             AgreementStatus agreementStatus,
             String agreementNumber,
+            LocalDate agreementValidUntil,
             LmsSignalModels.WorkLearning learning
     ) {
     }
@@ -68,7 +71,8 @@ public final class WorkControlModels {
             long withIssues,
             long moved,
             long created,
-            long completed
+            long completed,
+            long idle
     ) {
     }
 }
