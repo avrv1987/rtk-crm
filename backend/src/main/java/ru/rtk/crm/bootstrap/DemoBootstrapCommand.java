@@ -722,7 +722,17 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                 .param("title", DEMO_INTERACTION_TITLE)
                 .query(UUID.class)
                 .optional();
-        if (found.isEmpty()) {
+        // На давно заполненном стенде сценарный договор уже мог истечь, а «Подписание» не засчитывает истёкший
+        // договор: тогда работа остаётся на месте, а не роняет всё повторное заполнение.
+        boolean agreementValid = jdbcClient.sql("""
+                SELECT COUNT(*) FROM agreements
+                WHERE id = :agreementId AND status = 'ACTIVE' AND (valid_until IS NULL OR valid_until >= :today)
+                """)
+                .param("agreementId", stableId("agreement:" + DEMO_ORGANIZATION_NAME + "\u0000" + DEMO_SCENARIO_AGREEMENT))
+                .param("today", LocalDate.now(ZoneId.of("Europe/Moscow")))
+                .query(Long.class)
+                .single() > 0;
+        if (found.isEmpty() || !agreementValid) {
             return;
         }
         UUID interactionId = found.get();

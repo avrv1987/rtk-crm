@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -276,6 +277,19 @@ class DemoBootstrapCommandTest {
         OffsetDateTime created = jdbcTemplate.queryForObject("SELECT created_at FROM interactions WHERE id = ?",
                 OffsetDateTime.class, main.id());
         assertThat(created).isBefore(moves.getFirst());
+    }
+
+    @Test
+    void mainDemoWorkStaysInPlaceWhenTheScenarioAgreementHasExpiredOnAnOldStand() {
+        DemoBootstrapCommand command = command(demo());
+        command.run(null);
+        Interaction main = interactions.values().iterator().next();
+        jdbcTemplate.update("DELETE FROM interaction_events WHERE interaction_id = ? AND type = 'TRANSITIONED'", main.id());
+        jdbcTemplate.update("UPDATE agreements SET valid_until = ? WHERE number = 'ДЕМО-А/2'", LocalDate.now().minusDays(4));
+
+        command.run(null);
+
+        verify(interactionService, times(6)).transition(any(), any(), any(InteractionTransitionRequest.class), anyString());
     }
 
     @Test
