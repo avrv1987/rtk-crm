@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 // HTTP-клиент Bot API MAX на java.net.http без SDK. Короткие таймауты нужны потому, что отправка идёт из общего
@@ -29,6 +30,8 @@ public class MaxClient {
     private final Duration readTimeout;
     private final ObjectMapper objectMapper;
 
+    // Конструкторов два: без @Autowired Spring не выбирает и backend не стартует при MAX_ENABLED=true.
+    @Autowired
     public MaxClient(MaxProperties properties, ObjectMapper objectMapper) {
         this(HttpClient.newBuilder()
                 .connectTimeout(properties.connectTimeout())
