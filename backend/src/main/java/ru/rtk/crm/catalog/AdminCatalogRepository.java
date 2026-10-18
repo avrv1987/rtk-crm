@@ -118,17 +118,18 @@ public class AdminCatalogRepository {
                 .update() == 1;
     }
 
+    // Пустые столбцы приводятся к типу явно: PostgreSQL иначе отдаёт NULL как text, и чтение Boolean падает.
     private static String select(CatalogKind kind) {
         if (!kind.hasParent()) {
             return """
-                    SELECT entry.id, entry.name, NULL AS parent_id, NULL AS parent_name, entry.archived, entry.version,
+                    SELECT entry.id, entry.name, CAST(NULL AS UUID) AS parent_id, CAST(NULL AS VARCHAR) AS parent_name, entry.archived, entry.version,
                            %s AS labor_market
                     FROM %s entry
-                    """.formatted(kind == CatalogKind.DIRECTIONS ? "entry.labor_market" : "NULL", kind.table());
+                    """.formatted(kind == CatalogKind.DIRECTIONS ? "entry.labor_market" : "CAST(NULL AS BOOLEAN)", kind.table());
         }
         return """
                 SELECT entry.id, entry.name, parent.id AS parent_id, parent.name AS parent_name, entry.archived, entry.version,
-                       NULL AS labor_market
+                       CAST(NULL AS BOOLEAN) AS labor_market
                 FROM %s entry
                 JOIN %s parent ON parent.id = entry.%s
                 """.formatted(kind.table(), kind.parentTable(), kind.parentColumn());

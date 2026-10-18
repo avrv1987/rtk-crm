@@ -39,13 +39,14 @@ if ($values['MOODLE_BASE_URL'] -eq 'http://moodle:8080') {
 
 Push-Location $projectRoot
 try {
-    & docker compose --env-file $envFilePath @moodleFiles --profile demo run --rm -T -e APP_DEMOBOOTSTRAP_RESET=true backend-bootstrap
-    if ($LASTEXITCODE -ne 0) {
-        throw 'CRM demo data reset failed'
-    }
+    # Файлы удаляются до заполнения: заполнение само загружает демо-документы, и удаление после него стёрло бы их.
     & docker compose --env-file $envFilePath exec -T backend sh -c 'find $APP_ATTACHMENTS_STORAGE_ROOT ${APP_REPORTS_STORAGE_ROOT:-/var/lib/rtk-crm/reports} -mindepth 1 -delete'
     if ($LASTEXITCODE -ne 0) {
         throw 'Cannot clean the attachment and report storage'
+    }
+    & docker compose --env-file $envFilePath @moodleFiles --profile demo run --rm -T -e APP_DEMOBOOTSTRAP_RESET=true backend-bootstrap
+    if ($LASTEXITCODE -ne 0) {
+        throw 'CRM demo data reset failed'
     }
     Write-Output 'Demo data reset completed: CRM data, attachments and report files match a fresh bootstrap; Keycloak accounts and passwords were not changed'
 }
