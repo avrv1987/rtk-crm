@@ -25,6 +25,7 @@ import static ru.rtk.crm.report.ReportColumn.EVENT_AT;
 import static ru.rtk.crm.report.ReportColumn.EVENT_TYPE;
 import static ru.rtk.crm.report.ReportColumn.FROM_STAGE;
 import static ru.rtk.crm.report.ReportColumn.INTERACTION;
+import static ru.rtk.crm.report.ReportColumn.COMPLETION_BASIS;
 import static ru.rtk.crm.report.ReportColumn.COMPLETION_SHARE;
 import static ru.rtk.crm.report.ReportColumn.LEARNERS_COMPLETED;
 import static ru.rtk.crm.report.ReportColumn.LAST_EVENT_AT;
@@ -94,7 +95,7 @@ public enum ReportKind {
             "заявки",
             "Число заявок",
             List.of(DIRECTION, PROGRAM, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE,
-                    PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND),
+                    COMPLETION_BASIS, PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND),
             List.of()
     ),
     SNAPSHOT(
@@ -106,7 +107,7 @@ public enum ReportKind {
             List.of()
     ),
     DURATION(
-            "Длительность этапов и цикла",
+            "Длительность этапов и время до входа в последний этап",
             "длительность",
             "группы",
             "Число групп",

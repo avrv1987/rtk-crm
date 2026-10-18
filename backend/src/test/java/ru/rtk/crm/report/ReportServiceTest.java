@@ -81,6 +81,25 @@ class ReportServiceTest {
     }
 
     @Test
+    void stageFilterFollowsTheDefaultRouteEvenWhenOneWorkMovedAStageForward() {
+        UUID template = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO workflow_templates (id, name, default_template) VALUES (?, 'Базовый', TRUE)", template);
+        String[] route = {"Поиск контакта", "Уточнение актуальности", "Встреча", "Актуализация программы"};
+        for (int order = 0; order < route.length; order++) {
+            jdbcTemplate.update("INSERT INTO workflow_template_stages (id, template_id, stage_order, name) VALUES (?, ?, ?, ?)",
+                    UUID.randomUUID(), template, order == 3 ? 9 : order, route[order]);
+        }
+        jdbcTemplate.update("INSERT INTO interaction_stages (id, interaction_id, stage_order, name) VALUES (?, ?, 1, 'Актуализация программы')",
+                UUID.randomUUID(), INTERACTION_TWO_PRODUCTS);
+        jdbcTemplate.update("INSERT INTO interaction_stages (id, interaction_id, stage_order, name) VALUES (?, ?, 0, 'Свой этап')",
+                UUID.randomUUID(), INTERACTION_WITHOUT_LINKS);
+
+        assertThat(reportService.stages(MANAGER_A_PROFILE)).containsExactly(
+                "Поиск контакта", "Уточнение актуальности", "Встреча", "Актуализация программы", "Свой этап"
+        );
+    }
+
+    @Test
     void managerSeesOnlyOwnOrganizationInReportStatisticsAndFilters() {
         assertThat(interactionIds(MANAGER_A_PROFILE, portfolio(filters()))).containsExactly(
                 INTERACTION_TWO_PRODUCTS,
@@ -450,7 +469,7 @@ class ReportServiceTest {
                         tuple(null, null, null),
                         tuple("Анализ данных", 0L, 0L));
         assertThat(preview.columns()).extracting(ReportColumnView::title)
-                .anyMatch(title -> title.startsWith("Доля завершивших, % (Moodle, на "));
+                .anyMatch(title -> title.startsWith("Доля завершивших среди известных, % (Moodle, участия, на "));
         assertThat(ReportRow.percentOf(1L, 8L)).isEqualTo(13L);
         assertThat(ReportRow.percentOf(1L, 3L)).isEqualTo(33L);
         assertThat(ReportRow.percentOf(2L, 3L)).isEqualTo(67L);
@@ -603,15 +622,16 @@ class ReportServiceTest {
                 tuple(ReportColumn.PARTICIPANTS, ReportColumn.NO_DATA),
                 tuple(ReportColumn.LEARNERS_COMPLETED, ReportColumn.NO_DATA),
                 tuple(ReportColumn.COMPLETION_SHARE, ReportColumn.NO_DATA),
+                tuple(ReportColumn.COMPLETION_BASIS, "потоков в периоде нет"),
                 tuple(ReportColumn.PARALLEL_RUNS, ReportColumn.NO_DATA),
                 tuple(ReportColumn.MARKET_VACANCIES, ReportColumn.NO_DATA),
                 tuple(ReportColumn.MARKET_TREND, ReportColumn.NO_DATA)
         );
-        assertThat(preview.columns()).extracting(ReportColumnView::title).contains("Заявки (сайт, весь период)")
-                .anyMatch(title -> title.startsWith("Обучающиеся в потоках периода (Moodle, на "));
+        assertThat(preview.columns()).extracting(ReportColumnView::title).contains("Заявки (сайт, по дате подачи: весь период)")
+                .anyMatch(title -> title.startsWith("Обучающиеся в потоках периода (Moodle, участия — не уникальные люди, на "));
         assertThat(reportService.preview(LEADER_A_PROFILE, demand(SEPTEMBER_FIRST, SEPTEMBER_LAST, filters(), null), 0, 50)
                 .columns()).extracting(ReportColumnView::title)
-                .contains("Заявки (сайт, 01.09.2026–30.09.2026)", "Параллельные потоки (Moodle, на 30.09.2026)");
+                .contains("Заявки (сайт, по дате подачи: 01.09.2026–30.09.2026)", "Параллельные потоки (Moodle, на 30.09.2026)");
         assertThat(preview.notes()).anyMatch(note -> note.startsWith("Данные Moodle на ")
                 && note.contains("последнее наблюдение"));
         assertThat(preview.notes()).anyMatch(note -> note.contains("нет данных") && note.contains("сортировка: заявки"));
@@ -710,6 +730,35 @@ class ReportServiceTest {
                 new ReportAgreementFilters(List.of(VENDOR_ALPHA), null, null, List.of())), null), 0, 10))
                 .isInstanceOfSatisfying(InteractionValidationException.class,
                         exception -> assertThat(exception.field()).isEqualTo("filters.agreement"));
+    }
+
+    @Test
+    void demandCompletionShareFollowsTheLearningDynamicsFormulaWithBasisAndRunsWithoutData() {
+        ReportTestData.insertDemand(jdbcTemplate);
+        // Java-разработчик: поток курса 2 — 100 участий, C = 16, N = 4, остальные 80 без статуса; поток курса 5 без
+        // наблюдения на дату. Анализ данных: единственный поток без наблюдения.
+        jdbcTemplate.update("UPDATE learning_observations SET participants_count = 100, completed_count = 16, not_completed_count = 4,"
+                + " unknown_count = 80 WHERE mapping_id IN (SELECT id FROM source_mappings WHERE external_key = '2')");
+        jdbcTemplate.update("DELETE FROM learning_observations WHERE mapping_id IN (SELECT id FROM source_mappings"
+                + " WHERE external_key = '5:51' OR (organization_id = ? AND program_id = ?))",
+                ReportTestData.ORGANIZATION_A_UNASSIGNED, ReportTestData.PROGRAM_DATA);
+
+        assertThat(rows(LEADER_A_PROFILE, demand(null, null, filters(), null)))
+                .extracting(ReportRow::programName, ReportRow::participants, ReportRow::completed, ReportRow::completionPercent,
+                        ReportRow::completionBasis)
+                .containsExactlyInAnyOrder(
+                        tuple("Java-разработчик", 100L, 16L, 80L,
+                                "16 из 20 с известным статусом; данные по 20 из 100; потоков без данных: 1"),
+                        tuple(null, null, null, null, null),
+                        tuple("Анализ данных", null, null, null, "нет данных: у потоков нет наблюдений"));
+        ReportPreview preview = reportService.preview(LEADER_A_PROFILE, demand(null, null, filters(), null), 0, 50);
+        assertThat(preview.columns()).extracting(ReportColumnView::title)
+                .anyMatch(title -> title.startsWith("Основание доли (Moodle, участия, на "));
+        assertThat(preview.notes()).anyMatch(note -> note.startsWith("Доля завершивших — C / (C + N)")
+                && note.contains("«нет данных», а не ноль"));
+        assertThat(reportService.preview(LEADER_A_PROFILE, new ReportRequest(ReportKind.DEMAND, null, null, null, filters().build(),
+                List.of(ReportColumn.PROGRAM, ReportColumn.APPLICATIONS), null, null, null), 0, 50).notes())
+                .noneMatch(note -> note.startsWith("Доля завершивших"));
     }
 
     private static ReportRequest demand(LocalDate from, LocalDate to, Filters filters, ReportColumn sortBy) {

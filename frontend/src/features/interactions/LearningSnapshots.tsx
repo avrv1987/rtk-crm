@@ -7,7 +7,7 @@ import {
 } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { accessHandled, errorText, formatDateTime, requestIdOf, runPeriod, todayIso } from '../sources/sourceFormat'
-import { notFinishedRow } from './learningRun'
+import { completionBasis, notFinishedRow } from './learningRun'
 import '../sources/sources.css'
 
 type LearningSnapshotsProps = {
@@ -33,10 +33,10 @@ type RefreshState =
 
 type SourceState = InteractionSourceStatus['lms']
 
-const completionLabel = (snapshot: LearningSnapshot) => (
-  snapshot.completed === null || snapshot.completed === undefined
-    ? 'нет данных: завершение курса в Moodle не отслеживается'
-    : `${snapshot.completed} из ${snapshot.participants}`
+const completionLabel = (snapshot: LearningSnapshot) => completionBasis(
+  snapshot.completed,
+  snapshot.completed === null || snapshot.completed === undefined ? null : snapshot.completed + (snapshot.notCompleted ?? 0),
+  snapshot.participants
 )
 
 const SourceLine = ({ title, state, lms }: { title: string; state: SourceState; lms: boolean }) => {
@@ -58,6 +58,16 @@ const SourceLine = ({ title, state, lms }: { title: string; state: SourceState; 
   )
 }
 
+const Observation = ({ snapshot }: { snapshot: LearningSnapshot }) => (
+  <div>
+    <dt>Наблюдение</dt>
+    <dd>
+      {formatDateTime(snapshot.observedAt)}
+      {snapshot.stale && <span className="source-badge">данные устарели</span>}
+    </dd>
+  </div>
+)
+
 const NotFinished = ({ snapshot }: { snapshot: LearningSnapshot }) => {
   const row = notFinishedRow(snapshot, todayIso())
   return row === null ? null : <div><dt>{row.label}</dt><dd>{row.value ?? 'нет данных'}</dd></div>
@@ -74,7 +84,7 @@ const SnapshotItem = ({ snapshot }: { snapshot: LearningSnapshot }) => (
         <div><dt>Записано преподавателей</dt><dd>{snapshot.participants}</dd></div>
         <div><dt>Завершили</dt><dd>{completionLabel(snapshot)}</dd></div>
         <div><dt>Поток обучения</dt><dd>{runPeriod(snapshot.runStartsOn, snapshot.runEndsOn)}</dd></div>
-        <div><dt>Наблюдение</dt><dd>{formatDateTime(snapshot.observedAt)}</dd></div>
+        <Observation snapshot={snapshot} />
       </dl>
     ) : (
       <dl>
@@ -97,7 +107,7 @@ const SnapshotItem = ({ snapshot }: { snapshot: LearningSnapshot }) => (
             </dd>
           </div>
         )}
-        <div><dt>Наблюдение</dt><dd>{formatDateTime(snapshot.observedAt)}</dd></div>
+        <Observation snapshot={snapshot} />
       </dl>
     )}
   </li>

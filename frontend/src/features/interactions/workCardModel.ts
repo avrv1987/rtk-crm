@@ -20,6 +20,31 @@ export type WorkAgreementsLike<A extends WorkAgreementLike = WorkAgreementLike> 
   agreements: readonly A[]
 }
 
+// Адрес карточки строится из вуза самого взаимодействия, а не из вуза открытой панели: при переходе из колокольчика
+// во взаимодействие другого вуза панель прежнего вуза ещё смонтирована, и её вуз попал бы в адрес и хлебные крошки.
+export const cardHash = (organizationId: string, interactionId: string, currentHash: string) => {
+  const query = currentHash.split('?')[1]
+  return `#/organizations/${organizationId}/${interactionId}${query ? `?${query}` : ''}`
+}
+
+export type TransitionDirection = 'forward' | 'back'
+
+// Переход вперёд и возврат — разные действия: вперёд — дальше по маршруту (ближайший этап первым), назад — на
+// прежний этап (тоже ближайший первым). Один список «Перейти на этап» с возвратом внутри путал КАМ.
+export const transitionsToward = <T extends { stageId: string }>(
+  options: readonly T[],
+  stages: readonly { id: string; order: number }[],
+  currentStageId: string,
+  direction: TransitionDirection
+): T[] => {
+  const orderOf = new Map(stages.map((stage) => [stage.id, stage.order]))
+  const current = orderOf.get(currentStageId) ?? -1
+  const orderedOf = (option: T) => orderOf.get(option.stageId) ?? -1
+  return options
+    .filter((option) => direction === 'forward' ? orderedOf(option) > current : orderedOf(option) < current)
+    .sort((left, right) => direction === 'forward' ? orderedOf(left) - orderedOf(right) : orderedOf(right) - orderedOf(left))
+}
+
 export const primaryShortLabels: Record<PrimaryAction['kind'], string> = {
   transition: 'Следующий этап',
   resume: 'Возобновить',
@@ -64,7 +89,7 @@ export const primaryAction = (context: PrimaryContext): PrimaryAction | null => 
     return { kind: 'setStep', label: 'Задать следующий шаг' }
   }
   if (context.transitionCount === 0) {
-    return { kind: 'transition', label: 'Перейти на следующий этап', disabled: true, hint: 'Из текущего этапа переходы не разрешены' }
+    return { kind: 'transition', label: 'Перейти на следующий этап', disabled: true, hint: 'Дальше по маршруту переходов нет' }
   }
   return { kind: 'transition', label: 'Перейти на следующий этап', disabled: false }
 }
@@ -83,6 +108,19 @@ const signedOn = (agreement: WorkAgreementLike, today: string) => (
 )
 
 export const isSignedAgreement = (agreement: WorkAgreementLike) => signedOn(agreement, moscowToday())
+
+// Подсказка правила «Подписание» во вкладке договора: после подписания старое «завершится, когда договор будет
+// подписан» вводило в заблуждение, поэтому подписанный договор меняет текст, а вне этапа подсказка исчезает.
+export const signingRuleHint = (
+  role: AgreementStageRole | null,
+  agreements: readonly WorkAgreementLike[],
+  today: string = moscowToday()
+): string | null => {
+  if (agreements.some((agreement) => signedOn(agreement, today))) {
+    return role === 'SIGNING' ? 'Договор подписан: этап «Подписание» можно завершить.' : null
+  }
+  return role === 'SIGNING' ? 'Этап завершится, когда договор будет подписан.' : 'Этап «Подписание» завершится только с подписанным договором.'
+}
 
 const byStatusChangeDesc = <A extends WorkAgreementLike>(left: A, right: A) => (
   new Date(right.statusChangedAt).getTime() - new Date(left.statusChangedAt).getTime()

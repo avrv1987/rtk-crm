@@ -58,6 +58,12 @@ public class JsonReportWriter {
         if (!document.groupTotals().isEmpty()) {
             totals.put("managers", document.groupTotals());
         }
+        if (!document.productTotals().isEmpty()) {
+            totals.put("products", document.productTotals());
+        }
+        if (!document.organizationTotals().isEmpty()) {
+            totals.put("universities", document.organizationTotals());
+        }
 
         Map<String, Object> quality = new LinkedHashMap<>();
         quality.put("complete", true);

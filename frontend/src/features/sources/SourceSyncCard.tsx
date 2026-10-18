@@ -74,7 +74,8 @@ export const SourceSyncCard = ({
         </>
       )}
       history={source.adapterAvailable && (
-        <SourceRunHistory source={source.source} onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
+        // key: при смене вкладки история и раскрытие сбрасываются, иначе остаётся прежний источник
+        <SourceRunHistory key={source.source} source={source.source} onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
       )}
     >
       {children}

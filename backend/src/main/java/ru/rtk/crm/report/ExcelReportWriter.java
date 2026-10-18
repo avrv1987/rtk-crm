@@ -26,6 +26,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class ExcelReportWriter {
     public static final String TOTALS_SHEET = "Итоги по менеджерам";
+    public static final String PRODUCT_TOTALS_SHEET = "Итоги по продуктам";
+    public static final String ORGANIZATION_TOTALS_SHEET = "Итоги по вузам";
 
     private static final int STREAMING_WINDOW = 200;
     private static final int MAX_CELL_LENGTH = SpreadsheetVersion.EXCEL97.getMaxTextLength();
@@ -90,24 +92,33 @@ public class ExcelReportWriter {
         sheet.setAutoFilter(new CellRangeAddress(headerRow, Math.max(headerRow, rowIndex - 1), 0, lastColumn));
 
         if (!document.groupTotals().isEmpty()) {
-            fillTotals(workbook, document, styles);
+            fillTotals(workbook, document, styles, TOTALS_SHEET, ManagerWorkTotal.TITLES, ManagerWorkTotal.WIDTHS,
+                    document.groupTotals().stream().map(ManagerWorkTotal::values).toList());
+        }
+        if (!document.productTotals().isEmpty()) {
+            fillTotals(workbook, document, styles, PRODUCT_TOTALS_SHEET, ManagerWorkGroupTotal.titles("Продукт"),
+                    ManagerWorkGroupTotal.widths(), document.productTotals().stream().map(ManagerWorkGroupTotal::values).toList());
+        }
+        if (!document.organizationTotals().isEmpty()) {
+            fillTotals(workbook, document, styles, ORGANIZATION_TOTALS_SHEET, ManagerWorkGroupTotal.titles("Вуз"),
+                    ManagerWorkGroupTotal.widths(), document.organizationTotals().stream().map(ManagerWorkGroupTotal::values).toList());
         }
     }
 
     // Итоги лежат на отдельном листе: в диапазон автофильтра и сумм листа данных они не попадают. Числа пишутся
     // числовыми ячейками в своих колонках, чтобы их можно было сложить и взять в сводную таблицу.
-    private void fillTotals(Workbook workbook, ReportDocument document, Styles styles) {
-        Sheet sheet = workbook.createSheet(TOTALS_SHEET);
-        text(sheet.createRow(0).createCell(0), document.title() + ": " + TOTALS_SHEET.toLowerCase(Locale.ROOT), styles.title);
+    private void fillTotals(Workbook workbook, ReportDocument document, Styles styles, String name, List<String> titles, int[] widths,
+                            List<List<Object>> totals) {
+        Sheet sheet = workbook.createSheet(name);
+        text(sheet.createRow(0).createCell(0), document.title() + ": " + name.toLowerCase(Locale.ROOT), styles.title);
         Row header = sheet.createRow(2);
-        for (int column = 0; column < ManagerWorkTotal.TITLES.size(); column++) {
-            text(header.createCell(column), ManagerWorkTotal.TITLES.get(column), styles.header);
-            sheet.setColumnWidth(column, ManagerWorkTotal.WIDTHS[column] * 256);
+        for (int column = 0; column < titles.size(); column++) {
+            text(header.createCell(column), titles.get(column), styles.header);
+            sheet.setColumnWidth(column, widths[column] * 256);
         }
         int rowIndex = 3;
-        for (ManagerWorkTotal total : document.groupTotals()) {
+        for (List<Object> values : totals) {
             Row row = sheet.createRow(rowIndex++);
-            List<Object> values = total.values();
             for (int column = 0; column < values.size(); column++) {
                 Cell cell = row.createCell(column);
                 if (values.get(column) instanceof Number number) {
@@ -120,7 +131,7 @@ public class ExcelReportWriter {
             }
         }
         sheet.createFreezePane(0, 3);
-        sheet.setAutoFilter(new CellRangeAddress(2, Math.max(2, rowIndex - 1), 0, ManagerWorkTotal.TITLES.size() - 1));
+        sheet.setAutoFilter(new CellRangeAddress(2, Math.max(2, rowIndex - 1), 0, titles.size() - 1));
     }
 
     private void value(Cell cell, ReportColumn column, ReportRow row, Styles styles) {

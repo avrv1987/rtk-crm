@@ -73,6 +73,7 @@ import ru.rtk.crm.interaction.WorkflowTemplateRepository;
         InteractionService.class,
         ru.rtk.crm.agreement.AgreementStages.class,
         VendorContactImport.class,
+        ru.rtk.crm.audit.AuditJournalRepository.class,
         CatalogImportServiceTest.ImportTestConfiguration.class
 })
 class CatalogImportServiceTest {
@@ -550,6 +551,12 @@ class CatalogImportServiceTest {
 
         service.apply(admin, missing.id(), new CatalogImportApplyRequest(missing.version(), List.of(), List.of(agreementId)),
                 "archive-missing");
+        assertThat(jdbcTemplate.queryForMap(
+                "SELECT category, object_name, details FROM audit_events WHERE action = 'CATALOG_IMPORT_APPLIED' AND object_id = ?",
+                missing.id()))
+                .containsEntry("CATEGORY", "SETTINGS")
+                .containsEntry("OBJECT_NAME", "Импорт реестра соглашений")
+                .containsEntry("DETAILS", "строк применено: 0; договоров в архив: 1");
 
         assertThat(jdbcTemplate.queryForObject("SELECT archived_at FROM product_agreements WHERE id = ?", Object.class, agreementId))
                 .isNotNull();
@@ -836,6 +843,13 @@ class CatalogImportServiceTest {
     }
 
     private void createSchema() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id UUID PRIMARY KEY, category VARCHAR(32) NOT NULL, action VARCHAR(64) NOT NULL, actor_profile_id UUID,
+                    actor_display_name VARCHAR(200) NOT NULL, object_type VARCHAR(32), object_id UUID, object_name VARCHAR(500),
+                    details VARCHAR(2000), request_id VARCHAR(64), occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
         List.of(
                 """
                 CREATE TABLE IF NOT EXISTS catalog_change_events (
@@ -924,7 +938,7 @@ class CatalogImportServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_issues (
+                CREATE TABLE IF NOT EXISTS interaction_issues (last_comment VARCHAR(1000), last_comment_by UUID, last_comment_at TIMESTAMP WITH TIME ZONE,
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
                     description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
                     status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
@@ -1002,7 +1016,7 @@ class CatalogImportServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (
+                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, external_key VARCHAR(200) UNIQUE, interaction_id UUID NOT NULL,
                     command_id UUID NOT NULL, type VARCHAR(32) NOT NULL, stage_id UUID NOT NULL,
                     stage_name_snapshot VARCHAR(200) NOT NULL, from_stage_id UUID, from_stage_name_snapshot VARCHAR(200),

@@ -26,7 +26,7 @@ type EventsState =
 const formatDateTime = formatMoscowDateTime
 
 const reasonLabels: Record<NonNullable<OrganizationAssignmentEvent['reason']>, string> = {
-  PROFILE_BLOCKED: 'КАМ заблокирован администратором',
+  PROFILE_BLOCKED: 'блокировка КАМ',
   PROFILE_ROLE_CHANGED: 'у КАМ изменена роль',
   PROFILE_TEAM_CHANGED: 'КАМ переведён в другую команду',
   ORGANIZATION_TEAM_CHANGED: 'вуз передан в другую команду',

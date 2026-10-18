@@ -1,9 +1,18 @@
 package ru.rtk.crm.report;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
-public record ManagerWorkOrganization(UUID id, String name, UUID teamId, String teamName, UUID managerId, String managerName) {
+public record ManagerWorkOrganization(
+        UUID id,
+        String name,
+        UUID teamId,
+        String teamName,
+        UUID managerId,
+        String managerName,
+        OffsetDateTime lastActionAt
+) {
 
     // Вузы без идущего взаимодействия входят в числа «Контроля» и в итоги его выгрузки, только когда не заданы период и
     // отборы по направлению, программе, продукту и этапу: у такого вуза нет ни этапа, ни продукта, а период показывает

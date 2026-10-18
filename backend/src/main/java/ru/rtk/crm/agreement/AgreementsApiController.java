@@ -259,11 +259,12 @@ public class AgreementsApiController {
             @RequestParam(required = false) UUID managerId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expiresBefore,
             @RequestParam(required = false) Integer reviewLongerThanDays,
-            @RequestParam(defaultValue = "false") boolean delayed
+            @RequestParam(defaultValue = "false") boolean delayed,
+            @RequestParam(required = false) UUID teamId
     ) {
         return registryService.registry(
                 currentProfileService.requireActiveProfile(user),
-                new RegistryQuery(statuses, organizationId, managerId, expiresBefore, reviewLongerThanDays, delayed)
+                new RegistryQuery(statuses, organizationId, managerId, expiresBefore, reviewLongerThanDays, delayed, teamId)
         );
     }
 
@@ -276,11 +277,12 @@ public class AgreementsApiController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expiresBefore,
             @RequestParam(required = false) Integer reviewLongerThanDays,
             @RequestParam(defaultValue = "false") boolean delayed,
+            @RequestParam(required = false) UUID teamId,
             HttpServletRequest request
     ) throws IOException {
         CrmProfile profile = currentProfileService.requireActiveProfile(user);
         List<RegistryRow> rows = registryService.registry(
-                profile, new RegistryQuery(statuses, organizationId, managerId, expiresBefore, reviewLongerThanDays, delayed)
+                profile, new RegistryQuery(statuses, organizationId, managerId, expiresBefore, reviewLongerThanDays, delayed, teamId)
         );
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         registryService.writeRegistry(rows, OffsetDateTime.now(), output);

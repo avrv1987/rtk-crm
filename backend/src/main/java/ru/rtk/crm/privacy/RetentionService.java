@@ -86,6 +86,7 @@ public class RetentionService {
                 properties.inactiveContacts().toDays(),
                 properties.dismissedProfiles().toDays(),
                 properties.auditEvents().toDays(),
+                properties.agentPlans().toDays(),
                 term(properties.learnerProfiles()),
                 properties.cron(),
                 auditJournalRepository.findLatest(AuditAction.RETENTION_APPLIED).orElse(null),
@@ -102,6 +103,8 @@ public class RetentionService {
                         + " дн. после блокировки",
                 "Записи журнала администратора и безопасности (скачивания, действия с ПДн) удаляются через "
                         + properties.auditEvents().toDays() + " дн.",
+                "Планы записи, подготовленные ИИ-агентом, удаляются через " + properties.agentPlans().toDays()
+                        + " дн. после решения или истечения срока подтверждения",
                 "Анкеты слушателей обезличиваются через " + term(properties.learnerProfiles())
                         + " после окончания последнего потока слушателя; зачисления и оплаченные заявки остаются в статистике",
                 "Сроки установлены по умолчанию до решения оператора ПДн и задаются конфигурацией сервера"
@@ -149,7 +152,19 @@ public class RetentionService {
                 properties.learnerProfiles(), now.atZoneSameInstant(MOSCOW).toLocalDate()
         );
         int auditEvents = auditJournalRepository.deleteOlderThan(now.minus(properties.auditEvents()));
-        RetentionRun run = new RetentionRun(now, reportFiles.size(), contacts, profiles, learners, auditEvents);
+        // Сначала закрываем просроченные ожидающие планы, затем удаляем решённые: в тексте плана могут быть ПДн,
+        // а срок хранения отсчитывается от решения. Таблица есть и при выключенном MCP, поэтому это делается здесь.
+        List<PersonalDataRepository.ExpiredPlan> expiredPlans = repository.expireAgentPlans(now);
+        expiredPlans.forEach(plan -> auditJournalRepository.record(
+                AuditAction.AGENT_PLAN_EXPIRED, null, "INTERACTION", plan.interactionId(), "план " + plan.id(),
+                "клиент: " + (plan.clientId() == null ? "не указан" : plan.clientId())
+                        + "; версия карточки: " + plan.expectedVersion(),
+                requestId
+        ));
+        int agentPlans = repository.deleteDecidedAgentPlans(now.minus(properties.agentPlans()));
+        RetentionRun run = new RetentionRun(
+                now, reportFiles.size(), contacts, profiles, learners, auditEvents, expiredPlans.size(), agentPlans
+        );
         auditJournalRepository.record(AuditAction.RETENTION_APPLIED, actorId, "RETENTION", null, null, run.summary(), requestId);
         return run;
     }

@@ -1,5 +1,6 @@
 import type { ReportSelection } from '../reports/reportSelection'
 import type {
+  LearningTrend,
   ManagerWorkChange,
   ManagerWorkDue,
   ReportColumn,
@@ -10,6 +11,7 @@ import type {
   WorkControlManager,
   WorkControlQuery,
   WorkControlTeam,
+  WorkControlTotals,
   WorkLearning
 } from '../../shared/api/client'
 
@@ -26,7 +28,8 @@ export const emptyControlFilters: ControlFilters = {
   stage: [],
   from: '',
   to: '',
-  change: ''
+  change: '',
+  mode: 'NOW'
 }
 
 export const changeOptions: { id: ManagerWorkChange | ''; label: string }[] = [
@@ -34,6 +37,13 @@ export const changeOptions: { id: ManagerWorkChange | ''; label: string }[] = [
   { id: 'MOVED', label: 'Перешли на другой этап' },
   { id: 'NEW', label: 'Новые взаимодействия' },
   { id: 'COMPLETED', label: 'Завершённые' }
+]
+
+export type ControlMode = ControlFilters['mode']
+
+export const modeOptions: { value: ControlMode; label: string }[] = [
+  { value: 'NOW', label: 'Сейчас' },
+  { value: 'PERIOD', label: 'За период' }
 ]
 
 export const dueLabels: Record<ManagerWorkDue, string> = {
@@ -86,7 +96,9 @@ export const controlFiltersFromQuery = (query: string): ControlFilters => {
     stage: params.getAll('stage'),
     from: date('from'),
     to: date('to'),
-    change: changeFrom(params.get('change') ?? '')
+    change: changeFrom(params.get('change') ?? ''),
+    // Без периода режим всегда «Сейчас»: КАМ «на конец периода» без периода не определён.
+    mode: params.get('mode') === 'period' && (date('from') !== '' || date('to') !== '') ? 'PERIOD' : 'NOW'
   }
 }
 
@@ -112,6 +124,9 @@ export const controlQueryFromFilters = (filters: ControlFilters): string => {
   if (filters.change !== '') {
     params.set('change', filters.change)
   }
+  if (filters.mode === 'PERIOD' && hasPeriod(filters)) {
+    params.set('mode', 'period')
+  }
   return params.toString()
 }
 
@@ -128,8 +143,9 @@ export const activeControlFilterCount = (filters: ControlFilters) => [
   filters.change !== ''
 ].filter(Boolean).length
 
+// Это номер этапа в шаблоне, а не готовность: ветвления, возвраты и необязательные этапы не дают читать долю как результат.
 export const routeLabel = (item: Pick<WorkControlItem, 'stagePosition' | 'stageTotal'>) => (
-  item.stageTotal > 0 ? `${item.stagePosition} из ${item.stageTotal}` : ''
+  item.stageTotal > 0 ? `Положение в маршруте: этап ${item.stagePosition} из ${item.stageTotal}` : ''
 )
 
 export const routeShare = (item: Pick<WorkControlItem, 'stagePosition' | 'stageTotal'>) => (
@@ -154,10 +170,19 @@ export const changeNotes = (item: Pick<WorkControlItem, 'created' | 'completed' 
       : transitionsText(item.transitions))
   }
   if (item.completed) {
-    notes.push('Завершена')
+    notes.push('Завершена в периоде')
   }
   return notes
 }
+
+const signedNumber = (value: number) => (value > 0 ? `+${value}` : value < 0 ? `−${Math.abs(value)}` : '0')
+
+// Тренд в строке «Ещё»: сопоставимые потоки и потоки без базы сравнения — разные совокупности, в одно «было → стало»
+// их не складываем («10 → 32 (+2)» читалось бы как рост на 22).
+export const trendLine = (trend: Pick<LearningTrend, 'total'>, days: number) => (
+  `Обучающиеся за ${days} дней, сопоставимые потоки: ${trend.total.start} → ${trend.total.end}, ${signedNumber(trend.total.change)}`
+  + (trend.total.runsWithoutData > 0 ? `; новые потоки без базы сравнения: ${trend.total.endWithoutBase}` : '')
+)
 
 export const learningText = (learning: WorkLearning | null | undefined): string => {
   if (learning === null || learning === undefined) {
@@ -194,8 +219,9 @@ export const exportColumns = (filters: ControlFilters, withTeams: boolean): Repo
   ...(hasPeriod(filters) ? ['STAGE_AT_START' as const, 'TRANSITIONS' as const, 'PERIOD_COMMENTS' as const] : [])
 ]
 
-// Плитка уходит в выгрузку отбором tile: файл содержит те же строки, что экран. «Без работы» строк взаимодействий не
-// имеет, поэтому с этой плиткой выгружается всё по фильтрам.
+// Плитка уходит в выгрузку отбором tile: файл содержит те же строки, что экран. «Без работы» выгружается списком вузов
+// (КАМ, команда, последнее действие сотрудника), а не строками взаимодействий. Режим уходит как managerAt, поэтому
+// менеджер и отбор по нему в файле те же, что на экране.
 export const toExportRequest = (
   filters: ControlFilters,
   format: ReportFormat,
@@ -215,11 +241,16 @@ export const toExportRequest = (
     includeNoManager: filters.managerId.includes(managerUnassigned),
     stages: filters.stage,
     change: filters.change === '' ? null : filters.change,
-    tile: view.tile === null || view.tile === 'IDLE' ? null : view.tile,
-    minDaysOnStage: view.tile === 'STUCK' ? view.stuckDays : null
+    tile: view.tile,
+    minDaysOnStage: view.tile === 'STUCK' ? view.stuckDays : null,
+    managerAt: managerAt(filters)
   },
   columns: exportColumns(filters, withTeams)
 })
+
+export const managerAt = (filters: ControlFilters): 'CURRENT' | 'PERIOD_END' => (
+  filters.mode === 'PERIOD' && hasPeriod(filters) ? 'PERIOD_END' : 'CURRENT'
+)
 
 export type ControlTile = 'OVERDUE' | 'THIS_WEEK' | 'NO_NEXT_STEP' | 'ISSUES' | 'AGREEMENT' | 'UNASSIGNED' | 'STUCK' | 'LMS' | 'IDLE'
 
@@ -227,24 +258,35 @@ export type PeriodTile = ManagerWorkChange
 
 export const defaultStuckDays = 30
 
+export const trendDays = 90
+
+// Блоки запрашиваются отдельно от матрицы и без её фильтров: подпись называет область и время каждого числа.
+export const controlMoreScope = (management: boolean) => (
+  `${management ? 'По всем командам' : 'По всей команде'}, фильтры, плитки и период выше не применяются. `
+  + `Сигналы LMS — действующие сейчас; обучающиеся — сегодня против ${trendDays} дней назад`
+  + `${management ? '; подписания — текущий квартал' : ''}.`
+)
+
 export const stuckDayOptions = [7, 14, 30, 60, 90]
 
 const controlTileKeys: readonly ControlTile[] = ['OVERDUE', 'THIS_WEEK', 'NO_NEXT_STEP', 'ISSUES', 'AGREEMENT', 'UNASSIGNED', 'STUCK', 'LMS', 'IDLE']
 
-const agreementInProgress: ReadonlySet<string> = new Set(['REVIEW', 'CORRECTION', 'SIGNING'])
-
 export type ControlView = {
   tile: ControlTile | null
   stuckDays: number
+  // Команда из сводки «Руководства»: число в строке команды открывает её строки (отбор на экране, как плитка).
+  team?: string | null
 }
 
 export const controlViewFromQuery = (query: string): ControlView => {
   const params = new URLSearchParams(query)
   const tile = params.get('tile') ?? ''
   const stuck = Number(params.get('stuck') ?? '')
+  const team = params.get('team') ?? ''
   return {
     tile: controlTileKeys.find((key) => key === tile) ?? null,
-    stuckDays: Number.isInteger(stuck) && stuck > 0 && stuck <= 3650 ? stuck : defaultStuckDays
+    stuckDays: Number.isInteger(stuck) && stuck > 0 && stuck <= 3650 ? stuck : defaultStuckDays,
+    ...(team === '' ? {} : { team })
   }
 }
 
@@ -257,6 +299,9 @@ export const controlQuery = (filters: ControlFilters, view: ControlView): string
   }
   if (view.stuckDays !== defaultStuckDays) {
     params.set('stuck', String(view.stuckDays))
+  }
+  if (view.team !== undefined && view.team !== null) {
+    params.set('team', view.team)
   }
   return params.toString()
 }
@@ -279,7 +324,15 @@ export const isStuck = (item: Pick<WorkControlItem, 'status' | 'daysOnStage' | '
   isActiveWork(item) && !item.stageUnderApproval && (item.daysOnStage ?? 0) >= stuckDays
 )
 
-export const tileMatches = (item: WorkControlItem, managerId: string | null, tile: ControlTile, stuckDays: number): boolean => {
+// agreementOrganizations — вузы с договором на согласовании по правилу реестра (WorkControl.agreements): плитка
+// «Договор на согласовании» видит и договор, не привязанный к взаимодействию (как ManagerWorkReport.matches).
+export const tileMatches = (
+  item: WorkControlItem,
+  managerId: string | null,
+  tile: ControlTile,
+  stuckDays: number,
+  agreementOrganizations: ReadonlySet<string> = new Set()
+): boolean => {
   switch (tile) {
     case 'OVERDUE':
     case 'THIS_WEEK':
@@ -288,7 +341,7 @@ export const tileMatches = (item: WorkControlItem, managerId: string | null, til
     case 'ISSUES':
       return item.problems + item.risks > 0
     case 'AGREEMENT':
-      return item.agreementStatus !== null && item.agreementStatus !== undefined && agreementInProgress.has(item.agreementStatus)
+      return agreementOrganizations.has(item.organizationId)
     case 'UNASSIGNED':
       return managerId === null
     case 'STUCK':
@@ -304,6 +357,17 @@ const allWorks = (control: WorkControl) => control.teams.flatMap((team) => team.
   manager.works.map((item) => ({ item, managerId: manager.managerId }))
 )))
 
+const agreementOrganizationIds = (control: WorkControl): ReadonlySet<string> => (
+  new Set((control.agreements ?? []).map((row) => row.organizationId))
+)
+
+// Вузы без КАМ среди строк: с периодом плитка считает их так (КАМ — по режиму), чтобы число относилось к тем же
+// строкам, что таблица, а не к сегодняшнему списку вузов (решение владельца 18.10).
+export const unassignedInRows = (control: WorkControl): number => (
+  new Set(allWorks(control).filter(({ managerId }) => managerId === null).map(({ item }) => item.organizationId)).size
+)
+
+// «Договор на согласовании» считает договоры (единица — договор, как в реестре), остальные плитки — взаимодействия.
 export const tileCounts = (control: WorkControl, stuckDays: number): Record<Exclude<ControlTile, 'UNASSIGNED'>, number> => {
   const works = allWorks(control)
   const count = (tile: ControlTile) => works.filter(({ item, managerId }) => tileMatches(item, managerId, tile, stuckDays)).length
@@ -312,12 +376,43 @@ export const tileCounts = (control: WorkControl, stuckDays: number): Record<Excl
     THIS_WEEK: control.total.thisWeek,
     NO_NEXT_STEP: control.total.noNextStep,
     ISSUES: control.total.withIssues,
-    AGREEMENT: count('AGREEMENT'),
+    AGREEMENT: control.agreements?.length ?? 0,
     STUCK: count('STUCK'),
     LMS: count('LMS'),
     IDLE: control.total.idle
   }
 }
+
+// КАМ на конец периода сервер берёт только при заданном конце периода (WorkControlService.control).
+export const isPeriodMode = (filters: ControlFilters) => filters.mode === 'PERIOD' && filters.to !== ''
+
+const emptyTotals: WorkControlTotals = {
+  organizations: 0, works: 0, overdue: 0, thisWeek: 0, noNextStep: 0, inOrder: 0, withIssues: 0, moved: 0, created: 0, completed: 0, idle: 0
+}
+
+// Команда из сводки «Руководства»: остаются её строки, договоры и итоги; неизвестная команда даёт пустую матрицу.
+export const teamControl = (control: WorkControl, teamId: string | null | undefined): WorkControl => {
+  if (teamId === null || teamId === undefined) {
+    return control
+  }
+  const teams = control.teams.filter((team) => team.teamId === teamId)
+  return {
+    ...control,
+    teams,
+    total: teams[0]?.totals ?? emptyTotals,
+    idleOrganizations: control.idleOrganizations?.filter((organization) => organization.teamId === teamId) ?? control.idleOrganizations,
+    agreements: (control.agreements ?? []).filter((row) => row.teamId === teamId)
+  }
+}
+
+// На телефоне сначала «горящие» менеджеры (без КАМ, с просрочкой или проблемами), внутри — по числу просрочек.
+export const compactManagers = (managers: WorkControlManager[]) => (
+  [...managers].sort((a, b) => Number(isHotManager(b)) - Number(isHotManager(a)) || b.totals.overdue - a.totals.overdue)
+)
+
+export const compactTeams = (teams: WorkControlTeam[]) => (
+  [...teams].sort((a, b) => b.totals.overdue + b.totals.withIssues - a.totals.overdue - a.totals.withIssues)
+)
 
 export const managerCounts = (manager: WorkControlManager, stuckDays: number) => ({
   stuck: manager.works.filter((item) => isStuck(item, stuckDays)).length,
@@ -325,16 +420,21 @@ export const managerCounts = (manager: WorkControlManager, stuckDays: number) =>
 })
 
 // Плитка показывает только подходящие строки; менеджеры и команды без таких строк скрываются, чтобы отбор
-// не терялся среди пустых групп. Итоги групп остаются серверными: они описывают всю группу, а не отбор.
+// не терялся среди пустых групп. Итоги групп остаются серверными: они описывают всю группу, а не отбор, поэтому
+// рядом матрица показывает отдельный итог отбора (shownTotals) и подписывает оба числа.
 export const filterControl = (control: WorkControl, tile: ControlTile | null, stuckDays: number): WorkControl => {
   if (tile === null) {
     return control
   }
+  const agreementOrganizations = agreementOrganizationIds(control)
   const teams = control.teams
     .map((team) => ({
       ...team,
       managers: team.managers
-        .map((manager) => ({ ...manager, works: manager.works.filter((item) => tileMatches(item, manager.managerId, tile, stuckDays)) }))
+        .map((manager) => ({
+          ...manager,
+          works: manager.works.filter((item) => tileMatches(item, manager.managerId, tile, stuckDays, agreementOrganizations))
+        }))
         .filter((manager) => manager.works.length > 0)
     }))
     .filter((team) => team.managers.length > 0)
@@ -476,15 +576,31 @@ export const reportSelectionFromControl = (selection: ReportSelection, query: st
     managerIds: filters.managerId.filter((id) => id !== managerUnassigned),
     includeNoManager: filters.managerId.includes(managerUnassigned),
     stages: filters.stage,
-    change: filters.change
+    change: filters.change,
+    managerAt: managerAt(filters)
   }
 }
 
+export type ShownTotals = { organizations: number; works: number }
+
+// Итог отбора считается по показанным строкам: вуз — один раз, сколько бы взаимодействий у него ни было.
+export const shownTotals = (works: Pick<WorkControlItem, 'organizationId'>[]): ShownTotals => ({
+  organizations: new Set(works.map((item) => item.organizationId)).size,
+  works: works.length
+})
+
+export const shownWorks = (control: WorkControl): WorkControlItem[] => allWorks(control).map(({ item }) => item)
+
+export const shownTotalsText = (totals: ShownTotals) => `по отбору: вузов ${totals.organizations}, взаимодействий ${totals.works}`
+
 // Сколько строк осталось под выбранной плиткой: общий счётчик описывает всю выборку по фильтрам, а этот — отбор.
-// У «Без работы» строк взаимодействий нет, там считаются вузы.
+// У «Без работы» строк взаимодействий нет, там считаются вузы; у «Договор на согласовании» — договоры.
 export const tileShownCount = (shown: WorkControl, tile: ControlTile | null): number | null => {
   if (tile === null) {
     return null
+  }
+  if (tile === 'AGREEMENT') {
+    return shown.agreements?.length ?? 0
   }
   return tile === 'IDLE' ? shown.idleOrganizations?.length ?? 0 : allWorks(shown).length
 }

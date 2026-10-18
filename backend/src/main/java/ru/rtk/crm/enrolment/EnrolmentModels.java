@@ -122,18 +122,55 @@ record LearnerEnrolment(
         String orderNumber,
         UUID lmsExportId,
         OffsetDateTime lmsExportedAt,
-        OffsetDateTime lmsTransferredAt
+        OffsetDateTime lmsTransferredAt,
+        OffsetDateTime lmsSentAt,
+        BatchItemResult lmsResult
 ) {
 }
 
+// Файл сформирован, партия передана и строка принята LMS — разные факты. TRANSFERRED ставится только по результату
+// приёма строки; отметка «передано» без результата даёт SENT.
 enum LmsStatus {
     PENDING,
     EXPORTED,
+    SENT,
+    FAILED,
     TRANSFERRED;
 
-    static LmsStatus of(OffsetDateTime exportedAt, OffsetDateTime transferredAt) {
-        return transferredAt != null ? TRANSFERRED : exportedAt != null ? EXPORTED : PENDING;
+    static LmsStatus of(OffsetDateTime exportedAt, OffsetDateTime transferredAt, OffsetDateTime sentAt, BatchItemResult result) {
+        if (transferredAt != null) {
+            return TRANSFERRED;
+        }
+        if (exportedAt == null) {
+            return PENDING;
+        }
+        if (result == BatchItemResult.FAILED) {
+            return FAILED;
+        }
+        return sentAt != null ? SENT : EXPORTED;
     }
+}
+
+enum BatchItemResult {
+    PENDING,
+    ACCEPTED,
+    FAILED
+}
+
+enum RosterFormat {
+    XLSX_TEMPLATE,
+    MOODLE_CSV
+}
+
+enum EnrolmentQueueKind {
+    MISSING_DATA,
+    AMBIGUOUS_MATCH,
+    READY,
+    NOT_SENT,
+    AWAITING_RESULT,
+    LMS_ERROR,
+    MOVED_AFTER_TRANSFER,
+    CHANGED_AFTER_TRANSFER
 }
 
 record StreamEnrolmentRow(
@@ -148,10 +185,19 @@ record StreamEnrolmentRow(
         Set<LearnerField> missingFields,
         String emailHmac,
         String phoneHmac,
-        int learnerVersion
+        int learnerVersion,
+        OffsetDateTime lmsSentAt,
+        BatchItemResult lmsResult,
+        String lmsError,
+        Integer lmsSyncedVersion,
+        String lmsReconcileReason
 ) {
     boolean available() {
         return status == PersonalDataStatus.ACTIVE;
+    }
+
+    LmsStatus lmsStatus() {
+        return LmsStatus.of(lmsExportedAt, lmsTransferredAt, lmsSentAt, lmsResult);
     }
 
     boolean missingForLms() {
@@ -216,7 +262,8 @@ record StreamLearner(
         LmsStatus lmsStatus,
         UUID lmsExportId,
         OffsetDateTime lmsExportedAt,
-        OffsetDateTime lmsTransferredAt
+        OffsetDateTime lmsTransferredAt,
+        String lmsError
 ) {
     @Override
     public String toString() {
@@ -224,7 +271,18 @@ record StreamLearner(
     }
 }
 
-record RosterExport(UUID exportId, OffsetDateTime exportedAt, int rows, int transferred) {
+record RosterExport(
+        UUID exportId,
+        OffsetDateTime exportedAt,
+        int rows,
+        int transferred,
+        int failed,
+        int pending,
+        OffsetDateTime sentAt,
+        RosterFormat format,
+        String checksum,
+        boolean legacy
+) {
 }
 
 record RosterSummary(RosterScope pending, RosterScope all) {
@@ -243,10 +301,97 @@ enum IncompleteProfiles {
     EXCLUDE
 }
 
-record LmsRosterRequest(RosterMode mode, IncompleteProfiles incomplete) {
+record LmsRosterRequest(RosterMode mode, IncompleteProfiles incomplete, RosterFormat format) {
 }
 
-record LmsRoster(UUID exportId, String fileName, int rows, byte[] content) {
+record LmsRoster(UUID exportId, String fileName, int rows, byte[] content, RosterFormat format, String checksum) {
+}
+
+record EnrolmentBatchItemView(
+        UUID id,
+        int rowNo,
+        UUID enrolmentId,
+        UUID learnerId,
+        String lastName,
+        String firstName,
+        String orderNumber,
+        Integer learnerVersion,
+        Integer currentLearnerVersion,
+        BatchItemResult result,
+        String error,
+        String resultSource,
+        OffsetDateTime resultAt
+) {
+    @Override
+    public String toString() {
+        return "EnrolmentBatchItemView[rowNo=" + rowNo + ", masked]";
+    }
+}
+
+record EnrolmentBatchView(
+        UUID id,
+        UUID streamId,
+        String streamTitle,
+        RosterFormat format,
+        String fileName,
+        String checksum,
+        boolean legacy,
+        OffsetDateTime createdAt,
+        String createdByName,
+        OffsetDateTime sentAt,
+        int rows,
+        int accepted,
+        int failed,
+        int pending,
+        List<EnrolmentBatchItemView> items,
+        boolean moodleTransferAvailable
+) {
+}
+
+record MoodleTransferResult(EnrolmentBatchView batch, int sent, int accepted, int failed, String stoppedReason) {
+}
+
+record MoodleMoveResult(UUID enrolmentId, long courseFrom, long courseTo) {
+}
+
+record BatchResultItem(UUID itemId, BatchItemResult result, String error) {
+}
+
+record BatchResultUpdate(List<BatchResultItem> items) {
+}
+
+record BatchResultsApplied(EnrolmentBatchView batch, int changed, List<String> skipped) {
+}
+
+record EnrolmentQueueItem(
+        EnrolmentQueueKind kind,
+        UUID enrolmentId,
+        UUID learnerId,
+        UUID streamId,
+        String streamTitle,
+        String orderNumber,
+        String lastName,
+        String firstName,
+        String detail,
+        UUID batchId,
+        int learnerVersion
+) {
+    @Override
+    public String toString() {
+        return "EnrolmentQueueItem[kind=" + kind + ", masked]";
+    }
+}
+
+record EnrolmentQueueGroup(EnrolmentQueueKind kind, int total, List<EnrolmentQueueItem> items) {
+}
+
+record EnrolmentQueue(List<EnrolmentQueueGroup> groups, boolean moodleWriteAvailable) {
+}
+
+record LmsReconcile(EnrolmentQueueKind kind, Integer learnerVersion) {
+}
+
+record LmsReconciled(UUID enrolmentId, EnrolmentQueueKind kind) {
 }
 
 record RosterExportMarked(UUID exportId, UUID streamId, int rows, int marked) {
@@ -280,7 +425,8 @@ record LearnerEnrolmentView(
     static LearnerEnrolmentView of(LearnerEnrolment enrolment) {
         return new LearnerEnrolmentView(
                 enrolment.id(), enrolment.streamId(), enrolment.courseName(), enrolment.streamNo(), enrolment.streamEndsOn(),
-                enrolment.orderNumber(), LmsStatus.of(enrolment.lmsExportedAt(), enrolment.lmsTransferredAt()),
+                enrolment.orderNumber(),
+                LmsStatus.of(enrolment.lmsExportedAt(), enrolment.lmsTransferredAt(), enrolment.lmsSentAt(), enrolment.lmsResult()),
                 enrolment.lmsExportedAt(), enrolment.lmsTransferredAt()
         );
     }

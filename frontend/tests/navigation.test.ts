@@ -16,7 +16,7 @@ import {
 import { adminGroupsFor, adminSectionsFor, resolveAdminSection } from '../src/features/admin/adminSections.ts'
 
 const off = { enrolment: false, partner: false }
-const on = { enrolment: true, partner: true }
+const on = { enrolment: true, partner: true, mcp: true }
 const labels = (role: Parameters<typeof navFor>[0], operator = false, modules = on) => navFor(role, operator, modules).map((item) => item.label)
 
 test('верхнее меню: 4–5 пунктов на роль, у администратора и представителя вуза меню нет', () => {
@@ -47,9 +47,9 @@ test('нижняя панель телефона — четыре раздела
 
 test('каждый пункт меню ведёт в раздел, доступный роли, и ни один прежний раздел не потерян', () => {
   const before: Record<string, string[]> = {
-    USER: ['work', 'issues', 'organizations', 'agreements', 'reports', 'help'],
-    LEADER: ['control', 'work', 'issues', 'organizations', 'agreements', 'reports', 'admin', 'help'],
-    MANAGEMENT: ['control', 'work', 'issues', 'organizations', 'agreements', 'reports', 'help'],
+    USER: ['work', 'issues', 'organizations', 'agreements', 'reports', 'agent-plans', 'help'],
+    LEADER: ['control', 'work', 'issues', 'organizations', 'agreements', 'reports', 'admin', 'agent-plans', 'help'],
+    MANAGEMENT: ['summary', 'control', 'work', 'issues', 'organizations', 'agreements', 'reports', 'help'],
     ADMIN: ['admin', 'help'],
     PARTNER: ['partner', 'help']
   }
@@ -68,7 +68,7 @@ test('каждый пункт меню ведёт в раздел, доступ�
 test('группа «Работа»: вкладки по роли и подсветка активной', () => {
   assert.deepEqual(workTabsFor('USER').map((tab) => tab.label), ['Моя работа', 'Проблемы и риски'])
   assert.deepEqual(workTabsFor('LEADER').map((tab) => tab.label), ['Контроль', 'Проблемы и риски'])
-  assert.deepEqual(workTabsFor('MANAGEMENT').map((tab) => tab.label), ['Контроль', 'Проблемы и риски'])
+  assert.deepEqual(workTabsFor('MANAGEMENT').map((tab) => tab.label), ['Сводка команд', 'Контроль', 'Проблемы и риски'])
   assert.deepEqual(workTabsFor('ADMIN'), [])
   assert.equal(activeWorkTab('control'), 'control')
   assert.equal(activeWorkTab('issues'), 'issues')

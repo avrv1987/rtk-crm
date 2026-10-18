@@ -22,6 +22,7 @@ const TrendTable = ({ title, rows, total }: { title: string; rows: LearningTrend
           <th scope="col">На начало</th>
           <th scope="col">На конец</th>
           <th scope="col">Изменение</th>
+          <th scope="col">Без базы сравнения, на конец</th>
         </tr>
       </thead>
       <tbody>
@@ -30,10 +31,8 @@ const TrendTable = ({ title, rows, total }: { title: string; rows: LearningTrend
             <th scope="row">{row.name ?? 'Без названия'}</th>
             <td>{row.start}</td>
             <td>{row.end}</td>
-            <td className={row.change < 0 ? 'work-control__cell--danger' : undefined}>
-              {signed(row.change)}
-              {row.runsWithoutData > 0 && <span className="work-control__hint">{` (потоков без данных: ${row.runsWithoutData})`}</span>}
-            </td>
+            <td className={row.change < 0 ? 'work-control__cell--danger' : undefined}>{signed(row.change)}</td>
+            <td>{row.runsWithoutData > 0 ? `${row.endWithoutBase} (потоков: ${row.runsWithoutData})` : '—'}</td>
           </tr>
         ))}
         {total && (
@@ -42,6 +41,7 @@ const TrendTable = ({ title, rows, total }: { title: string; rows: LearningTrend
             <td>{total.start}</td>
             <td>{total.end}</td>
             <td>{signed(total.change)}</td>
+            <td>{total.runsWithoutData > 0 ? `${total.endWithoutBase} (потоков: ${total.runsWithoutData})` : '—'}</td>
           </tr>
         )}
       </tbody>
@@ -57,9 +57,8 @@ const TrendList = ({ title, items, empty }: { title: string; items: LearningTren
         {items.map((item) => (
           <li key={item.id ?? item.name}>
             <strong>{item.name}</strong>
-            <span>{item.runsWithoutData > 0
-              ? `${signed(item.change)}: на конец ${item.end}, в потоках без данных на начало: ${item.runsWithoutData}`
-              : `${signed(item.change)}: было ${item.start}, стало ${item.end}`}</span>
+            <span>{`${signed(item.change)}: сопоставимые потоки ${item.start} → ${item.end}`
+              + (item.runsWithoutData > 0 ? `; без базы сравнения: ${item.endWithoutBase}` : '')}</span>
           </li>
         ))}
       </ol>
@@ -119,9 +118,12 @@ export const LearningTrendPanel = ({ ownTeam = false, onSessionExpired, onProfil
         <>
           <ul className="desk-tiles" aria-label="Обучающиеся на начало и конец периода">
             {[
-              { label: `Обучающихся в идущих потоках на ${formatDate(state.trend.from)}`, value: state.trend.total.start.toLocaleString('ru-RU'), tone: '' },
-              { label: `Обучающихся в идущих потоках на ${formatDate(state.trend.to)}`, value: state.trend.total.end.toLocaleString('ru-RU'), tone: '' },
-              { label: 'Изменение за период', value: signed(state.trend.total.change), tone: state.trend.total.change < 0 ? ' desk-tile--danger' : ' desk-tile--plain' }
+              { label: `Сопоставимые потоки, на ${formatDate(state.trend.from)}`, value: state.trend.total.start.toLocaleString('ru-RU'), tone: '' },
+              { label: `Сопоставимые потоки, на ${formatDate(state.trend.to)}`, value: state.trend.total.end.toLocaleString('ru-RU'), tone: '' },
+              { label: 'Изменение в сопоставимых потоках', value: signed(state.trend.total.change), tone: state.trend.total.change < 0 ? ' desk-tile--danger' : ' desk-tile--plain' },
+              ...(state.trend.total.runsWithoutData > 0
+                ? [{ label: `Новые потоки без базы сравнения, на ${formatDate(state.trend.to)}`, value: state.trend.total.endWithoutBase.toLocaleString('ru-RU'), tone: ' desk-tile--plain' }]
+                : [])
             ].map((tile) => (
               <li key={tile.label}>
                 <span className={`desk-tile${tile.tone}`}>
@@ -136,8 +138,8 @@ export const LearningTrendPanel = ({ ownTeam = false, onSessionExpired, onProfil
           </p>
           {state.trend.runsWithoutData > 0 && (
             <p className="notice" role="note">
-              <strong>{`Потоков без данных на начало периода: ${state.trend.runsWithoutData}.`}</strong>
-              <span>{`Обучение в них уже шло на ${formatDate(state.trend.from)}, но наблюдений до этой даты нет. Они входят в число обучающихся на ${formatDate(state.trend.to)}, но не в изменение за период.`}</span>
+              <strong>{`Потоков без базы сравнения: ${state.trend.runsWithoutData}.`}</strong>
+              <span>{`На ${formatDate(state.trend.from)} у них нет наблюдения, поэтому они показаны отдельно: на ${formatDate(state.trend.to)} в них ${state.trend.total.endWithoutBase.toLocaleString('ru-RU')} обучающихся. В сопоставимые потоки и в изменение они не входят — это расширение охвата данных, а не рост.`}</span>
             </p>
           )}
           {!ownTeam && <TrendTable title="Команда" rows={state.trend.teams} total={state.trend.total} />}

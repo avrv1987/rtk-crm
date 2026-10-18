@@ -135,7 +135,7 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_issues (
+                CREATE TABLE IF NOT EXISTS interaction_issues (last_comment VARCHAR(1000), last_comment_by UUID, last_comment_at TIMESTAMP WITH TIME ZONE,
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
                     description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
                     status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
@@ -189,7 +189,7 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_events (
+                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
                     type VARCHAR(32) NOT NULL,
@@ -201,7 +201,7 @@ final class ReportTestData {
                     actor_profile_id UUID NOT NULL,
                     owner_manager_id_snapshot UUID,
                     version INTEGER NOT NULL DEFAULT 0,
-                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL, work_status_after VARCHAR(16)
                 )
                 """);
         jdbc.execute("""
@@ -309,7 +309,7 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), 
+                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), applied_at TIMESTAMP WITH TIME ZONE, 
                     id UUID PRIMARY KEY,
                     source VARCHAR(16) NOT NULL,
                     record_type VARCHAR(64) NOT NULL,

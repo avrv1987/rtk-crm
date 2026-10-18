@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: CRM ИТ Школы РТК — REST API
-  version: 2.3.0
+  version: 2.4.0
   description: |
     API веб-клиента CRM и точка интеграции с корпоративными системами.
 
@@ -22,6 +22,10 @@ tags:
   - name: Work
   - name: Enrolment
   - name: Partner
+  - name: Max
+    description: Модуль MAX (уведомления и мини-приложение); при MAX_ENABLED=false все пути /api/max/** отвечают 404
+  - name: Mail
+    description: Модуль почты (уведомления, приглашения, журнал отправки); при MAIL_ENABLED=false все пути /api/mail/** отвечают 404
 paths:
   /api/auth/login:
     get:
@@ -118,7 +122,7 @@ paths:
       security: []
       description: >-
         Доступен без входа: интерфейс по нему скрывает разделы выключенных модулей, в том числе на посадочной странице.
-        Модули включаются переменными MODULE_ENROLMENT_ENABLED и MODULE_PARTNER_ENABLED (по умолчанию выключены).
+        Модули включаются переменными MODULE_ENROLMENT_ENABLED и MODULE_PARTNER_ENABLED (по умолчанию выключены), модуль MAX — MAX_ENABLED.
       responses:
         '200':
           description: Состояние модулей
@@ -1029,9 +1033,15 @@ paths:
         Строки — работы вузов: активные, а при заданном периоде ещё и приостановленные или завершённые с событиями в нём.
         Повторяющиеся параметры означают «любое из значений». Отбор «ответственный» принимает идентификатор профиля
         или UNASSIGNED («Требует назначения»). Изменения за период (переходы, новые, завершённые) считаются по from и to
-        включительно, по московскому времени; без периода они считаются за всё время. Срок следующего шага:
-        OVERDUE — раньше текущего момента, THIS_WEEK — до конца текущей недели, NO_NEXT_STEP — нет шага или срока,
-        IN_ORDER — позже. Положение на маршруте — номер этапа среди этапов работы (stagePosition из stageTotal).
+        включительно, по московскому времени; без периода они считаются за всё время. «Завершённые» — последняя в
+        периоде смена статуса перевела работу в COMPLETED; вход в последний этап завершением не считается. Срок
+        следующего шага: OVERDUE — раньше текущего момента, THIS_WEEK — до конца текущей недели, NO_NEXT_STEP — нет шага
+        или срока, IN_ORDER — позже; срок оценивается только у активной работы, у приостановленной — по дате возврата
+        (NO_NEXT_STEP к ней не относится), завершённая всегда IN_ORDER. Положение в маршруте — номер этапа среди этапов
+        работы (stagePosition из stageTotal). mode=PERIOD с заданным to — режим «За период»: менеджер и отбор managerId
+        — КАМ вуза на конец периода по истории назначений, как в отчёте MANAGER_WORK; иначе режим «Сейчас» (текущий КАМ;
+        вуз без действующего КАМ своей команды — UNASSIGNED и в отбор прежнего владельца не входит). Область видимости в
+        обоих режимах текущая.
       parameters:
         - name: organizationId
           in: query
@@ -1098,6 +1108,13 @@ paths:
           description: Оставить работы с изменением в периоде
           schema:
             $ref: '#/components/schemas/ManagerWorkChange'
+        - name: mode
+          in: query
+          required: false
+          description: NOW — «Сейчас» (по умолчанию), PERIOD — «За период», действует только с to
+          schema:
+            type: string
+            enum: [NOW, PERIOD]
       responses:
         '200':
           description: Команды, менеджеры и их работы с итогами
@@ -1432,6 +1449,139 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/issues/{issueId}/comments:
+    post:
+      tags: [Work]
+      summary: Комментарий ответственного к проблеме или риску
+      operationId: commentIssueAsResponsible
+      description: >-
+        Только ответственный за запись (USER или LEADER), в том числе КАМ другого вуза. Карточка взаимодействия и вуз ему не
+        открываются. Комментарий сохраняется в записи (lastComment) и попадает в историю взаимодействия событием DETAILS_UPDATED.
+      parameters:
+        - $ref: '#/components/parameters/IssueId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionIssueNote'
+      responses:
+        '200':
+          description: Строка реестра после комментария
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InteractionIssue'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/issues/{issueId}/resolution:
+    post:
+      tags: [Work]
+      summary: Решить проблему или риск ответственным
+      operationId: resolveIssueAsResponsible
+      description: >-
+        Только ответственный за запись (USER или LEADER). «Как решили» обязательно. Запись получает статус RESOLVED, в истории
+        взаимодействия появляется событие DETAILS_UPDATED. Чужая запись — 404.
+      parameters:
+        - $ref: '#/components/parameters/IssueId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionIssueNote'
+      responses:
+        '200':
+          description: Строка реестра после решения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InteractionIssue'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/work/news:
+    get:
+      tags: [Work]
+      summary: Новое по моим вузам
+      operationId: getWorkNews
+      description: >-
+        Для КАМ и руководителя в их области. Заявки с сайта и данные LMS, записанные в истории взаимодействий за последние
+        days суток (по умолчанию 7, до 90). Сначала непросмотренные, затем просмотренные, до 50 строк; unviewed — полный счёт
+        непросмотренных. Отметка «просмотрено» — своя у каждого сотрудника.
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+      responses:
+        '200':
+          description: Новое из источников
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkNews'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/work/news/{eventId}/viewed:
+    put:
+      tags: [Work]
+      summary: Отметить новое из источника просмотренным
+      operationId: markWorkNewsViewed
+      description: Повтор ничего не меняет. Событие вне области или не из источника — 404.
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Отмечено
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/reminders:
     get:
       tags: [Work]
@@ -1754,6 +1904,16 @@ paths:
             type: integer
             minimum: 1
             maximum: 3650
+        - name: noContactDays
+          in: query
+          required: false
+          description: >-
+            Только работы без делового контакта дольше указанного числа суток: дата последнего контакта (а если её нет —
+            дата создания взаимодействия) раньше, чем столько суток назад
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 3650
       responses:
         '200':
           description: Взаимодействия всех видимых организаций либо одной видимой организации при указании organizationId; фильтры, итог и страницы вычисляются на сервере
@@ -1973,7 +2133,7 @@ paths:
       operationId: getInteractionSourceStatus
       x-implementation-stage: 4
       description: >
-        Любой профиль, видящий взаимодействие. Для LMS и сайта: настроен ли источник, последний успешный запуск, охвативший организацию взаимодействия (полные запуски или запуски, начатые из его карточек), ошибка последнего завершённого запуска, если он завершился неудачей после этого успеха, и признак устаревания (нет успеха за SOURCES_STALE_AFTER, по умолчанию 26 часов). learning.state объясняет, почему у карточки нет данных LMS: NO_PROGRAM, NOT_CONFIGURED, NOT_MAPPED, OTHER_CYCLE, NOT_DATED, SOURCE_FAILED, RUN_ENDED, NOT_SYNCED; AVAILABLE, если снимки есть.
+        Любой профиль, видящий взаимодействие. Для LMS и сайта: настроен ли источник, последний успешный запуск, охвативший организацию взаимодействия (полные запуски или запуски, начатые из его карточек), ошибка последнего завершённого запуска, если он завершился неудачей после этого успеха, и признак устаревания (нет успеха за SOURCES_STALE_AFTER, по умолчанию 26 часов; для LMS — ещё и снимок идущего потока карточки старше этого порога). learning.state объясняет, почему у карточки нет данных LMS: NO_PROGRAM, NOT_CONFIGURED, NOT_MAPPED, OTHER_CYCLE, NOT_DATED, SOURCE_FAILED, RUN_ENDED, NOT_SYNCED; AVAILABLE, если снимки есть.
       parameters:
         - $ref: '#/components/parameters/UuidId'
       responses:
@@ -3651,6 +3811,7 @@ paths:
         - $ref: '#/components/parameters/AgreementRegistryExpiresBefore'
         - $ref: '#/components/parameters/AgreementRegistryReviewLonger'
         - $ref: '#/components/parameters/AgreementRegistryDelayed'
+        - $ref: '#/components/parameters/AgreementRegistryTeam'
       responses:
         '200':
           description: Строки реестра, сначала дольше всего в текущем статусе
@@ -3681,6 +3842,7 @@ paths:
         - $ref: '#/components/parameters/AgreementRegistryExpiresBefore'
         - $ref: '#/components/parameters/AgreementRegistryReviewLonger'
         - $ref: '#/components/parameters/AgreementRegistryDelayed'
+        - $ref: '#/components/parameters/AgreementRegistryTeam'
       responses:
         '200':
           description: Файл XLSX; Content-Disposition содержит имя файла в UTF-8 (filename*)
@@ -4791,6 +4953,121 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-profiles/{id}/organizations:
+    get:
+      tags: [Administration]
+      summary: Вузы сотрудника и КАМ его команды для передачи
+      operationId: listCrmProfileOrganizations
+      description: >-
+        Только администратор. Вузы, закреплённые за сотрудником, и действующие КАМ его команды (кроме него самого), которым их
+        можно передать в том же изменении профиля полем transferOrganizationsTo при блокировке, смене роли или команды.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Вузы и кандидаты
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrmProfileOrganizations'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-profiles/{id}/login-lockout:
+    get:
+      tags: [Administration]
+      summary: Неудачные входы и временная блокировка входа в Keycloak
+      operationId: getCrmProfileLoginLockout
+      description: >-
+        Только администратор. Счётчик неудачных входов подряд и временная блокировка защиты от подбора пароля Keycloak
+        (brute force detection). Учётная запись при этом остаётся включённой. Без связи с Keycloak available = false.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Состояние входа
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginLockoutStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: ACCOUNT_SYNC_FAILED — Keycloak недоступен или отклонил запрос
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/crm-profiles/{id}/login-lockout-release:
+    post:
+      tags: [Administration]
+      summary: Снять блокировку входа
+      operationId: releaseCrmProfileLoginLockout
+      description: >-
+        Только администратор. Обнуляет счётчик неудачных входов и снимает временную блокировку в Keycloak; пароль и сеансы
+        не меняются. Повтор безвреден, поэтому ключ идемпотентности не нужен. Пишет в журнал ACCOUNT_LOCKOUT_RELEASED.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Блокировка снята
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginLockoutStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: ACCOUNT_SYNC_FAILED — Keycloak недоступен или отклонил запрос; блокировка не снята
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/backup-status:
+    get:
+      tags: [Administration]
+      summary: Время последней резервной копии
+      operationId: getBackupStatus
+      description: >-
+        Только администратор. scripts/backup.sh после успешной копии оставляет отметку времени в томе вложений; в саму
+        копию отметка не входит. null — копий ещё не было, отметка не записалась или стенд восстановлен из копии.
+      responses:
+        '200':
+          description: Отметка последней копии
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/admin/crm-profiles/{id}/events:
@@ -6357,7 +6634,8 @@ paths:
       tags: [Administration]
       summary: Ограничить обработку данных контакта или снять ограничение
       operationId: restrictPersonalDataContact
-      description: Ограниченный контакт остаётся доступным для чтения в истории, но не может быть связан со взаимодействиями
+      description: >-
+        Ограниченный контакт остаётся доступным для чтения в истории, но не может быть связан со взаимодействиями. Основание обязательно и вместе с комментарием записывается в журнал; без основания — 400 VALIDATION_ERROR
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -6437,7 +6715,7 @@ paths:
       summary: Обезличить данные субъекта ПДн
       operationId: anonymizePersonalDataSubject
       description: >-
-        Заменяет имя, email и телефон субъекта на маркер в выбранных контактах, заблокированных профилях CRM, комментариях, следующих шагах, записях источников и технических снимках; удаляет выбранные вложения и файлы отчётов, которые могли содержать данные субъекта. Выбранные профили обучающихся теряют зашифрованные поля и отпечатки; их зачисления и оплаченные заказы остаются для статистики. История взаимодействий и связи событий сохраняются.
+        Заменяет ФИО целиком, полную почту и телефон выбранных субъектов на маркер только в их области: для контакта — взаимодействия, вложения, записи источников и записи журнала его вуза; для заблокированного сотрудника — вузов, с которыми он работал; служебные снимки — только если в них есть идентификатор субъекта или его вуза. Отдельные слова ФИО и их транслитерация не используются; «другие написания» учитываются, только если это ФИО целиком. Удаляет выбранные вложения и готовые отчёты с текстами и ФИО у тех, кто видел вузы субъекта (руководство, команды этих вузов, сам сотрудник); такие отчёты помечаются «сформирован до обезличивания». Выбранные профили обучающихся теряют зашифрованные поля и отпечатки; их зачисления и оплаченные заказы остаются для статистики. Основание обязательно; в журнал пишется запись на каждого субъекта с основанием и счётчиками. Без выбранных записей — 400.
       parameters:
         - $ref: '#/components/parameters/CsrfHeader'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -6464,6 +6742,43 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           description: IDEMPOTENCY_CONFLICT или PROFILE_ACTIVE, если у выбранного профиля ещё есть доступ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/personal-data/anonymization/preview:
+    post:
+      tags: [Administration]
+      summary: Предпросмотр обезличивания
+      operationId: previewPersonalDataAnonymization
+      description: Считает, сколько записей каких видов изменит обезличивание с теми же параметрами, ничего не меняя. Основание не требуется
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnonymizationRequest'
+      responses:
+        '200':
+          description: Счётчики записей, которые будут изменены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnonymizationResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: PROFILE_ACTIVE, если у выбранного профиля ещё есть доступ
           content:
             application/json:
               schema:
@@ -7145,7 +7460,12 @@ paths:
       operationId: exportLmsRoster
       x-implementation-stage: 5
       description: >-
-        XLSX по шаблону организатора: Лист1 — 30 заголовков дословно, одна строка на зачисление (одинаковый email у двух
+        Каждая выгрузка — новая неизменяемая партия (enrolment_batches): состав, номер строки в файле (с 2, первая —
+        заголовок), версия анкеты на момент выгрузки, формат, дата и SHA-256 файла (заголовок X-Roster-Checksum). Сам файл
+        не хранится. Повторная выгрузка прежнюю партию не меняет. format XLSX_TEMPLATE (по умолчанию) —
+        XLSX по шаблону организатора; это не типовой CSV Moodle «Загрузка пользователей», совместимость проверяется на
+        реальном приёмнике. format MOODLE_CSV — CSV UTF-8 с колонками username, firstname, lastname, middlename, email,
+        phone1 (логин — почта); колонки зачисления на курс не пишутся. XLSX по шаблону организатора: Лист1 — 30 заголовков дословно, одна строка на зачисление (одинаковый email у двух
         слушателей строк не убирает), Лист2 и проверки данных «Пол» и «Образование», телефон числом, даты — датами,
         защита от формул. mode PENDING — только зачисления без отметки «передано», ALL — весь поток; incomplete EXCLUDE
         исключает анкеты без Фамилии, Имени, телефона или email, INCLUDE выгружает их с пустыми ячейками. Анкеты
@@ -7173,8 +7493,16 @@ paths:
             X-Roster-Rows:
               schema:
                 type: integer
+            X-Roster-Checksum:
+              description: SHA-256 содержимого файла в шестнадцатеричном виде
+              schema:
+                type: string
           content:
             application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            text/csv:
               schema:
                 type: string
                 format: binary
@@ -7191,12 +7519,13 @@ paths:
   /api/enrolment/roster-exports/{id}/transferred:
     post:
       tags: [Enrolment]
-      summary: Отметить слушателей выгрузки переданными в LMS
+      summary: Отметить партию переданной в LMS
       operationId: markRosterExportTransferred
       x-implementation-stage: 5
       description: >-
-        Отметка ставится ровно по зачислениям этой выгрузки, ещё не отмеченным (marked = 0 — неотмеченных нет). Журнал —
-        LMS_ROSTER_MARKED. Неизвестная выгрузка — 404.
+        Фиксирует, что файл партии передан в LMS; «принято LMS» не ставит. marked — сколько строк партии теперь ждут
+        результата приёма (0 — партия уже отмечена). Результат строк записывается методами /api/enrolment/batches/{id}/results
+        и /protocol. Журнал — LMS_ROSTER_MARKED. Неизвестная партия — 404.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -7208,6 +7537,313 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RosterExportMarked'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/enrolment/batches/{id}:
+    get:
+      tags: [Enrolment]
+      summary: Партия передачи в LMS построчно
+      operationId: getEnrolmentBatch
+      description: >-
+        Только оператор зачисления. Состав партии с номером строки файла, версией анкеты на момент выгрузки и текущей
+        версией, результатом приёма LMS и ошибкой. Фамилия и имя показываются как в списке потока; просмотр пишется в
+        журнал (LEARNER_LIST_VIEWED). Cache-Control no-store.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Партия
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrolmentBatch'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/enrolment/batches/{id}/results:
+    post:
+      tags: [Enrolment]
+      summary: Отметить результат приёма LMS по строкам
+      operationId: recordEnrolmentBatchResults
+      description: >-
+        Только оператор зачисления. Результат по одной или нескольким строкам: ACCEPTED — принята, FAILED — ошибка
+        (причина обязательна; пустая заменяется на «без описания»), PENDING — ожидает. Принятая строка окончательна: её
+        не меняют ни повторная отметка, ни протокол — такие строки возвращаются в skipped. Принятая строка делает
+        зачисление «Передано в LMS». Партия при первой записи результата считается переданной. Журнал —
+        LMS_RESULTS_RECORDED.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [itemId, result]
+                    properties:
+                      itemId:
+                        type: string
+                        format: uuid
+                      result:
+                        $ref: '#/components/schemas/BatchItemResult'
+                      error:
+                        type: [string, 'null']
+                        maxLength: 500
+      responses:
+        '200':
+          description: Партия после записи
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResultsApplied'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/enrolment/batches/{id}/protocol:
+    post:
+      tags: [Enrolment]
+      summary: Загрузить протокол приёма LMS
+      operationId: importEnrolmentBatchProtocol
+      description: >-
+        Только оператор зачисления. CSV (разделитель «;» или «,», UTF-8) или XLSX до 5 МиБ и 5000 строк с колонками
+        «строка, результат, ошибка»; первая строка-заголовок пропускается. Номер строки — как в файле партии.
+        Результат: «принята», «ok», «успешно», «добавлен», «создан» — принята; «ошибка», «error», «отклонена» — ошибка;
+        «ожидает» — ожидает. Нераспознанные строки и номера, которых нет в партии, возвращаются в skipped.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Партия после записи протокола
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResultsApplied'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/enrolment/batches/{id}/moodle-transfer:
+    post:
+      tags: [Enrolment]
+      summary: Передать партию в Moodle через API
+      operationId: transferEnrolmentBatchToMoodle
+      description: >-
+        Только оператор зачисления и только при MOODLE_WRITE_ENABLED=true с токеном MOODLE_WRITE_TOKEN; иначе 400.
+        По каждой не принятой строке: core_user_get_users_by_field (почта), при отсутствии — core_user_create_users
+        (логин — почта, фамилия, имя, почта; другие поля анкеты не уходят), при расхождении имени —
+        core_user_update_users; enrol_manual_enrol_users на курс потока с ролью студента; core_group_add_group_members,
+        если у курса одна сопоставленная группа; затем сверка core_enrol_get_enrolled_users. Курс — из сопоставлений
+        Moodle программы потока; нет курса — ошибка строки «нет курса для потока». Строка «принята» только после сверки;
+        отказ Moodle — ошибка строки с кодом Moodle. Moodle недоступен или отклонил токен — передача останавливается,
+        оставшиеся строки ждут (stoppedReason). Повтор отправляет только не принятые строки. Журнал — LMS_API_TRANSFER
+        без персональных данных.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Итог передачи
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [batch, sent, accepted, failed, stoppedReason]
+                properties:
+                  batch:
+                    $ref: '#/components/schemas/EnrolmentBatch'
+                  sent:
+                    type: integer
+                  accepted:
+                    type: integer
+                  failed:
+                    type: integer
+                  stoppedReason:
+                    type: [string, 'null']
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/enrolment/enrolments/{id}/moodle-move:
+    post:
+      tags: [Enrolment]
+      summary: Перенести слушателя между курсами Moodle
+      operationId: moveEnrolmentInMoodle
+      description: >-
+        Только оператор зачисления, при включённой записи в Moodle и только для зачисления из очереди «перенос после
+        передачи». enrol_manual_unenrol_users с курса прежнего потока, enrol_manual_enrol_users на курс нового, сверка;
+        затем сверка снимается. Пользователь Moodle ищется по почте; нет или несколько — 400, перенос вручную. Журнал —
+        LMS_API_MOVE.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Перенос выполнен
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrolmentId, courseFrom, courseTo]
+                properties:
+                  enrolmentId:
+                    type: string
+                    format: uuid
+                  courseFrom:
+                    type: integer
+                    format: int64
+                  courseTo:
+                    type: integer
+                    format: int64
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/enrolment/queue:
+    get:
+      tags: [Enrolment]
+      summary: Очередь зачисления — что обработать сегодня
+      operationId: getEnrolmentQueue
+      description: >-
+        Только оператор зачисления. Группы по всем потокам: MISSING_DATA — нет обязательных для LMS сведений;
+        AMBIGUOUS_MATCH — та же почта или телефон у другого слушателя потока; READY — готово к передаче; NOT_SENT — файл
+        сформирован, партия не отмечена переданной; AWAITING_RESULT — ожидается результат LMS; LMS_ERROR — ошибка LMS;
+        MOVED_AFTER_TRANSFER — перенос в другой поток после выгрузки, нужна сверка LMS; CHANGED_AFTER_TRANSFER —
+        анкета изменена после передачи. В группе total и до 50 строк. Анкеты с ограниченной обработкой и обезличенные
+        в очереди передачи не показываются. Просмотр пишется в журнал.
+      responses:
+        '200':
+          description: Очередь
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrolmentQueue'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/enrolment/enrolments/{id}/lms-reconciled:
+    post:
+      tags: [Enrolment]
+      summary: Отметить сверку с LMS
+      operationId: reconcileEnrolmentLms
+      description: >-
+        Только оператор зачисления. MOVED_AFTER_TRANSFER — перенос учтён в LMS; CHANGED_AFTER_TRANSFER — изменения анкеты
+        внесены в LMS, learnerVersion обязана совпасть с текущей версией анкеты (иначе 409). Журнал — LMS_RECONCILED.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind:
+                  type: string
+                  enum: [MOVED_AFTER_TRANSFER, CHANGED_AFTER_TRANSFER]
+                learnerVersion:
+                  type: [integer, 'null']
+      responses:
+        '200':
+          description: Сверка отмечена
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrolmentId, kind]
+                properties:
+                  enrolmentId:
+                    type: string
+                    format: uuid
+                  kind:
+                    $ref: '#/components/schemas/EnrolmentQueueKind'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -7495,8 +8131,1401 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/partner/requests/{id}/responses:
+    post:
+      tags: [Partner]
+      summary: Ответить на запрос школы
+      operationId: respondPartnerRequest
+      description: >-
+        Только для роли PARTNER и только по запросу, адресованному контакту профиля; чужой запрос — 404. Ответ
+        (ANSWER) принимается в статусах «Ожидает ответа» и «Возвращено на доработку», переводит запрос в «Ответ передан»;
+        вопрос (QUESTION, только текст) переводит в «Нужны уточнения». Файл проходит те же проверки, что вложения
+        карточки: тип по содержимому, антивирус; сохраняется во взаимодействии и вузу не открывается. Повтор с тем же
+        Idempotency-Key возвращает ту же квитанцию без второго ответа и второго файла.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                kind:
+                  type: string
+                  enum: [ANSWER, QUESTION]
+                version:
+                  type: integer
+                  minimum: 0
+                message:
+                  type: string
+                  maxLength: 4000
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Квитанция с номером и временем; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerReceipt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/partner/documents/{id}/receipt:
+    put:
+      tags: [Partner]
+      summary: Подтвердить получение материала
+      operationId: confirmPartnerDocument
+      description: >-
+        Только для роли PARTNER. Подтверждает получение конкретной версии документа своего вуза, открытого вузу и
+        проверенного антивирусом; иначе 404. Повторный вызов возвращает прежнюю дату. Новая версия документа — другой
+        документ и приходит неподтверждённой.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Дата подтверждения
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [documentId, receivedAt]
+                properties:
+                  documentId:
+                    type: string
+                    format: uuid
+                  receivedAt:
+                    type: string
+                    format: date-time
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interactions/{id}/partner-requests:
+    get:
+      tags: [Partner]
+      summary: Запросы вузу по взаимодействию
+      operationId: listPartnerRequests
+      description: Сотрудник, которому видна карточка взаимодействия; иначе 404. Модуль кабинета вуза выключен — 404.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Запросы, новые сверху
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PartnerRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Partner]
+      summary: Создать запрос вузу
+      operationId: createPartnerRequest
+      description: >-
+        Ответственный КАМ вуза или руководитель его команды. Адресат — контакт вуза с действующим доступом в кабинет;
+        материалы — документы этого взаимодействия, открытые вузу. Внутренний этап маршрута не меняется.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contactId, action, expectedResult]
+              properties:
+                contactId:
+                  type: string
+                  format: uuid
+                action:
+                  type: string
+                  maxLength: 300
+                expectedResult:
+                  type: string
+                  maxLength: 1000
+                dueOn:
+                  type: [string, 'null']
+                  format: date
+                materialIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        '201':
+          description: Запрос создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/partner-requests/review:
+    get:
+      tags: [Partner]
+      summary: Ответы вузов, ждущие проверки
+      operationId: listPartnerRequestsAwaitingReview
+      description: >-
+        КАМ и руководитель: запросы своих вузов в статусах «Ответ передан» и «Нужны уточнения» — для колокольчика.
+        Остальным ролям — пустой список.
+      responses:
+        '200':
+          description: До 50 запросов, старые сверху
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PartnerReviewItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/partner-requests/{id}/review:
+    post:
+      tags: [Partner]
+      summary: Принять ответ вуза или вернуть на доработку
+      operationId: reviewPartnerRequest
+      description: >-
+        Ответственный КАМ или руководитель команды; запрос в статусе «Ответ передан». Ответ с файлом принимается только
+        после успешной антивирусной проверки, иначе 409. Возврат требует причину — вуз увидит её в кабинете.
+        Внутренний этап маршрута не меняется.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, decision]
+              properties:
+                version:
+                  type: integer
+                  minimum: 0
+                decision:
+                  type: string
+                  enum: [ACCEPTED, RETURNED]
+                reason:
+                  type: [string, 'null']
+                  maxLength: 1000
+      responses:
+        '200':
+          description: Запрос после решения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/partner-requests/{id}/clarify:
+    post:
+      tags: [Partner]
+      summary: Ответить на вопрос вуза по запросу
+      operationId: clarifyPartnerRequest
+      description: Ответственный КАМ или руководитель команды; запрос в статусе «Нужны уточнения» возвращается в «Ожидает ответа».
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, text]
+              properties:
+                version:
+                  type: integer
+                  minimum: 0
+                text:
+                  type: string
+                  maxLength: 2000
+      responses:
+        '200':
+          description: Запрос после уточнения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/partner-requests/{id}/cancel:
+    post:
+      tags: [Partner]
+      summary: Отменить запрос вузу
+      operationId: cancelPartnerRequest
+      description: Ответственный КАМ или руководитель команды; принятый и уже отменённый запрос не отменяется.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version:
+                  type: integer
+                  minimum: 0
+                reason:
+                  type: [string, 'null']
+                  maxLength: 1000
+      responses:
+        '200':
+          description: Запрос отменён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/agent-plans/{id}:
+    get:
+      tags: [Interaction]
+      summary: Открыть план ИИ-агента на экране подтверждения
+      operationId: getAgentPlan
+      description: Только при MCP_ENABLED=true и только для сотрудника, для которого план создан; чужой план — 404. Истёкший план при открытии получает статус EXPIRED.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: План с текущими и предложенными шагом и сроком
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentPlan'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/agent-plans/{id}/apply:
+    post:
+      tags: [Interaction]
+      summary: Записать план ИИ-агента
+      operationId: applyAgentPlan
+      description: Исполняет комментарий с новым шагом и сроком одной командой (ключ повтора agent-plan:<id>). Если карточку изменили после подготовки — STALE без изменений; ошибка команды — FAILED. Повтор возвращает тот же итог.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: План с текущими и предложенными шагом и сроком
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentPlan'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/agent-plans/{id}/reject:
+    post:
+      tags: [Interaction]
+      summary: Отклонить план ИИ-агента
+      operationId: rejectAgentPlan
+      description: Закрывает ожидающий план без изменений карточки.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: План с текущими и предложенными шагом и сроком
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentPlan'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/webhook:
+    post:
+      tags: [Max]
+      summary: Принять событие вебхука MAX
+      operationId: receiveMaxWebhook
+      security: []
+      description: >-
+        Модуль MAX (MAX_ENABLED). Вызывает сервер MAX. Подлинность — секрет в заголовке X-Max-Bot-Api-Secret, сверка
+        в постоянное время; cookie и CSRF не нужны. Событие сначала записывается во входящую очередь, и только после
+        записи возвращается 200; если база недоступна — 503, и MAX повторит доставку. Повтор того же события (ключ по
+        полям события: mid сообщения, callback_id с временем нажатия, тип + пользователь + timestamp) не создаёт второй
+        записи. Тело больше 64 КБ — 413. При выключенном модуле — 404.
+      parameters:
+        - name: X-Max-Bot-Api-Secret
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [update_type, timestamp]
+              additionalProperties: true
+              properties:
+                update_type:
+                  type: string
+                timestamp:
+                  type: integer
+                  format: int64
+      responses:
+        '200':
+          description: Событие сохранено
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/link:
+    get:
+      tags: [Max]
+      summary: Состояние подключения MAX текущего сотрудника
+      operationId: getMaxLink
+      description: >-
+        Модуль MAX. Только КАМ и руководитель команды без флага оператора зачисления; остальным — 403. Состояния: NONE —
+        не подключено; WAITING — ссылка выдана, бот ещё не открыт; FOUND — найден аккаунт MAX, ждёт подтверждения;
+        ACTIVE — подключено; STOPPED — пользователь остановил бота.
+      responses:
+        '200':
+          description: Состояние
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxLinkStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Max]
+      summary: Получить одноразовую ссылку подключения MAX
+      operationId: startMaxLink
+      description: >-
+        Создаёт код на 10 минут (в базе только SHA-256; прежний код сотрудника удаляется) и возвращает ссылку
+        https://max.ru/<бот>?start=<код>. Код виден только в этом ответе. Журнал — MAX_LINK_REQUESTED. Бот не настроен —
+        409 MAX_NOT_CONFIGURED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Ссылка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxLinkStart'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Max]
+      summary: Отключить свой аккаунт MAX
+      operationId: deleteMaxLink
+      description: Удаляет связь, код и сеансы мини-приложения, сбрасывает ожидающие сообщения. Журнал — MAX_UNLINKED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Состояние после отключения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxLinkStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/link/confirm:
+    post:
+      tags: [Max]
+      summary: Подтвердить найденный аккаунт MAX
+      operationId: confirmMaxLink
+      description: >-
+        Тот же сотрудник в своей сессии CRM подтверждает аккаунт, открывший его ссылку: без этого пересланная ссылка не
+        привяжет чужой MAX. Код истёк или аккаунт не найден — 409 MAX_LINK_EXPIRED; аккаунт уже подключён к другому
+        профилю — 409 MAX_ACCOUNT_TAKEN. Журнал — MAX_LINKED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Подключено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxLinkStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/link/reject:
+    post:
+      tags: [Max]
+      summary: Отклонить найденный аккаунт MAX («Это не я»)
+      operationId: rejectMaxLink
+      description: Удаляет код и найденный аккаунт. Журнал — MAX_LINK_REJECTED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Состояние
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxLinkStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/link/preferences:
+    put:
+      tags: [Max]
+      summary: Что присылать в MAX
+      operationId: saveMaxPreferences
+      description: Настройки хранятся в таблице модуля. Без подключения — 409 MAX_NOT_LINKED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MaxPreferences'
+      responses:
+        '200':
+          description: Состояние
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxLinkStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/admin/settings:
+    get:
+      tags: [Max]
+      summary: Настройки бота MAX и состояние канала
+      operationId: getMaxSettings
+      description: Только ADMIN. Токен и секрет вебхука никогда не возвращаются.
+      responses:
+        '200':
+          description: Настройки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Max]
+      summary: Сохранить токен бота MAX и кнопку мини-приложения
+      operationId: updateMaxSettings
+      description: >-
+        Только ADMIN. Токен шифруется ключом SOURCES_SETTINGS_KEY; вместе с ним создаётся новый секрет вебхука, имя
+        бота и подписка сбрасываются. Пустое поле оставляет прежнее значение. Журнал — MAX_SETTINGS_CHANGED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MaxSettingsUpdate'
+      responses:
+        '200':
+          description: Настройки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/admin/check:
+    post:
+      tags: [Max]
+      summary: Проверить связь с MAX
+      operationId: checkMaxConnection
+      description: Только ADMIN. GET /me Bot API; при успехе сохраняет имя бота для ссылок подключения.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxCheck'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/admin/subscription:
+    post:
+      tags: [Max]
+      summary: Подписать вебхук MAX
+      operationId: subscribeMaxWebhook
+      description: >-
+        Только ADMIN. POST /subscriptions Bot API: адрес <публичный адрес CRM>/api/max/webhook (только HTTPS), события
+        bot_started, bot_stopped, dialog_removed, message_created и секрет. Адрес не HTTPS — 409 MAX_WEBHOOK_URL_INVALID;
+        MAX отказал — 502 MAX_REQUEST_FAILED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Настройки после подписки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/admin/outbox/requeue:
+    post:
+      tags: [Max]
+      summary: Вернуть ошибочные сообщения MAX в очередь
+      operationId: requeueMaxOutbox
+      description: Только ADMIN. Неустаревшие сообщения в статусе ERROR возвращаются в очередь. Журнал — MAX_OUTBOX_REQUEUED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Сколько возвращено
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requeued]
+                properties:
+                  requeued:
+                    type: integer
+                    minimum: 0
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/admin/links:
+    get:
+      tags: [Max]
+      summary: Подключения MAX сотрудников
+      operationId: listMaxLinks
+      description: Только ADMIN. Идентификатор пользователя MAX не возвращается.
+      responses:
+        '200':
+          description: Подключения
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MaxAdminLink'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/admin/links/{profileId}:
+    delete:
+      tags: [Max]
+      summary: Отключить MAX сотрудника
+      operationId: deleteMaxLinkByAdmin
+      description: Только ADMIN. Удаляет связь и сеансы мини-приложения. Журнал — MAX_UNLINKED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Отключено
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/mail/preferences:
+    get:
+      tags: [Mail]
+      summary: Мои уведомления на почту
+      operationId: getMailPreferences
+      description: >-
+        Любой активный сотрудник. Темы, доступные роли, и адрес учётной записи Keycloak, на который приходят письма. Оператору зачисления и представителю вуза тем нет.
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailPreferences'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Mail]
+      summary: Сохранить, что присылать на почту
+      operationId: saveMailPreferences
+      description: >-
+        Любой активный сотрудник. Список отключённых тем; темы, недоступные роли, игнорируются.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MailPreferencesUpdate'
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailPreferences'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/mail/admin/settings:
+    get:
+      tags: [Mail]
+      summary: Настройки почты и счётчики очереди
+      operationId: getMailSettings
+      description: >-
+        Только ADMIN. Пароль SMTP никогда не возвращается: только признак passwordState.
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Mail]
+      summary: Сохранить настройки почты
+      operationId: updateMailSettings
+      description: >-
+        Только ADMIN. Режим (заглушка или SMTP), сервер, порт, шифрование, логин, пароль, отправитель. Пароль шифруется ключом SOURCES_SETTINGS_KEY; пустое поле пароля оставляет прежний, clearPassword удаляет. Журнал — MAIL_SETTINGS_CHANGED без пароля и логина.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MailSettingsUpdate'
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/mail/admin/check:
+    post:
+      tags: [Mail]
+      summary: Проверить подключение к почтовому серверу
+      operationId: checkMailConnection
+      description: >-
+        Только ADMIN. Заглушка — всегда успех; SMTP — подключение и вход на сервер. Журнал — MAIL_CONNECTION_CHECKED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailCheck'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/mail/admin/test:
+    post:
+      tags: [Mail]
+      summary: Отправить тестовое письмо себе
+      operationId: sendMailTest
+      description: >-
+        Только ADMIN. Письмо на почту учётной записи администратора уходит сразу; результат — строка журнала. Журнал — MAIL_TEST_SENT.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailJournalRow'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/mail/admin/outbox:
+    get:
+      tags: [Mail]
+      summary: Журнал отправки писем
+      operationId: listMailOutbox
+      description: >-
+        Только ADMIN. Новые сверху; адрес получателя — маской.
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [QUEUED, SENT, ERROR, DROPPED, CANCELLED]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailJournalPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/mail/admin/outbox/{id}:
+    get:
+      tags: [Mail]
+      summary: Просмотреть письмо
+      operationId: getMailLetter
+      description: >-
+        Только ADMIN. Отправленное письмо читается из сохранённого MIME, ждущее — из очереди. Журнал — MAIL_LETTER_VIEWED.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailLetter'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/mail/admin/outbox/{id}/retry:
+    post:
+      tags: [Mail]
+      summary: Повторить письмо с ошибкой
+      operationId: retryMailLetter
+      description: >-
+        Только ADMIN. Только для письма с ошибкой, у которого не истёк срок. Журнал — MAIL_OUTBOX_REQUEUED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailJournalRow'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/mail/admin/outbox/{id}/cancel:
+    post:
+      tags: [Mail]
+      summary: Отменить письмо
+      operationId: cancelMailLetter
+      description: >-
+        Только ADMIN. Только для письма в очереди или с ошибкой. Журнал — MAIL_OUTBOX_CANCELLED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailJournalRow'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/mail/admin/outbox/requeue:
+    post:
+      tags: [Mail]
+      summary: Вернуть все письма с ошибкой в очередь
+      operationId: requeueMailOutbox
+      description: >-
+        Только ADMIN. Возвращаются только неустаревшие письма. Журнал — MAIL_OUTBOX_REQUEUED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requeued]
+                properties:
+                  requeued:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/mail/admin/subject-report:
+    post:
+      tags: [Mail]
+      summary: Отправить сведения субъекту ПДн на почту
+      operationId: sendMailSubjectReport
+      description: >-
+        Только ADMIN. Тот же отчёт PDF, что «Выгрузить сведения», уходит на адрес, указанный субъектом; после отправки вложение в журнале не хранится. Журнал — SUBJECT_EXPORTED и MAIL_SUBJECT_REPORT_SENT без адреса.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MailSubjectReportRequest'
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailJournalRow'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/mail/invitations:
+    post:
+      tags: [Mail]
+      summary: Открыть приглашение и получить временный пароль
+      operationId: redeemMailInvitation
+      description: >-
+        Без входа и CSRF. Токен из ссылки письма — в теле, а не в адресе. Ссылка одноразовая: пароль создаётся в Keycloak в момент открытия и показывается один раз, ответ не кэшируется. Журнал — MAIL_INVITATION_REDEEMED.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MailInvitationRedeem'
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailInvitationRedeemed'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Ссылка уже использована или истекла (MAIL_INVITATION_USED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/app/session:
+    post:
+      tags: [Max]
+      summary: Войти в мини-приложение MAX по initData
+      operationId: startMaxAppSession
+      security: []
+      description: >-
+        Модуль MAX. initData — строка window.WebApp.initData как есть. Сервер проверяет подпись HMAC (ключ — токен бота),
+        однократность параметров и возраст auth_date (не старше 1 часа; повтор той же initData в пределах часа разрешён),
+        затем активную подтверждённую связь и профиль: только КАМ и руководитель команды без флага оператора зачисления.
+        В ответе — токен сеанса для заголовка Authorization: Bearer; в базе только его SHA-256. Простой 30 минут,
+        предел 4 часа, сеанс закрывается при смене роли, команды, блокировке (access_revision), отключении MAX,
+        остановке бота и «Завершить сеансы» у администратора. Журнал — MAX_SESSION_STARTED.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [initData]
+              properties:
+                initData:
+                  type: string
+                  maxLength: 4096
+      responses:
+        '200':
+          description: Сеанс
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxAppSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Max]
+      summary: Завершить сеанс мини-приложения
+      operationId: endMaxAppSession
+      security:
+        - maxAppBearer: []
+      responses:
+        '204':
+          description: Сеанс завершён
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/app/me:
+    get:
+      tags: [Max]
+      summary: Профиль сеанса мини-приложения
+      operationId: getMaxAppMe
+      security:
+        - maxAppBearer: []
+      responses:
+        '200':
+          description: Профиль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxAppMe'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/app/work:
+    get:
+      tags: [Max]
+      summary: «Моя работа» в мини-приложении
+      operationId: getMaxAppWork
+      security:
+        - maxAppBearer: []
+      description: >-
+        Итоги групп — лента ReminderFeed (как колокольчик и «Моя работа» в CRM); список — серверная страница по 20
+        взаимодействий выбранной группы срока по Москве, total — полное число.
+      parameters:
+        - name: due
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OVERDUE, TODAY, THIS_WEEK, LATER, NO_NEXT_STEP]
+            default: TODAY
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Лента и страница
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxAppWork'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/app/interactions/{id}:
+    get:
+      tags: [Max]
+      summary: Карточка взаимодействия в мини-приложении
+      operationId: getMaxAppCard
+      security:
+        - maxAppBearer: []
+      description: >-
+        Права и видимость — как в CRM (InteractionService); чужая или невидимая карточка — 404. Контакты — привязанные к
+        взаимодействию, действующие и без ограничения обработки ПДн; события — последние 5, новые сверху.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Карточка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaxAppCard'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/app/interactions/{id}/comments:
+    post:
+      tags: [Max]
+      summary: Комментарий со следующим шагом из мини-приложения
+      operationId: commentMaxAppInteraction
+      security:
+        - maxAppBearer: []
+      description: >-
+        Комментарий пишется в текущий этап, этап не меняется. Оба поля nextStep обязательны: неполный шаг стёр бы второе
+        поле. Повтор с тем же Idempotency-Key возвращает прежний результат; устаревшая version — 409 VERSION_CONFLICT.
+        Журнал — MAX_CHANGE.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MaxAppComment'
+      responses:
+        '200':
+          description: Карточка после сохранения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/app/interactions/{id}/step-completions:
+    post:
+      tags: [Max]
+      summary: «Шаг выполнен» из мини-приложения
+      operationId: completeMaxAppStep
+      security:
+        - maxAppBearer: []
+      description: >-
+        Тот же метод, что в CRM: результат и обязательный следующий шаг целиком. Журнал — MAX_CHANGE.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MaxAppStepCompletion'
+      responses:
+        '200':
+          description: Карточка после сохранения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/max/app/control:
+    get:
+      tags: [Max]
+      summary: «Контроль» руководителя в мини-приложении
+      operationId: getMaxAppControl
+      security:
+        - maxAppBearer: []
+      description: Только руководитель команды, только чтение; КАМ — 403.
+      responses:
+        '200':
+          description: Показатели команды
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamIndicators'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
   securitySchemes:
+    maxAppBearer:
+      type: http
+      scheme: bearer
+      description: Токен сеанса мини-приложения MAX из POST /api/max/app/session; только для путей /api/max/app/**.
     cookieAuth:
       type: apiKey
       in: cookie
@@ -7569,6 +9598,14 @@ components:
       schema:
         type: string
         format: date
+    AgreementRegistryTeam:
+      name: teamId
+      in: query
+      required: false
+      description: Команда вуза; область данных не расширяет — руководитель чужой команды получает пустой список
+      schema:
+        type: string
+        format: uuid
     AgreementRegistryDelayed:
       name: delayed
       in: query
@@ -7917,6 +9954,61 @@ components:
           schema:
             $ref: '#/components/schemas/ApiError'
   schemas:
+    AgentPlanStatus:
+      type: string
+      enum: [PENDING, APPLIED, REJECTED, EXPIRED, STALE, FAILED]
+    AgentPlan:
+      type: object
+      required: [id, status, organizationId, organizationName, interactionId, interactionTitle, cardChanged, note,
+                 nextAction, nextActionAt, createdAt, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/AgentPlanStatus'
+        clientId:
+          type: [string, 'null']
+          description: Клиент MCP (azp токена), который подготовил план
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        interactionId:
+          type: string
+          format: uuid
+        interactionTitle:
+          type: string
+        stageName:
+          type: [string, 'null']
+        cardChanged:
+          type: boolean
+          description: Карточку изменили после подготовки плана; «Записать» даст STALE
+        currentNextAction:
+          type: [string, 'null']
+        currentNextActionAt:
+          type: [string, 'null']
+          format: date-time
+        note:
+          type: string
+          description: Комментарий, который предлагает агент; показывается как текст
+        nextAction:
+          type: string
+        nextActionAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        decidedAt:
+          type: [string, 'null']
+          format: date-time
+        errorCode:
+          type: [string, 'null']
     PaidOrderUpload:
       type: object
       required: [runId, received, emptyElements, created, updated, skipped, needsMapping, failed, message, streams, issues,
@@ -8057,8 +10149,167 @@ components:
       enum: [MAIN, DOCUMENTS, PERSONAL, ADDRESS, DATIVE, EDUCATION]
     LmsStatus:
       type: string
-      description: PENDING ожидает выгрузки, EXPORTED выгружено в файл, TRANSFERRED передано в LMS
-      enum: [PENDING, EXPORTED, TRANSFERRED]
+      description: >-
+        PENDING ожидает выгрузки; EXPORTED файл сформирован, партия не отмечена переданной; SENT партия передана, ждём
+        результат LMS; FAILED LMS вернула ошибку по строке; TRANSFERRED строка принята LMS
+      enum: [PENDING, EXPORTED, SENT, FAILED, TRANSFERRED]
+    BatchItemResult:
+      type: string
+      description: PENDING ожидает результата; ACCEPTED принята LMS; FAILED ошибка LMS
+      enum: [PENDING, ACCEPTED, FAILED]
+    RosterFormat:
+      type: string
+      description: XLSX_TEMPLATE — XLSX по шаблону организатора; MOODLE_CSV — CSV «Загрузка пользователей» Moodle
+      enum: [XLSX_TEMPLATE, MOODLE_CSV]
+    EnrolmentQueueKind:
+      type: string
+      enum: [MISSING_DATA, AMBIGUOUS_MATCH, READY, NOT_SENT, AWAITING_RESULT, LMS_ERROR, MOVED_AFTER_TRANSFER, CHANGED_AFTER_TRANSFER]
+    EnrolmentBatchItem:
+      type: object
+      required: [id, rowNo, enrolmentId, learnerId, lastName, firstName, orderNumber, learnerVersion, currentLearnerVersion, result,
+                 error, resultSource, resultAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        rowNo:
+          type: integer
+          description: Номер строки в файле партии (первая строка — заголовок)
+        enrolmentId:
+          type: string
+          format: uuid
+        learnerId:
+          type: string
+          format: uuid
+        lastName:
+          type: [string, 'null']
+        firstName:
+          type: [string, 'null']
+        orderNumber:
+          type: [string, 'null']
+        learnerVersion:
+          type: [integer, 'null']
+          description: Версия анкеты на момент выгрузки; null у партий до учёта версий
+        currentLearnerVersion:
+          type: [integer, 'null']
+        result:
+          $ref: '#/components/schemas/BatchItemResult'
+        error:
+          type: [string, 'null']
+        resultSource:
+          type: [string, 'null']
+          enum: [MANUAL, PROTOCOL, LEGACY, API, null]
+        resultAt:
+          type: [string, 'null']
+          format: date-time
+    EnrolmentBatch:
+      type: object
+      required: [id, streamId, streamTitle, format, fileName, checksum, legacy, createdAt, createdByName, sentAt, rows, accepted, failed,
+                 pending, items, moodleTransferAvailable]
+      properties:
+        id:
+          type: string
+          format: uuid
+        streamId:
+          type: string
+          format: uuid
+        streamTitle:
+          type: string
+        format:
+          $ref: '#/components/schemas/RosterFormat'
+        fileName:
+          type: [string, 'null']
+        checksum:
+          type: [string, 'null']
+        legacy:
+          type: boolean
+          description: Партия перенесена из отметок до учёта партий
+        createdAt:
+          type: string
+          format: date-time
+        createdByName:
+          type: [string, 'null']
+        sentAt:
+          type: [string, 'null']
+          format: date-time
+        rows:
+          type: integer
+        accepted:
+          type: integer
+        failed:
+          type: integer
+        pending:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnrolmentBatchItem'
+        moodleTransferAvailable:
+          type: boolean
+          description: Включена запись в Moodle (флаг и токен записи); иначе остаётся только передача файлом
+    BatchResultsApplied:
+      type: object
+      required: [batch, changed, skipped]
+      properties:
+        batch:
+          $ref: '#/components/schemas/EnrolmentBatch'
+        changed:
+          type: integer
+        skipped:
+          type: array
+          items:
+            type: string
+    EnrolmentQueueItem:
+      type: object
+      required: [kind, enrolmentId, learnerId, streamId, streamTitle, orderNumber, lastName, firstName, detail, batchId, learnerVersion]
+      properties:
+        kind:
+          $ref: '#/components/schemas/EnrolmentQueueKind'
+        enrolmentId:
+          type: string
+          format: uuid
+        learnerId:
+          type: string
+          format: uuid
+        streamId:
+          type: string
+          format: uuid
+        streamTitle:
+          type: string
+        orderNumber:
+          type: [string, 'null']
+        lastName:
+          type: [string, 'null']
+        firstName:
+          type: [string, 'null']
+        detail:
+          type: [string, 'null']
+          description: Причина — каких полей нет, текст ошибки LMS, причина сверки
+        batchId:
+          type: [string, 'null']
+          format: uuid
+        learnerVersion:
+          type: integer
+    EnrolmentQueue:
+      type: object
+      required: [groups, moodleWriteAvailable]
+      properties:
+        moodleWriteAvailable:
+          type: boolean
+        groups:
+          type: array
+          items:
+            type: object
+            required: [kind, total, items]
+            properties:
+              kind:
+                $ref: '#/components/schemas/EnrolmentQueueKind'
+              total:
+                type: integer
+              items:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EnrolmentQueueItem'
     EnrolmentStreams:
       type: object
       required: [streams, counters]
@@ -8216,9 +10467,12 @@ components:
         lmsTransferredAt:
           type: [string, 'null']
           format: date-time
+        lmsError:
+          type: [string, 'null']
+          description: Ошибка LMS по текущей партии, если строка не принята
     RosterExport:
       type: object
-      required: [exportId, exportedAt, rows, transferred]
+      required: [exportId, exportedAt, rows, transferred, failed, pending, sentAt, format, checksum, legacy]
       properties:
         exportId:
           type: string
@@ -8229,10 +10483,27 @@ components:
         rows:
           type: integer
           minimum: 1
-          description: Зачислений с этим идентификатором выгрузки
+          description: Строк в партии
         transferred:
           type: integer
           minimum: 0
+          description: Принято LMS
+        failed:
+          type: integer
+          minimum: 0
+        pending:
+          type: integer
+          minimum: 0
+        sentAt:
+          type: [string, 'null']
+          format: date-time
+          description: Когда партию отметили переданной в LMS
+        format:
+          $ref: '#/components/schemas/RosterFormat'
+        checksum:
+          type: [string, 'null']
+        legacy:
+          type: boolean
     RosterSummary:
       type: object
       required: [pending, all]
@@ -8272,6 +10543,10 @@ components:
         incomplete:
           type: string
           enum: [INCLUDE, EXCLUDE]
+        format:
+          anyOf:
+            - $ref: '#/components/schemas/RosterFormat'
+            - type: 'null'
     RosterExportMarked:
       type: object
       required: [exportId, streamId, rows, marked]
@@ -8794,7 +11069,7 @@ components:
     AgreementRegistryRow:
       type: object
       required: [id, organizationId, organizationName, number, status, statusChangedAt, daysInStatus, sentOn, concludedOn, validUntil,
-                 subject, managerId, managerName, approval]
+                 subject, managerId, managerName, approval, teamId, teamName]
       properties:
         id:
           type: string
@@ -8836,6 +11111,12 @@ components:
           oneOf:
             - $ref: '#/components/schemas/AgreementApproval'
             - type: 'null'
+        teamId:
+          type: [string, 'null']
+          format: uuid
+        teamName:
+          type: [string, 'null']
+          description: Команда вуза
     AgreementPeriodTransition:
       type: object
       required: [occurredAt, agreementId, organizationName, number, fromStatus, toStatus, actorName, comment]
@@ -9507,11 +11788,14 @@ components:
         login:
           type: string
         temporaryPassword:
-          type: string
-          description: Показывается один раз; при первом входе Keycloak потребует сменить пароль
+          type: [string, 'null']
+          description: Показывается один раз; при первом входе Keycloak потребует сменить пароль; null, если ссылка ушла на почту
+        invitationSentTo:
+          type: [string, 'null']
+          description: При включённом модуле почты и почте у контакта — маска адреса, куда ушла одноразовая ссылка на пароль
     PartnerCabinet:
       type: object
-      required: [organization, manager, works, documents, agreements]
+      required: [organization, manager, works, documents, agreements, requests]
       properties:
         organization:
           type: object
@@ -9552,6 +11836,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PartnerAgreement'
+        requests:
+          type: array
+          description: Запросы школы, адресованные контакту этого профиля; чужие запросы того же вуза не показываются
+          items:
+            $ref: '#/components/schemas/PartnerRequestForPartner'
     PartnerWork:
       type: object
       required: [id, title, programName, productNames, currentStageName, status, passedStages, nextStep]
@@ -9574,7 +11863,9 @@ components:
           enum: [ACTIVE, PAUSED, COMPLETED]
         passedStages:
           type: array
-          description: Этапы до текущего, по которым есть отметка выполнения или переход дальше; дата — отметка, иначе день перехода (МСК)
+          description: >-
+            Этапы до текущего, по которым есть отметка выполнения или переход дальше; дата — отметка, иначе день
+            перехода (МСК). Не полная история: при возврате на прежний этап более поздние отметки сюда не попадают
           items:
             type: object
             required: [name, passedOn]
@@ -9598,7 +11889,7 @@ components:
             - type: 'null'
     PartnerDocument:
       type: object
-      required: [id, workId, workTitle, name, kind, mediaType, sizeBytes, downloadable, createdAt]
+      required: [id, workId, workTitle, name, kind, mediaType, sizeBytes, downloadable, createdAt, revision, replaced, receivedAt]
       properties:
         id:
           type: string
@@ -9623,6 +11914,17 @@ components:
         createdAt:
           type: string
           format: date-time
+        revision:
+          type: integer
+          minimum: 1
+          description: Номер версии документа
+        replaced:
+          type: boolean
+          description: Есть более новая версия этого документа
+        receivedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Когда вуз подтвердил получение именно этой версии; скачивание подтверждением не считается
     PartnerAgreement:
       type: object
       description: Договор вуза на любой стадии, кроме «Проект»; файлы договора вузу не показываются
@@ -9656,6 +11958,208 @@ components:
           description: >-
             Круг согласования — номер прохода «На согласовании»; только для «На согласовании» (сторона вуза),
             «На корректировке» (сторона школы) и «На подписании»
+    PartnerRequestStatus:
+      type: string
+      description: >-
+        AWAITING_RESPONSE — ожидает ответа; CLARIFICATION_NEEDED — вуз задал вопрос, нужны уточнения школы;
+        RESPONDED — ответ передан и ждёт проверки; ACCEPTED — принято; RETURNED — возвращено на доработку с причиной;
+        CANCELLED — отменено
+      enum: [AWAITING_RESPONSE, CLARIFICATION_NEEDED, RESPONDED, ACCEPTED, RETURNED, CANCELLED]
+    PartnerFileState:
+      type: [string, 'null']
+      description: CHECKING — файл проверяется антивирусом; CLEAN — проверен; REJECTED — отклонён
+      enum: [CHECKING, CLEAN, REJECTED, null]
+    PartnerRequestMaterial:
+      type: object
+      required: [id, name, revision, downloadable, receivedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        revision:
+          type: integer
+        downloadable:
+          type: boolean
+        receivedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Когда адресат подтвердил получение этой версии
+    PartnerReceipt:
+      type: object
+      required: [receiptNumber, kind, message, fileName, fileState, submittedAt, decision, decisionReason]
+      properties:
+        receiptNumber:
+          type: string
+          description: Номер квитанции
+        kind:
+          type: string
+          enum: [ANSWER, QUESTION]
+        message:
+          type: [string, 'null']
+        fileName:
+          type: [string, 'null']
+        fileState:
+          $ref: '#/components/schemas/PartnerFileState'
+        submittedAt:
+          type: string
+          format: date-time
+        decision:
+          type: [string, 'null']
+          enum: [ACCEPTED, RETURNED, null]
+        decisionReason:
+          type: [string, 'null']
+    PartnerRequestForPartner:
+      type: object
+      required: [id, workId, workTitle, action, expectedResult, dueOn, status, returnReason, clarification, materials, responses,
+                 createdAt, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workId:
+          type: string
+          format: uuid
+        workTitle:
+          type: string
+        action:
+          type: string
+        expectedResult:
+          type: string
+        dueOn:
+          type: [string, 'null']
+          format: date
+        status:
+          $ref: '#/components/schemas/PartnerRequestStatus'
+        returnReason:
+          type: [string, 'null']
+          description: Только в статусе RETURNED
+        clarification:
+          type: [string, 'null']
+        materials:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartnerRequestMaterial'
+        responses:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartnerReceipt'
+        createdAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+    PartnerRequestResponse:
+      type: object
+      required: [id, receiptNumber, kind, message, attachmentId, fileName, fileState, submittedAt, submittedByName, decision,
+                 decisionReason, decidedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        receiptNumber:
+          type: string
+        kind:
+          type: string
+          enum: [ANSWER, QUESTION]
+        message:
+          type: [string, 'null']
+        attachmentId:
+          type: [string, 'null']
+          format: uuid
+          description: Файл ответа во вложениях взаимодействия; скачивается обычным методом вложений после проверки
+        fileName:
+          type: [string, 'null']
+        fileState:
+          $ref: '#/components/schemas/PartnerFileState'
+        submittedAt:
+          type: string
+          format: date-time
+        submittedByName:
+          type: [string, 'null']
+        decision:
+          type: [string, 'null']
+          enum: [ACCEPTED, RETURNED, null]
+        decisionReason:
+          type: [string, 'null']
+        decidedAt:
+          type: [string, 'null']
+          format: date-time
+    PartnerRequest:
+      type: object
+      required: [id, interactionId, contactId, contactName, action, expectedResult, dueOn, status, returnReason, clarification,
+                 cancelReason, materials, responses, createdByName, createdAt, updatedAt, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        interactionId:
+          type: string
+          format: uuid
+        contactId:
+          type: string
+          format: uuid
+        contactName:
+          type: string
+        action:
+          type: string
+        expectedResult:
+          type: string
+        dueOn:
+          type: [string, 'null']
+          format: date
+        status:
+          $ref: '#/components/schemas/PartnerRequestStatus'
+        returnReason:
+          type: [string, 'null']
+        clarification:
+          type: [string, 'null']
+        cancelReason:
+          type: [string, 'null']
+        materials:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartnerRequestMaterial'
+        responses:
+          type: array
+          description: Ответы и вопросы вуза, новые сверху
+          items:
+            $ref: '#/components/schemas/PartnerRequestResponse'
+        createdByName:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+    PartnerReviewItem:
+      type: object
+      required: [requestId, interactionId, organizationId, organizationName, workTitle, action, status, updatedAt]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        interactionId:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        workTitle:
+          type: string
+        action:
+          type: string
+        status:
+          $ref: '#/components/schemas/PartnerRequestStatus'
+        updatedAt:
+          type: string
+          format: date-time
     Me:
       type: object
       required: [id, role, teamId, teamName, accessRevision, enrolmentOperator]
@@ -9697,7 +12201,7 @@ components:
       properties:
         modules:
           type: object
-          required: [enrolment, partner]
+          required: [enrolment, partner, max, mcp]
           properties:
             enrolment:
               type: boolean
@@ -9705,6 +12209,15 @@ components:
             partner:
               type: boolean
               description: Кабинет вуза; при false методы /api/partner/** и доступа в кабинет отвечают 404, вход представителя вуза отклоняется (403, PARTNER_MODULE_DISABLED)
+            max:
+              type: boolean
+              description: Модуль MAX (MAX_ENABLED, по умолчанию выключен); при false методы /api/max/** и путь /max/ отвечают 404
+            mcp:
+              type: boolean
+              description: Модуль MCP для ИИ-агентов (по умолчанию выключен); при false /mcp и /api/agent-plans/** отвечают 404 и без сеанса, экрана «План ИИ-агента» нет
+            mail:
+              type: boolean
+              description: Модуль почты (MAIL_ENABLED, по умолчанию выключен); при false методы /api/mail/** отвечают 404
     CsrfToken:
       type: object
       required: [headerName, token]
@@ -9762,6 +12275,20 @@ components:
             - PARTNER_ACCOUNT_CONFLICT
             - ACCOUNT_CONFLICT
             - FILE_UNAVAILABLE
+            - MAX_NOT_CONFIGURED
+            - MAX_UNAVAILABLE
+            - MAX_REQUEST_FAILED
+            - MAX_WEBHOOK_URL_INVALID
+            - MAX_LINK_EXPIRED
+            - MAX_ACCOUNT_TAKEN
+            - MAX_NOT_LINKED
+            - MAX_INIT_DATA_INVALID
+            - MAX_INIT_DATA_EXPIRED
+            - MAX_ROLE_NOT_ALLOWED
+            - MAX_SESSION_EXPIRED
+            - MAIL_INVITATION_INVALID
+            - MAIL_INVITATION_USED
+            - MAIL_LETTER_STATE
         message:
           type: string
         requestId:
@@ -10358,7 +12885,7 @@ components:
       type: object
       required: [id, interactionId, interactionTitle, organizationId, organizationName, ownerManagerName, kind, description, riskLevel,
                  responsibleId, responsibleName, dueOn, status, resolution, createdBy, createdByName, createdAt, resolvedByName, resolvedAt,
-                 organizationAccessible]
+                 organizationAccessible, lastComment, lastCommentByName, lastCommentAt]
       properties:
         id:
           type: string
@@ -10417,6 +12944,64 @@ components:
           format: date-time
         organizationAccessible:
           description: Открывается ли вуз записи текущему сотруднику. false у записи, назначенной ему в чужом вузе
+          type: boolean
+        lastComment:
+          description: Последний комментарий ответственного из реестра
+          type: [string, 'null']
+        lastCommentByName:
+          type: [string, 'null']
+        lastCommentAt:
+          type: [string, 'null']
+          format: date-time
+    InteractionIssueNote:
+      type: object
+      required: [text]
+      properties:
+        text:
+          description: Комментарий или «Как решили»
+          type: string
+          maxLength: 1000
+    WorkNews:
+      type: object
+      required: [days, unviewed, items]
+      properties:
+        days:
+          type: integer
+        unviewed:
+          type: integer
+          format: int64
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkNewsItem'
+    WorkNewsItem:
+      type: object
+      required: [eventId, interactionId, organizationId, organizationName, interactionTitle, kind, summary, occurredAt, viewed]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        interactionId:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        interactionTitle:
+          type: string
+        kind:
+          type: string
+          description: SITE_REQUEST — заявка с сайта, LMS_DATA — данные LMS
+          enum: [SITE_REQUEST, LMS_DATA]
+        summary:
+          description: Первая строка записи в истории
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        viewed:
           type: boolean
     InteractionIssueList:
       type: object
@@ -10715,6 +13300,29 @@ components:
           anyOf:
             - $ref: '#/components/schemas/InteractionNextStep'
             - type: 'null'
+        contact:
+          anyOf:
+            - $ref: '#/components/schemas/InteractionContactMark'
+            - type: 'null'
+    InteractionContactMark:
+      type: object
+      description: >-
+        Отметка «был контакт с вузом». Обновляет дату последнего контакта взаимодействия (только вперёд), канал и участники
+        видны в истории. Записи источников (заявки сайта, данные LMS) контактом не считаются.
+      required: [channel]
+      properties:
+        channel:
+          type: string
+          description: MEETING — встреча, CALL — звонок, EMAIL — письмо, MESSENGER — мессенджер, EVENT — мероприятие
+          enum: [MEETING, CALL, EMAIL, MESSENGER, EVENT]
+        participantIds:
+          description: Участники со стороны вуза — контакты этого вуза
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
     InteractionStepCompletion:
       type: object
       required: [version]
@@ -10728,6 +13336,10 @@ components:
         nextStep:
           oneOf:
             - $ref: '#/components/schemas/InteractionNextStep'
+            - type: 'null'
+        contact:
+          anyOf:
+            - $ref: '#/components/schemas/InteractionContactMark'
             - type: 'null'
     OrganizationBulkAssignment:
       type: object
@@ -10989,7 +13601,7 @@ components:
           description: Вузы с КАМ без идущего взаимодействия («Без работы»); 0, если они не считаются
     WorkControlIdleOrganization:
       type: object
-      required: [id, name, teamId, teamName, managerId, managerName]
+      required: [id, name, teamId, teamName, managerId, managerName, lastActionAt]
       properties:
         id:
           type: string
@@ -11006,6 +13618,10 @@ components:
           format: uuid
         managerName:
           type: string
+        lastActionAt:
+          type: [string, 'null']
+          format: date-time
+          description: Последнее действие сотрудника по вузу — событие его взаимодействий, кроме автоматических записей источников; null — не зафиксировано
     WorkControlItem:
       type: object
       required: [interactionId, organizationId, organizationName, title, products, stage, stagePosition, stageTotal, due, problems, risks, transitions, created, completed, stageUnderApproval]
@@ -11182,6 +13798,14 @@ components:
             задан период или отбор по направлению, программе, продукту или этапу
           items:
             $ref: '#/components/schemas/WorkControlIdleOrganization'
+        agreements:
+          type: array
+          description: >
+            Договоры на согласовании, корректировке и подписании для плитки «Договор на согласовании» — по правилу реестра,
+            в том числе не привязанные к взаимодействию. Без отборов и периода совпадают с реестром; при отборе — договоры
+            вузов из строк и группы «Без работы». Предмет и дата подписания не заполняются
+          items:
+            $ref: '#/components/schemas/AgreementRegistryRow'
     TeamsSummary:
       type: object
       required: [calculatedAt, stuckDays, teams, total]
@@ -11200,7 +13824,8 @@ components:
           $ref: '#/components/schemas/TeamSummary'
     LearningDynamics:
       type: object
-      required: [generatedAt, from, to, timezone, seriesBy, notes, months, series, totalParticipants, totalCompleted, rows]
+      required: [generatedAt, from, to, timezone, seriesBy, notes, months, series, totalParticipants, totalCompleted, totalKnown,
+                 totalRunsWithoutData, rows]
       properties:
         generatedAt:
           type: string
@@ -11231,14 +13856,27 @@ components:
             $ref: '#/components/schemas/LearningDynamicsSeries'
         totalParticipants:
           type: array
+          description: Участия в потоках с наблюдением; 0 — потоков в месяце не было, null — потоки были, но ни у одного нет наблюдения («нет данных»)
           items:
-            type: integer
+            type: [integer, 'null']
             format: int64
         totalCompleted:
           type: array
           description: null — ни один поток месяца не отслеживает завершение («нет данных»)
           items:
             type: [integer, 'null']
+            format: int64
+        totalKnown:
+          type: array
+          description: Участия с известным статусом завершения (завершили и не завершили); null — нет данных
+          items:
+            type: [integer, 'null']
+            format: int64
+        totalRunsWithoutData:
+          type: array
+          description: Потоки, шедшие в месяце, у которых нет наблюдения на его конец
+          items:
+            type: integer
             format: int64
         rows:
           type: array
@@ -11367,8 +14005,9 @@ components:
           type: string
         participants:
           type: array
+          description: null — потоки линии в месяце были, но без наблюдения
           items:
-            type: integer
+            type: [integer, 'null']
             format: int64
         completed:
           type: array
@@ -11377,7 +14016,8 @@ components:
             format: int64
     LearningDynamicsRow:
       type: object
-      required: [month, monthLabel, organizationId, organizationName, programId, programName, runs, participants]
+      required: [month, monthLabel, organizationId, organizationName, programId, programName, runs, runsWithoutData, participants,
+                 completionBasis]
       properties:
         month:
           type: string
@@ -11396,16 +14036,29 @@ components:
         runs:
           type: integer
           format: int64
-        participants:
+          description: Потоки с наблюдением
+        runsWithoutData:
           type: integer
           format: int64
+          description: Потоки, шедшие в месяце, без наблюдения на его конец
+        participants:
+          type: [integer, 'null']
+          format: int64
+          description: null — у потоков строки нет наблюдений («нет данных», не ноль)
         completed:
           type: [integer, 'null']
           format: int64
+        known:
+          type: [integer, 'null']
+          format: int64
+          description: Участия с известным статусом завершения (завершили и не завершили); null — завершение не отслеживается
         completionPercent:
           type: [integer, 'null']
           format: int64
-          description: Доля завершивших, % (целое) — завершившие к обучающимся потоков, где Moodle отслеживает завершение; null — нет данных
+          description: Доля завершивших среди участий с известным статусом, % (целое); null — нет данных
+        completionBasis:
+          type: string
+          description: Основание доли, например «16 из 20 с известным статусом; данные по 20 из 100»
     LearningTrend:
       type: object
       required: [calculatedAt, from, to, days, total, teams, programs, growing, falling, runsWithoutData]
@@ -11443,7 +14096,10 @@ components:
           type: integer
     LearningTrendItem:
       type: object
-      required: [start, end, change, runsWithoutData]
+      description: >
+        start, end и change — по сопоставимым потокам (есть значение на начало, до начала потока — ноль); потоки без
+        значения на начало (runsWithoutData) в них не входят, их обучающиеся на конец — endWithoutBase
+      required: [start, end, change, runsWithoutData, endWithoutBase]
       properties:
         id:
           type: [string, 'null']
@@ -11461,6 +14117,9 @@ components:
           format: int64
         runsWithoutData:
           type: integer
+        endWithoutBase:
+          type: integer
+          format: int64
     ReminderStep:
       type: object
       required: [interactionId, organizationId, title, organizationName, nextAction, nextActionAt, ownerManagerName]
@@ -11531,7 +14190,7 @@ components:
     ReminderDigest:
       type: object
       required: [enabled, generatedAt, upcomingDays, overdueTotal, dueTodayTotal, upcomingTotal, overdue, upcoming, expiringLicenses, trainingCycles, licenseExpiresBy,
-        qualificationDue, agreementNoticeDays, expiringAgreements, feed]
+        qualificationDue, agreementNoticeDays, expiringAgreements, feed, unassignedAfterBlock]
       properties:
         enabled:
           type: boolean
@@ -11585,6 +14244,27 @@ components:
             $ref: '#/components/schemas/ReminderAgreement'
         feed:
           $ref: '#/components/schemas/ReminderFeed'
+        unassignedAfterBlock:
+          type: array
+          description: >-
+            Только у руководителя команды: вузы, оставшиеся без КАМ после блокировки КАМ без передачи, за 30 дней, пока КАМ
+            не назначен. У КАМ всегда пусто
+          items:
+            $ref: '#/components/schemas/ReminderUnassigned'
+    ReminderUnassigned:
+      type: object
+      required: [organizationId, organizationName, previousOwnerName, unassignedAt]
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        previousOwnerName:
+          type: [string, 'null']
+        unassignedAt:
+          type: string
+          format: date-time
     ReminderFeed:
       type: object
       description: >-
@@ -11688,14 +14368,16 @@ components:
           description: Работа, поток и вид сигнала
         type:
           type: string
-          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION, LOW_ACTIVITY, NOT_STARTED, DROPOUT, TEACHER_INACTIVE, NO_ACTIVITY]
+          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION, COMPLETION_UNVERIFIED, LOW_ACTIVITY, NOT_STARTED, DROPOUT, TEACHER_INACTIVE, NO_ACTIVITY]
           description: >
             STUDENTS_APPEARED — в идущем потоке есть обучающиеся, а текущий этап маршрута раньше этапа «Занятия»;
             NO_STUDENTS — поток идёт дольше app.lms-signals.no-students-after-days дней, обучающихся 0;
             LOW_COMPLETION — поток закрыт или до его конца не больше app.lms-signals.completion-window-days дней,
-            отслеживание завершения включено, доля завершивших ниже app.lms-signals.low-completion-percent.
+            отслеживание завершения включено, статус известен не меньше чем у app.lms-signals.completion-coverage-percent
+            (70) % обучающихся, доля завершивших среди известных ниже app.lms-signals.low-completion-percent;
+            COMPLETION_UNVERIFIED — те же условия, но статус известен у меньшей доли: «данных недостаточно, нужна проверка».
             Сигналы активности (поток идёт не меньше app.lms-signals.activity-grace-days дней, Moodle отдал время последнего
-            входа в курс): NOT_STARTED — ни разу не заходили больше not-started-percent % обучающихся; NO_ACTIVITY — за 7 дней
+            входа в курс, наблюдение не старше SOURCES_STALE_AFTER): NOT_STARTED — ни разу не заходили больше not-started-percent % обучающихся; NO_ACTIVITY — за 7 дней
             не заходили ни обучающиеся, ни преподаватели; LOW_ACTIVITY — за 7 дней заходили меньше low-activity-percent %;
             DROPOUT — заходили раньше, но не заходят больше inactive-after-days дней, больше dropout-percent %;
             TEACHER_INACTIVE — у потока есть преподаватели с ролью в курсе, ни один не заходил 14 дней
@@ -11774,7 +14456,7 @@ components:
       properties:
         type:
           type: string
-          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION, LOW_ACTIVITY, NOT_STARTED, DROPOUT, TEACHER_INACTIVE, NO_ACTIVITY]
+          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION, COMPLETION_UNVERIFIED, LOW_ACTIVITY, NOT_STARTED, DROPOUT, TEACHER_INACTIVE, NO_ACTIVITY]
         mappingId:
           type: string
           format: uuid
@@ -11788,7 +14470,7 @@ components:
           description: Версия работы, как в «Добавить проблему или риск»
         type:
           type: string
-          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION, LOW_ACTIVITY, NOT_STARTED, DROPOUT, TEACHER_INACTIVE, NO_ACTIVITY]
+          enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION, COMPLETION_UNVERIFIED, LOW_ACTIVITY, NOT_STARTED, DROPOUT, TEACHER_INACTIVE, NO_ACTIVITY]
         mappingId:
           type: string
           format: uuid
@@ -12526,7 +15208,10 @@ components:
           type: string
         temporaryPassword:
           type: [string, 'null']
-          description: Показывается один раз; null при повторе запроса с тем же ключом
+          description: Показывается один раз; null при повторе запроса с тем же ключом и когда ссылка на пароль ушла на почту
+        invitationSentTo:
+          type: [string, 'null']
+          description: При включённом модуле почты — маска адреса, куда ушла одноразовая ссылка на пароль
     AccountEmailChange:
       type: object
       required: [email]
@@ -12559,6 +15244,55 @@ components:
         enrolmentOperator:
           type: boolean
           description: Назначить или снять флаг «Оператор зачисления» (400 для ADMIN и MANAGEMENT)
+        transferOrganizationsTo:
+          type: string
+          format: uuid
+          description: >-
+            Действующий КАМ той же команды, которому в том же изменении передаются вузы сотрудника при блокировке, смене роли
+            или команды (запись истории с причиной). Без поля вузы остаются без КАМ, а руководитель команды видит их в колокольчике.
+    CrmProfileOrganizations:
+      type: object
+      required: [organizations, candidates]
+      properties:
+        organizations:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrganizationAssignmentCandidate'
+    LoginLockoutStatus:
+      type: object
+      required: [available, failures, locked, lastFailureAt]
+      properties:
+        available:
+          type: boolean
+          description: false, если связь CRM с Keycloak не настроена
+        failures:
+          type: integer
+          minimum: 0
+          description: Неудачных входов подряд
+        locked:
+          type: boolean
+          description: Keycloak временно не пускает сотрудника даже с верным паролем
+        lastFailureAt:
+          type: [string, 'null']
+          format: date-time
+    BackupStatus:
+      type: object
+      required: [lastBackupAt]
+      properties:
+        lastBackupAt:
+          type: [string, 'null']
+          format: date-time
     CrmProfileEvent:
       type: object
       required: [id, profileId, commandId, actorProfileId, actorDisplayName, previousDisplayName, displayName, previousRole, role, previousTeamId, previousTeamName, teamId, teamName, previousActive, active, previousEnrolmentOperator, enrolmentOperator, requestId, version, occurredAt]
@@ -13234,8 +15968,8 @@ components:
         только для LEADER; USER получает только события взаимодействий. SNAPSHOT показывает взаимодействия, созданные
         до конца asOf, с этапом последнего перехода и КАМ организации, восстановленным из истории назначений на эту
         дату; from и to отклоняются. DURATION группирует по команде, программе и этапу среднее и максимальное число
-        дней пребывания на этапе и всего цикла (от создания до первого входа на последний этап маршрута), завершённых
-        в периоде, плюс пребывания, всё ещё открытые на конец периода. AGREEMENTS выдаёт одну строку на каждое
+        дней пребывания на этапе и время до входа в последний этап (от создания до первого входа на последний этап маршрута;
+        это не подтверждённое завершение), закончившихся в периоде, плюс пребывания, всё ещё открытые на конец периода. AGREEMENTS выдаёт одну строку на каждое
         мероприятие плана по договору (договор без мероприятий даёт одну строку): период отбирает мероприятия, чьи
         фактические даты, иначе плановые даты, иначе срок договора пересекаются с ним; MANAGER — ответственный за
         мероприятие, PARTICIPANTS суммирует участия в Moodle по программам связанных работ, считая только запуски
@@ -13276,11 +16010,15 @@ components:
         WAITING, PROBLEM, RISK, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, VENDORS, CONTRACT_NUMBER,
         LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON; DAYS_ON_STAGE — число полных
         дней от последнего входа на текущий этап (от создания, если карточка ни разу не входила на него через переход)
-        до момента формирования отчёта; колонки по договору показывают само значение для одного продукта и пары
+        до момента формирования отчёта; LAST_EVENT_AT — последнее событие работы без автоматических записей источников
+        (команда APPLY_SOURCE_RECORD: Moodle, сайт), null, если таких событий нет; колонки по договору показывают само значение для одного продукта и пары
         «продукт: значение» для нескольких. EVENTS допускает EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE,
         FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND допускает DIRECTION, PROGRAM,
-        APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, PARALLEL_RUNS, MARKET_VACANCIES,
-        MARKET_TREND; заголовки колонок DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков.
+        APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, COMPLETION_BASIS, PARALLEL_RUNS,
+        MARKET_VACANCIES, MARKET_TREND; заголовки колонок DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков.
+        COMPLETION_SHARE — C / (C + N) по участиям с известным статусом завершения, COMPLETION_BASIS — основание этой доли
+        («C из C + N с известным статусом; данные по C + N из P», плюс «потоков без данных: K», если у части потоков периода
+        нет наблюдения на дату; программа только с такими потоками — «нет данных…», без потоков в периоде — null).
         MARKET_VACANCIES — число открытых вакансий по ИТ-направлению программы в последнем месячном срезе периода, MARKET_TREND —
         изменение этого числа в процентах от последнего среза до начала периода (если его нет — от первого среза периода) до
         последнего среза периода; оба показателя считаются только для направлений с признаком «Учитывать спрос рынка труда»,
@@ -13295,18 +16033,20 @@ components:
         PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS. MANAGER_WORK допускает MANAGER, ORGANIZATION, PRODUCTS,
         PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS, NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS,
         LMS_LEARNING, LMS_CHECK, TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM,
-        RISK, AGREEMENT_STATUS, AGREEMENT; LMS_LEARNING и LMS_CHECK — текущие данные LMS по идущим потокам и сверка этапа с
+        RISK, AGREEMENT_STATUS, AGREEMENT; с tile IDLE колонки всегда MANAGER, TEAM, ORGANIZATION, LAST_STAFF_ACTION — только
+        для этой плитки (строка — вуз без идущего взаимодействия, LAST_STAFF_ACTION — последнее действие сотрудника по
+        вузу, «не зафиксировано», если его нет); LMS_LEARNING и LMS_CHECK — текущие данные LMS по идущим потокам и сверка этапа с
         ними, AGREEMENT_STATUS и AGREEMENT — статус и номер последнего связанного договора с вузом («Нет», если договора нет).
       enum: [ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK,
              MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, EVENT_AT, EVENT_TYPE, FROM_STAGE, COMMENT, AUTHOR,
-             APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, PARALLEL_RUNS, MARKET_VACANCIES,
-             MARKET_TREND, VENDORS, CONTRACT_NUMBER,
+             APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, COMPLETION_BASIS,
+             PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND, VENDORS, CONTRACT_NUMBER,
              LICENSE_SIGNED, LICENSE_EXPIRY_YEAR,
              TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON, TEAM, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS,
              AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME,
              VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, ACTIVITY_STATUS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS,
              STAGE_AT_START, STAGE_AT_END, STAGE_POSITION, TRANSITIONS, PERIOD_COMMENTS, DUE_STATE, OVERDUE_DAYS,
-             LMS_LEARNING, LMS_CHECK]
+             LMS_LEARNING, LMS_CHECK, LAST_STAFF_ACTION]
     ReportFilters:
       type: object
       description: >
@@ -13387,16 +16127,25 @@ components:
             Только PORTFOLIO; оставляет взаимодействия, чей последний вход в текущий этап произошёл не менее чем за столько дней до формирования отчёта — то же правило, что у DAYS_ON_STAGE и фильтра minDaysOnStage списка работ; другие виды отклоняют его с 400 VALIDATION_ERROR. В MANAGER_WORK с tile STUCK — порог «на этапе дольше» (по умолчанию 30)
         tile:
           type: [string, 'null']
-          enum: [OVERDUE, THIS_WEEK, NO_NEXT_STEP, ISSUES, AGREEMENT, UNASSIGNED, STUCK, LMS, null]
+          enum: [OVERDUE, THIS_WEEK, NO_NEXT_STEP, ISSUES, AGREEMENT, UNASSIGNED, STUCK, LMS, IDLE, null]
           description: >
             Только MANAGER_WORK; отбор плиткой «Контроля» — те же строки, что на экране: просрочено, срок на этой неделе,
             без шага или срока, проблемы и риски, договор на согласовании, вузы без КАМ, на этапе дольше minDaysOnStage
-            дней, сигналы LMS. Итоги считаются по отобранным строкам; другие виды отклоняют его с 400 VALIDATION_ERROR
+            дней, сигналы LMS. IDLE — «Без работы»: строки — вузы с КАМ без идущего взаимодействия (не взаимодействия),
+            только без периода и без отборов по направлению, программе, продукту и этапу, иначе 400 VALIDATION_ERROR.
+            Итоги считаются по отобранным строкам; другие виды отклоняют его с 400 VALIDATION_ERROR
         change:
           oneOf:
             - $ref: '#/components/schemas/ManagerWorkChange'
             - type: 'null'
           description: Только MANAGER_WORK; оставляет работы с переходами, новые или завершённые в периоде; другие виды отклоняют его с 400 VALIDATION_ERROR
+        managerAt:
+          type: [string, 'null']
+          enum: [CURRENT, PERIOD_END, null]
+          description: >
+            Только MANAGER_WORK; CURRENT — текущий КАМ (режим «Контроля» «Сейчас»), PERIOD_END или null — КАМ вуза на конец
+            закончившегося периода по истории назначений («За период»). Колонка MANAGER и отбор managerIds используют одно
+            и то же правило; область видимости текущая. Другие виды отклоняют его с 400 VALIDATION_ERROR
     ReportAgreementFilters:
       type: object
       description: >
@@ -13605,6 +16354,44 @@ components:
             странице целиком. Для других видов отчётов пусто или отсутствует
           items:
             $ref: '#/components/schemas/ManagerWorkTotal'
+        productTotals:
+          type: array
+          description: >
+            Итоги отчёта MANAGER_WORK по продуктам: взаимодействие входит в строку каждого своего продукта, без продукта —
+            в «Продукт не указан»; последняя строка «Всего (уникальные взаимодействия)» считается по уникальным
+            взаимодействиям, а не суммой строк
+          items:
+            $ref: '#/components/schemas/ManagerWorkGroupTotal'
+        organizationTotals:
+          type: array
+          description: Итоги отчёта MANAGER_WORK по вузам и последней строкой «Всего (уникальные взаимодействия)»
+          items:
+            $ref: '#/components/schemas/ManagerWorkGroupTotal'
+    ManagerWorkGroupTotal:
+      type: object
+      required: [name, organizations, works, overdue, thisWeek, noNextStep, transitions]
+      properties:
+        name:
+          type: string
+          description: Продукт, вуз или «Всего (уникальные взаимодействия)»
+        organizations:
+          type: integer
+          minimum: 0
+        works:
+          type: integer
+          minimum: 0
+        overdue:
+          type: integer
+          minimum: 0
+        thisWeek:
+          type: integer
+          minimum: 0
+        noNextStep:
+          type: integer
+          minimum: 0
+        transitions:
+          type: integer
+          minimum: 0
     ManagerWorkTotal:
       type: object
       required: [team, manager, organizations, works, overdue, thisWeek, noNextStep, transitions]
@@ -14275,7 +17062,7 @@ components:
             $ref: '#/components/schemas/LearningSnapshot'
     LearningSnapshot:
       type: object
-      required: [mappingId, runKind, courseId, courseName, participants, teachers, unknown, groupsCount, observedAt, changedAt]
+      required: [mappingId, runKind, courseId, courseName, participants, teachers, unknown, groupsCount, observedAt, changedAt, stale]
       properties:
         mappingId:
           type: string
@@ -14339,6 +17126,11 @@ components:
           description: >
             Последний вход в курс на момент последнего наблюдения; null — Moodle не отдал время входа. Меняется каждый день,
             поэтому не входит в changedAt и не пишет событие «Данные LMS»
+        stale:
+          type: boolean
+          description: >
+            Поток ещё идёт, а снимок не подтверждён наблюдением дольше SOURCES_STALE_AFTER (по умолчанию 26 часов):
+            курс не читается, например падает в каждом частичном запуске. Закрытый поток устаревшим не считается
     LearningActivity:
       type: object
       required: [active7d, active30d, neverAccessed, inactive, teachersActive7d, teachersActive14d]
@@ -14993,7 +17785,8 @@ components:
           format: date-time
     AuditCategory:
       type: string
-      enum: [PROFILE, ASSIGNMENT, ORGANIZATION, TEAM, SYNC, DOWNLOAD, PERSONAL_DATA, RETENTION, ACCOUNT, LOGIN, LEARNER]
+      enum: [PROFILE, ASSIGNMENT, ORGANIZATION, TEAM, SYNC, DOWNLOAD, PERSONAL_DATA, RETENTION, ACCOUNT, LOGIN, LEARNER, AGENT, MESSENGER,
+             SETTINGS, MAIL]
     AuditEntry:
       type: object
       required: [id, occurredAt, category, action, actionLabel, actorProfileId, actorDisplayName, objectType, objectId,
@@ -15021,7 +17814,17 @@ components:
                  LEARNER_RESTRICTED, LEARNER_RESTRICTION_LIFTED, PAID_ORDERS_UPLOADED, LEARNERS_SYNCED,
                  LEARNER_LIST_VIEWED, LEARNER_SEARCHED, LEARNER_VIEWED, LEARNER_FIELDS_REVEALED, LEARNER_CHANGED,
                  LEARNER_ENROLMENTS_MOVED, LEARNER_TEMPLATE_PREVIEWED, LEARNER_TEMPLATE_IMPORTED, LMS_ROSTER_EXPORTED,
-                 LMS_ROSTER_MARKED, STREAM_END_DATE_CHANGED, TEACHER_ROSTER_EXPORTED, TEACHER_ROSTER_MARKED]
+                 LMS_ROSTER_MARKED, STREAM_END_DATE_CHANGED, TEACHER_ROSTER_EXPORTED, TEACHER_ROSTER_MARKED,
+                 AGENT_TOOL_CALLED, AGENT_PLAN_PREPARED, AGENT_PLAN_APPLIED, AGENT_PLAN_REJECTED,
+                 AGENT_PLAN_EXPIRED, AGENT_PLAN_STALE, AGENT_PLAN_FAILED,
+                 MAX_SETTINGS_CHANGED, MAX_LINK_REQUESTED, MAX_LINKED, MAX_LINK_REJECTED, MAX_UNLINKED, MAX_SESSION_STARTED,
+                 MAX_CHANGE, MAX_OUTBOX_REQUEUED, PARTNER_REQUEST_CREATED, PARTNER_REQUEST_CHANGED, PARTNER_RESPONSE_SUBMITTED,
+                 PARTNER_RESPONSE_REVIEWED, PARTNER_MATERIAL_RECEIVED, LMS_RESULTS_RECORDED, LMS_RECONCILED,
+                 LMS_API_TRANSFER, LMS_API_MOVE,
+                 LOGIN_FAILED, ACCOUNT_LOCKOUT_RELEASED, ORGANIZATION_RECORD_CHANGED, CATALOG_CHANGED, CATALOG_IMPORT_APPLIED,
+                 WORKFLOW_TEMPLATE_CHANGED, WORKFLOW_ROLLOUT_APPLIED, SOURCE_MAPPING_CHANGED,
+                 MAIL_SETTINGS_CHANGED, MAIL_CONNECTION_CHECKED, MAIL_TEST_SENT, MAIL_LETTER_VIEWED, MAIL_OUTBOX_REQUEUED,
+                 MAIL_OUTBOX_CANCELLED, MAIL_INVITATION_SENT, MAIL_INVITATION_REDEEMED, MAIL_SUBJECT_REPORT_SENT]
         actionLabel:
           type: string
         actorProfileId:
@@ -15146,7 +17949,7 @@ components:
           type: string
         place:
           type: string
-          enum: [COMMENT, PLAN_HISTORY, NEXT_ACTION, TITLE]
+          enum: [COMMENT, PLAN_HISTORY, NEXT_ACTION, TITLE, AGENT_PLAN]
         text:
           type: string
         occurredAt:
@@ -15286,13 +18089,23 @@ components:
           maxLength: 50
     ContactRestriction:
       type: object
-      required: [version, restricted]
+      required: [version, restricted, reason]
       properties:
         version:
           type: integer
           minimum: 0
         restricted:
           type: boolean
+        reason:
+          $ref: '#/components/schemas/PersonalDataReason'
+        comment:
+          type: [string, 'null']
+          maxLength: 500
+          description: Номер обращения или пояснение; обязателен при основании OTHER
+    PersonalDataReason:
+      type: string
+      enum: [SUBJECT_REQUEST, CONSENT_WITHDRAWN, PURPOSE_ACHIEVED, UNLAWFUL_PROCESSING, REGULATOR_REQUEST, OTHER]
+      description: Основание действия с ПДн; записывается в журнал
     AnonymizationRequest:
       type: object
       properties:
@@ -15322,10 +18135,16 @@ components:
           items:
             type: string
             format: uuid
+        reason:
+          $ref: '#/components/schemas/PersonalDataReason'
+        comment:
+          type: [string, 'null']
+          maxLength: 500
+          description: Номер обращения или пояснение; обязателен при основании OTHER
     AnonymizationResult:
       type: object
-      required: [contacts, profiles, mentions, sourceRecords, technicalRecords, attachmentsDeleted, reportFilesDeleted,
-                 learners]
+      required: [contacts, profiles, mentions, attachmentsRenamed, sourceRecords, technicalRecords, attachmentsDeleted,
+                 reportFilesDeleted, learners]
       properties:
         contacts:
           type: integer
@@ -15334,6 +18153,9 @@ components:
           type: integer
           minimum: 0
         mentions:
+          type: integer
+          minimum: 0
+        attachmentsRenamed:
           type: integer
           minimum: 0
         sourceRecords:
@@ -15353,8 +18175,8 @@ components:
           minimum: 0
     RetentionPolicy:
       type: object
-      required: [reportFilesDays, inactiveContactsDays, dismissedProfilesDays, auditEventsDays, learnerProfilesTerm,
-                 schedule, lastRun, learners]
+      required: [reportFilesDays, inactiveContactsDays, dismissedProfilesDays, auditEventsDays, agentPlansDays,
+                 learnerProfilesTerm, schedule, lastRun, learners]
       properties:
         reportFilesDays:
           type: integer
@@ -15368,6 +18190,12 @@ components:
         auditEventsDays:
           type: integer
           minimum: 0
+        agentPlansDays:
+          type: integer
+          minimum: 0
+          description: >-
+            Через сколько дней после решения (записан, отклонён, устарел, ошибка) или истечения срока подтверждения
+            удаляется план записи ИИ-агента; APP_RETENTION_AGENT_PLANS
         learnerProfilesTerm:
           type: string
           description: >-
@@ -15411,7 +18239,7 @@ components:
     RetentionRun:
       type: object
       required: [appliedAt, reportFilesDeleted, contactsAnonymized, profilesAnonymized, learnersAnonymized,
-                 auditEventsDeleted]
+                 auditEventsDeleted, agentPlansExpired, agentPlansDeleted]
       properties:
         appliedAt:
           type: string
@@ -15431,5 +18259,522 @@ components:
         auditEventsDeleted:
           type: integer
           minimum: 0
+        agentPlansExpired:
+          type: integer
+          minimum: 0
+          description: Ожидавшие подтверждения планы ИИ-агента, срок которых истёк; переведены в EXPIRED
+        agentPlansDeleted:
+          type: integer
+          minimum: 0
+    MaxPreferences:
+      type: object
+      required: [digest, assignment, agreement, siteRequest]
+      properties:
+        digest:
+          type: boolean
+          description: Утренняя сводка в 9:00 по рабочим дням
+        assignment:
+          type: boolean
+          description: Назначен или передан вуз
+        agreement:
+          type: boolean
+          description: Договор вернули на доработку; договор истекает через 30 и 7 дней
+        siteRequest:
+          type: boolean
+          description: Новая заявка с сайта (руководителю команды)
+    MaxLinkStatus:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [NONE, WAITING, FOUND, ACTIVE, STOPPED]
+        botName:
+          type: [string, 'null']
+        expiresAt:
+          type: [string, 'null']
+          format: date-time
+        candidateName:
+          type: [string, 'null']
+          description: Имя аккаунта MAX, открывшего ссылку (для FOUND)
+        maxName:
+          type: [string, 'null']
+        confirmedAt:
+          type: [string, 'null']
+          format: date-time
+        preferences:
+          oneOf:
+            - $ref: '#/components/schemas/MaxPreferences'
+            - type: 'null'
+    MaxLinkStart:
+      type: object
+      required: [link, expiresAt]
+      properties:
+        link:
+          type: string
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
+    MailTopic:
+      type: string
+      enum: [DIGEST, ASSIGNMENT, AGREEMENT, ISSUES, PARTNER_REPLIES, SITE_REQUEST, UNASSIGNED, WEEKLY, ADMIN_ALERTS]
+    MailPreferences:
+      type: object
+      required: [topics]
+      properties:
+        email:
+          type: [string, 'null']
+          description: Почта учётной записи Keycloak; null — не указана или Keycloak недоступен
+        topics:
+          type: array
+          items:
+            type: object
+            required: [topic, label, enabled]
+            properties:
+              topic:
+                $ref: '#/components/schemas/MailTopic'
+              label:
+                type: string
+              enabled:
+                type: boolean
+    MailPreferencesUpdate:
+      type: object
+      properties:
+        disabledTopics:
+          type: array
+          items:
+            $ref: '#/components/schemas/MailTopic'
+    MailQueueCounts:
+      type: object
+      required: [queued, errors, sent, dropped, cancelled]
+      properties:
+        queued:
+          type: integer
+        errors:
+          type: integer
+        sent:
+          type: integer
+          description: Отправлено за 24 часа
+        dropped:
+          type: integer
+          description: Не отправлено за 24 часа (устарело, получатель или вуз недоступны, тема отключена)
+        cancelled:
+          type: integer
+          description: Отменено администратором за 24 часа
+    MailSettings:
+      type: object
+      required: [mode, security, passwordState, encryptionAvailable, fromAddress, fromName, queue]
+      properties:
+        mode:
+          type: string
+          enum: [STUB, SMTP]
+        host:
+          type: [string, 'null']
+        port:
+          type: [integer, 'null']
+        security:
+          type: string
+          enum: [NONE, STARTTLS, TLS]
+        username:
+          type: [string, 'null']
+        passwordState:
+          type: string
+          enum: [NONE, SET, UNREADABLE]
+        encryptionAvailable:
+          type: boolean
+        fromAddress:
+          type: string
+        fromName:
+          type: string
+        changedAt:
+          type: [string, 'null']
+          format: date-time
+        checkedAt:
+          type: [string, 'null']
+          format: date-time
+        checkOk:
+          type: [boolean, 'null']
+        checkMessage:
+          type: [string, 'null']
+        queue:
+          $ref: '#/components/schemas/MailQueueCounts'
+    MailSettingsUpdate:
+      type: object
+      required: [mode, fromAddress, fromName]
+      properties:
+        mode:
+          type: string
+          enum: [STUB, SMTP]
+        host:
+          type: [string, 'null']
+          maxLength: 255
+        port:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 65535
+        security:
+          type: [string, 'null']
+          enum: [NONE, STARTTLS, TLS, null]
+        username:
+          type: [string, 'null']
+          maxLength: 255
+        password:
+          type: [string, 'null']
+          maxLength: 500
+          description: Пусто — оставить прежний
+        clearPassword:
+          type: [boolean, 'null']
+        fromAddress:
+          type: string
+          maxLength: 254
+        fromName:
+          type: string
+          maxLength: 200
+    MailCheck:
+      type: object
+      required: [ok, message]
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+    MailJournalRow:
+      type: object
+      required: [id, kind, kindTitle, employee, subject, status, attempts, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [INVITATION, DIGEST, ASSIGNMENT, AGREEMENT_CORRECTION, AGREEMENT_EXPIRY, ISSUE_ASSIGNED, ISSUE_RESOLVED, PARTNER_REQUEST, PARTNER_REPLY, SITE_REQUEST, ORGANIZATIONS_UNASSIGNED, WEEKLY_SUMMARY, ADMIN_SOURCE_FAILURE, ADMIN_PENDING_ACTIVATION, ADMIN_DAILY, TEST, SUBJECT_REPORT]
+        kindTitle:
+          type: string
+        recipient:
+          type: [string, 'null']
+          description: Маска адреса; у ещё не отправленного письма сотруднику — null (адрес берётся из Keycloak при отправке)
+        employee:
+          type: boolean
+          description: Письмо сотруднику CRM, а не внешнему адресу
+        subject:
+          type: string
+        status:
+          type: string
+          enum: [QUEUED, SENT, ERROR, DROPPED, CANCELLED]
+        transport:
+          type: [string, 'null']
+          enum: [STUB, SMTP, null]
+          description: STUB — «отправлено (заглушка)», наружу не уходило
+        attempts:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        sentAt:
+          type: [string, 'null']
+          format: date-time
+        error:
+          type: [string, 'null']
+    MailJournalPage:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MailJournalRow'
+        total:
+          type: integer
+    MailLetter:
+      type: object
+      required: [id, kindTitle, status, subject, attachments, mimeSize]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kindTitle:
+          type: string
+        status:
+          type: string
+          enum: [QUEUED, SENT, ERROR, DROPPED, CANCELLED]
+        transport:
+          type: [string, 'null']
+          enum: [STUB, SMTP, null]
+        recipient:
+          type: [string, 'null']
+        subject:
+          type: string
+        from:
+          type: [string, 'null']
+        sentAt:
+          type: [string, 'null']
+          format: date-time
+        messageId:
+          type: [string, 'null']
+        text:
+          type: [string, 'null']
+        html:
+          type: [string, 'null']
+          description: Показывать только в изолированном iframe (sandbox) без скриптов
+        attachments:
+          type: array
+          items:
+            type: string
+        mimeSize:
+          type: integer
+        error:
+          type: [string, 'null']
+    MailSubjectReportRequest:
+      type: object
+      required: [email, query]
+      properties:
+        email:
+          type: string
+          maxLength: 254
+        query:
+          $ref: '#/components/schemas/SubjectQuery'
+    MailInvitationRedeem:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          maxLength: 100
+    MailInvitationRedeemed:
+      type: object
+      required: [login, temporaryPassword, loginUrl]
+      properties:
+        login:
+          type: string
+        temporaryPassword:
+          type: string
+          description: Показывается один раз; при первом входе Keycloak потребует задать свой пароль
+        loginUrl:
+          type: string
+    MaxQueueCounts:
+      type: object
+      required: [queued, errors, sent, dropped, inboxWaiting, inboxErrors]
+      properties:
+        queued:
+          type: integer
+        errors:
+          type: integer
+        sent:
+          type: integer
+          description: Отправлено за 24 часа
+        dropped:
+          type: integer
+          description: Не отправлено за 24 часа (устарело, профиль или вуз недоступны, бот остановлен)
+        inboxWaiting:
+          type: integer
+        inboxErrors:
+          type: integer
+    MaxSettings:
+      type: object
+      required: [tokenState, encryptionAvailable, miniAppEnabled, webhookUrlValid, queue]
+      properties:
+        tokenState:
+          type: string
+          enum: [NONE, SCREEN, UNREADABLE]
+        encryptionAvailable:
+          type: boolean
+        botName:
+          type: [string, 'null']
+        miniAppEnabled:
+          type: boolean
+          description: Кнопки сообщений открывают мини-приложение (open_app), а не ссылку на CRM
+        webhookUrl:
+          type: [string, 'null']
+        webhookUrlValid:
+          type: boolean
+        subscribedAt:
+          type: [string, 'null']
+          format: date-time
+        subscriptionCheckedAt:
+          type: [string, 'null']
+          format: date-time
+        subscriptionOk:
+          type: [boolean, 'null']
+        subscriptionError:
+          type: [string, 'null']
+        lastEventAt:
+          type: [string, 'null']
+          format: date-time
+        queue:
+          $ref: '#/components/schemas/MaxQueueCounts'
+    MaxSettingsUpdate:
+      type: object
+      properties:
+        token:
+          type: [string, 'null']
+          maxLength: 500
+        miniAppEnabled:
+          type: [boolean, 'null']
+    MaxCheck:
+      type: object
+      required: [ok, message]
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        botName:
+          type: [string, 'null']
+    MaxAdminLink:
+      type: object
+      required: [profileId, displayName, role, status, confirmedAt, statusChangedAt]
+      properties:
+        profileId:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+        role:
+          type: string
+        maxName:
+          type: [string, 'null']
+        status:
+          type: string
+          enum: [ACTIVE, STOPPED]
+        confirmedAt:
+          type: string
+          format: date-time
+        statusChangedAt:
+          type: string
+          format: date-time
+    MaxAppSession:
+      type: object
+      required: [token, expiresAt, idleMinutes, role]
+      properties:
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        idleMinutes:
+          type: integer
+        role:
+          type: string
+          enum: [USER, LEADER]
+        displayName:
+          type: [string, 'null']
+        startParam:
+          type: [string, 'null']
+          description: payload кнопки open_app или параметра startapp, после проверки подписи
+    MaxAppMe:
+      type: object
+      required: [role, canControl]
+      properties:
+        role:
+          type: string
+          enum: [USER, LEADER]
+        displayName:
+          type: [string, 'null']
+        canControl:
+          type: boolean
+    MaxAppWork:
+      type: object
+      required: [feed, due, items]
+      properties:
+        feed:
+          $ref: '#/components/schemas/ReminderFeed'
+        due:
+          type: string
+          enum: [OVERDUE, TODAY, THIS_WEEK, LATER, NO_NEXT_STEP]
+        items:
+          $ref: '#/components/schemas/PageInteraction'
+    MaxAppCard:
+      type: object
+      required: [organization, interaction, events, contacts, agreements]
+      properties:
+        organization:
+          type: object
+          required: [id, name]
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+            ownerManagerName:
+              type: [string, 'null']
+        interaction:
+          $ref: '#/components/schemas/Interaction'
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/InteractionEvent'
+        contacts:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              position:
+                type: [string, 'null']
+              phone:
+                type: [string, 'null']
+              email:
+                type: [string, 'null']
+        agreements:
+          type: array
+          items:
+            type: object
+            required: [id, number, status, statusTitle]
+            properties:
+              id:
+                type: string
+                format: uuid
+              number:
+                type: string
+              status:
+                type: string
+              statusTitle:
+                type: string
+              validUntil:
+                type: [string, 'null']
+                format: date
+    MaxAppComment:
+      type: object
+      required: [version, text, nextStep]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        nextStep:
+          $ref: '#/components/schemas/MaxAppNextStep'
+    MaxAppStepCompletion:
+      type: object
+      required: [version, nextStep]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        result:
+          type: [string, 'null']
+          maxLength: 4000
+        nextStep:
+          $ref: '#/components/schemas/MaxAppNextStep'
+    MaxAppNextStep:
+      type: object
+      required: [nextAction, nextActionAt]
+      properties:
+        nextAction:
+          type: string
+          minLength: 1
+          maxLength: 500
+        nextActionAt:
+          type: string
+          format: date-time
 security:
   - cookieAuth: []

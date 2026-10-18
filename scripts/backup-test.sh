@@ -56,6 +56,8 @@ check 'backup holds only encrypted archives and checksums' \
     '[[ $(cd "$work/b2" && ls | tr "\n" " ") == "SHA256SUMS attachments.tar.enc crm.dump.enc keycloak.dump.enc reports.tar.enc " ]]'
 check 'encrypted dump does not contain the plain data' '! grep -aq "PGDMP\|crm data" "$work/b2/crm.dump.enc"'
 check 'SHA256SUMS covers the encrypted files' '(cd "$work/b2" && sha256sum --check --quiet SHA256SUMS) && grep -q "crm.dump.enc$" "$work/b2/SHA256SUMS"'
+check 'backup leaves the last-backup mark after the copy and keeps it out of the attachments archive' \
+    'tail -n 1 "$FAKE_OUT/calls" | grep -q "date -u .*/.last-backup" && grep "APP_ATTACHMENTS_STORAGE_ROOT.*-cf" "$FAKE_OUT/calls" | grep -q -- "--exclude=./.last-backup"'
 
 : > "$FAKE_OUT/calls"
 check 'restore with another key stops before touching the stand' \

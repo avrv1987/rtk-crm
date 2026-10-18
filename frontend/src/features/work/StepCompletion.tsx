@@ -2,10 +2,12 @@ import { type FormEvent, useRef, useState } from 'react'
 import { ApiError, apiClient, createIdempotencyKey, type Interaction } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { type AccessHandlers, commandErrorText, formatDateTime, handledAccessError, isoFromInput } from './workShared'
+import { ContactMarkFields } from './ContactMarkFields'
+import { type ContactMarkDraft, contactMarkMissingChannel, contactMarkPayload } from './contactMark'
 import './workControl.css'
 
 type StepCompletionProps = AccessHandlers & {
-  interaction: Pick<Interaction, 'id' | 'version' | 'nextAction' | 'nextActionAt'>
+  interaction: Pick<Interaction, 'id' | 'organizationId' | 'version' | 'nextAction' | 'nextActionAt'>
   onCompleted: (interaction: Interaction) => void
   onReload: () => void
   startOpen?: boolean
@@ -32,6 +34,7 @@ export const StepCompletion = ({
   const [result, setResult] = useState('')
   const [nextAction, setNextAction] = useState('')
   const [nextActionAt, setNextActionAt] = useState('')
+  const [contact, setContact] = useState<ContactMarkDraft>(null)
   const commandKey = useRef<string | null>(null)
   const hasStep = (interaction.nextAction?.trim() ?? '').length > 0 || interaction.nextActionAt !== null
 
@@ -61,7 +64,8 @@ export const StepCompletion = ({
         {
           version: interaction.version,
           result: result.trim().length > 0 ? result.trim() : null,
-          nextStep: action.length > 0 || dueAt !== null ? { nextAction: action.length > 0 ? action : null, nextActionAt: dueAt } : null
+          nextStep: action.length > 0 || dueAt !== null ? { nextAction: action.length > 0 ? action : null, nextActionAt: dueAt } : null,
+          contact: contactMarkPayload(contact)
         },
         commandKey.current ?? (commandKey.current = createIdempotencyKey())
       )
@@ -69,6 +73,7 @@ export const StepCompletion = ({
       setResult('')
       setNextAction('')
       setNextActionAt('')
+      setContact(null)
       setState({ kind: 'done' })
       onCompleted(updated)
     } catch (error) {
@@ -98,7 +103,7 @@ export const StepCompletion = ({
       )}
       {hasStep && (state.kind === 'open' || state.kind === 'saving' || state.kind === 'failed') && (
         <form className="step-completion__form" onSubmit={(event) => void submit(event)}>
-          <p>Отмечаем выполненным: «{stepLabel}»{deadline}. Запись попадёт в историю, а текущий шаг заменится новым.</p>
+          <p>Отмечаем выполненным: «{stepLabel}»{deadline}. Запись попадёт в историю, а текущий шаг заменится новым. Этап не меняется.</p>
           <label>
             Результат (необязательно)
             <textarea value={result} maxLength={4000} onChange={(event) => edit(() => setResult(event.target.value))} />
@@ -111,6 +116,7 @@ export const StepCompletion = ({
             Срок нового шага (МСК)
             <input type="datetime-local" value={nextActionAt} onChange={(event) => edit(() => setNextActionAt(event.target.value))} />
           </label>
+          <ContactMarkFields organizationId={interaction.organizationId} value={contact} onChange={(value) => edit(() => setContact(value))} />
           {nextAction.trim().length === 0 && nextActionAt.length === 0 && (
             <p className="step-completion__hint">Если новый шаг не указать, у взаимодействия не будет следующего шага и срока.</p>
           )}
@@ -124,7 +130,7 @@ export const StepCompletion = ({
             </div>
           )}
           <div className="step-completion__actions">
-            <button type="submit" disabled={state.kind === 'saving'}>
+            <button type="submit" disabled={state.kind === 'saving' || contactMarkMissingChannel(contact)}>
               {state.kind === 'saving' ? 'Сохраняем…' : 'Отметить выполненным'}
             </button>
             <button type="button" className="button--secondary" disabled={state.kind === 'saving'} onClick={() => onCancel === undefined ? setState({ kind: 'closed' }) : onCancel()}>

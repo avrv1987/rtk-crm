@@ -46,9 +46,17 @@ const manager = (managerId: string | null, works: WorkControlItem[], patch: Part
   works
 })
 
+// Договоры по правилу реестра: у вуза «b» — на согласовании, у вуза «z» без взаимодействий — на корректировке.
+const agreement = (id: string, organizationId: string, status: 'REVIEW' | 'CORRECTION') => ({
+  id, organizationId, organizationName: organizationId, number: id, status, statusChangedAt: '2026-10-01T09:00:00Z', daysInStatus: 16,
+  sentOn: null, concludedOn: null, validUntil: null, subject: null, managerId: null, managerName: null, approval: null,
+  teamId: 't1', teamName: 'Команда 1'
+})
+
 const control: WorkControl = {
   calculatedAt: '2026-10-17T09:00:00Z',
   byTeams: true,
+  agreements: [agreement('Д-1', 'org-b', 'REVIEW'), agreement('Д-2', 'org-z', 'CORRECTION')],
   total: { ...totals, organizations: 5, works: 6, overdue: 2, thisWeek: 1, noNextStep: 1, withIssues: 1 },
   teams: [
     {
@@ -84,7 +92,7 @@ test('плитка «Контроля» отбирает строки по ср�
   assert.deepEqual(ids('THIS_WEEK'), ['b'])
   assert.deepEqual(ids('NO_NEXT_STEP'), ['d'])
   assert.deepEqual(ids('ISSUES'), ['a'])
-  assert.deepEqual(ids('AGREEMENT'), ['b'], 'договор «Действует» не считается договором на согласовании')
+  assert.deepEqual(ids('AGREEMENT'), ['b'], 'строки — взаимодействия вузов с договором на согласовании из реестра, «Действует» не в счёт')
   assert.deepEqual(ids('UNASSIGNED'), ['e'])
   assert.deepEqual(ids('STUCK'), ['b'], 'завершённое взаимодействие не считается «долго на этапе»')
   assert.deepEqual(ids('STUCK', 60), [])
@@ -100,7 +108,8 @@ test('отбор плиткой скрывает пустые группы, а �
 })
 
 test('числа на плитках: сроки и проблемы — из итогов сервера, остальное — по строкам', () => {
-  assert.deepEqual(tileCounts(control, 30), { OVERDUE: 2, THIS_WEEK: 1, NO_NEXT_STEP: 1, ISSUES: 1, AGREEMENT: 1, STUCK: 1, LMS: 2, IDLE: 0 })
+  assert.deepEqual(tileCounts(control, 30), { OVERDUE: 2, THIS_WEEK: 1, NO_NEXT_STEP: 1, ISSUES: 1, AGREEMENT: 2, STUCK: 1, LMS: 2, IDLE: 0 },
+    'договор считается и без привязки к взаимодействию, как в реестре')
   assert.equal(tileMatches(item('x', { daysOnStage: 30 }), 'm', 'STUCK', 30), true)
   assert.equal(tileMatches(item('x', { daysOnStage: 29 }), 'm', 'STUCK', 30), false)
   assert.equal(tileMatches(item('x', { daysOnStage: 99, status: 'PAUSED' }), 'm', 'STUCK', 30), false)

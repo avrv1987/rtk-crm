@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { notFinishedRow, runPhase } from '../src/features/interactions/learningRun.ts'
+import { completionBasis, notFinishedRow, runPhase } from '../src/features/interactions/learningRun.ts'
 
 const run = { participants: 10, completed: 4, notCompleted: 5, runStartsOn: '2026-09-01', runEndsOn: '2026-10-01' }
 
@@ -26,4 +26,11 @@ test('у закончившегося потока — «Не завершили
   assert.deepEqual(notFinishedRow(run, '2026-10-05'), { label: 'Не завершили', value: 5 })
   assert.equal(notFinishedRow(run, '2026-08-01'), null)
   assert.deepEqual(notFinishedRow({ ...run, runStartsOn: null }, '2026-09-15'), { label: 'Не завершили', value: 5 })
+})
+
+// П14, П15: C=16, N=4, U=80 — доля только среди известных, рядом покрытие; поток без наблюдения — «нет данных», не ноль.
+test('основание доли завершивших называет числитель, знаменатель и покрытие', () => {
+  assert.equal(completionBasis(16, 20, 100), '16 из 20 с известным статусом; данные по 20 из 100')
+  assert.equal(completionBasis(null, null, 100), 'нет данных: завершение в Moodle не отслеживается')
+  assert.equal(completionBasis(null, null, null), 'нет данных: у потоков нет наблюдений')
 })

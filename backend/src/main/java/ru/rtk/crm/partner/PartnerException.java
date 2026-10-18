@@ -40,6 +40,16 @@ public class PartnerException extends RuntimeException {
         return new PartnerException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Документ не найден или не открыт вузу");
     }
 
+    public static PartnerException requestNotFound() {
+        return new PartnerException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Запрос вузу не найден");
+    }
+
+    public static PartnerException requestForbidden() {
+        return new PartnerException(
+                HttpStatus.FORBIDDEN, "FORBIDDEN", "Запросы вузу ведут ответственный КАМ и руководитель команды вуза"
+        );
+    }
+
     public HttpStatus status() {
         return status;
     }

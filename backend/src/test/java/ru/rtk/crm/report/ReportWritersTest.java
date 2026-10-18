@@ -168,8 +168,8 @@ class ReportWritersTest {
             int headerIndex = document.notes().size() + 2;
             assertThat(texts(sheet.getRow(headerIndex))).containsExactly(
                     "ИТ-направление", "ИТ-программа", "Заявки (сайт)", "Оплаченные заявки (сайт)", "Потоки с оплатами (сайт)",
-                    "Обучающиеся (Moodle)", "Завершили (Moodle)", "Доля завершивших, %", "Параллельные потоки (Moodle)",
-                    "Спрос рынка: вакансии", "Тренд спроса, %");
+                    "Обучающиеся (Moodle)", "Завершили (Moodle)", "Доля завершивших среди известных, %", "Основание доли",
+                    "Параллельные потоки (Moodle)", "Спрос рынка: вакансии", "Тренд спроса, %");
             Row data = sheet.getRow(headerIndex + 1);
             assertThat(data.getCell(2).getCellType()).isEqualTo(CellType.NUMERIC);
             assertThat(data.getCell(2).getNumericCellValue()).isEqualTo(5.0);
@@ -178,9 +178,10 @@ class ReportWritersTest {
             assertThat(data.getCell(5).getStringCellValue()).isEqualTo("нет данных");
             assertThat(data.getCell(6).getStringCellValue()).isEqualTo("нет данных");
             assertThat(data.getCell(7).getStringCellValue()).isEqualTo("нет данных");
-            assertThat(data.getCell(8).getStringCellValue()).isEqualTo("нет данных");
+            assertThat(data.getCell(8).getStringCellValue()).isEqualTo("потоков в периоде нет");
             assertThat(data.getCell(9).getStringCellValue()).isEqualTo("нет данных");
             assertThat(data.getCell(10).getStringCellValue()).isEqualTo("нет данных");
+            assertThat(data.getCell(11).getStringCellValue()).isEqualTo("нет данных");
         }
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -278,7 +279,7 @@ class ReportWritersTest {
     private static ReportRow marketRow(String program, MarketDemand market) {
         return new ReportRow(null, null, null, null, UUID.randomUUID(), "Направление", UUID.randomUUID(), program, List.of(), null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, List.of(), null, null,
-                null, null, null, null, null, market);
+                null, null, null, null, null, market, null);
     }
 
     private static ReportRow row(String organization, String comment) {

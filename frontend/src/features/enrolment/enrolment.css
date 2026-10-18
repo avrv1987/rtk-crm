@@ -415,3 +415,44 @@
   margin: 0;
   font-weight: 600;
 }
+
+.enrolment-queue__group {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.enrolment-queue__group summary {
+  cursor: pointer;
+}
+
+.enrolment-queue__list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.enrolment-queue__list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+
+.enrolment-queue__detail {
+  color: var(--color-text-muted);
+}
+
+.enrolment-batch__checksum code {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.enrolment .enrolment__stream-actions label {
+  min-width: 0;
+  max-width: 100%;
+}

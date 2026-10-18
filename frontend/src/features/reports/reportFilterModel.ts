@@ -39,7 +39,7 @@ export const activeFilterGroups = (selection: ReportSelection): FilterGroupId[] 
     ['workStatuses', visible.workStatuses && selection.workStatuses.length > 0],
     ['flags', visible.flags && selection.flags.length > 0],
     ['eventTypes', visible.eventTypes && selection.eventTypes.length > 0],
-    ['change', visible.change && selection.change !== ''],
+    ['change', visible.change && (selection.change !== '' || selection.managerAt !== 'PERIOD_END')],
     ['agreement', visible.agreement && agreementActive(selection.agreement)],
     ['periodBasis', visible.periodBasis && selection.periodBasis !== 'CREATED'],
     ['minDays', visible.minDays && selection.minDaysOnStage !== '']
@@ -70,7 +70,8 @@ export const resetFilters = (selection: ReportSelection): ReportSelection => ({
   agreement: { vendorIds: [], licenseSigned: '', licenseExpiresBy: '', notTransferred: [] },
   eventTypes: [],
   minDaysOnStage: '',
-  change: ''
+  change: '',
+  managerAt: 'PERIOD_END'
 })
 
 export type ColumnRow = { column: ReportColumn; checked: boolean }

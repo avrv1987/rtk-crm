@@ -4,7 +4,6 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -13,7 +12,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 
-import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
 import ru.rtk.crm.agreement.AgreementModels.ApprovalColor;
 import ru.rtk.crm.agreement.AgreementRepository.WorkAgreementStatus;
 import ru.rtk.crm.interaction.InteractionWorkStatus;
@@ -23,8 +21,6 @@ final class ManagerWorkReport {
     static final String UNASSIGNED = "Требует назначения";
     static final int DEFAULT_STUCK_DAYS = 30;
 
-    private static final Set<AgreementStatus> AGREEMENT_IN_PROGRESS =
-            EnumSet.of(AgreementStatus.REVIEW, AgreementStatus.CORRECTION, AgreementStatus.SIGNING);
     private static final Comparator<ManagerWorkLine> ORDER = Comparator
             .comparing((ManagerWorkLine line) -> Objects.toString(line.teamName(), ""), String.CASE_INSENSITIVE_ORDER)
             .thenComparing(line -> Objects.toString(line.teamId(), ""))
@@ -36,20 +32,22 @@ final class ManagerWorkReport {
     }
 
     // Плитка «Контроля» отбирает строки так же, как экран (controlModel.ts, tileMatches): файл совпадает с тем, что
-    // руководитель видел на экране.
+    // руководитель видел на экране. «Договор на согласовании» — взаимодействия вузов, у которых есть договор на
+    // согласовании, даже не привязанный к взаимодействию (правило реестра).
     static boolean matches(ManagerWorkLine line, ManagerWorkTile tile, int stuckDays, WorkAgreementStatus agreement,
-                           WorkLearning learning, OffsetDateTime now) {
+                           WorkLearning learning, Set<UUID> agreementOrganizations, OffsetDateTime now) {
         return switch (tile) {
             case OVERDUE -> line.due(now) == ManagerWorkDue.OVERDUE;
             case THIS_WEEK -> line.due(now) == ManagerWorkDue.THIS_WEEK;
             case NO_NEXT_STEP -> line.due(now) == ManagerWorkDue.NO_NEXT_STEP;
             case ISSUES -> line.withIssues();
-            case AGREEMENT -> agreement != null && AGREEMENT_IN_PROGRESS.contains(agreement.status());
+            case AGREEMENT -> agreementOrganizations.contains(line.organizationId());
             case UNASSIGNED -> line.managerId() == null;
             // На этапе договора, пока договор на согласовании, действуют пороги согласования (AgreementApproval).
             case STUCK -> active(line) && line.daysOnStage() != null && line.daysOnStage() >= stuckDays
                     && (agreement == null || !agreement.stageUnderApproval());
             case LMS -> learning != null && (learning.signals() > 0 || learning.mismatch() != null && !learning.mismatch().isEmpty());
+            case IDLE -> false;
         };
     }
 
@@ -71,6 +69,31 @@ final class ManagerWorkReport {
                 .map(line -> row(line, products.getOrDefault(line.interactionId(), List.of()),
                         comments.getOrDefault(line.interactionId(), List.of()), learning.get(line.interactionId()),
                         agreements == null ? null : agreement(agreements.get(line.interactionId()), now), now))
+                .toList();
+    }
+
+    // Строка «Без работы» — вуз без идущего взаимодействия: КАМ, команда и последнее действие сотрудника по вузу;
+    // полей взаимодействия у неё нет.
+    static List<ReportRow> idleRows(List<ManagerWorkOrganization> organizations) {
+        Comparator<ManagerWorkOrganization> order = Comparator
+                .comparing((ManagerWorkOrganization organization) -> Objects.toString(organization.teamName(), ""),
+                        String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(organization -> organization.managerId() == null)
+                .thenComparing(organization -> Objects.toString(organization.managerName(), ""), String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(organization -> Objects.toString(organization.name(), ""), String.CASE_INSENSITIVE_ORDER);
+        return organizations.stream().sorted(order)
+                .map(organization -> new ReportRow(
+                        null, null, organization.id(), organization.name(),
+                        null, null, null, null, List.of(), null,
+                        organization.managerId(), organization.managerId() == null ? UNASSIGNED : organization.managerName(),
+                        null, organization.lastActionAt(),
+                        null, null, null,
+                        null, null, null, null, null,
+                        null, null, null,
+                        null,
+                        List.of(), null, null, null, null, null, null,
+                        new ReportRow.ManagerWork(organization.teamName(), null, null, null, null, null, null, null, null, null)
+                ))
                 .toList();
     }
 
@@ -107,6 +130,56 @@ final class ManagerWorkReport {
             totals.add(all.total("Все команды", "Всего", now));
         }
         return totals;
+    }
+
+    static final String NO_PRODUCT = "Продукт не указан";
+    static final String UNIQUE_TOTAL = "Всего (уникальные взаимодействия)";
+
+    // Итоги по продуктам: взаимодействие входит в строку каждого своего продукта, без продукта — в «Продукт не указан».
+    // Строки поэтому пересекаются, и «Всего» считается отдельно по уникальным взаимодействиям, а не суммой строк.
+    static List<ManagerWorkGroupTotal> productTotals(List<ManagerWorkLine> lines, Map<UUID, List<String>> products, OffsetDateTime now) {
+        Map<String, List<ManagerWorkLine>> groups = new TreeMap<>(Comparator.comparing((String name) -> name.equals(NO_PRODUCT))
+                .thenComparing(String.CASE_INSENSITIVE_ORDER).thenComparing(Comparator.naturalOrder()));
+        lines.forEach(line -> {
+            List<String> names = products.getOrDefault(line.interactionId(), List.of()).stream().distinct().toList();
+            (names.isEmpty() ? List.of(NO_PRODUCT) : names).forEach(name -> groups.computeIfAbsent(name, key -> new ArrayList<>()).add(line));
+        });
+        return withUniqueTotal(groups, lines, now);
+    }
+
+    static List<ManagerWorkGroupTotal> organizationTotals(List<ManagerWorkLine> lines, OffsetDateTime now) {
+        Map<String, List<ManagerWorkLine>> groups = new TreeMap<>(String.CASE_INSENSITIVE_ORDER.thenComparing(Comparator.naturalOrder()));
+        // Ключ — название и идентификатор: два вуза с одинаковым названием не сливаются в одну строку.
+        lines.forEach(line -> groups.computeIfAbsent(Objects.toString(line.organizationName(), "") + " " + line.organizationId(),
+                key -> new ArrayList<>()).add(line));
+        List<ManagerWorkGroupTotal> totals = new ArrayList<>();
+        groups.values().forEach(group -> totals.add(groupTotal(group.getFirst().organizationName(), group, now)));
+        if (!lines.isEmpty()) {
+            totals.add(groupTotal(UNIQUE_TOTAL, lines, now));
+        }
+        return totals;
+    }
+
+    private static List<ManagerWorkGroupTotal> withUniqueTotal(Map<String, List<ManagerWorkLine>> groups, List<ManagerWorkLine> lines,
+                                                               OffsetDateTime now) {
+        List<ManagerWorkGroupTotal> totals = new ArrayList<>();
+        groups.forEach((name, group) -> totals.add(groupTotal(name, group, now)));
+        if (!lines.isEmpty()) {
+            totals.add(groupTotal(UNIQUE_TOTAL, lines, now));
+        }
+        return totals;
+    }
+
+    private static ManagerWorkGroupTotal groupTotal(String name, List<ManagerWorkLine> lines, OffsetDateTime now) {
+        return new ManagerWorkGroupTotal(
+                name,
+                lines.stream().map(ManagerWorkLine::organizationId).distinct().count(),
+                lines.stream().map(ManagerWorkLine::interactionId).distinct().count(),
+                lines.stream().filter(line -> line.due(now) == ManagerWorkDue.OVERDUE).count(),
+                lines.stream().filter(line -> line.due(now) == ManagerWorkDue.THIS_WEEK).count(),
+                lines.stream().filter(line -> line.due(now) == ManagerWorkDue.NO_NEXT_STEP).count(),
+                lines.stream().mapToLong(ManagerWorkLine::transitions).sum()
+        );
     }
 
     private record TotalKey(UUID teamId, String teamName, UUID managerId, String managerName) {

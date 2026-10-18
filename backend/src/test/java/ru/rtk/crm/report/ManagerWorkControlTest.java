@@ -279,7 +279,200 @@ class ManagerWorkControlTest {
 
         assertThat(works(workControlService.control(LEADER_A_PROFILE, filters().withChange(ManagerWorkChange.MOVED), SEPTEMBER_FIRST, SEPTEMBER_LAST))).containsExactly(INTERACTION_TWO_PRODUCTS);
         assertThat(works(workControlService.control(LEADER_A_PROFILE, filters().withChange(ManagerWorkChange.NEW), SEPTEMBER_FIRST, SEPTEMBER_LAST))).containsExactlyInAnyOrder(INTERACTION_WITHOUT_LINKS, INTERACTION_UNASSIGNED);
-        assertThat(works(workControlService.control(LEADER_A_PROFILE, filters().withChange(ManagerWorkChange.COMPLETED), SEPTEMBER_FIRST, SEPTEMBER_LAST))).containsExactly(INTERACTION_TWO_PRODUCTS);
+        // П07: вход в последний этап маршрута при статусе ACTIVE — не завершение.
+        assertThat(works(workControlService.control(LEADER_A_PROFILE, filters().withChange(ManagerWorkChange.COMPLETED), SEPTEMBER_FIRST, SEPTEMBER_LAST))).isEmpty();
+        assertThat(control.total().completed()).isZero();
+    }
+
+    // П01, П02: вуз передан другому КАМ после конца месяца. В каждом режиме экран, предпросмотр и файл дают одни и те же
+    // взаимодействия, менеджеров и итоги — без отбора и с отбором каждого КАМ.
+    @Test
+    void eachModeUsesOneOwnerPolicyOnScreenPreviewAndFileForEveryManagerFilter() {
+        ReportTestData.assignment(jdbcTemplate, ReportTestData.ORGANIZATION_A, MANAGER_A, "Анна Кузнецова", MANAGER_A2,
+                "Борис Смирнов", ReportTestData.at("2026-10-05T10:00:00+03:00"));
+        List<ReportFilters> managerFilters = List.of(filters(), filters(List.of(), List.of(MANAGER_A), List.of(), false),
+                filters(List.of(), List.of(MANAGER_A2), List.of(), false), filters(List.of(), List.of(), List.of(), true));
+        for (ManagerAt mode : ManagerAt.values()) {
+            for (ReportFilters managerFilter : managerFilters) {
+                ReportFilters selected = managerFilter.withManagerAt(mode);
+                Control control = workControlService.control(LEADER_A_PROFILE, selected, SEPTEMBER_FIRST, SEPTEMBER_LAST);
+                ReportRequest request = new ReportRequest(ReportKind.MANAGER_WORK, SEPTEMBER_FIRST, SEPTEMBER_LAST, null, selected,
+                        List.of(ReportColumn.MANAGER, ReportColumn.INTERACTION), ReportFormat.XLSX, null, null);
+                ReportPreview preview = reportService.preview(LEADER_A_PROFILE, request, 0, 50);
+                ReportDocument document = reportService.document(LEADER_A_PROFILE, request);
+                String label = mode + " " + selected.managerIds() + " " + selected.includeNoManager();
+
+                assertThat(document.rows()).extracting(ReportRow::interactionId).as(label)
+                        .containsExactlyInAnyOrderElementsOf(works(control));
+                assertThat(preview.total()).as(label).isEqualTo(control.total().works()).isEqualTo(document.rows().size());
+                assertThat(preview.items()).extracting(item -> item.get("INTERACTION") + "|" + item.get("MANAGER")).as(label)
+                        .containsExactlyInAnyOrderElementsOf(document.rows().stream()
+                                .map(row -> row.interactionTitle() + "|" + row.managerName()).toList())
+                        .containsExactlyInAnyOrderElementsOf(control.teams().stream().flatMap(team -> team.managers().stream())
+                                .flatMap(block -> block.works().stream().map(work -> work.title() + "|"
+                                        + (block.managerName() == null ? "Требует назначения" : block.managerName())))
+                                .toList());
+                if (control.total().works() > 0) {
+                    assertThat(preview.groupTotals().getLast().works()).as(label).isEqualTo(control.total().works());
+                    assertThat(document.groupTotals().getLast().organizations()).as(label).isEqualTo(control.total().organizations());
+                }
+            }
+        }
+        ReportFilters annaInSeptember = filters(List.of(), List.of(MANAGER_A), List.of(), false);
+        assertThat(works(workControlService.control(LEADER_A_PROFILE, annaInSeptember.withManagerAt(ManagerAt.PERIOD_END),
+                SEPTEMBER_FIRST, SEPTEMBER_LAST))).containsExactlyInAnyOrder(INTERACTION_TWO_PRODUCTS, INTERACTION_WITHOUT_LINKS);
+        assertThat(works(workControlService.control(LEADER_A_PROFILE, annaInSeptember.withManagerAt(ManagerAt.CURRENT),
+                SEPTEMBER_FIRST, SEPTEMBER_LAST))).isEmpty();
+        assertThat(works(workControlService.control(LEADER_A_PROFILE, annaInSeptember, SEPTEMBER_FIRST, SEPTEMBER_LAST)))
+                .as("без режима «Контроль» — «Сейчас»").isEmpty();
+        assertThat(works(workControlService.control(LEADER_A_PROFILE, annaInSeptember.withManagerAt(ManagerAt.PERIOD_END), null, null)))
+                .as("без периода режим «Сейчас»").isEmpty();
+    }
+
+    // Исторический КАМ не расширяет доступ: вуз, переданный после периода в другую команду, руководитель прежней
+    // команды не видит и в режиме «За период».
+    @Test
+    void periodModeKeepsTheCurrentScope() {
+        ReportTestData.assignment(jdbcTemplate, ReportTestData.ORGANIZATION_A, MANAGER_A, "Анна Кузнецова", ReportTestData.MANAGER_B,
+                "Вера Орлова", ReportTestData.at("2026-10-05T10:00:00+03:00"));
+        jdbcTemplate.update("UPDATE organizations SET team_id = ? WHERE id = ?", ReportTestData.TEAM_B, ReportTestData.ORGANIZATION_A);
+        ReportFilters periodEnd = filters().withManagerAt(ManagerAt.PERIOD_END);
+
+        assertThat(works(workControlService.control(LEADER_A_PROFILE, periodEnd, SEPTEMBER_FIRST, SEPTEMBER_LAST)))
+                .containsExactly(INTERACTION_UNASSIGNED);
+        assertThat(reportService.preview(LEADER_A_PROFILE, new ReportRequest(ReportKind.MANAGER_WORK, SEPTEMBER_FIRST, SEPTEMBER_LAST,
+                null, periodEnd, List.of(ReportColumn.INTERACTION), ReportFormat.XLSX, null, null), 0, 50).items())
+                .extracting(item -> item.get("INTERACTION")).containsExactly("Запрос на обучение");
+    }
+
+    // П03: выгрузка плитки «Без работы» — те же вузы, что на экране, с КАМ, командой и последним действием сотрудника.
+    @Test
+    void idleExportIsTheSameOrganizationListWithLastStaffAction() {
+        UUID gamma = UUID.randomUUID();
+        UUID delta = UUID.randomUUID();
+        ReportTestData.organization(jdbcTemplate, gamma, "Университет «Гамма»", ReportTestData.TEAM_A, MANAGER_A2);
+        ReportTestData.organization(jdbcTemplate, delta, "Университет «Дельта»", ReportTestData.TEAM_A, MANAGER_A);
+        ReportTestData.organization(jdbcTemplate, UUID.randomUUID(), "Колледж без КАМ", ReportTestData.TEAM_A, null);
+        UUID closed = UUID.randomUUID();
+        ReportTestData.interaction(jdbcTemplate, closed, delta, "Закрытое", null, 0, ReportTestData.at("2026-08-02T10:00:00+03:00"));
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'COMPLETED' WHERE id = ?", closed);
+        ReportTestData.event(jdbcTemplate, closed, "COMMENTED", "Поиск контакта", null, "Итоговый звонок", MANAGER_A,
+                ReportTestData.at("2026-09-20T15:00:00+03:00"));
+        UUID command = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO command_idempotency_records (id, actor_profile_id, operation, idempotency_key, request_fingerprint)
+                VALUES (?, ?, 'APPLY_SOURCE_RECORD', 'source-idle', ?)
+                """, command, LEADER_A_PROFILE.id(), "0".repeat(64));
+        ReportTestData.event(jdbcTemplate, closed, "COMMENTED", "Поиск контакта", null, "Данные LMS", MANAGER_A,
+                ReportTestData.at("2026-10-01T15:00:00+03:00"));
+        jdbcTemplate.update("UPDATE interaction_events SET command_id = ? WHERE comment = 'Данные LMS'", command);
+
+        Control control = workControlService.control(LEADER_A_PROFILE, filters(), null, null);
+        ReportRequest idle = new ReportRequest(ReportKind.MANAGER_WORK, null, null, null, tileFilters(ManagerWorkTile.IDLE, null),
+                List.of(ReportColumn.MANAGER, ReportColumn.INTERACTION, ReportColumn.NEXT_ACTION), ReportFormat.XLSX, null, null);
+        ReportPreview preview = reportService.preview(LEADER_A_PROFILE, idle, 0, 50);
+        ReportDocument document = reportService.document(LEADER_A_PROFILE, idle);
+
+        assertThat(preview.columns()).extracting(column -> column.id().name())
+                .containsExactly("MANAGER", "TEAM", "ORGANIZATION", "LAST_STAFF_ACTION");
+        assertThat(document.rows()).extracting(ReportRow::organizationId)
+                .containsExactlyInAnyOrderElementsOf(control.idleOrganizations().stream().map(ManagerWorkOrganization::id).toList())
+                .containsExactlyInAnyOrder(gamma, delta);
+        assertThat(document.rows()).allSatisfy(row -> assertThat(row.interactionId()).isNull());
+        assertThat(preview.items()).extracting(item -> item.get("ORGANIZATION"), item -> item.get("MANAGER"), item -> item.get("TEAM"))
+                .containsExactly(tuple("Университет «Дельта»", "Анна Кузнецова", "Команда А"),
+                        tuple("Университет «Гамма»", "Борис Смирнов", "Команда А"));
+        assertThat(document.rows()).extracting(ReportColumn.LAST_STAFF_ACTION::text)
+                .containsExactly("20.09.2026 15:00", "не зафиксировано");
+        assertThat(control.idleOrganizations()).filteredOn(organization -> organization.id().equals(delta)).singleElement()
+                .satisfies(organization -> assertThat(organization.lastActionAt())
+                        .isEqualTo(ReportTestData.at("2026-09-20T15:00:00+03:00")));
+        assertThat(preview.groupTotals().getLast().organizations()).isEqualTo(control.total().idle());
+        assertThat(preview.groupTotals().getLast().works()).isZero();
+        assertThatThrownBy(() -> reportService.preview(LEADER_A_PROFILE, new ReportRequest(ReportKind.MANAGER_WORK, SEPTEMBER_FIRST,
+                SEPTEMBER_LAST, null, tileFilters(ManagerWorkTile.IDLE, null), null, ReportFormat.XLSX, null, null), 0, 50))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        exception -> assertThat(exception.field()).isEqualTo("filters.tile"));
+    }
+
+    // П06 и повторное открытие: завершено в периоде — только если последняя смена статуса в периоде дала COMPLETED.
+    @Test
+    void completedInPeriodFollowsTheStatusAfterTheEvent() {
+        statusEvent(INTERACTION_WITHOUT_LINKS, "PAUSED", "2026-09-10T10:00:00+03:00");
+        statusEvent(INTERACTION_WITHOUT_LINKS, "COMPLETED", "2026-10-03T10:00:00+03:00");
+        statusEvent(INTERACTION_UNASSIGNED, "COMPLETED", "2026-09-20T10:00:00+03:00");
+        statusEvent(INTERACTION_UNASSIGNED, "ACTIVE", "2026-09-25T10:00:00+03:00");
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'COMPLETED' WHERE id = ?", INTERACTION_WITHOUT_LINKS);
+        LocalDate octoberFirst = LocalDate.parse("2026-10-01");
+        LocalDate octoberLast = LocalDate.parse("2026-10-31");
+        ReportFilters completed = filters().withChange(ManagerWorkChange.COMPLETED);
+
+        assertThat(works(workControlService.control(LEADER_A_PROFILE, completed, SEPTEMBER_FIRST, SEPTEMBER_LAST))).isEmpty();
+        assertThat(works(workControlService.control(LEADER_A_PROFILE, completed, octoberFirst, octoberLast)))
+                .containsExactly(INTERACTION_WITHOUT_LINKS);
+        assertThat(reportService.preview(LEADER_A_PROFILE, new ReportRequest(ReportKind.MANAGER_WORK, octoberFirst, octoberLast, null,
+                completed, List.of(ReportColumn.INTERACTION), ReportFormat.XLSX, null, null), 0, 50).items())
+                .extracting(item -> item.get("INTERACTION")).containsExactly("Первое обращение");
+    }
+
+    // П08: завершённое взаимодействие без следующего шага — не дефект продолжения; приостановленное — по дате возврата.
+    @Test
+    void dueCountsOnlyActiveWorkAndPausedByReturnDate() {
+        statusEvent(INTERACTION_WITHOUT_LINKS, "COMPLETED", "2026-09-20T10:00:00+03:00");
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'COMPLETED' WHERE id = ?", INTERACTION_WITHOUT_LINKS);
+        statusEvent(INTERACTION_UNASSIGNED, "PAUSED", "2026-09-21T10:00:00+03:00");
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'PAUSED', next_action = 'Вернуться к работе после приостановки',"
+                + " next_action_at = ? WHERE id = ?", java.time.OffsetDateTime.now().minusDays(1), INTERACTION_UNASSIGNED);
+
+        Control control = workControlService.control(LEADER_A_PROFILE, filters(), SEPTEMBER_FIRST, SEPTEMBER_LAST);
+
+        assertThat(control.teams().getFirst().managers().stream().flatMap(block -> block.works().stream()))
+                .extracting(WorkItem::interactionId, WorkItem::due)
+                .containsExactlyInAnyOrder(
+                        tuple(INTERACTION_TWO_PRODUCTS, ManagerWorkDue.OVERDUE),
+                        tuple(INTERACTION_WITHOUT_LINKS, ManagerWorkDue.IN_ORDER),
+                        tuple(INTERACTION_UNASSIGNED, ManagerWorkDue.OVERDUE));
+        assertThat(control.total().noNextStep()).isZero();
+        assertThat(control.total().overdue()).isEqualTo(2);
+
+        jdbcTemplate.update("UPDATE interactions SET next_action_at = ? WHERE id = ?",
+                java.time.OffsetDateTime.now().plusDays(60), INTERACTION_UNASSIGNED);
+        jdbcTemplate.update("UPDATE interactions SET next_action_at = ? WHERE id = ?",
+                java.time.OffsetDateTime.now().minusDays(3), INTERACTION_WITHOUT_LINKS);
+        Control later = workControlService.control(LEADER_A_PROFILE, filters(), SEPTEMBER_FIRST, SEPTEMBER_LAST);
+        assertThat(later.total().overdue()).isEqualTo(1);
+        assertThat(later.total().noNextStep()).isZero();
+        assertThat(reportService.preview(LEADER_A_PROFILE, new ReportRequest(ReportKind.MANAGER_WORK, SEPTEMBER_FIRST, SEPTEMBER_LAST,
+                null, tileFilters(ManagerWorkTile.NO_NEXT_STEP, null), List.of(ReportColumn.INTERACTION), ReportFormat.XLSX, null, null),
+                0, 50).total()).isZero();
+    }
+
+    // П09: возврат из последнего этапа — это переходы, а не завершение.
+    @Test
+    void returnFromTheLastStageIsTransitionsNotCompletion() {
+        ReportTestData.event(jdbcTemplate, INTERACTION_TWO_PRODUCTS, "TRANSITIONED", "Уточнение актуальности", "Встреча",
+                "Вернули на уточнение", MANAGER_A, ReportTestData.at("2026-09-20T12:00:00+03:00"));
+        jdbcTemplate.update("UPDATE interactions SET current_stage_id = (SELECT id FROM interaction_stages WHERE interaction_id = ?"
+                + " AND name = 'Уточнение актуальности') WHERE id = ?", INTERACTION_TWO_PRODUCTS, INTERACTION_TWO_PRODUCTS);
+
+        Control control = workControlService.control(LEADER_A_PROFILE, filters(), SEPTEMBER_FIRST, SEPTEMBER_LAST);
+
+        WorkItem item = control.teams().getFirst().managers().stream().flatMap(block -> block.works().stream())
+                .filter(work -> work.interactionId().equals(INTERACTION_TWO_PRODUCTS)).findFirst().orElseThrow();
+        assertThat(item.transitions()).isEqualTo(2);
+        assertThat(item.completed()).isFalse();
+        assertThat(control.total().completed()).isZero();
+        assertThat(works(workControlService.control(LEADER_A_PROFILE, filters().withChange(ManagerWorkChange.MOVED), SEPTEMBER_FIRST,
+                SEPTEMBER_LAST))).containsExactly(INTERACTION_TWO_PRODUCTS);
+    }
+
+    private void statusEvent(UUID interactionId, String status, String occurredAt) {
+        String stage = jdbcTemplate.queryForObject("SELECT s.name FROM interactions i JOIN interaction_stages s ON s.id = i.current_stage_id"
+                + " WHERE i.id = ?", String.class, interactionId);
+        ReportTestData.event(jdbcTemplate, interactionId, "STATUS_CHANGED", stage, null, "Смена статуса: " + status, MANAGER_A,
+                ReportTestData.at(occurredAt));
+        jdbcTemplate.update("UPDATE interaction_events SET work_status_after = ? WHERE interaction_id = ? AND occurred_at = ?",
+                status, interactionId, ReportTestData.at(occurredAt));
     }
 
     @Test
@@ -573,6 +766,77 @@ class ManagerWorkControlTest {
                 .organizations()).isEqualTo(2);
         assertThat(reportService.preview(LEADER_A_PROFILE, request(SEPTEMBER_FIRST, SEPTEMBER_LAST), 0, 50).groupTotals().getLast()
                 .organizations()).isEqualTo(2);
+    }
+
+    @Test
+    void agreementTileCountsContractsOnApprovalEvenWhenNotLinkedToWork() {
+        UUID review = UUID.randomUUID();
+        UUID correction = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO agreements (id, organization_id, number, status, status_changed_at, sent_on) VALUES
+                    (?, ?, 'Д-11', 'REVIEW', TIMESTAMP WITH TIME ZONE '2026-09-01 10:00:00+03:00', DATE '2026-07-20'),
+                    (?, ?, 'Д-12', 'CORRECTION', TIMESTAMP WITH TIME ZONE '2026-09-02 10:00:00+03:00', NULL),
+                    (?, ?, 'Д-13', 'ACTIVE', TIMESTAMP WITH TIME ZONE '2026-09-03 10:00:00+03:00', NULL),
+                    (?, ?, 'Д-14', 'REVIEW', TIMESTAMP WITH TIME ZONE '2026-09-04 10:00:00+03:00', NULL)
+                """, review, ReportTestData.ORGANIZATION_A, correction, ReportTestData.ORGANIZATION_A_UNASSIGNED,
+                UUID.randomUUID(), ReportTestData.ORGANIZATION_A, UUID.randomUUID(), ORGANIZATION_B);
+
+        Control control = workControlService.control(LEADER_A_PROFILE, filters(), null, null);
+        assertThat(control.agreements()).as("ни один договор не привязан к взаимодействию, чужая команда не видна")
+                .extracting(row -> row.number(), row -> row.teamName())
+                .containsExactlyInAnyOrder(tuple("Д-11", "Команда А"), tuple("Д-12", "Команда А"));
+        assertThat(control.agreements()).filteredOn(row -> row.number().equals("Д-11")).singleElement()
+                .satisfies(row -> assertThat(row.approval().sideDays()).as("круг у вуза — от даты отправки").isPositive());
+        assertThat(workControlService.control(new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0), filters(), null, null)
+                .agreements()).hasSize(3);
+
+        // С отбором остаются договоры вузов из строк: продукт Игрек есть только у взаимодействия Университета «Альфа».
+        assertThat(workControlService.control(LEADER_A_PROFILE, filters(List.of(PRODUCT_Y), List.of(), List.of(), false), null, null)
+                .agreements()).extracting(row -> row.number()).containsExactly("Д-11");
+
+        // Выгрузка с плиткой — взаимодействия этих вузов, как строки на экране.
+        assertThat(titles(tile(ManagerWorkTile.AGREEMENT, null)))
+                .containsExactlyInAnyOrder("Договор на курс Java", "Первое обращение", "Запрос на обучение");
+    }
+
+    @Test
+    void reportTotalsByProductAndByUniversityCountDistinctWorks() {
+        ReportPreview preview = reportService.preview(LEADER_A_PROFILE, request(null, null), 0, 50);
+
+        assertThat(preview.productTotals())
+                .extracting(ManagerWorkGroupTotal::name, ManagerWorkGroupTotal::organizations, ManagerWorkGroupTotal::works)
+                .containsExactly(
+                        tuple("Продукт Игрек", 1L, 1L),
+                        tuple("Продукт Икс", 2L, 2L),
+                        tuple("Продукт не указан", 1L, 1L),
+                        tuple("Всего (уникальные взаимодействия)", 2L, 3L)
+                );
+        assertThat(preview.productTotals().subList(0, 3).stream().mapToLong(ManagerWorkGroupTotal::works).sum())
+                .as("взаимодействие с двумя продуктами входит в обе строки").isEqualTo(4);
+        assertThat(preview.organizationTotals())
+                .extracting(ManagerWorkGroupTotal::name, ManagerWorkGroupTotal::works)
+                .containsExactly(
+                        tuple("Институт без КАМ", 1L),
+                        tuple("Университет «Альфа»", 2L),
+                        tuple("Всего (уникальные взаимодействия)", 3L)
+                );
+        assertThat(preview.notes()).contains(ReportService.GROUP_TOTALS_NOTE);
+    }
+
+    @Test
+    void groupTotalsGoToTheirOwnSheetsInTheFile() throws IOException {
+        ReportDocument document = reportService.document(LEADER_A_PROFILE, request(null, null));
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        new ExcelReportWriter().write(document, ReportFormat.XLSX, output);
+        try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(output.toByteArray()))) {
+            Sheet products = workbook.getSheet(ExcelReportWriter.PRODUCT_TOTALS_SHEET);
+            assertThat(products.getRow(2).getCell(0).getStringCellValue()).isEqualTo("Продукт");
+            assertThat(products.getRow(6).getCell(0).getStringCellValue()).isEqualTo("Всего (уникальные взаимодействия)");
+            assertThat(products.getRow(6).getCell(2).getNumericCellValue()).isEqualTo(3);
+            Sheet universities = workbook.getSheet(ExcelReportWriter.ORGANIZATION_TOTALS_SHEET);
+            assertThat(universities.getRow(2).getCell(0).getStringCellValue()).isEqualTo("Вуз");
+            assertThat(universities.getRow(4).getCell(0).getStringCellValue()).isEqualTo("Университет «Альфа»");
+        }
     }
 
     private ReportRequest tile(ManagerWorkTile tile, Integer days) {

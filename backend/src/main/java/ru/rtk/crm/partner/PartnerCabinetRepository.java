@@ -29,8 +29,14 @@ public class PartnerCabinetRepository {
     }
 
     public Optional<UUID> findOrganizationId(UUID profileId) {
+        return findScope(profileId).map(PartnerScope::organizationId);
+    }
+
+    // Организация и контакт берутся из профиля, а не из запроса представителя; доступ действует, только пока
+    // профиль активен, организация действующая, а контакт актуален и без ограничения обработки.
+    public Optional<PartnerScope> findScope(UUID profileId) {
         return jdbcClient.sql("""
-                SELECT p.partner_organization_id
+                SELECT p.partner_organization_id, p.partner_contact_id
                 FROM crm_user_profiles p
                 JOIN organizations o ON o.id = p.partner_organization_id
                 JOIN contacts c ON c.id = p.partner_contact_id AND c.organization_id = o.id
@@ -38,7 +44,10 @@ public class PartnerCabinetRepository {
                   AND o.status = 'ACTIVE' AND c.inactive = FALSE AND c.personal_data_status = 'ACTIVE'
                 """)
                 .param("profileId", profileId)
-                .query(UUID.class)
+                .query((resultSet, rowNumber) -> new PartnerScope(
+                        resultSet.getObject("partner_organization_id", UUID.class),
+                        resultSet.getObject("partner_contact_id", UUID.class)
+                ))
                 .optional();
     }
 
@@ -128,7 +137,11 @@ public class PartnerCabinetRepository {
 
     public List<PartnerDocument> findDocuments(UUID organizationId) {
         return jdbcClient.sql("""
-                SELECT a.id, a.interaction_id, i.title, a.original_name, a.kind, a.media_type, a.size_bytes, a.status, a.created_at
+                SELECT a.id, a.interaction_id, i.title, a.original_name, a.kind, a.media_type, a.size_bytes, a.status, a.created_at,
+                       a.revision, EXISTS (
+                           SELECT 1 FROM attachments newer
+                           WHERE newer.replaces_id = a.id AND newer.deleted_at IS NULL AND newer.status <> 'REJECTED'
+                       ) AS replaced
                 """ + VISIBLE_DOCUMENT + """
                   AND a.status <> 'REJECTED'
                 ORDER BY a.created_at DESC, a.id
@@ -143,7 +156,10 @@ public class PartnerCabinetRepository {
                         resultSet.getString("media_type"),
                         resultSet.getLong("size_bytes"),
                         "CLEAN".equals(resultSet.getString("status")),
-                        resultSet.getObject("created_at", OffsetDateTime.class)
+                        resultSet.getObject("created_at", OffsetDateTime.class),
+                        resultSet.getInt("revision"),
+                        resultSet.getBoolean("replaced"),
+                        null
                 ))
                 .list();
     }
@@ -202,6 +218,9 @@ public class PartnerCabinetRepository {
                         resultSet.getString("title")
                 ))
                 .list();
+    }
+
+    public record PartnerScope(UUID organizationId, UUID contactId) {
     }
 
     public record OrganizationRow(UUID id, String name, OrganizationType type, String managerName, String managerSubject) {

@@ -29,7 +29,8 @@ public final class PartnerModels {
         }
     }
 
-    public record PartnerAccessGranted(PartnerAccess access, String login, String temporaryPassword) {
+    // invitationSentTo — маска адреса, куда ушла ссылка на пароль; тогда temporaryPassword пустой.
+    public record PartnerAccessGranted(PartnerAccess access, String login, String temporaryPassword, String invitationSentTo) {
     }
 
     public record PartnerCabinet(
@@ -37,7 +38,8 @@ public final class PartnerModels {
             PartnerManager manager,
             List<PartnerWork> works,
             List<PartnerDocument> documents,
-            List<PartnerAgreement> agreements
+            List<PartnerAgreement> agreements,
+            List<PartnerRequestModels.PartnerRequestForPartner> requests
     ) {
     }
 
@@ -74,8 +76,15 @@ public final class PartnerModels {
             String mediaType,
             long sizeBytes,
             boolean downloadable,
-            OffsetDateTime createdAt
+            OffsetDateTime createdAt,
+            int revision,
+            boolean replaced,
+            OffsetDateTime receivedAt
     ) {
+        PartnerDocument withReceivedAt(OffsetDateTime value) {
+            return new PartnerDocument(id, workId, workTitle, name, kind, mediaType, sizeBytes, downloadable, createdAt, revision, replaced,
+                    value);
+        }
     }
 
     public record PartnerAgreement(

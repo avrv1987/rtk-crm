@@ -51,26 +51,30 @@ public class LmsWorkLearningService {
         if (scope.isEmpty() || interactionIds.isEmpty()) {
             return Map.of();
         }
-        LocalDate today = OffsetDateTime.now().atZoneSameInstant(WorkProperties.ZONE).toLocalDate();
+        OffsetDateTime now = OffsetDateTime.now();
         Set<UUID> wanted = new HashSet<>(interactionIds);
         Map<String, Boolean> dismissals = repository.findDismissals(scope.get(), null);
         Map<UUID, List<SignalSource>> byWork = repository.findSources(scope.get(), null, properties.classesStageName()).stream()
                 .filter(source -> wanted.contains(source.interactionId()))
                 .collect(Collectors.groupingBy(SignalSource::interactionId, LinkedHashMap::new, Collectors.toList()));
         Map<UUID, WorkLearning> result = new HashMap<>();
-        byWork.forEach((interactionId, sources) -> result.put(interactionId, learning(sources, dismissals, today)));
+        byWork.forEach((interactionId, sources) -> result.put(interactionId, learning(sources, dismissals, now)));
         return result;
     }
 
-    private WorkLearning learning(List<SignalSource> sources, Map<String, Boolean> dismissals, LocalDate today) {
+    private WorkLearning learning(List<SignalSource> sources, Map<String, Boolean> dismissals, OffsetDateTime now) {
+        LocalDate today = LmsSignalService.today(now);
         List<SignalSource> running = sources.stream().filter(source -> LmsSignalService.running(source, today)).toList();
         int participants = running.stream().mapToInt(SignalSource::participants).sum();
-        List<Activity> activity = running.stream().map(SignalSource::activity).filter(Objects::nonNull).toList();
+        // Устаревшая активность считается неизвестной, как и в сигналах.
+        List<Activity> activity = running.stream()
+                .filter(source -> LmsSignalService.fresh(source, now, properties))
+                .map(SignalSource::activity).filter(Objects::nonNull).toList();
         // null — активности нет ни по одному идущему потоку: «нет данных» отличается от нуля.
         Integer active7d = activity.isEmpty() ? null : activity.stream().mapToInt(Activity::active7d).sum();
         List<String> titles = new ArrayList<>();
         for (SignalSource source : sources) {
-            for (LmsSignalType type : LmsSignalService.types(source, today, properties)) {
+            for (LmsSignalType type : LmsSignalService.types(source, now, properties)) {
                 String key = LmsSignalRepository.dismissalKey(source.interactionId(), source.mappingId(), type,
                         source.dataVersion(type));
                 // Скрытые сигналы, в том числе записанные как риск, не считаются: менеджер их уже учёл.

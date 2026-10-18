@@ -2,8 +2,10 @@ package ru.rtk.crm.privacy;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -33,6 +35,7 @@ import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.privacy.PersonalDataRepository.ContactState;
 import ru.rtk.crm.privacy.PersonalDataRepository.ContactValues;
 import ru.rtk.crm.privacy.PersonalDataRepository.ProfileState;
+import ru.rtk.crm.privacy.PersonalDataRepository.Scope;
 import ru.rtk.crm.privacy.PersonalDataRepository.StoredFile;
 import ru.rtk.crm.privacy.PersonalDataRepository.TextColumn;
 import ru.rtk.crm.privacy.PersonalDataRepository.TextKind;
@@ -46,7 +49,8 @@ public class PersonalDataService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(PersonalDataService.class);
     private static final String REPORTS_AFTER_ANONYMIZATION =
-            "Файл удалён после обезличивания персональных данных; сформируйте отчёт заново";
+            "Отчёт сформирован до обезличивания персональных данных, файл удалён; сформируйте отчёт заново";
+    private static final int MAX_COMMENT = 500;
     private static final int MAX_IDS = 200;
 
     private final SubjectSearchRepository searchRepository;
@@ -99,6 +103,7 @@ public class PersonalDataService {
         if (format == null) {
             throw new InteractionValidationException("format", "Выберите формат выгрузки: JSON или PDF");
         }
+        SubjectTerms.requireExact(query);
         SubjectSearchResult result = find(query);
         List<UUID> learnerIds = learnerIds(result);
         List<LearnerDisclosure> learners = learnerPrivacyService.disclose(learnerIds);
@@ -174,7 +179,8 @@ public class PersonalDataService {
         }
         int version = requiredVersion(request.version());
         boolean restricted = request.restricted();
-        RestrictCommand command = new RestrictCommand(contactId, version, restricted);
+        String basis = basis(request.reason(), request.comment());
+        RestrictCommand command = new RestrictCommand(contactId, version, restricted, request.reason(), request.comment());
         return idempotent(actor, CommandOperation.RESTRICT_CONTACT_PROCESSING, idempotencyKey, command, SubjectContact.class, () -> {
             ContactState contact = lockedContact(contactId, version);
             PersonalDataStatus next = restricted ? PersonalDataStatus.RESTRICTED : PersonalDataStatus.ACTIVE;
@@ -188,7 +194,7 @@ public class PersonalDataService {
             }
             auditJournalRepository.record(
                     restricted ? AuditAction.CONTACT_RESTRICTED : AuditAction.CONTACT_RESTRICTION_LIFTED,
-                    actor.id(), "CONTACT", contactId, contact.organizationName(), null, requestId
+                    actor.id(), "CONTACT", contactId, contact.organizationName(), basis, requestId
             );
             return searchRepository.findContact(contactId).orElseThrow(PrivacyException::contactNotFound);
         });
@@ -209,7 +215,8 @@ public class PersonalDataService {
         }
         int version = requiredVersion(request.version());
         boolean restricted = request.restricted();
-        RestrictLearnerCommand command = new RestrictLearnerCommand(learnerId, version, restricted);
+        String basis = basis(request.reason(), request.comment());
+        RestrictLearnerCommand command = new RestrictLearnerCommand(learnerId, version, restricted, request.reason(), request.comment());
         return idempotent(actor, CommandOperation.RESTRICT_LEARNER_PROCESSING, idempotencyKey, command, SubjectLearner.class, () -> {
             SubjectLearner learner = learnerPrivacyService.lock(learnerId).orElseThrow(PrivacyException::learnerNotFound);
             if (learner.status() == PersonalDataStatus.ANONYMIZED) {
@@ -229,10 +236,24 @@ public class PersonalDataService {
             }
             learnerPrivacyService.journal(
                     restricted ? AuditAction.LEARNER_RESTRICTED : AuditAction.LEARNER_RESTRICTION_LIFTED,
-                    actor.id(), List.of(learnerId), null, requestId
+                    actor.id(), List.of(learnerId), basis, requestId
             );
             return learnerPrivacyService.lock(learnerId).orElseThrow(PrivacyException::learnerNotFound);
         });
+    }
+
+    // Предпросмотр считает то же, что сделает «Обезличить», теми же запросами, но ничего не записывает.
+    @Transactional
+    public AnonymizationResult previewAnonymization(CrmProfile actor, AnonymizationRequest request) {
+        AdminAuthorization.requireAdmin(actor);
+        Selection selection = selection(request);
+        long learners = lockLearners(selection.learnerIds()).stream()
+                .filter(learner -> learner.status() != PersonalDataStatus.ANONYMIZED)
+                .count();
+        return anonymizeLocked(
+                selection.spellings(), lockContacts(selection.contactIds()), lockProfiles(selection.profileIds()),
+                attachmentFiles(selection.attachmentIds()), true, true
+        ).withLearners((int) learners);
     }
 
     @Transactional
@@ -243,27 +264,18 @@ public class PersonalDataService {
             String requestId
     ) {
         AdminAuthorization.requireAdmin(actor);
-        if (request == null) {
-            throw new InteractionValidationException("body", "Укажите, что обезличить");
-        }
-        List<UUID> contactIds = ids(request.contactIds(), "contactIds");
-        List<UUID> profileIds = ids(request.profileIds(), "profileIds");
-        List<UUID> attachmentIds = ids(request.attachmentIds(), "attachmentIds");
-        List<UUID> learnerIds = ids(request.learnerIds(), "learnerIds");
-        SubjectTerms terms = hasTerms(request.subject()) ? SubjectTerms.of(request.subject()) : null;
-        if (terms == null && contactIds.isEmpty() && profileIds.isEmpty() && attachmentIds.isEmpty() && learnerIds.isEmpty()) {
-            throw new InteractionValidationException(
-                    "contactIds", "Выберите контакты, профили, анкеты слушателей или файлы либо укажите данные субъекта"
-            );
-        }
-        AnonymizeCommand command = new AnonymizeCommand(request.subject(), contactIds, profileIds, attachmentIds, learnerIds);
+        Selection selection = selection(request);
+        String basis = basis(request.reason(), request.comment());
+        AnonymizeCommand command = new AnonymizeCommand(
+                request.subject(), selection.contactIds(), selection.profileIds(), selection.attachmentIds(), selection.learnerIds(),
+                request.reason(), request.comment()
+        );
         return idempotent(actor, CommandOperation.ANONYMIZE_PERSONAL_DATA, idempotencyKey, command, AnonymizationResult.class, () -> {
-            List<SubjectLearner> learners = learnerIds.stream()
-                    .map(id -> learnerPrivacyService.lock(id).orElseThrow(PrivacyException::learnerNotFound))
-                    .toList();
-            AnonymizationResult changed = anonymizeLocked(
-                    terms, lockContacts(contactIds), lockProfiles(profileIds), attachmentFiles(attachmentIds), false, true
-            );
+            List<SubjectLearner> learners = lockLearners(selection.learnerIds());
+            List<ContactState> contacts = lockContacts(selection.contactIds());
+            List<ProfileState> profiles = lockProfiles(selection.profileIds());
+            List<StoredFile> files = attachmentFiles(selection.attachmentIds());
+            AnonymizationResult changed = anonymizeLocked(selection.spellings(), contacts, profiles, files, true, false);
             List<UUID> anonymizedLearners = new ArrayList<>();
             for (SubjectLearner learner : learners) {
                 if (learnerPrivacyService.anonymize(learner.id())) {
@@ -271,94 +283,160 @@ public class PersonalDataService {
                 }
             }
             AnonymizationResult result = changed.withLearners(anonymizedLearners.size());
-            auditJournalRepository.record(
-                    AuditAction.SUBJECT_ANONYMIZED, actor.id(), "SUBJECT", null, null, result.summary(), requestId
-            );
-            learnerPrivacyService.journal(AuditAction.SUBJECT_ANONYMIZED, actor.id(), anonymizedLearners, null, requestId);
+            // Объект записи — сам субъект с обозначением без ПДн, а не «—»: по журналу видно, кого и что изменили.
+            String details = basis + "; изменено: " + result.summary();
+            for (ContactState contact : contacts) {
+                auditJournalRepository.record(
+                        AuditAction.SUBJECT_ANONYMIZED, actor.id(), "CONTACT", contact.id(),
+                        "Контакт " + shortId(contact.id()) + ", вуз «" + contact.organizationName() + "»", details, requestId
+                );
+            }
+            for (ProfileState profile : profiles) {
+                auditJournalRepository.record(
+                        AuditAction.SUBJECT_ANONYMIZED, actor.id(), "PROFILE", profile.id(),
+                        "Сотрудник " + shortId(profile.id()), details, requestId
+                );
+            }
+            learnerPrivacyService.journal(AuditAction.SUBJECT_ANONYMIZED, actor.id(), learners.stream().map(SubjectLearner::id).toList(),
+                    details, requestId);
+            if (contacts.isEmpty() && profiles.isEmpty() && learners.isEmpty()) {
+                for (StoredFile file : files) {
+                    auditJournalRepository.record(
+                            AuditAction.SUBJECT_ANONYMIZED, actor.id(), "ATTACHMENT", file.id(), "Файл " + shortId(file.id()),
+                            details, requestId
+                    );
+                }
+            }
             return result;
         });
     }
 
     @Transactional
     public AnonymizationResult anonymizeForRetention(List<UUID> contactIds, List<UUID> profileIds) {
-        return anonymizeLocked(null, lockContacts(contactIds), lockProfiles(profileIds), List.of(), true, false);
+        return anonymizeLocked(List.of(), lockContacts(contactIds), lockProfiles(profileIds), List.of(), false, false);
     }
 
+    // Область каждого субъекта своя: контакт — его вуз (взаимодействия, где он участник, всегда этого вуза),
+    // сотрудник — вузы, с которыми он работал. Заменяются только его ФИО целиком, полная почта и телефон.
     private AnonymizationResult anonymizeLocked(
-            SubjectTerms queryTerms,
+            List<String> spellings,
             List<ContactState> contacts,
             List<ProfileState> profiles,
             List<StoredFile> files,
-            boolean scopedToOrganizations,
-            boolean expireReports
+            boolean expireReports,
+            boolean dryRun
     ) {
         if (profiles.stream().anyMatch(ProfileState::active)) {
             throw PrivacyException.profileActive();
         }
         OffsetDateTime now = OffsetDateTime.now();
-        boolean employeeSubject = contacts.isEmpty() && !profiles.isEmpty();
-        SubjectTerms base = queryTerms == null ? SubjectTerms.empty() : queryTerms;
         Counts counts = new Counts();
         List<ContactState> pendingContacts = contacts.stream()
                 .filter(contact -> contact.status() != PersonalDataStatus.ANONYMIZED)
                 .toList();
-        if (scopedToOrganizations) {
-            for (ContactState contact : pendingContacts) {
-                replace(SubjectTerms.empty().with(contact.name(), contact.email(), contact.phone()),
-                        CONTACT_MARKER, contact.organizationId(), counts);
-            }
-        } else {
-            SubjectTerms contactTerms = employeeSubject ? SubjectTerms.empty() : base;
-            for (ContactState contact : pendingContacts) {
-                contactTerms = contactTerms.with(contact.name(), contact.email(), contact.phone());
-            }
-            replace(contactTerms, CONTACT_MARKER, null, counts);
-        }
-        SubjectTerms employeeTerms = employeeSubject ? base : SubjectTerms.empty();
         List<ProfileState> pendingProfiles = profiles.stream().filter(profile -> !profile.anonymized()).toList();
-        for (ProfileState profile : pendingProfiles) {
-            employeeTerms = employeeTerms.with(profile.displayName(), null, null);
-        }
-        replace(employeeTerms, EMPLOYEE_MARKER, null, counts);
+        // Другие написания из формы поиска относятся к контакту, а если контакт не выбран — к сотруднику.
+        List<String> profileSpellings = pendingContacts.isEmpty() ? spellings : List.of();
+        List<UUID> deletedFiles = files.stream().map(StoredFile::id).toList();
+        Set<UUID> organizations = new LinkedHashSet<>();
         for (ContactState contact : pendingContacts) {
-            repository.anonymizeContact(contact.id(), CONTACT_MARKER, now);
+            replace(SubjectTerms.subject(contact.name(), contact.email(), contact.phone(), spellings), CONTACT_MARKER,
+                    new Scope(List.of(contact.organizationId()), List.of(contact.id()), deletedFiles), counts, dryRun);
+            organizations.add(contact.organizationId());
         }
         for (ProfileState profile : pendingProfiles) {
-            repository.anonymizeProfile(profile.id(), EMPLOYEE_MARKER, PREVIOUS_EMPLOYEE_MARKER, now);
+            List<UUID> profileOrganizations = repository.profileOrganizationIds(profile.id());
+            replace(SubjectTerms.subject(profile.displayName(), null, null, profileSpellings), EMPLOYEE_MARKER,
+                    new Scope(profileOrganizations, List.of(profile.id()), deletedFiles), counts, dryRun);
+            organizations.addAll(profileOrganizations);
         }
-        for (StoredFile file : files) {
-            repository.deleteAttachment(file.id());
+        int reports = 0;
+        if (expireReports && !(pendingContacts.isEmpty() && pendingProfiles.isEmpty())) {
+            List<StoredFile> reportFiles = repository.findSubjectReports(
+                    List.copyOf(organizations), pendingProfiles.stream().map(ProfileState::id).toList()
+            );
+            if (dryRun) {
+                reports = reportFiles.size();
+            } else {
+                List<UUID> expired = reportFiles.stream()
+                        .filter(report -> repository.expireReport(report, REPORTS_AFTER_ANONYMIZATION))
+                        .map(StoredFile::storageKey)
+                        .toList();
+                afterCommit(() -> expired.forEach(key -> reportStorage.delete(reportStorage.resultFile(key))));
+                reports = expired.size();
+            }
         }
-        afterCommit(() -> deleteAttachmentFiles(files));
-        AnonymizationResult changed = new AnonymizationResult(
-                pendingContacts.size(), pendingProfiles.size(), counts.mentions, counts.sourceRecords, counts.technical,
-                files.size(), 0, 0
-        );
-        if (!expireReports || !changed.changedAnything()) {
-            return changed;
+        if (!dryRun) {
+            for (ContactState contact : pendingContacts) {
+                repository.anonymizeContact(contact.id(), CONTACT_MARKER, now);
+            }
+            for (ProfileState profile : pendingProfiles) {
+                repository.anonymizeProfile(profile.id(), EMPLOYEE_MARKER, PREVIOUS_EMPLOYEE_MARKER, now);
+            }
+            for (StoredFile file : files) {
+                repository.deleteAttachment(file.id());
+            }
+            afterCommit(() -> deleteAttachmentFiles(files));
         }
-        List<UUID> reportFiles = repository.expireReportResults(null, REPORTS_AFTER_ANONYMIZATION);
-        afterCommit(() -> reportFiles.forEach(key -> reportStorage.delete(reportStorage.resultFile(key))));
         return new AnonymizationResult(
-                changed.contacts(), changed.profiles(), changed.mentions(), changed.sourceRecords(), changed.technicalRecords(),
-                changed.attachmentsDeleted(), reportFiles.size(), 0
+                pendingContacts.size(), pendingProfiles.size(), counts.mentions, counts.files, counts.sourceRecords,
+                counts.technical, files.size(), reports, 0
         );
     }
 
-    private void replace(SubjectTerms terms, String marker, UUID organizationId, Counts counts) {
+    private void replace(SubjectTerms terms, String marker, Scope scope, Counts counts, boolean dryRun) {
         if (terms.isEmpty()) {
             return;
         }
         for (TextColumn column : TextColumn.values()) {
-            int changed = repository.replaceText(column, terms, marker, organizationId);
-            if (column.kind() == TextKind.MENTION) {
-                counts.mentions += changed;
-            } else if (column.kind() == TextKind.SOURCE) {
-                counts.sourceRecords += changed;
-            } else {
-                counts.technical += changed;
+            int changed = repository.replaceText(column, terms, marker, scope, dryRun);
+            switch (column.kind()) {
+                case MENTION -> counts.mentions += changed;
+                case FILE_NAME -> counts.files += changed;
+                case SOURCE -> counts.sourceRecords += changed;
+                case TECHNICAL -> counts.technical += changed;
             }
         }
+    }
+
+    private Selection selection(AnonymizationRequest request) {
+        if (request == null) {
+            throw new InteractionValidationException("body", "Укажите, что обезличить");
+        }
+        Selection selection = new Selection(
+                SubjectTerms.spellings(request.subject()),
+                ids(request.contactIds(), "contactIds"),
+                ids(request.profileIds(), "profileIds"),
+                ids(request.attachmentIds(), "attachmentIds"),
+                ids(request.learnerIds(), "learnerIds")
+        );
+        // Без выбранных записей обезличивать нечего: замена по одной строке поиска задела бы чужие данные.
+        if (selection.contactIds().isEmpty() && selection.profileIds().isEmpty() && selection.attachmentIds().isEmpty()
+                && selection.learnerIds().isEmpty()) {
+            throw new InteractionValidationException("contactIds", "Отметьте контакты, профили, анкеты слушателей или файлы");
+        }
+        return selection;
+    }
+
+    private List<SubjectLearner> lockLearners(List<UUID> learnerIds) {
+        return learnerIds.stream()
+                .map(id -> learnerPrivacyService.lock(id).orElseThrow(PrivacyException::learnerNotFound))
+                .toList();
+    }
+
+    private static String basis(PersonalDataReason reason, String comment) {
+        if (reason == null) {
+            throw new InteractionValidationException("reason", "Выберите основание");
+        }
+        String text = optionalText(comment, "comment", MAX_COMMENT);
+        if (reason == PersonalDataReason.OTHER && text == null) {
+            throw new InteractionValidationException("comment", "Опишите основание в комментарии");
+        }
+        return "основание: " + reason.label() + (text == null ? "" : "; комментарий: " + text);
+    }
+
+    private static String shortId(UUID id) {
+        return id.toString().substring(0, 8);
     }
 
     private void deleteAttachmentFiles(List<StoredFile> files) {
@@ -497,15 +575,6 @@ public class PersonalDataService {
                 + ", записей источников: " + result.sourceRecords().size() + ", слушателей: " + result.learners().size();
     }
 
-    private static boolean hasTerms(SubjectQuery query) {
-        return query != null && (notBlank(query.name()) || notBlank(query.email()) || notBlank(query.phone())
-                || notBlank(query.otherSpellings()));
-    }
-
-    private static boolean notBlank(String value) {
-        return value != null && !value.isBlank();
-    }
-
     private static List<UUID> ids(List<UUID> values, String field) {
         if (values == null) {
             return List.of();
@@ -557,6 +626,7 @@ public class PersonalDataService {
 
     private static final class Counts {
         private int mentions;
+        private int files;
         private int sourceRecords;
         private int technical;
     }
@@ -567,14 +637,27 @@ public class PersonalDataService {
     private record RectifyCommand(UUID contactId, int version, ContactValues values) {
     }
 
-    private record RestrictCommand(UUID contactId, int version, boolean restricted) {
+    private record RestrictCommand(UUID contactId, int version, boolean restricted, PersonalDataReason reason, String comment) {
     }
 
-    private record RestrictLearnerCommand(UUID learnerId, int version, boolean restricted) {
+    private record RestrictLearnerCommand(
+            UUID learnerId, int version, boolean restricted, PersonalDataReason reason, String comment
+    ) {
     }
 
     private record AnonymizeCommand(
             SubjectQuery subject,
+            List<UUID> contactIds,
+            List<UUID> profileIds,
+            List<UUID> attachmentIds,
+            List<UUID> learnerIds,
+            PersonalDataReason reason,
+            String comment
+    ) {
+    }
+
+    private record Selection(
+            List<String> spellings,
             List<UUID> contactIds,
             List<UUID> profileIds,
             List<UUID> attachmentIds,

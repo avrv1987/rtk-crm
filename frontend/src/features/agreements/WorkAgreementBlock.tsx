@@ -6,6 +6,7 @@ import { activeStageRole, agreementStatusLabels, agreementTerm, linkCandidates, 
 import { AgreementForm } from './AgreementForm'
 import { AgreementTransitions } from './AgreementTransitions'
 import { AgreementTermMark, CommandError, useAccessErrorHandler, useCommandKey } from './agreementUi'
+import { signingRuleHint } from '../interactions/workCardModel'
 import './agreements.css'
 
 type WorkAgreementBlockProps = {
@@ -142,12 +143,8 @@ export const WorkAgreementBlock = ({
   return (
     <section className="work-agreement" aria-labelledby="work-agreement-title">
       <h5 id="work-agreement-title">Договор с вузом</h5>
-      {work.signingRuleEnabled && hasSigningStage && (
-        <p className="work-agreement__rule">
-          {role === 'SIGNING'
-            ? 'Этап завершится, когда договор будет подписан.'
-            : 'Этап «Подписание» завершится только с подписанным договором.'}
-        </p>
+      {work.signingRuleEnabled && hasSigningStage && signingRuleHint(role, work.agreements) !== null && (
+        <p className="work-agreement__rule">{signingRuleHint(role, work.agreements)}</p>
       )}
       {work.agreements.length === 0 ? (
         <div className="work-agreement__empty">

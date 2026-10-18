@@ -110,24 +110,28 @@ public class LearningTrendService {
         private long end;
         private long change;
         private int withoutStart;
+        private long endWithoutStart;
 
         private Totals(UUID id, String name) {
             this.id = id;
             this.name = name;
         }
 
+        // Поток без значения на начало не смешивается с сопоставимыми: иначе «10 → 32 (+2)» складывало бы разные
+        // совокупности в одну строку.
         private void add(Long startValue, long endValue) {
-            end += endValue;
             if (startValue == null) {
                 withoutStart++;
+                endWithoutStart += endValue;
                 return;
             }
             start += startValue;
+            end += endValue;
             change += endValue - startValue;
         }
 
         private LearningTrend.Item view() {
-            return new LearningTrend.Item(id, name, start, end, change, withoutStart);
+            return new LearningTrend.Item(id, name, start, end, change, withoutStart, endWithoutStart);
         }
     }
 }

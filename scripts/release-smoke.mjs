@@ -268,8 +268,112 @@ const pdfText = (buffer) => {
   return text
 }
 
-const xlsIncludes = (buffer, value) => buffer.includes(Buffer.from(value, 'utf16le'))
-  || (!/[^\u0000-\u00ff]/.test(value) && buffer.includes(Buffer.from(value, 'latin1')))
+// Строки XLS берутся из таблицы строк BIFF8 (SST) потока Workbook. Побайтный поиск ненадёжен: длинная таблица
+// делится записями CONTINUE, и строка может оказаться разрезана заголовком записи и байтом флага.
+function oleStream(buffer, wanted) {
+  const shift = buffer.readUInt16LE(0x1e)
+  const size = 1 << shift
+  const sector = (id) => buffer.subarray((id + 1) * size, (id + 2) * size)
+  const fatSectors = []
+  for (let index = 0; index < 109; index += 1) fatSectors.push(buffer.readUInt32LE(0x4c + index * 4))
+  for (let next = buffer.readUInt32LE(0x44), left = buffer.readUInt32LE(0x48); left > 0 && next < 0xfffffffa; left -= 1) {
+    const difat = sector(next)
+    for (let index = 0; index < size / 4 - 1; index += 1) fatSectors.push(difat.readUInt32LE(index * 4))
+    next = difat.readUInt32LE(size - 4)
+  }
+  const fat = Buffer.concat(fatSectors.filter((id) => id < 0xfffffffa).map(sector))
+  const chain = (start, table, read) => {
+    const parts = []
+    for (let id = start; id < 0xfffffffa; id = table.readUInt32LE(id * 4)) parts.push(read(id))
+    return Buffer.concat(parts)
+  }
+  const directory = chain(buffer.readUInt32LE(0x30), fat, sector)
+  const entries = []
+  for (let offset = 0; offset + 128 <= directory.length; offset += 128) {
+    const nameLength = directory.readUInt16LE(offset + 0x40)
+    entries.push({
+      name: directory.toString('utf16le', offset, offset + Math.max(0, nameLength - 2)),
+      start: directory.readUInt32LE(offset + 0x74),
+      size: directory.readUInt32LE(offset + 0x78)
+    })
+  }
+  const entry = entries.find((item) => wanted.includes(item.name))
+  assert(entry, 'XLS has no Workbook stream')
+  if (entry.size >= buffer.readUInt32LE(0x38)) {
+    return chain(entry.start, fat, sector).subarray(0, entry.size)
+  }
+  const miniSize = 1 << buffer.readUInt16LE(0x20)
+  const miniStream = chain(entries[0].start, fat, sector)
+  const miniFat = chain(buffer.readUInt32LE(0x3c), fat, sector)
+  return chain(entry.start, miniFat, (id) => miniStream.subarray(id * miniSize, (id + 1) * miniSize)).subarray(0, entry.size)
+}
+
+function xlsStrings(buffer) {
+  const stream = oleStream(buffer, ['Workbook', 'Book'])
+  const segments = []
+  for (let offset = 0; offset + 4 <= stream.length;) {
+    const type = stream.readUInt16LE(offset)
+    const length = stream.readUInt16LE(offset + 2)
+    const data = stream.subarray(offset + 4, offset + 4 + length)
+    if (type === 0x00fc) segments.push(data)
+    else if (type === 0x003c && segments.length > 0) segments.push(data)
+    else if (segments.length > 0) break
+    offset += 4 + length
+  }
+  if (segments.length === 0) return []
+  let segment = 0
+  let position = 0
+  const advance = () => {
+    if (position >= segments[segment].length) {
+      segment += 1
+      position = 0
+    }
+  }
+  const byte = () => {
+    advance()
+    return segments[segment][position++]
+  }
+  const uint16 = () => byte() | (byte() << 8)
+  const uint32 = () => (uint16() | (uint16() << 16)) >>> 0
+  const skip = (count) => {
+    for (let left = count; left > 0;) {
+      advance()
+      const step = Math.min(left, segments[segment].length - position)
+      position += step
+      left -= step
+    }
+  }
+  uint32()
+  const unique = uint32()
+  const strings = []
+  for (let index = 0; index < unique; index += 1) {
+    const characters = uint16()
+    const flags = byte()
+    let wide = (flags & 0x01) !== 0
+    const runs = flags & 0x08 ? uint16() : 0
+    const extension = flags & 0x04 ? uint32() : 0
+    let text = ''
+    for (let left = characters; left > 0;) {
+      if (segments[segment].length - position < (wide ? 2 : 1)) {
+        // Символы строки на границе CONTINUE: новая запись начинается с собственного байта флага ширины.
+        segment += 1
+        position = 0
+        wide = (segments[segment][position++] & 0x01) !== 0
+      }
+      const width = wide ? 2 : 1
+      const count = Math.min(left, Math.floor((segments[segment].length - position) / width))
+      const chunk = segments[segment].subarray(position, position + count * width)
+      text += wide ? chunk.toString('utf16le') : chunk.toString('latin1')
+      position += count * width
+      left -= count
+    }
+    skip(runs * 4 + extension)
+    strings.push(text)
+  }
+  return strings
+}
+
+const xlsIncludes = (strings, value) => strings.some((text) => text.includes(value))
 
 function checkFile(format, buffer, expectations) {
   const { present, absent } = expectations
@@ -285,8 +389,9 @@ function checkFile(format, buffer, expectations) {
   }
   if (format === 'XLS') {
     assert(buffer.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])), 'XLS is not an OLE2 file')
-    present.forEach((value) => assert(xlsIncludes(buffer, value), 'XLS lacks expected text'))
-    absent.forEach((value) => assert(!xlsIncludes(buffer, value), 'XLS contains foreign text'))
+    const strings = xlsStrings(buffer)
+    present.forEach((value) => assert(xlsIncludes(strings, value), 'XLS lacks expected text: ' + value))
+    absent.forEach((value) => assert(!xlsIncludes(strings, value), 'XLS contains foreign text'))
     return { container: 'ole2' }
   }
   if (format === 'PDF') {
@@ -725,8 +830,12 @@ try {
         for (const format of ['PNG', 'PDF']) {
           const chart = await orderFile(page, { ...chartRequest, format }, name + '-' + kind + '-chart-' + chartRequest.groupBy + '-' + format)
           fs.writeFileSync(path.join(outputDirectory, name + '-' + kind + '-chart-' + chartRequest.groupBy.toLowerCase() + '.' + format.toLowerCase()), chart.buffer)
+          // Итог в PDF сверяется с числом строк самого задания: это тот же снимок данных, по которому построен файл.
+          // Ответ /api/statistics получен раньше; если между ними кто-то записал событие, числа расходятся честно,
+          // и тогда по нему сверяются только подписи, без итога и «Не указано».
+          const sameSnapshot = chart.job.rowCount === statistics.total
           const present = format === 'PDF'
-            ? ['Таблица основания диаграммы', 'Всего строк в выборке\n' + statistics.total, ...statistics.items.map((item) => item.label), ...(chartRequest.groupBy === 'PROGRAM' ? ['Не указано\n' + statistics.unknownCount] : [])]
+            ? ['Таблица основания диаграммы', 'Всего строк в выборке\n' + chart.job.rowCount, ...statistics.items.map((item) => item.label), ...(chartRequest.groupBy === 'PROGRAM' && sameSnapshot ? ['Не указано\n' + statistics.unknownCount] : [])]
             : []
           files['chart' + chartRequest.groupBy + format] = checkFile(format, chart.buffer, { present, absent: ['Университет Б'] })
         }
@@ -805,7 +914,7 @@ try {
   assert(uiTarget, 'UI interaction has no transition without a comment')
   const dialogForms = { 'Перейти на этап': 'interaction-transition-form', 'Комментарий': 'interaction-comment-form' }
   const cardControls = {
-    'Перейти на этап': "(document.querySelector('.work-card__primary[data-action=transition]') ?? [...document.querySelectorAll('.work-card__more [role=menuitem]')].find((item) => item.textContent.trim() === 'Перейти на этап…'))",
+    'Перейти на этап': "(document.querySelector('.work-card__primary[data-action=transition]') ?? [...document.querySelectorAll('.work-card__more [role=menuitem]')].find((item) => item.textContent.trim() === 'Перейти на следующий этап…'))",
     'Комментарий': "[...document.querySelectorAll('.work-card__add [role=menuitem]')].find((item) => item.textContent.trim() === 'Комментарий…')"
   }
   const formByTitle = (titleText) => `document.querySelector('dialog[open] form.${dialogForms[titleText]}')`
@@ -873,7 +982,8 @@ try {
   const uiEvents = requireStatus(await api(kamA, 'GET', '/api/interactions/' + uiInteraction.id + '/events'), 200, 'UI history is unavailable')
   assert(uiEvents.some((event) => event.type === 'COMMENTED' && event.comment === uiComment), 'UI comment is absent from history')
   const uiAfterComment = await uiState()
-  await kamA.evaluate("location.hash = '#/reports'")
+  // «Отчёты» открываются на вкладке «Задачи»; карточки каталога — на своей вкладке.
+  await kamA.evaluate("location.hash = '#/reports?tab=catalog'")
   await kamA.waitFor(() => kamA.evaluate("document.querySelectorAll('.report-card').length > 0"), 'UI reports catalog did not open')
   await kamA.evaluate("document.querySelector('.report-card[href=\"#/reports/portfolio\"]').click()")
   await kamA.waitFor(() => kamA.evaluate("Boolean(document.querySelector('.reports__form .report-period__preset'))"), 'UI reports screen did not open')

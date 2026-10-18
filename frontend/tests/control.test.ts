@@ -10,6 +10,7 @@ import {
   dueTones,
   emptyControlFilters,
   exportColumns,
+  filterControl,
   hasPeriod,
   isStuck,
   learningText,
@@ -20,8 +21,13 @@ import {
   controlListHref,
   controlReportHref,
   reportSelectionFromControl,
+  controlMoreScope,
+  shownTotals,
+  shownTotalsText,
+  shownWorks,
   skippedNotice,
-  tileShownCount
+  tileShownCount,
+  trendLine
 } from '../src/features/control/controlModel.ts'
 import type { ReportSelection } from '../src/features/reports/reportSelection.ts'
 import type { WorkControl } from '../src/shared/api/client.ts'
@@ -88,8 +94,9 @@ test('цвет и подпись состояния срока', () => {
   )
 })
 
-test('положение на маршруте: номер из числа этапов и доля', () => {
-  assert.equal(routeLabel({ stagePosition: 5, stageTotal: 13 }), '5 из 13')
+test('положение в маршруте: номер этапа без процента готовности', () => {
+  assert.equal(routeLabel({ stagePosition: 5, stageTotal: 13 }), 'Положение в маршруте: этап 5 из 13')
+  assert.doesNotMatch(routeLabel({ stagePosition: 5, stageTotal: 13 }), /готов|%/)
   assert.equal(routeShare({ stagePosition: 5, stageTotal: 13 }), 38)
   assert.equal(routeShare({ stagePosition: 13, stageTotal: 13 }), 100)
   assert.equal(routeLabel({ stagePosition: 0, stageTotal: 0 }), '')
@@ -104,7 +111,7 @@ test('пометки изменений за период', () => {
     changeNotes({ ...base, transitions: 2, stageAtStart: 'Поиск контакта' }),
     ['Было: Поиск контакта · 2 перехода']
   )
-  assert.deepEqual(changeNotes({ ...base, transitions: 5, stageAtStart: 'Встреча', completed: true }), ['5 переходов', 'Завершена'])
+  assert.deepEqual(changeNotes({ ...base, transitions: 5, stageAtStart: 'Встреча', completed: true }), ['5 переходов', 'Завершена в периоде'])
 })
 
 test('выгрузка берёт те же отборы, что на экране, и добавляет колонки периода', () => {
@@ -147,7 +154,8 @@ test('выгрузка «Контроля» берёт выбранную пли
   const stuck = toExportRequest(emptyControlFilters, 'PDF', false, { tile: 'STUCK', stuckDays: 14 })
   assert.equal(stuck.filters?.tile, 'STUCK')
   assert.equal(stuck.filters?.minDaysOnStage, 14)
-  assert.equal(toExportRequest(emptyControlFilters, 'XLSX', false, { tile: 'IDLE', stuckDays: 30 }).filters?.tile, null)
+  // П03: «Без работы» выгружается своей плиткой — списком вузов, а не всеми взаимодействиями по фильтрам.
+  assert.equal(toExportRequest(emptyControlFilters, 'XLSX', false, { tile: 'IDLE', stuckDays: 30 }).filters?.tile, 'IDLE')
   assert.equal(toExportRequest(emptyControlFilters, 'XLSX', false).filters?.tile, null)
   assert.ok(overdue.columns?.includes('AGREEMENT'))
   assert.ok(overdue.columns?.includes('AGREEMENT_STATUS'))
@@ -155,6 +163,32 @@ test('выгрузка «Контроля» берёт выбранную пли
 })
 
 const queryOf = (href: string) => href.slice(href.indexOf('?') + 1)
+
+// П01, П02: режим хранится в адресе и уходит в выгрузку и в отчёт тем же правилом владельца, что на экране.
+test('режим «За период» живёт в адресе и уходит в выгрузку и отчёт, без периода режим «Сейчас»', () => {
+  const period = { ...emptyControlFilters, from: '2026-09-01', to: '2026-09-30', managerId: ['m1'], mode: 'PERIOD' as const }
+  const query = controlQueryFromFilters(period)
+  assert.ok(query.includes('mode=period'))
+  assert.deepEqual(controlFiltersFromQuery(query), period)
+  assert.equal(controlFiltersFromQuery('mode=period').mode, 'NOW')
+  assert.equal(controlQueryFromFilters({ ...emptyControlFilters, mode: 'PERIOD' }), '')
+  assert.equal(toExportRequest(period, 'XLSX', false).filters?.managerAt, 'PERIOD_END')
+  assert.equal(toExportRequest({ ...period, mode: 'NOW' }, 'PDF', false).filters?.managerAt, 'CURRENT')
+  assert.equal(toExportRequest({ ...emptyControlFilters, mode: 'PERIOD' }, 'PDF', false).filters?.managerAt, 'CURRENT')
+  const selection = reportSelectionFromControl({} as ReportSelection, queryOf(controlReportHref(period, { tile: null, stuckDays: 30 })))
+  assert.equal(selection?.managerAt, 'PERIOD_END')
+  assert.deepEqual(selection?.managerIds, ['m1'])
+  assert.equal(reportSelectionFromControl({} as ReportSelection, queryOf(controlReportHref({ ...period, mode: 'NOW' },
+    { tile: null, stuckDays: 30 })))?.managerAt, 'CURRENT')
+})
+
+// П17: сопоставимые потоки и потоки без базы сравнения не складываются в одно «было → стало».
+test('строка тренда разделяет сопоставимые потоки и новые без базы', () => {
+  const total = { start: 10, end: 12, change: 2, runsWithoutData: 1, endWithoutBase: 20 }
+  assert.equal(trendLine({ total }, 90), 'Обучающиеся за 90 дней, сопоставимые потоки: 10 → 12, +2; новые потоки без базы сравнения: 20')
+  assert.equal(trendLine({ total: { ...total, runsWithoutData: 0, endWithoutBase: 0 } }, 90),
+    'Обучающиеся за 90 дней, сопоставимые потоки: 10 → 12, +2')
+})
 
 test('«Показать списком» переносит вуз, менеджера, этап и плитку, остальное называет', () => {
   const filters = { ...emptyControlFilters, organizationId: ['o1'], managerId: ['m1'], stage: ['Пилот'] }
@@ -228,4 +262,33 @@ test('счётчик «Контроля» показывает число стр
   assert.equal(tileShownCount(shown, null), null)
   assert.equal(tileShownCount(shown, 'OVERDUE'), 3)
   assert.equal(tileShownCount(shown, 'IDLE'), 2)
+})
+
+test('под плиткой итог менеджера «всего» остаётся серверным, а итог отбора считается по показанным строкам', () => {
+  const work = (interactionId: string, organizationId: string, due: string) => ({ interactionId, organizationId, due, problems: 0, risks: 0 })
+  const control = {
+    total: { organizations: 2, works: 3, overdue: 2 },
+    teams: [{
+      teamId: 't1',
+      totals: { organizations: 2, works: 3, overdue: 2 },
+      managers: [{
+        managerId: 'm1',
+        totals: { organizations: 2, works: 3, overdue: 2 },
+        works: [work('w1', 'o1', 'OVERDUE'), work('w2', 'o1', 'OVERDUE'), work('w3', 'o2', 'IN_ORDER')]
+      }]
+    }]
+  } as unknown as WorkControl
+  const shown = filterControl(control, 'OVERDUE', 30)
+  const manager = shown.teams[0].managers[0]
+  assert.equal(manager.works.length, 2)
+  assert.equal(manager.totals.works, 3)
+  assert.deepEqual(shownTotals(manager.works), { organizations: 1, works: 2 })
+  assert.equal(shownTotalsText(shownTotals(shownWorks(shown))), 'по отбору: вузов 1, взаимодействий 2')
+  assert.equal(filterControl(control, null, 30), control)
+})
+
+test('дополнительные блоки «Контроля» подписаны областью, временем и тем, что фильтры к ним не применяются', () => {
+  assert.equal(controlMoreScope(true), 'По всем командам, фильтры, плитки и период выше не применяются. Сигналы LMS — действующие сейчас; обучающиеся — сегодня против 90 дней назад; подписания — текущий квартал.')
+  assert.match(controlMoreScope(false), /^По всей команде, фильтры, плитки и период выше не применяются\./)
+  assert.doesNotMatch(controlMoreScope(false), /подписания/)
 })

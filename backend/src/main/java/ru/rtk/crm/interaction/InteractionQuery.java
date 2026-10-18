@@ -1,7 +1,7 @@
 package ru.rtk.crm.interaction;
 
-record InteractionQuery(int page, int size, InteractionSort sort) {
-    static InteractionQuery from(int page, int size, String sort) {
+public record InteractionQuery(int page, int size, InteractionSort sort) {
+    public static InteractionQuery from(int page, int size, String sort) {
         if (page < 0) {
             throw new InteractionValidationException("page", "Номер страницы не может быть отрицательным");
         }

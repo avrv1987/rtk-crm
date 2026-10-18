@@ -20,6 +20,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.audit.AuditAction;
+import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.catalog.Organization;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
@@ -35,6 +37,7 @@ public class WorkflowRolloutService {
     private final OrganizationRepository organizationRepository;
     private final CommandIdempotencyRepository commandIdempotencyRepository;
     private final ObjectMapper objectMapper;
+    private final AuditJournalRepository auditJournalRepository;
 
     public WorkflowRolloutService(
             WorkflowTemplateRepository workflowTemplateRepository,
@@ -42,7 +45,8 @@ public class WorkflowRolloutService {
             InteractionRepository interactionRepository,
             OrganizationRepository organizationRepository,
             CommandIdempotencyRepository commandIdempotencyRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            AuditJournalRepository auditJournalRepository
     ) {
         this.workflowTemplateRepository = workflowTemplateRepository;
         this.workflowRolloutRepository = workflowRolloutRepository;
@@ -50,6 +54,7 @@ public class WorkflowRolloutService {
         this.organizationRepository = organizationRepository;
         this.commandIdempotencyRepository = commandIdempotencyRepository;
         this.objectMapper = objectMapper;
+        this.auditJournalRepository = auditJournalRepository;
     }
 
     @Transactional(readOnly = true)
@@ -288,6 +293,12 @@ public class WorkflowRolloutService {
                     now
             );
         }
+        auditJournalRepository.record(
+                AuditAction.WORKFLOW_ROLLOUT_APPLIED, profile.id(), "WORKFLOW_TEMPLATE", templateId, template.name(),
+                "версия маршрута " + targetVersion + "; работ переведено: " + works.size()
+                        + (replaceLocalChanges ? "; местные правки маршрута заменены" : ""),
+                null
+        );
         return store(commandId, new WorkflowRolloutResult(targetVersion, works.size()));
     }
 

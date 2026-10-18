@@ -48,7 +48,22 @@ export const errorCodes: ErrorCodeInfo[] = [
   { module: 'partner', code: 'PARTNER_ACCESS_EXISTS', http: '409', meaning: 'У контакта уже есть доступ в кабинет вуза.', action: 'Обновите вкладку «Контакты»: доступ уже открыт. Если представитель забыл пароль, закройте доступ и откройте снова — будет выдан новый временный пароль.' },
   { module: 'partner', code: 'PARTNER_ACCOUNT_CONFLICT', http: '409', meaning: 'В Keycloak уже есть учётная запись с такой почтой или логином.', action: 'Проверьте почту контакта; если это другой человек, исправьте почту. Иначе обратитесь к администратору.' },
   { code: 'ACCOUNT_CONFLICT', http: '409', meaning: 'При заведении сотрудника или смене почты: в Keycloak уже есть учётная запись с таким логином или почтой.', action: 'Укажите другой логин или почту; если сотрудник уже заведён, найдите его в списке профилей.' },
-  { code: 'FILE_UNAVAILABLE', http: '404', meaning: 'Файл недоступен: запись о документе есть, а самого файла в хранилище нет.', action: 'Повтор не поможет. Сообщите администратору CRM: файл нужно восстановить из резервной копии или загрузить заново.' }
+  { code: 'FILE_UNAVAILABLE', http: '404', meaning: 'Файл недоступен: запись о документе есть, а самого файла в хранилище нет.', action: 'Повтор не поможет. Сообщите администратору CRM: файл нужно восстановить из резервной копии или загрузить заново.' },
+  // Модуль MAX
+  { module: 'max', code: 'MAX_NOT_CONFIGURED', http: '409', meaning: 'Бот MAX ещё не настроен.', action: 'Администратор вводит токен бота и проверяет связь: «Администрирование» → «Источники данных» → «Бот MAX».' },
+  { module: 'max', code: 'MAX_UNAVAILABLE', http: '503', meaning: 'MAX не ответил.', action: 'Повторите позже. Сообщения не теряются: они ждут в очереди.' },
+  { module: 'max', code: 'MAX_REQUEST_FAILED', http: '502', meaning: 'MAX отклонил запрос, например подписку вебхука.', action: 'Проверьте токен и адрес вебхука в карточке «Бот MAX» и повторите.' },
+  { module: 'max', code: 'MAX_WEBHOOK_URL_INVALID', http: '409', meaning: 'Публичный адрес CRM не HTTPS: MAX не примет вебхук.', action: 'Администратор сервера задаёт PUBLIC_ORIGIN или MAX_PUBLIC_BASE_URL с https://.' },
+  { module: 'max', code: 'MAX_LINK_EXPIRED', http: '409', meaning: 'Ссылка подключения истекла или по ней ещё никто не открыл бота.', action: 'Меню профиля → «Подключить MAX» → «Новая ссылка».' },
+  { module: 'max', code: 'MAX_ACCOUNT_TAKEN', http: '409', meaning: 'Этот аккаунт MAX уже подключён к другому профилю CRM.', action: 'Подключите свой аккаунт MAX. Если аккаунт ваш, попросите администратора отключить прежнее подключение.' },
+  { module: 'max', code: 'MAX_NOT_LINKED', http: '403/409', meaning: 'Аккаунт MAX не подключён к профилю CRM.', action: 'В CRM: меню профиля → «Подключить MAX».' },
+  { module: 'max', code: 'MAX_INIT_DATA_INVALID', http: '401', meaning: 'Мини-приложение открыто не из MAX или данные запуска подделаны.', action: 'Откройте мини-приложение из бота CRM в MAX.' },
+  { module: 'max', code: 'MAX_INIT_DATA_EXPIRED', http: '401', meaning: 'Мини-приложение открыто больше часа назад.', action: 'Закройте мини-приложение и откройте снова.' },
+  { module: 'max', code: 'MAX_ROLE_NOT_ALLOWED', http: '403', meaning: 'Мини-приложение доступно только КАМ и руководителю команды.', action: 'Работайте в основной CRM.' },
+  { module: 'max', code: 'MAX_SESSION_EXPIRED', http: '401', meaning: 'Сеанс мини-приложения закончился или отозван: простой 30 минут, 4 часа, смена роли или отключение MAX.', action: 'Мини-приложение входит заново само; если не вышло — закройте и откройте его снова.' },
+  { module: 'mail', code: 'MAIL_INVITATION_INVALID', http: '404', meaning: 'Ссылка из письма-приглашения не найдена или учётная запись закрыта.', action: 'Попросите администратора (сотруднику) или менеджера (представителю вуза) выдать новую ссылку.' },
+  { module: 'mail', code: 'MAIL_INVITATION_USED', http: '410', meaning: 'Ссылка из письма уже открывалась или прошло 72 часа.', action: 'Войдите с паролем, полученным по ссылке. Если он не сохранён, попросите выдать новый пароль.' },
+  { module: 'mail', code: 'MAIL_LETTER_STATE', http: '409', meaning: 'Письмо уже отправлено, отменено или устарело.', action: 'Обновите журнал в «Администрирование» → «Почта».' }
 ]
 
 export type TocItem = {
@@ -64,6 +79,8 @@ export const tocItems: TocItem[] = [
   { id: 'help-admin', label: 'Администратор' },
   { module: 'enrolment', id: 'help-enrolment', label: 'Оператор зачисления' },
   { module: 'partner', id: 'help-partner', label: 'Кабинет вуза' },
+  { module: 'max', id: 'help-max', label: 'MAX: уведомления и мини-приложение' },
+  { module: 'mail', id: 'help-mail', label: 'Почта: уведомления и приглашения' },
   { id: 'help-errors', label: 'Коды ошибок' },
   { id: 'help-links', label: 'Swagger UI и техническая информация' }
 ]

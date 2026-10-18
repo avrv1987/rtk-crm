@@ -17,21 +17,26 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.audit.AuditAction;
+import ru.rtk.crm.audit.AuditJournalRepository;
 
 @Service
 public class WorkflowTemplateService {
     private final WorkflowTemplateRepository workflowTemplateRepository;
     private final CommandIdempotencyRepository commandIdempotencyRepository;
     private final ObjectMapper objectMapper;
+    private final AuditJournalRepository auditJournalRepository;
 
     public WorkflowTemplateService(
             WorkflowTemplateRepository workflowTemplateRepository,
             CommandIdempotencyRepository commandIdempotencyRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            AuditJournalRepository auditJournalRepository
     ) {
         this.workflowTemplateRepository = workflowTemplateRepository;
         this.commandIdempotencyRepository = commandIdempotencyRepository;
         this.objectMapper = objectMapper;
+        this.auditJournalRepository = auditJournalRepository;
     }
 
     @Transactional(readOnly = true)
@@ -97,6 +102,8 @@ public class WorkflowTemplateService {
             }
             workflowTemplateRepository.updateTeamDefault(profile.teamId(), teamDefaultId);
         }
+        journal(profile, templateId, current.name(),
+                profile.role() == UserRole.ADMIN ? "выбран общим шаблоном по умолчанию" : "выбран шаблоном команды по умолчанию");
         WorkflowTemplate result = workflowTemplateRepository.findById(templateId)
                 .map(workflowTemplateRepository::toTemplate)
                 .orElseThrow(WorkflowTemplateNotFoundException::new);
@@ -157,6 +164,7 @@ public class WorkflowTemplateService {
                 profile.id(),
                 now
         );
+        journal(profile, templateId, name, versionText("создан", 1, workflow.stages().size(), comment));
         WorkflowTemplate result = workflowTemplateRepository.findById(templateId)
                 .map(workflowTemplateRepository::toTemplate)
                 .orElseThrow(WorkflowTemplateNotFoundException::new);
@@ -224,15 +232,20 @@ public class WorkflowTemplateService {
         }
         // Версия маршрута пишется и при правке одного названия: так сохраняется полная история, а откат — это
         // обычный перевод работ на прежнюю версию.
+        int versionNumber = workflowTemplateRepository.findLatestVersionNumber(templateId) + 1;
         workflowTemplateRepository.insertVersion(
                 templateId,
-                workflowTemplateRepository.findLatestVersionNumber(templateId) + 1,
+                versionNumber,
                 name,
                 route.write(objectMapper),
                 comment,
                 profile.id(),
                 now
         );
+        journal(profile, templateId, name, versionText(
+                current.name().equals(name) ? "изменён" : "изменён, прежнее название «" + current.name() + "»",
+                versionNumber, route.stages().size(), comment
+        ));
         WorkflowTemplate result = workflowTemplateRepository.findById(templateId)
                 .map(workflowTemplateRepository::toTemplate)
                 .orElseThrow(WorkflowTemplateNotFoundException::new);
@@ -273,7 +286,20 @@ public class WorkflowTemplateService {
                     .orElseThrow(WorkflowTemplateNotFoundException::new);
             throw InteractionConflictException.workflowTemplateVersion(currentVersion);
         }
+        // Версии шаблона удаляются вместе с ним (ON DELETE CASCADE), поэтому след удаления остаётся только в журнале.
+        journal(profile, templateId, current.name(), "удалён");
         commandIdempotencyRepository.complete(commandId, "{}");
+    }
+
+    private void journal(CrmProfile profile, UUID templateId, String name, String details) {
+        auditJournalRepository.record(
+                AuditAction.WORKFLOW_TEMPLATE_CHANGED, profile.id(), "WORKFLOW_TEMPLATE", templateId, name, details, null
+        );
+    }
+
+    private static String versionText(String change, int version, int stages, String comment) {
+        return change + "; версия маршрута " + version + ", этапов: " + stages
+                + (comment == null ? "" : "; комментарий: " + comment);
     }
 
     private WorkflowTemplateRepository.WorkflowTemplateRow requireVisibleTemplate(

@@ -13,6 +13,7 @@ public final class LmsSignalModels {
         STUDENTS_APPEARED,
         NO_STUDENTS,
         LOW_COMPLETION,
+        COMPLETION_UNVERIFIED,
         LOW_ACTIVITY,
         NOT_STARTED,
         DROPOUT,

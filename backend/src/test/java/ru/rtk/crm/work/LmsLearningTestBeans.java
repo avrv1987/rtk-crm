@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Import;
 @TestConfiguration(proxyBeanMethods = false)
 @Import({LmsSignalRepository.class, LmsWorkLearningService.class})
 public class LmsLearningTestBeans {
-    public static final LmsSignalProperties PROPERTIES = new LmsSignalProperties("Занятия", 14, 50, 7, 7, 40, 50, 25, 14);
+    public static final LmsSignalProperties PROPERTIES = new LmsSignalProperties("Занятия", 14, 50, 7, 7, 40, 50, 25, 14, null, null);
 
     @Bean
     LmsSignalProperties lmsSignalProperties() {

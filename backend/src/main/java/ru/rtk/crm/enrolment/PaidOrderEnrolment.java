@@ -92,11 +92,16 @@ public class PaidOrderEnrolment {
             return new LearnerIntake(0, 1, 0, 0, 0, 0, contactsDiffer);
         }
         int afterLms = enrolment.lmsExportedAt() == null ? 0 : 1;
+        String reconcile = afterLms == 0 ? null : "Перенос из потока «" + enrolment.courseName() + ", поток " + enrolment.streamNo()
+                + "» после выгрузки в LMS: уберите слушателя с прежнего курса в LMS и проверьте новый";
         if (enrolmentRepository.enrolled(learner.id(), stream.id())) {
             enrolmentRepository.delete(enrolment.id());
+            if (reconcile != null) {
+                enrolmentRepository.markReconcile(learner.id(), stream.id(), reconcile, now);
+            }
             return new LearnerIntake(0, 1, 0, 1, 1, afterLms, contactsDiffer);
         }
-        enrolmentRepository.moveToStream(enrolment.id(), stream.id(), now);
+        enrolmentRepository.moveToStream(enrolment.id(), stream.id(), now, reconcile);
         return new LearnerIntake(0, 1, 0, 0, 1, afterLms, contactsDiffer);
     }
 

@@ -125,6 +125,14 @@ public class PersonalDataApiController {
         );
     }
 
+    @PostMapping("/personal-data/anonymization/preview")
+    public AnonymizationResult previewAnonymization(
+            @AuthenticationPrincipal OidcUser user,
+            @RequestBody(required = false) AnonymizationRequest anonymization
+    ) {
+        return personalDataService.previewAnonymization(currentProfileService.requireActiveProfile(user), anonymization);
+    }
+
     @GetMapping("/retention")
     public RetentionPolicy retention(@AuthenticationPrincipal OidcUser user) {
         return retentionService.policy(currentProfileService.requireActiveProfile(user));

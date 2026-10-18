@@ -58,6 +58,17 @@ public class CurrentProfileService {
         return profile;
     }
 
+    // Вход ИИ-агента по access token (MCP): та же пара «издатель + subject», но без совместимого режима. Роль профиля
+    // обязана быть в токене: агент не входит по роли из CRM, которую Keycloak не подтвердил или уже снял.
+    public CrmProfile requireTokenProfile(String issuer, String subject, Collection<?> keycloakRoleNames) {
+        CrmProfile profile = userProfileRepository.findActiveByIdentity(issuer, subject)
+                .orElseThrow(CrmProfileNotFoundException::new);
+        if (!UserRole.fromKeycloakRoles(keycloakRoleNames).contains(profile.role())) {
+            throw new CrmProfileNotFoundException();
+        }
+        return profile;
+    }
+
     public static Set<UserRole> keycloakRoles(OidcUser user) {
         Map<String, Object> realmAccess = user.getIdToken().getClaimAsMap("realm_access");
         return realmAccess != null && realmAccess.get("roles") instanceof Collection<?> names

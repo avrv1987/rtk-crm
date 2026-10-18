@@ -64,16 +64,27 @@ public class OrganizationHistoryService {
         );
     }
 
+    // Автоматическое снятие или передача без причины выглядели бы как действие администратора без объяснения,
+    // поэтому причина из события назначения дописывается к тексту истории.
     private static String assignmentText(StoredHistoryItem stored) {
         String previous = manager(stored.previousOwnerId(), stored.previousOwnerName());
         String next = manager(stored.ownerId(), stored.ownerName());
-        if (stored.ownerId() == null) {
-            return "Снято назначение: " + previous + ".";
-        }
-        if (stored.previousOwnerId() == null) {
-            return "Назначен ответственный: " + next + ".";
-        }
-        return "Ответственный изменён: " + previous + " → " + next + ".";
+        String text = stored.ownerId() == null
+                ? "Снято назначение: " + previous + "."
+                : stored.previousOwnerId() == null
+                        ? "Назначен ответственный: " + next + "."
+                        : "Ответственный изменён: " + previous + " → " + next + ".";
+        return stored.assignmentReason() == null ? text : text + " Причина: " + reasonText(stored.assignmentReason()) + ".";
+    }
+
+    static String reasonText(String reason) {
+        return switch (OrganizationAssignmentReason.valueOf(reason)) {
+            case PROFILE_BLOCKED -> "блокировка КАМ";
+            case PROFILE_ROLE_CHANGED -> "у КАМ изменена роль";
+            case PROFILE_TEAM_CHANGED -> "КАМ переведён в другую команду";
+            case ORGANIZATION_TEAM_CHANGED -> "вуз передан в другую команду";
+            case IMPORT -> "назначение из импорта справочника";
+        };
     }
 
     private static String agreementText(StoredHistoryItem stored) {

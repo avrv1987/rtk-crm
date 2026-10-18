@@ -92,6 +92,28 @@ public class InteractionIssuesApiController {
         );
     }
 
+    @PostMapping("/api/issues/{issueId}/comments")
+    public InteractionIssue commentAsResponsible(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String issueId,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody(required = false) InteractionIssueNote request
+    ) {
+        return issueService.commentAsResponsible(currentProfileService.requireActiveProfile(user), uuid(issueId, "issueId"), request,
+                idempotencyKey);
+    }
+
+    @PostMapping("/api/issues/{issueId}/resolution")
+    public InteractionIssue resolveAsResponsible(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String issueId,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody(required = false) InteractionIssueNote request
+    ) {
+        return issueService.resolveAsResponsible(currentProfileService.requireActiveProfile(user), uuid(issueId, "issueId"), request,
+                idempotencyKey);
+    }
+
     @GetMapping("/api/issues")
     public InteractionIssuePage registry(
             @AuthenticationPrincipal OidcUser user,

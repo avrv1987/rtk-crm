@@ -42,6 +42,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import ru.rtk.crm.enrolment.EnrolmentBatchTestSchema;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 @SpringBootTest(properties = {
@@ -98,6 +99,7 @@ class AccessManagementHttpTest {
     void setUp() {
         createSchema();
         jdbcTemplate.update("DELETE FROM audit_events");
+        jdbcTemplate.update("DELETE FROM catalog_change_events");
         jdbcTemplate.update("DELETE FROM source_settings");
         jdbcTemplate.update("DELETE FROM crm_exchange_events");
         jdbcTemplate.update("DELETE FROM crm_profile_events");
@@ -119,6 +121,35 @@ class AccessManagementHttpTest {
         insertProfile(MANAGEMENT, "Руководство", "MANAGEMENT", null, true, false);
         insertOrganization(ORGANIZATION_A, "Университет А", TEAM_A, USER_A);
         insertOrganization(ORGANIZATION_B, "Университет Б", TEAM_B, null);
+    }
+
+    @Test
+    void catalogAndOrganizationChangesJoinTheSecurityJournalWithoutPersonalData() throws Exception {
+        String insert = """
+                INSERT INTO catalog_change_events (id, entity_type, entity_id, action, entity_name, changes, actor_profile_id,
+                    actor_display_name, request_id, occurred_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'Администратор', 'catalog-request', CURRENT_TIMESTAMP)
+                """;
+        jdbcTemplate.update(insert, UUID.randomUUID(), "DIRECTION", UUID.randomUUID(), "CREATE", "Аудит-направление", "Код: D-1", ADMIN);
+        jdbcTemplate.update(insert, UUID.randomUUID(), "ORGANIZATION", ORGANIZATION_A, "UPDATE", "Университет А", "Город: Казань", ADMIN);
+        jdbcTemplate.update(insert, UUID.randomUUID(), "VENDOR_CONTACT", UUID.randomUUID(), "UPDATE", "Иванов Иван",
+                "Телефон: +7 900 000-00-01", ADMIN);
+        jdbcTemplate.update(insert, UUID.randomUUID(), "TEAM", TEAM_A, "UPDATE", "Команда А", null, ADMIN);
+
+        mockMvc.perform(get("/api/admin/audit-events").param("category", "SETTINGS").with(login(ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.items[?(@.objectName == 'Аудит-направление')].details").value("направление: создание; Код: D-1"))
+                .andExpect(jsonPath("$.items[?(@.objectName == 'Аудит-направление')].action").value("CATALOG_CHANGED"))
+                .andExpect(jsonPath("$.items[?(@.objectName == 'Контакт вендора')].details").value("контакт вендора: изменение"));
+        mockMvc.perform(get("/api/admin/audit-events").param("object", "Аудит-напр").with(login(ADMIN)))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].actorDisplayName").value("Администратор"));
+        mockMvc.perform(get("/api/admin/audit-events").param("category", "ORGANIZATION").with(login(ADMIN)))
+                .andExpect(jsonPath("$.items[0].action").value("ORGANIZATION_RECORD_CHANGED"))
+                .andExpect(jsonPath("$.items[0].details").value("вуз: изменение; Город: Казань"));
+        mockMvc.perform(get("/api/admin/audit-events").param("object", "Иванов").with(login(ADMIN)))
+                .andExpect(jsonPath("$.total").value(0));
     }
 
     @Test
@@ -578,6 +609,28 @@ class AccessManagementHttpTest {
                 .andExpect(status().isForbidden());
     }
 
+    // Д-6: без основания ни ограничение обработки, ни обезличивание не выполняются — 400.
+    @Test
+    void personalDataActionsWithoutReasonAreRejected() throws Exception {
+        UUID contact = UUID.randomUUID();
+        mockMvc.perform(post("/api/admin/personal-data/contacts/{id}/restriction", contact)
+                        .with(login(ADMIN)).with(csrf()).header("Idempotency-Key", "restrict-no-reason")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0,\"restricted\":true}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors.reason").exists());
+        mockMvc.perform(post("/api/admin/personal-data/anonymization")
+                        .with(login(ADMIN)).with(csrf()).header("Idempotency-Key", "anonymize-no-reason")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"contactIds\":[\"" + contact + "\"]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors.reason").exists());
+        mockMvc.perform(post("/api/admin/personal-data/anonymization/preview")
+                        .with(login(LEADER_A)).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"contactIds\":[\"" + contact + "\"]}"))
+                .andExpect(status().isForbidden());
+    }
+
     @Test
     void roleFromKeycloakTokenIsRequiredOnceConfirmedAndRoleChangesNeedTheServiceClient() throws Exception {
         mockMvc.perform(get("/api/me").with(login(USER_A)))
@@ -653,6 +706,14 @@ class AccessManagementHttpTest {
     }
 
     private void createSchema() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS catalog_change_events (
+                    id UUID PRIMARY KEY, entity_type VARCHAR(16) NOT NULL, entity_id UUID NOT NULL, action VARCHAR(16) NOT NULL,
+                    entity_name VARCHAR(300) NOT NULL, changes VARCHAR(2000), actor_profile_id UUID NOT NULL,
+                    actor_display_name VARCHAR(200) NOT NULL, request_id VARCHAR(64) NOT NULL,
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS teams (
                     id UUID PRIMARY KEY,
@@ -862,6 +923,7 @@ class AccessManagementHttpTest {
                 """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS learner_enrolments (
+                    lms_synced_version INTEGER, lms_reconcile_reason VARCHAR(500),
                     id UUID PRIMARY KEY,
                     learner_id UUID NOT NULL,
                     stream_id UUID NOT NULL,
@@ -871,6 +933,8 @@ class AccessManagementHttpTest {
                     lms_transferred_at TIMESTAMP WITH TIME ZONE
                 )
                 """);
+        jdbcTemplate.execute(EnrolmentBatchTestSchema.BATCHES);
+        jdbcTemplate.execute(EnrolmentBatchTestSchema.ITEMS);
         jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS source_records (id UUID PRIMARY KEY, external_id VARCHAR(200), program_id UUID,"
                 + " status VARCHAR(16) DEFAULT 'APPLIED' NOT NULL, sync_run_id UUID)");
         jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS programs (id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL)");

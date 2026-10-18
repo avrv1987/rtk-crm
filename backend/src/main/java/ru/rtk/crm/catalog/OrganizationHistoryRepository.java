@@ -26,7 +26,7 @@ public class OrganizationHistoryRepository {
                    CAST(NULL AS UUID) AS previous_owner_id, CAST(NULL AS VARCHAR(200)) AS previous_owner_name,
                    CAST(NULL AS UUID) AS owner_id, CAST(NULL AS VARCHAR(200)) AS owner_name,
                    CAST(NULL AS VARCHAR(100)) AS agreement_number, CAST(NULL AS VARCHAR(16)) AS from_status,
-                   CAST(NULL AS VARCHAR(16)) AS to_status
+                   CAST(NULL AS VARCHAR(16)) AS to_status, CAST(NULL AS VARCHAR(32)) AS assignment_reason
             """.formatted(InteractionRepository.EVENT_COMMENT);
 
     private static final String WORK_FROM = """
@@ -47,7 +47,7 @@ public class OrganizationHistoryRepository {
                    ae.previous_owner_manager_display_name AS previous_owner_name,
                    ae.owner_manager_id AS owner_id, ae.new_owner_manager_display_name AS owner_name,
                    CAST(NULL AS VARCHAR(100)) AS agreement_number, CAST(NULL AS VARCHAR(16)) AS from_status,
-                   CAST(NULL AS VARCHAR(16)) AS to_status
+                   CAST(NULL AS VARCHAR(16)) AS to_status, ae.reason AS assignment_reason
             """;
 
     private static final String ASSIGNMENT_FROM = """
@@ -64,7 +64,7 @@ public class OrganizationHistoryRepository {
                    CAST(NULL AS UUID) AS previous_owner_id, CAST(NULL AS VARCHAR(200)) AS previous_owner_name,
                    CAST(NULL AS UUID) AS owner_id, CAST(NULL AS VARCHAR(200)) AS owner_name,
                    CAST(NULL AS VARCHAR(100)) AS agreement_number, CAST(NULL AS VARCHAR(16)) AS from_status,
-                   CAST(NULL AS VARCHAR(16)) AS to_status
+                   CAST(NULL AS VARCHAR(16)) AS to_status, CAST(NULL AS VARCHAR(32)) AS assignment_reason
             """;
 
     private static final String CONTACT_FROM = """
@@ -84,7 +84,7 @@ public class OrganizationHistoryRepository {
                    CAST(NULL AS VARCHAR(10000)) AS changes,
                    CAST(NULL AS UUID) AS previous_owner_id, CAST(NULL AS VARCHAR(200)) AS previous_owner_name,
                    CAST(NULL AS UUID) AS owner_id, CAST(NULL AS VARCHAR(200)) AS owner_name,
-                   ag.number AS agreement_number, se.from_status AS from_status, se.to_status AS to_status
+                   ag.number AS agreement_number, se.from_status AS from_status, se.to_status AS to_status, CAST(NULL AS VARCHAR(32)) AS assignment_reason
             """;
 
     private static final String AGREEMENT_FROM = """
@@ -197,7 +197,8 @@ public class OrganizationHistoryRepository {
                 resultSet.getString("owner_name"),
                 resultSet.getString("agreement_number"),
                 resultSet.getString("from_status"),
-                resultSet.getString("to_status")
+                resultSet.getString("to_status"),
+                resultSet.getString("assignment_reason")
         );
     }
 
@@ -223,7 +224,8 @@ public class OrganizationHistoryRepository {
             String ownerName,
             String agreementNumber,
             String fromStatus,
-            String toStatus
+            String toStatus,
+            String assignmentReason
     ) {
     }
 }

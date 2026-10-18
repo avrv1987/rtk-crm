@@ -4,7 +4,7 @@ import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { shiftCalendarDate, todayInMoscow } from '../../shared/format/datetime'
 import { recordOf, textOf, useFormDraft } from './formDraft'
-import { useUnsavedDraft } from './unsavedDrafts'
+import { forgetUnsavedDraft, useUnsavedDraft } from './unsavedDrafts'
 import { commandFailureMessage, handledAccessError, type WorkStatus, workStatusLabels } from './workMarks'
 import './workCard.css'
 
@@ -142,6 +142,9 @@ export const InteractionStatusPanel = ({
       commandKey.current = null
       setDraft(null)
       setState({ kind: 'idle' })
+      // После завершения карточка перерисовывается и панель может закрыться раньше, чем эффект с dirty=false
+      // снимет метку черновика; черновик в хранилище уже очищен, поэтому метку снимаем сразу.
+      forgetUnsavedDraft(`card:${interaction.id}:status`)
       onChanged(updated)
     } catch (error) {
       if (!handledAccessError(error, onSessionExpired, onProfileUnavailable)) {

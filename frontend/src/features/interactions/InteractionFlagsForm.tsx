@@ -4,7 +4,7 @@ import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { changedDraft, conflictKeys, keepDraftValues, mergedValues, parseBasedDraft, takeCurrentValues } from './draftBase'
 import { DraftConflictNotice } from './DraftConflictNotice'
 import { recordOf, textOf, useFormDraft } from './formDraft'
-import { useUnsavedDraft } from './unsavedDrafts'
+import { forgetUnsavedDraft, useUnsavedDraft } from './unsavedDrafts'
 import { commandFailureMessage, handledAccessError, type WaitingOn, waitingLabels } from './workMarks'
 import './workCard.css'
 
@@ -111,6 +111,7 @@ export const InteractionFlagsForm = ({
       commandKey.current = null
       setDraft(null)
       setState({ kind: 'idle' })
+      forgetUnsavedDraft(`card:${interaction.id}:flags`)
       onChanged(updated)
     } catch (error) {
       if (!handledAccessError(error, onSessionExpired, onProfileUnavailable)) {

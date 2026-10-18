@@ -10,6 +10,7 @@ import ru.rtk.crm.access.PartnerModuleDisabledException;
 import ru.rtk.crm.access.UserProfileRepository;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.enrolment.EnrolmentAccess;
+import ru.rtk.crm.mcp.McpProperties;
 import ru.rtk.crm.module.ModuleProperties;
 
 @RestController
@@ -18,17 +19,20 @@ public class SessionApiController {
     private final UserProfileRepository userProfileRepository;
     private final EnrolmentAccess enrolmentAccess;
     private final ModuleProperties modules;
+    private final McpProperties mcp;
 
     public SessionApiController(
             CurrentProfileService currentProfileService,
             UserProfileRepository userProfileRepository,
             EnrolmentAccess enrolmentAccess,
-            ModuleProperties modules
+            ModuleProperties modules,
+            McpProperties mcp
     ) {
         this.currentProfileService = currentProfileService;
         this.userProfileRepository = userProfileRepository;
         this.enrolmentAccess = enrolmentAccess;
         this.modules = modules;
+        this.mcp = mcp;
     }
 
     @GetMapping("/api/me")
@@ -46,7 +50,9 @@ public class SessionApiController {
 
     @GetMapping("/api/config")
     public ConfigResponse config() {
-        return new ConfigResponse(new ConfigResponse.Modules(modules.enrolmentEnabled(), modules.partnerEnabled()));
+        return new ConfigResponse(new ConfigResponse.Modules(modules.enrolmentEnabled(), modules.partnerEnabled(), modules.maxEnabled(),
+                mcp.enabled(),
+                modules.mailEnabled()));
     }
 
     @GetMapping("/api/csrf")

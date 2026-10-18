@@ -26,6 +26,9 @@ public class AuditJournalRepository {
     // считается изменением, только если запуск впервые отправил запись на разбор или в ошибку (за ней закреплён
     // sync_run_id, см. SourceRepository.updateRecord): записи, которые уже ждут разбора, каждый запуск находит снова.
     // У «Рынка труда» записей источника нет, для него правило прежнее.
+    // Справочники и записи вузов берутся из их собственного журнала catalog_change_events, чтобы в общем журнале была
+    // и прежняя история. Команды туда не берутся: они уже пишутся в audit_events. У контакта вендора имя и изменения
+    // скрыты — это персональные данные.
     private static final String JOURNAL = """
             SELECT a.id, a.occurred_at, a.category, a.action, a.actor_profile_id, a.actor_display_name,
                    a.object_type, a.object_id, a.object_name, a.details, a.request_id
@@ -95,6 +98,24 @@ public class AuditJournalRepository {
                    OR r.source = 'LABOR_MARKET' AND r.needs_mapping_count + r.failed_count > 0
                    OR r.id IN (SELECT sr.sync_run_id FROM source_records sr
                                WHERE sr.sync_run_id IS NOT NULL AND sr.status <> 'SKIPPED'))
+            UNION ALL
+            SELECT c.id, c.occurred_at,
+                   CASE WHEN c.entity_type = 'ORGANIZATION' THEN 'ORGANIZATION' ELSE 'SETTINGS' END,
+                   CASE WHEN c.entity_type = 'ORGANIZATION' THEN 'ORGANIZATION_RECORD_CHANGED' ELSE 'CATALOG_CHANGED' END,
+                   c.actor_profile_id, c.actor_display_name, c.entity_type, c.entity_id,
+                   CASE WHEN c.entity_type = 'VENDOR_CONTACT' THEN 'Контакт вендора' ELSE c.entity_name END,
+                   CASE c.entity_type WHEN 'ORGANIZATION' THEN 'вуз' WHEN 'DIRECTION' THEN 'направление'
+                                      WHEN 'PROGRAM' THEN 'программа' WHEN 'VENDOR' THEN 'вендор'
+                                      WHEN 'PRODUCT' THEN 'продукт' WHEN 'AGREEMENT' THEN 'соглашение'
+                                      ELSE 'контакт вендора' END
+                       || ': ' || CASE c.action WHEN 'CREATE' THEN 'создание' WHEN 'REQUEST' THEN 'запрос на добавление'
+                                                WHEN 'APPROVE' THEN 'одобрение' WHEN 'REJECT' THEN 'отклонение'
+                                                WHEN 'ARCHIVE' THEN 'перенос в архив' WHEN 'RESTORE' THEN 'восстановление'
+                                                ELSE 'изменение' END
+                       || CASE WHEN c.changes IS NULL OR c.entity_type = 'VENDOR_CONTACT' THEN '' ELSE '; ' || c.changes END,
+                   c.request_id
+            FROM catalog_change_events c
+            WHERE c.entity_type <> 'TEAM'
             """.formatted(ROLE_LABEL.formatted("e.previous_role"), ROLE_LABEL.formatted("e.role"), SYSTEM_ACTOR);
 
     private final JdbcClient jdbcClient;
@@ -111,6 +132,27 @@ public class AuditJournalRepository {
             String objectName,
             String details,
             String requestId
+    ) {
+        record(action, actorProfileId, objectType, objectId, objectName, details, requestId, OffsetDateTime.now());
+    }
+
+    public boolean recorded(AuditAction action, String requestId) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM audit_events WHERE action = :action AND request_id = :requestId")
+                .param("action", action.name())
+                .param("requestId", requestId)
+                .query(Long.class)
+                .single() > 0;
+    }
+
+    public void record(
+            AuditAction action,
+            UUID actorProfileId,
+            String objectType,
+            UUID objectId,
+            String objectName,
+            String details,
+            String requestId,
+            OffsetDateTime occurredAt
     ) {
         jdbcClient.sql("""
                 INSERT INTO audit_events (
@@ -132,7 +174,7 @@ public class AuditJournalRepository {
                 .param("objectName", limit(objectName, 500))
                 .param("details", limit(details, 2000))
                 .param("requestId", requestId)
-                .param("occurredAt", OffsetDateTime.now())
+                .param("occurredAt", occurredAt)
                 .update();
     }
 

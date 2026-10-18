@@ -114,6 +114,39 @@ public class InteractionService {
         return interactionRepository.findEvents(interactionId);
     }
 
+    // Поиск для MCP: тот же фильтр и та же область видимости, что у GET /api/interactions, одна страница
+    // с ближайшими сроками первыми.
+    @Transactional(readOnly = true)
+    public InteractionPage find(
+            CrmProfile profile,
+            UUID organizationId,
+            String search,
+            String due,
+            String stage,
+            String status,
+            String minDaysOnStage,
+            int size
+    ) {
+        return list(
+                profile,
+                InteractionFilter.from(organizationId, search, due, stage, status, null, null, null, minDaysOnStage),
+                InteractionQuery.from(0, size, "nextActionAt,asc")
+        );
+    }
+
+    // Последние события с лимитом в SQL: история длинной карточки не загружается целиком ради нескольких строк.
+    @Transactional(readOnly = true)
+    public RecentEvents recentEvents(CrmProfile profile, UUID interactionId, int limit) {
+        requireVisibleInteraction(profile, interactionId);
+        return new RecentEvents(
+                interactionRepository.findRecentEvents(interactionId, limit),
+                interactionRepository.countEvents(interactionId)
+        );
+    }
+
+    public record RecentEvents(List<InteractionEvent> items, long total) {
+    }
+
     // Общий порядок всех изменяющих команд карточки: проверка прав и входных данных, отпечаток запроса, резерв
     // ключа повтора, и только потом сверка версии и запись. Любая ошибка после резерва откатывает всю
     // транзакцию вместе с резервом, поэтому повтор после сбоя выполняется заново, а не «успешно» без записи.
@@ -426,13 +459,15 @@ public class InteractionService {
         String text = requiredText(request.text(), "text", 4_000);
         List<UUID> attachmentIds = validatedAttachmentIds(request.attachmentIds());
         NextStepPatch nextStep = nextStepPatch(request.nextStep());
+        InteractionContactMark contact = contactMark(visible.row().organizationId(), request.contact());
         CommentInteractionCommand command = new CommentInteractionCommand(
                 interactionId,
                 expectedVersion,
                 request.stageId(),
                 text,
                 attachmentIds,
-                nextStep
+                nextStep,
+                contact
         );
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
@@ -475,6 +510,10 @@ public class InteractionService {
                 now
         );
         attachmentRepository.bindCleanUnbound(interactionId, selectedStage.id(), eventId, attachmentIds, now);
+        if (contact != null) {
+            interactionRepository.saveContactMark(interactionId, eventId, contact, now);
+            event = interactionRepository.findEvent(eventId);
+        }
         Interaction updated = toInteraction(interactionRepository.findById(interactionId)
                 .orElseThrow(InteractionNotFoundException::new));
         return storeComment(commandId, new InteractionCommentResult(updated, event));
@@ -889,8 +928,9 @@ public class InteractionService {
                         optionalText(request.nextStep().nextAction(), "nextStep.nextAction", 500),
                         request.nextStep().nextActionAt()
                 );
+        InteractionContactMark contact = contactMark(visible.row().organizationId(), request.contact());
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
-        CompleteStepCommand command = new CompleteStepCommand(interactionId, expectedVersion, result, nextStep);
+        CompleteStepCommand command = new CompleteStepCommand(interactionId, expectedVersion, result, nextStep, contact);
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
         OffsetDateTime now = OffsetDateTime.now();
@@ -913,8 +953,9 @@ public class InteractionService {
             throw versionConflict(interactionId, row.version());
         }
         interactionRepository.updatePlan(interactionId, nextStep.nextAction(), nextStep.nextActionAt(), row.programId());
+        UUID eventId = UUID.randomUUID();
         interactionRepository.insertEvent(
-                UUID.randomUUID(),
+                eventId,
                 interactionId,
                 commandId,
                 InteractionEventType.PLAN_UPDATED,
@@ -928,6 +969,9 @@ public class InteractionService {
                 expectedVersion + 1,
                 now
         );
+        if (contact != null) {
+            interactionRepository.saveContactMark(interactionId, eventId, contact, now);
+        }
         Interaction updated = toInteraction(interactionRepository.findById(interactionId)
                 .orElseThrow(InteractionNotFoundException::new));
         return storeInteraction(commandId, updated);
@@ -1086,8 +1130,9 @@ public class InteractionService {
         if (nextStep != null) {
             interactionRepository.updatePlan(row.id(), nextStep.nextAction(), nextStep.nextActionAt(), row.programId());
         }
+        UUID eventId = UUID.randomUUID();
         interactionRepository.insertEvent(
-                UUID.randomUUID(),
+                eventId,
                 row.id(),
                 commandId,
                 type,
@@ -1101,6 +1146,10 @@ public class InteractionService {
                 expectedVersion + 1,
                 now
         );
+        // Статус после события нужен отчётам: «завершено в периоде» считается по событию, а не по сегодняшнему статусу.
+        if (type == InteractionEventType.STATUS_CHANGED) {
+            interactionRepository.updateEventStatusAfter(eventId, marks.status());
+        }
         Interaction updated = toInteraction(interactionRepository.findById(row.id())
                 .orElseThrow(InteractionNotFoundException::new));
         return storeInteraction(commandId, updated);
@@ -1400,6 +1449,18 @@ public class InteractionService {
                     : "Все контакты должны относиться к вузу взаимодействия");
         }
         return List.copyOf(uniqueContactIds);
+    }
+
+    // Отметку «был контакт» ставит только сотрудник командой карточки; записи источников (заявки сайта, данные LMS)
+    // идут через appendSourceComment и дату последнего контакта не трогают.
+    private InteractionContactMark contactMark(UUID organizationId, InteractionContactMark requested) {
+        if (requested == null) {
+            return null;
+        }
+        if (requested.channel() == null) {
+            throw new InteractionValidationException("contact.channel", "Выберите, как прошёл контакт");
+        }
+        return new InteractionContactMark(requested.channel(), validatedContactIds(organizationId, requested.participantIds()));
     }
 
     private UUID validatedProgramId(UUID programId) {
@@ -1775,7 +1836,8 @@ public class InteractionService {
             UUID stageId,
             String text,
             List<UUID> attachmentIds,
-            NextStepPatch nextStep
+            NextStepPatch nextStep,
+            InteractionContactMark contact
     ) {
     }
 
@@ -1818,7 +1880,8 @@ public class InteractionService {
             UUID interactionId,
             int version,
             String result,
-            InteractionNextStep nextStep
+            InteractionNextStep nextStep,
+            InteractionContactMark contact
     ) {
     }
 

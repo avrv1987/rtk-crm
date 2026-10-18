@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, apiClient, type Me } from '../shared/api/client'
 import { AdminScreen, adminNoticeText } from '../features/admin/AdminScreen'
+import { AgentPlanScreen } from '../features/agentPlans/AgentPlanScreen'
 import { AgreementRegistry } from '../features/agreements/AgreementRegistry'
 import { ControlScreen } from '../features/control/ControlScreen'
+import { TeamsOverview } from '../features/control/TeamsOverview'
 import { EnrolmentScreen } from '../features/enrolment/EnrolmentScreen'
 import { ActivationRequest, keycloakLogoutUrl } from '../features/session/ActivationRequest'
 import { announceSession, watchSessionElsewhere } from '../features/session/sessionSync'
@@ -32,6 +34,8 @@ import {
   type NavItem
 } from './routing'
 import { LandingPage } from '../features/landing/LandingPage'
+import { InvitationScreen } from '../features/mail/InvitationScreen'
+import { invitationToken } from '../features/mail/mailAdmin'
 import { OrganizationsScreen } from '../features/organizations/OrganizationsScreen'
 import { PartnerCabinet } from '../features/partner/PartnerCabinet'
 import { ReportsScreen } from '../features/reports/ReportsScreen'
@@ -89,7 +93,8 @@ export const App = () => {
   }, [redirect])
 
   useEffect(() => {
-    if (state.kind !== 'profile') {
+    // Адрес приглашения не подменяется разделом CRM: страницу ссылки из письма открывают и в чужой сессии.
+    if (state.kind !== 'profile' || invitationToken(window.location.hash) !== null) {
       return
     }
     const sections = sectionsFor(state.profile.role, state.profile.enrolmentOperator, getModules())
@@ -199,6 +204,11 @@ export const App = () => {
     setState({ kind: 'forbidden', requestId, pending: false })
   }, [])
 
+  // Ссылка из письма-приглашения открывается и без входа, и в чужой сессии: пароль получает тот, у кого письмо.
+  const inviteToken = invitationToken(hash)
+  if (inviteToken !== null) {
+    return <InvitationScreen token={inviteToken} />
+  }
   if (state.kind === 'loading') {
     return <SessionScreen title="Проверяем сессию" />
   }
@@ -323,6 +333,9 @@ export const App = () => {
               onProfileUnavailable={handleProfileUnavailable}
             />
           )}
+          {section === 'summary' && (
+            <TeamsOverview key={routePulse} onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
+          )}
           {section === 'control' && (
             <ControlScreen
               key={isListView(route.query) ? 'list' : 'board'}
@@ -369,6 +382,7 @@ export const App = () => {
             <AgreementRegistry
               key={routePulse}
               role={profile.role}
+              initialQuery={route.query}
               onSessionExpired={handleSessionExpired}
               onProfileUnavailable={handleProfileUnavailable}
             />
@@ -391,6 +405,14 @@ export const App = () => {
             <PartnerCabinet onSessionExpired={handleSessionExpired} onProfileUnavailable={handleProfileUnavailable} />
           )}
           {section === 'help' && <HelpScreen initialQuery={route.query} />}
+          {section === 'agent-plans' && (
+            <AgentPlanScreen
+              key={route.organizationId}
+              planId={route.organizationId}
+              onSessionExpired={handleSessionExpired}
+              onProfileUnavailable={handleProfileUnavailable}
+            />
+          )}
         </div>
         <UnsavedDraftNotice />
       </main>

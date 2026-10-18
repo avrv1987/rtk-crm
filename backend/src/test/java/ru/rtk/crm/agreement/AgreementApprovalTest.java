@@ -89,6 +89,31 @@ class AgreementApprovalTest {
     }
 
     @Test
+    void firstUniversityRoundCountsFromTheEnteredSendDate() {
+        LocalDate sent = LocalDate.parse("2026-09-01");
+        LocalDate today = LocalDate.parse("2026-10-18");
+        List<StatusEntry> enteredLate = List.of(entry(AgreementStatus.REVIEW, "2026-10-18"));
+
+        Approval late = approval.state(AgreementStatus.REVIEW, at("2026-10-18"), sent, enteredLate, today);
+        assertThat(late.sideDays()).as("договор внесён задним числом: круг идёт от даты отправки").isEqualTo(47);
+        assertThat(late.totalDays()).isEqualTo(47);
+        assertThat(late.color()).as("у вуза дольше 6 недель").isEqualTo(ApprovalColor.YELLOW);
+
+        Approval noDate = approval.state(AgreementStatus.REVIEW, at("2026-10-18"), null, enteredLate, today);
+        assertThat(noDate.sideDays()).as("без даты отправки — от смены статуса").isZero();
+
+        List<StatusEntry> twoRounds = List.of(
+                entry(AgreementStatus.REVIEW, "2026-09-01"),
+                entry(AgreementStatus.CORRECTION, "2026-09-20"),
+                entry(AgreementStatus.REVIEW, "2026-10-10"));
+        Approval second = approval.state(AgreementStatus.REVIEW, at("2026-10-10"), sent, twoRounds, today);
+        assertThat(second.sideDays()).as("второй круг — от возврата вузу").isEqualTo(8);
+        Approval school = approval.state(AgreementStatus.CORRECTION, at("2026-09-20"), sent, twoRounds.subList(0, 2),
+                LocalDate.parse("2026-09-25"));
+        assertThat(school.sideDays()).as("у школы — от смены статуса").isEqualTo(5);
+    }
+
+    @Test
     void signedVersionIgnoresReopeningAfterCompletionAndContractsNeverActive() {
         AgreementModels.AgreementFile draft = file(1, "2026-02-01", true);
         AgreementModels.AgreementFile agreed = file(2, "2026-02-20", true);

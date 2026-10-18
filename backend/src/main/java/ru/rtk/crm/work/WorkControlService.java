@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -17,10 +18,13 @@ import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.agreement.AgreementRepository;
+import ru.rtk.crm.agreement.AgreementModels.RegistryRow;
 import ru.rtk.crm.agreement.AgreementRepository.WorkAgreementStatus;
 import ru.rtk.crm.catalog.OrganizationAssignmentRepository;
+import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.interaction.InteractionMarks;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.report.ManagerAt;
 import ru.rtk.crm.report.ManagerWorkDue;
 import ru.rtk.crm.report.ManagerWorkLine;
 import ru.rtk.crm.report.ManagerWorkOrganization;
@@ -41,17 +45,20 @@ public class WorkControlService {
     private final OrganizationAssignmentRepository organizationAssignmentRepository;
     private final AgreementRepository agreementRepository;
     private final LmsWorkLearningService lmsWorkLearningService;
+    private final OrganizationRepository organizationRepository;
 
     public WorkControlService(
             ReportRepository reportRepository,
             OrganizationAssignmentRepository organizationAssignmentRepository,
             AgreementRepository agreementRepository,
-            LmsWorkLearningService lmsWorkLearningService
+            LmsWorkLearningService lmsWorkLearningService,
+            OrganizationRepository organizationRepository
     ) {
         this.reportRepository = reportRepository;
         this.organizationAssignmentRepository = organizationAssignmentRepository;
         this.agreementRepository = agreementRepository;
         this.lmsWorkLearningService = lmsWorkLearningService;
+        this.organizationRepository = organizationRepository;
     }
 
     @Transactional(readOnly = true)
@@ -70,7 +77,10 @@ public class WorkControlService {
         }
         ReportFilters filters = requestedFilters.normalized();
         OffsetDateTime now = OffsetDateTime.now();
-        List<ManagerWorkLine> lines = reportRepository.findManagerWork(profile, filters, from, to, now);
+        // Режим «За период» показывает КАМ на конец периода по тому же правилу, что отчёт «Работа менеджеров»; без
+        // периода режим всегда «Сейчас». Область видимости остаётся текущей.
+        boolean managerAtPeriodEnd = filters.managerAt() == ManagerAt.PERIOD_END && to != null;
+        List<ManagerWorkLine> lines = reportRepository.findManagerWork(profile, filters, from, to, now, managerAtPeriodEnd);
         Map<UUID, List<String>> products = reportRepository.findManagerWorkProducts(
                 lines.stream().map(ManagerWorkLine::interactionId).toList()
         );
@@ -111,7 +121,25 @@ public class WorkControlService {
         List<ManagerWorkOrganization> idleOrganizations = withoutWork == null
                 ? null
                 : without.stream().filter(organization -> organization.managerId() != null).toList();
-        return new Control(now, from, to, !leader, teams, totals(lines, without, now), idleOrganizations);
+        return new Control(now, from, to, !leader, teams, totals(lines, without, now), idleOrganizations,
+                agreementsInProgress(profile, filters, from, to, lines, without, now));
+    }
+
+    // Плитка «Договор на согласовании» считает договоры по правилу реестра (статусы, область), а не только привязанные к
+    // взаимодействию: иначе договор, который КАМ не привязал, не виден на главном экране. Без отборов и периода числа
+    // совпадают с реестром; при отборе остаются договоры вузов, попавших в строки или в «Без работы».
+    private List<RegistryRow> agreementsInProgress(CrmProfile profile, ReportFilters filters, LocalDate from, LocalDate to,
+                                                   List<ManagerWorkLine> lines, List<ManagerWorkOrganization> without,
+                                                   OffsetDateTime now) {
+        List<RegistryRow> all = organizationRepository.visibilityScope(profile)
+                .map(scope -> agreementRepository.findInProgress(scope, now.atZoneSameInstant(WorkProperties.ZONE).toLocalDate()))
+                .orElse(List.of());
+        if (unrestricted(filters, from, to)) {
+            return all;
+        }
+        Set<UUID> shown = Stream.concat(lines.stream().map(ManagerWorkLine::organizationId), without.stream().map(ManagerWorkOrganization::id))
+                .collect(Collectors.toSet());
+        return all.stream().filter(row -> shown.contains(row.organizationId())).toList();
     }
 
     private record CandidateManager(UUID id, String displayName) {
@@ -126,7 +154,7 @@ public class WorkControlService {
     }
 
     private static boolean unrestricted(ReportFilters filters, LocalDate from, LocalDate to) {
-        return filters.equals(ReportFilters.none().normalized()) && from == null && to == null;
+        return filters.withManagerAt(null).equals(ReportFilters.none().normalized()) && from == null && to == null;
     }
 
     private TeamBlock team(

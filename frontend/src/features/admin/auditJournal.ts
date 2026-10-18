@@ -11,7 +11,7 @@ export type AuditFilters = {
 export const categoryLabels: Record<AuditCategory, string> = {
   PROFILE: 'Профили',
   ASSIGNMENT: 'Назначения КАМ',
-  ORGANIZATION: 'Переносы вузов',
+  ORGANIZATION: 'Вузы: записи и переносы',
   TEAM: 'Команды',
   SYNC: 'Синхронизация источников',
   DOWNLOAD: 'Скачивания',
@@ -19,7 +19,11 @@ export const categoryLabels: Record<AuditCategory, string> = {
   RETENTION: 'Сроки хранения',
   ACCOUNT: 'Учётные записи Keycloak',
   LOGIN: 'Входы и выходы',
-  LEARNER: 'Слушатели'
+  LEARNER: 'Слушатели',
+  AGENT: 'ИИ-агенты (MCP)',
+  MESSENGER: 'Канал MAX',
+  SETTINGS: 'Настройки и справочники',
+  MAIL: 'Почта'
 }
 
 /** Подписи действий приходят с сервера (`actionLabel`); эти — запасные, если сервер подпись не прислал. */

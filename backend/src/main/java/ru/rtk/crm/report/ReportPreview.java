@@ -13,8 +13,24 @@ public record ReportPreview(
         int page,
         int size,
         long total,
-        List<ManagerWorkTotal> groupTotals
+        List<ManagerWorkTotal> groupTotals,
+        List<ManagerWorkGroupTotal> productTotals,
+        List<ManagerWorkGroupTotal> organizationTotals
 ) {
+    public ReportPreview(
+            ReportKind kind,
+            OffsetDateTime generatedAt,
+            List<String> notes,
+            List<ReportColumnView> columns,
+            List<Map<String, Object>> items,
+            int page,
+            int size,
+            long total,
+            List<ManagerWorkTotal> groupTotals
+    ) {
+        this(kind, generatedAt, notes, columns, items, page, size, total, groupTotals, List.of(), List.of());
+    }
+
     public ReportPreview(
             ReportKind kind,
             OffsetDateTime generatedAt,

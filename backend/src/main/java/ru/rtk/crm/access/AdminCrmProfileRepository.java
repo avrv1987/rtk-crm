@@ -224,6 +224,15 @@ public class AdminCrmProfileRepository {
                 .optional();
     }
 
+    public Optional<UUID> findIdBySubject(String subject) {
+        return jdbcClient.sql("SELECT id FROM crm_user_profiles WHERE subject = :subject AND anonymized_at IS NULL ORDER BY id")
+                .param("subject", subject)
+                .query(UUID.class)
+                .list()
+                .stream()
+                .findFirst();
+    }
+
     public Optional<String> findDisplayName(UUID profileId) {
         return jdbcClient.sql("SELECT display_name FROM crm_user_profiles WHERE id = :profileId")
                 .param("profileId", profileId)

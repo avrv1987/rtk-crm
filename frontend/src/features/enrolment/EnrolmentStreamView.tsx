@@ -11,6 +11,7 @@ import { todayInMoscow } from '../../shared/format/datetime'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { LmsRosterDialog } from './LmsRosterDialog'
+import { enrolmentHref } from './enrolmentRoute'
 import { QuestionnaireImportDialog } from './QuestionnaireImportDialog'
 import {
   type AccessErrorReporter,
@@ -58,6 +59,9 @@ const learnerNotes = (learner: StreamLearner): string[] => {
   }
   if (learner.missingForLms.length > 0) {
     notes.push(`нет обязательных для LMS: ${fieldCodeLabels(learner.missingForLms)}`)
+  }
+  if (learner.lmsError !== null) {
+    notes.push(`ошибка LMS: ${learner.lmsError}`)
   }
   return notes
 }
@@ -283,7 +287,8 @@ export const EnrolmentStreamView = ({ streamId, onOpenLearner, onAccessError }: 
       </section>
 
       <section className="enrolment__section" aria-labelledby="enrolment-stream-exports-title">
-        <h3 id="enrolment-stream-exports-title">Выгрузки для LMS</h3>
+        <h3 id="enrolment-stream-exports-title">Партии для LMS</h3>
+        <p className="enrolment__hint">Каждая выгрузка — отдельная партия; повторная выгрузка прежнюю не меняет. «Принято» ставится только по результату LMS.</p>
         {exports.length === 0 ? (
           <p>Выгрузок пока не было.</p>
         ) : (
@@ -291,19 +296,26 @@ export const EnrolmentStreamView = ({ streamId, onOpenLearner, onAccessError }: 
             {exports.map((rosterExport) => (
               <li key={rosterExport.exportId}>
                 <span>
-                  {formatDateTime(rosterExport.exportedAt)} — строк: {rosterExport.rows}, передано: {rosterExport.transferred}
+                  <a href={enrolmentHref({ kind: 'batch', batchId: rosterExport.exportId })}>{formatDateTime(rosterExport.exportedAt)}</a>
+                  {` — строк: ${rosterExport.rows}, принято LMS: ${rosterExport.transferred}, ошибок: ${rosterExport.failed}, ожидает: ${rosterExport.pending}`}
+                  {rosterExport.sentAt === null ? ' · не отмечена переданной' : ` · передана ${formatDateTime(rosterExport.sentAt)}`}
                 </span>
-                <button
-                  type="button"
-                  className="button--secondary"
-                  disabled={markState?.kind === 'busy'}
-                  onClick={() => void markTransferred(rosterExport.exportId)}
-                >
-                  {markState?.exportId === rosterExport.exportId && markState.kind === 'busy' ? 'Отмечаем…' : 'Отметить переданными'}
-                </button>
+                {rosterExport.sentAt === null && (
+                  <button
+                    type="button"
+                    className="button--secondary"
+                    disabled={markState?.kind === 'busy'}
+                    onClick={() => void markTransferred(rosterExport.exportId)}
+                  >
+                    {markState?.exportId === rosterExport.exportId && markState.kind === 'busy' ? 'Отмечаем…' : 'Отметить переданными'}
+                  </button>
+                )}
+                <a className="button--secondary" href={enrolmentHref({ kind: 'batch', batchId: rosterExport.exportId })}>Результат по строкам</a>
                 {markState?.exportId === rosterExport.exportId && markState.kind === 'done' && (
                   <p role="status">
-                    {markState.marked === 0 ? 'В выгрузке нет неотмеченных слушателей' : `Отмечено переданными: ${markState.marked}`}
+                    {markState.marked === 0
+                      ? 'Партия уже отмечена переданной'
+                      : `Партия передана, ждём результат LMS по строкам: ${markState.marked}. Загрузите протокол или отметьте строки.`}
                   </p>
                 )}
                 {markState?.exportId === rosterExport.exportId && markState.kind === 'failed' && (

@@ -64,7 +64,38 @@ public final class WorkModels {
             List<ReminderQualification> qualificationDue,
             int agreementNoticeDays,
             List<ReminderAgreement> expiringAgreements,
-            ReminderFeed feed
+            ReminderFeed feed,
+            List<ReminderUnassigned> unassignedAfterBlock
+    ) {
+        public ReminderDigest(
+                boolean enabled,
+                OffsetDateTime generatedAt,
+                int upcomingDays,
+                long overdueTotal,
+                long dueTodayTotal,
+                long upcomingTotal,
+                List<ReminderStep> overdue,
+                List<ReminderStep> upcoming,
+                List<ReminderLicense> expiringLicenses,
+                List<ReminderTraining> trainingCycles,
+                int licenseExpiresBy,
+                List<ReminderQualification> qualificationDue,
+                int agreementNoticeDays,
+                List<ReminderAgreement> expiringAgreements,
+                ReminderFeed feed
+        ) {
+            this(enabled, generatedAt, upcomingDays, overdueTotal, dueTodayTotal, upcomingTotal, overdue, upcoming,
+                    expiringLicenses, trainingCycles, licenseExpiresBy, qualificationDue, agreementNoticeDays,
+                    expiringAgreements, feed, List.of());
+        }
+    }
+
+    // Вуз остался без КАМ, потому что КАМ заблокировали и вузы не передали: сигнал руководителю команды.
+    public record ReminderUnassigned(
+            UUID organizationId,
+            String organizationName,
+            String previousOwnerName,
+            OffsetDateTime unassignedAt
     ) {
     }
 

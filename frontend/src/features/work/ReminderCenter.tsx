@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { apiClient, isAccessDenied, type ReminderDigest } from '../../shared/api/client'
+import { getModules } from '../../shared/modules'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { listPartnerReviewQueue, type PartnerReviewItem } from '../partner/partnerApi'
+import { partnerRequestStatusLabels } from '../partner/partnerRequestModel'
 import { type AccessHandlers, formatDate, formatDateTime, handledAccessError, requestIdOf, todayIso } from './workShared'
 import './workControl.css'
 
@@ -43,7 +46,7 @@ const rememberShown = (profileId: string) => {
 
 const reminderCount = (digest: ReminderDigest) => (
   digest.overdueTotal + digest.upcomingTotal + digest.expiringLicenses.length + digest.trainingCycles.length
-  + digest.qualificationDue.length + digest.expiringAgreements.length
+  + digest.qualificationDue.length + digest.expiringAgreements.length + digest.unassignedAfterBlock.length
 )
 
 const cardLink = (organizationId: string, interactionId: string) => `#/organizations/${organizationId}/${interactionId}`
@@ -71,6 +74,7 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
   const [settingState, setSettingState] = useState<SettingState>({ kind: 'idle' })
   const [open, setOpen] = useState(false)
   const [fresh, setFresh] = useState(false)
+  const [partnerReview, setPartnerReview] = useState<PartnerReviewItem[]>([])
   const rootRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -86,6 +90,16 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
       }
       setState({ kind: 'ready', digest })
       setFresh(digest.enabled && reminderCount(digest) > 0 && !shownToday(profileId))
+      // Ответы вузов загружаются отдельно: сбой этого списка не должен скрывать сроки и просрочки.
+      if (getModules().partner) {
+        listPartnerReviewQueue()
+          .then((items) => {
+            if (version === requestVersion.current) {
+              setPartnerReview(items)
+            }
+          })
+          .catch(() => setPartnerReview([]))
+      }
     } catch (error) {
       if (version !== requestVersion.current || handledAccessError(error, { onSessionExpired, onProfileUnavailable }) || isAccessDenied(error)) {
         return
@@ -161,6 +175,9 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
   }
 
   const overdue = state.kind === 'ready' ? state.digest.overdueTotal : null
+  const partnerWaiting = partnerReview.length
+  // Сигнал руководителю: вузы остались без КАМ после блокировки, их нужно назначить.
+  const unassigned = state.kind === 'ready' ? state.digest.unassignedAfterBlock.length : 0
 
   return (
     <div className="reminder-center" ref={rootRef}>
@@ -170,7 +187,7 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
         className={`reminder-center__open${fresh ? ' reminder-center__open--fresh' : ''}`}
         aria-expanded={open}
         aria-controls={`${titleId}-panel`}
-        aria-label={`Напоминания${overdue === null ? '' : `, просрочено шагов: ${overdue}`}${fresh ? ', новая сводка на сегодня' : ''}`}
+        aria-label={`Напоминания${overdue === null ? '' : `, просрочено шагов: ${overdue}`}${partnerWaiting > 0 ? `, ответов вузов ждут проверки: ${partnerWaiting}` : ''}${unassigned > 0 ? `, вузов без КАМ после блокировки: ${unassigned}` : ''}${fresh ? ', новая сводка на сегодня' : ''}`}
         title="Напоминания"
         data-overdue={overdue ?? undefined}
         onClick={() => open ? closePanel() : openPanel()}
@@ -180,7 +197,7 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
           <path d="M10 21h4" />
         </svg>
         {overdue !== null && overdue > 0 && <span className="reminder-center__badge" aria-hidden="true">{overdue}</span>}
-        {fresh && overdue === 0 && <span className="reminder-center__dot" aria-hidden="true" />}
+        {(fresh || partnerWaiting > 0 || unassigned > 0) && overdue === 0 && <span className="reminder-center__dot" aria-hidden="true" />}
       </button>
       <div
         id={`${titleId}-panel`}
@@ -217,6 +234,38 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
               Просрочено: {state.digest.overdueTotal}, срок сегодня: {state.digest.dueTodayTotal},
               в ближайшие {state.digest.upcomingDays} дней: {state.digest.upcomingTotal}.
             </p>
+            {partnerWaiting > 0 && (
+              <section aria-labelledby={`${titleId}-partner`}>
+                <h3 id={`${titleId}-partner`}>Ответы вузов ждут проверки</h3>
+                <ul className="reminder-center__list">
+                  {partnerReview.map((item) => (
+                    <li key={item.requestId}>
+                      <a href={cardLink(item.organizationId, item.interactionId)}>{item.action}</a>
+                      <span>{item.organizationName} · {item.workTitle}</span>
+                      <span className="status status--planned">
+                        {partnerRequestStatusLabels[item.status]} {formatDateTime(item.updatedAt)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+            {state.digest.unassignedAfterBlock.length > 0 && (
+              <section aria-labelledby={`${titleId}-unassigned`}>
+                <h3 id={`${titleId}-unassigned`}>Вузы без КАМ после блокировки</h3>
+                <ul className="reminder-center__list">
+                  {state.digest.unassignedAfterBlock.map((item) => (
+                    <li key={item.organizationId}>
+                      <a href={`#/organizations/${item.organizationId}`}>{item.organizationName}</a>
+                      <span className="status status--overdue">
+                        {item.previousOwnerName === null ? 'КАМ заблокирован' : `КАМ «${item.previousOwnerName}» заблокирован`}
+                        {' '}{formatDateTime(item.unassignedAt)}, вузы не переданы — назначьте КАМ
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
             <section aria-labelledby={`${titleId}-overdue`}>
               <h3 id={`${titleId}-overdue`}>Просроченные шаги</h3>
               {state.digest.overdue.length === 0 ? <p>Просроченных шагов нет.</p> : (

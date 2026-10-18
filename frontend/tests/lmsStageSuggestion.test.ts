@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { findDuplicateTraining, findLmsStageSuggestion, findProgramUpdateSuggestion } from '../src/features/training/lmsStageSuggestionRules.ts'
+import {
+  findDuplicateTraining,
+  findLmsStageSuggestion,
+  findProgramUpdateSuggestion,
+  lmsStageWarning,
+  markStageByLms
+} from '../src/features/training/lmsStageSuggestionRules.ts'
 import type { Interaction, InteractionStage, LearningSnapshot, TeacherTraining } from '../src/shared/api/client.ts'
 
 const today = '2026-09-28'
@@ -11,6 +17,8 @@ const interaction = (overrides: {
   currentStageId: string
   stages: InteractionStage[]
   stageCompletions?: Interaction['stageCompletions']
+  allowedStageIds?: string[]
+  version?: number
 }): Interaction => ({
   id: 'interaction-1',
   organizationId: 'org-1',
@@ -19,7 +27,7 @@ const interaction = (overrides: {
   currentStageName: overrides.stages.find((item) => item.id === overrides.currentStageId)?.name ?? '',
   stages: overrides.stages,
   transitions: [],
-  allowedTransitions: [],
+  allowedTransitions: (overrides.allowedStageIds ?? []).map((stageId) => ({ stageId, commentRequired: false })),
   nextAction: null,
   nextActionAt: null,
   contactIds: [],
@@ -30,7 +38,7 @@ const interaction = (overrides: {
   attachments: [],
   stageCompletions: overrides.stageCompletions ?? [],
   lastContactAt: null,
-  version: 1,
+  version: overrides.version ?? 1,
   createdBy: 'user-1',
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
@@ -144,4 +152,96 @@ test('подсказка актуализации ждёт обучения пр
   assert.equal(findProgramUpdateSuggestion(interaction({ currentStageId: 's3', stages }), [snapshot({ completed: 0 })]), null)
   assert.equal(findProgramUpdateSuggestion(interaction({ currentStageId: 's3', stages }), [snapshot({ runKind: 'STUDENTS' })]), null)
   assert.equal(findProgramUpdateSuggestion(interaction({ currentStageId: 's4', stages }), [snapshot({})]), null)
+})
+
+test('подсказка «Актуализация программы» предлагает переход к этапу, если маршрут его разрешает', () => {
+  const done = [
+    { stageId: 's2', completedOn: '2026-09-16', comment: null, eventId: 'e1', actorDisplayName: 'КАМ', markedAt: '2026-09-16T00:00:00Z' }
+  ]
+  assert.equal(findProgramUpdateSuggestion(interaction({ currentStageId: 's1', stages, stageCompletions: done, allowedStageIds: ['s3'] }),
+    [snapshot({})])?.reachable, true)
+  assert.equal(findProgramUpdateSuggestion(interaction({ currentStageId: 's1', stages, stageCompletions: done, allowedStageIds: ['s2'] }),
+    [snapshot({})])?.reachable, false)
+})
+
+test('подсказка этапа 9 отмечает, что часть преподавателей ещё не завершила курс', () => {
+  const work = interaction({ currentStageId: 's2', stages })
+  assert.equal(findLmsStageSuggestion(work, [snapshot({ participants: 20, completed: 1 })], today)?.partial, true)
+  assert.equal(findLmsStageSuggestion(work, [snapshot({ participants: 4, completed: 3 })], today)?.partial, true)
+  assert.equal(findLmsStageSuggestion(work, [snapshot({ participants: 4, completed: 4 })], today)?.partial, false)
+})
+
+test('редактор шаблонов предупреждает о переименованном или удалённом этапе из правил LMS', () => {
+  const before = ['Переговоры', 'Занятия', 'Обучение преподавателей', 'Актуализация программы']
+  assert.equal(lmsStageWarning(before, before), null)
+  assert.equal(lmsStageWarning(before, [...before, 'Новый этап']), null)
+  assert.equal(lmsStageWarning(['Переговоры'], ['Переговоры 2']), null)
+  const renamed = lmsStageWarning(before, ['Переговоры', 'Учёба', 'Обучение преподавателей', 'Актуализация программы'])
+  assert.match(renamed ?? '', /этап «Занятия» — сигнал «В LMS появились обучающиеся»/)
+  assert.doesNotMatch(renamed ?? '', /Обучение преподавателей»/)
+  const removed = lmsStageWarning(before, ['Переговоры', 'Занятия'])
+  assert.match(removed ?? '', /«Обучение преподавателей»/)
+  assert.match(removed ?? '', /«Актуализация программы»/)
+  assert.equal(lmsStageWarning([' Занятия '], ['Занятия']), null)
+})
+
+const fakeApi = (options: { failStage?: number; completedOnServer?: boolean }) => {
+  const calls: string[] = []
+  let stageCalls = 0
+  const saved = interaction({ currentStageId: 's1', stages, version: 2 })
+  const fresh = interaction({
+    currentStageId: 's1',
+    stages,
+    version: 5,
+    stageCompletions: options.completedOnServer
+      ? [{ stageId: 's2', completedOn: '2026-09-16', comment: null, eventId: 'e1', actorDisplayName: 'КАМ', markedAt: '2026-09-16T00:00:00Z' }]
+      : []
+  })
+  return {
+    calls,
+    saved,
+    api: {
+      createTraining: async () => {
+        calls.push('training')
+        return saved
+      },
+      getInteraction: async () => {
+        calls.push('get')
+        return fresh
+      },
+      completeStage: async (version: number) => {
+        calls.push(`stage:${version}`)
+        stageCalls += 1
+        if (stageCalls <= (options.failStage ?? 0)) {
+          throw new Error('conflict')
+        }
+        return fresh
+      }
+    }
+  }
+}
+
+test('сбой отметки этапа после сохранённой записи: повтор отправляет только отметку со свежей версией', async () => {
+  const { api, calls, saved } = fakeApi({ failStage: 1 })
+  const first = await markStageByLms(api, 's2', true, null)
+  assert.equal(first.kind, 'stageFailed')
+  assert.equal(first.kind === 'stageFailed' ? first.saved : null, saved)
+  assert.deepEqual(calls, ['training', 'stage:2'])
+  const retry = await markStageByLms(api, 's2', true, first.kind === 'stageFailed' ? first.saved : null)
+  assert.equal(retry.kind, 'done')
+  assert.deepEqual(calls, ['training', 'stage:2', 'get', 'stage:5'])
+})
+
+test('повтор не отмечает этап второй раз, если первая отметка прошла, а ответ не дошёл', async () => {
+  const { api, calls, saved } = fakeApi({ completedOnServer: true })
+  const retry = await markStageByLms(api, 's2', true, saved)
+  assert.equal(retry.kind, 'done')
+  assert.deepEqual(calls, ['get'])
+})
+
+test('если этап текущий, сохраняется только запись, а ошибка записи не считается частичным успехом', async () => {
+  const { api, calls } = fakeApi({})
+  assert.equal((await markStageByLms(api, 's2', false, null)).kind, 'done')
+  assert.deepEqual(calls, ['training'])
+  await assert.rejects(markStageByLms({ ...api, createTraining: async () => { throw new Error('offline') } }, 's2', true, null))
 })

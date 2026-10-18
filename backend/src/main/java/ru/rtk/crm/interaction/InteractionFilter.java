@@ -3,7 +3,8 @@ package ru.rtk.crm.interaction;
 import java.util.Arrays;
 import java.util.UUID;
 
-record InteractionFilter(
+// Публичен для тонкого контроллера мини-приложения MAX, который вызывает InteractionService.list без OidcUser.
+public record InteractionFilter(
         UUID organizationId,
         String search,
         InteractionDue due,
@@ -13,14 +14,15 @@ record InteractionFilter(
         Integer licenseExpiresBy,
         UUID responsibleId,
         boolean unassigned,
-        Integer minDaysOnStage
+        Integer minDaysOnStage,
+        Integer noContactDays
 ) {
     static final String UNASSIGNED = "UNASSIGNED";
     private static final String ALL_STATUSES = "ALL";
     private static final int MAX_TEXT_LENGTH = 200;
     private static final int MAX_DAYS_ON_STAGE = 3650;
 
-    static InteractionFilter from(UUID organizationId, String search, String due, String stage) {
+    public static InteractionFilter from(UUID organizationId, String search, String due, String stage) {
         return from(organizationId, search, due, stage, null, null, null, null, null);
     }
 
@@ -43,6 +45,21 @@ record InteractionFilter(
             String responsible,
             String minDaysOnStage
     ) {
+        return from(organizationId, search, due, stage, status, flag, licenseExpiresBy, responsible, minDaysOnStage, null);
+    }
+
+    static InteractionFilter from(
+            UUID organizationId,
+            String search,
+            String due,
+            String stage,
+            String status,
+            String flag,
+            Integer licenseExpiresBy,
+            String responsible,
+            String minDaysOnStage,
+            String noContactDays
+    ) {
         String responsibleValue = optionalText(responsible, "responsible");
         boolean unassigned = UNASSIGNED.equals(responsibleValue);
         return new InteractionFilter(
@@ -55,7 +72,8 @@ record InteractionFilter(
                 ProductAgreementRules.optionalLicenseYear(licenseExpiresBy, "licenseExpiresBy"),
                 responsibleValue == null || unassigned ? null : responsibleId(responsibleValue),
                 unassigned,
-                minDaysOnStage(minDaysOnStage)
+                days(minDaysOnStage, "minDaysOnStage"),
+                days(noContactDays, "noContactDays")
         );
     }
 
@@ -80,7 +98,7 @@ record InteractionFilter(
         }
     }
 
-    private static Integer minDaysOnStage(String value) {
+    private static Integer days(String value, String field) {
         if (value == null || value.isBlank()) {
             return null;
         }
@@ -88,16 +106,16 @@ record InteractionFilter(
         try {
             days = Integer.parseInt(value.strip());
         } catch (NumberFormatException exception) {
-            throw invalidDays();
+            throw invalidDays(field);
         }
         if (days < 1 || days > MAX_DAYS_ON_STAGE) {
-            throw invalidDays();
+            throw invalidDays(field);
         }
         return days;
     }
 
-    private static InteractionValidationException invalidDays() {
-        return new InteractionValidationException("minDaysOnStage", "Укажите целое число дней от 1 до " + MAX_DAYS_ON_STAGE);
+    private static InteractionValidationException invalidDays(String field) {
+        return new InteractionValidationException(field, "Укажите целое число дней от 1 до " + MAX_DAYS_ON_STAGE);
     }
 
     private static String optionalText(String value, String field) {

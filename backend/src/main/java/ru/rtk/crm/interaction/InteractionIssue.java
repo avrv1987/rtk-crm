@@ -24,6 +24,9 @@ public record InteractionIssue(
         OffsetDateTime createdAt,
         String resolvedByName,
         OffsetDateTime resolvedAt,
-        boolean organizationAccessible
+        boolean organizationAccessible,
+        String lastComment,
+        String lastCommentByName,
+        OffsetDateTime lastCommentAt
 ) {
 }

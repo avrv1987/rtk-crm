@@ -26,6 +26,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.CurrentProfileService;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.agreement.AgreementRepository;
 import ru.rtk.crm.catalog.OrganizationAssignmentRepository;
 import ru.rtk.crm.report.ManagerWorkChange;
 import ru.rtk.crm.report.ReportFilters;
@@ -58,6 +59,9 @@ class WorkControlHttpTest {
 
     @MockitoBean
     private OrganizationAssignmentRepository organizationAssignmentRepository;
+
+    @MockitoBean
+    private AgreementRepository agreementRepository;
 
     @Test
     void onlyLeaderAndManagementReadTheControlMatrix() throws Exception {
@@ -94,13 +98,15 @@ class WorkControlHttpTest {
                         .param("stage", "Согласование, подписание")
                         .param("from", "2026-09-01")
                         .param("to", "2026-09-30")
-                        .param("change", "MOVED"))
+                        .param("change", "MOVED")
+                        .param("mode", "PERIOD"))
                 .andExpect(status().isOk());
 
         ArgumentCaptor<ReportFilters> filters = ArgumentCaptor.forClass(ReportFilters.class);
         verify(reportRepository).findManagerWork(
-                any(), filters.capture(), eq(LocalDate.parse("2026-09-01")), eq(LocalDate.parse("2026-09-30")), any()
+                any(), filters.capture(), eq(LocalDate.parse("2026-09-01")), eq(LocalDate.parse("2026-09-30")), any(), eq(true)
         );
+        assertThat(filters.getValue().managerAt()).isEqualTo(ru.rtk.crm.report.ManagerAt.PERIOD_END);
         assertThat(filters.getValue().productIds()).containsExactly(product);
         assertThat(filters.getValue().managerIds()).containsExactly(MANAGER);
         assertThat(filters.getValue().includeNoManager()).isTrue();
@@ -113,7 +119,7 @@ class WorkControlHttpTest {
         when(currentProfileService.requireActiveProfile(any())).thenReturn(new CrmProfile(MANAGER, UserRole.MANAGEMENT, null, 0));
         when(reportRepository.findManagerWorkProducts(any())).thenReturn(Map.of());
 
-        for (String[] parameter : new String[][]{{"productId", "не-идентификатор"}, {"from", "вчера"}, {"change", "ALL"}}) {
+        for (String[] parameter : new String[][]{{"productId", "не-идентификатор"}, {"from", "вчера"}, {"change", "ALL"}, {"mode", "HISTORY"}}) {
             mockMvc.perform(get("/api/work/control").with(oidcLogin()).param(parameter[0], parameter[1]))
                     .andExpect(status().isBadRequest());
         }

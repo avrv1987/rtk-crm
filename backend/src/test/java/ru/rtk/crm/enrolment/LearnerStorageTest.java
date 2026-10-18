@@ -430,7 +430,9 @@ class LearnerStorageTest {
                 LEARNER_SCHEMA_STREAMS,
                 LEARNER_SCHEMA_LEARNERS,
                 "CREATE UNIQUE INDEX IF NOT EXISTS learners_snils_key ON learners (snils_hmac)",
-                LEARNER_SCHEMA_ENROLMENTS
+                LEARNER_SCHEMA_ENROLMENTS,
+                EnrolmentBatchTestSchema.BATCHES,
+                EnrolmentBatchTestSchema.ITEMS
         )) {
             jdbcTemplate.execute(statement);
         }
@@ -466,6 +468,7 @@ class LearnerStorageTest {
 
     static final String LEARNER_SCHEMA_ENROLMENTS = """
             CREATE TABLE IF NOT EXISTS learner_enrolments (
+                lms_synced_version INTEGER, lms_reconcile_reason VARCHAR(500),
                 id UUID PRIMARY KEY, learner_id UUID NOT NULL REFERENCES learners(id),
                 stream_id UUID NOT NULL REFERENCES enrolment_streams(id),
                 source_record_id UUID NOT NULL UNIQUE REFERENCES source_records(id),

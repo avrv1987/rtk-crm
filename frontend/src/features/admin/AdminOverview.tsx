@@ -1,9 +1,11 @@
-import type { CrmEventCounts, DataSource } from '../../shared/api/client'
+import type { BackupStatus, CrmEventCounts, DataSource } from '../../shared/api/client'
+import { backupText } from './backupStatus'
 
 export type AdminSummary = {
   pendingProfiles?: number
   sources?: DataSource[]
   crmEvents?: CrmEventCounts
+  backup?: BackupStatus
   failed: boolean
 }
 
@@ -67,6 +69,13 @@ export const AdminOverview = ({ summary, onRetry }: { summary: AdminSummary | nu
             </ul>
           )}
           <a className="button-link" href="#/admin/sources">Подробнее</a>
+        </div>
+        <div className="admin-overview__card">
+          <h2>Резервная копия</h2>
+          {summary.backup === undefined ? <p>{noData}</p> : (
+            <p className={backupText(summary.backup).stale ? 'admin-overview__warning' : undefined}>{backupText(summary.backup).text}</p>
+          )}
+          <a className="button-link" href="#/help?section=help-admin-ops">Как восстановить</a>
         </div>
         <div className="admin-overview__card">
           <h2>События для CRM заказчика</h2>

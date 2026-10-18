@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { apiClient, type LearningDynamics, type LearningDynamicsQuery, type Me } from '../../shared/api/client'
 import { formatMoscowDateTime, todayInMoscow } from '../../shared/format/datetime'
 import { saveFile } from '../admin/saveFile'
+import { completionBasis } from '../interactions/learningRun'
 import { type AccessHandlers, handledAccessError } from '../work/workShared'
 import { reportMeta } from './ReportCatalog'
 import { PeriodPicker, ReportSegments } from './ReportControls'
@@ -44,7 +45,7 @@ const DynamicsChart = ({ result, metric }: { result: LearningDynamics; metric: M
   const lines: Line[] = result.series.slice(0, maxLines).map((series) => ({
     key: series.key,
     label: series.label,
-    values: metric === 'participants' ? series.participants : series.completed.map((value) => value ?? null)
+    values: (metric === 'participants' ? series.participants : series.completed).map((value) => value ?? null)
   }))
   const count = result.months.length
   const max = lines.reduce((value, line) => Math.max(value, ...line.values.map((item) => item ?? 0)), 0)
@@ -63,7 +64,7 @@ const DynamicsChart = ({ result, metric }: { result: LearningDynamics; metric: M
       <figcaption>
         <strong>{title}</strong>
         <ul className="reports__notes">
-          <li>Шкала начинается с нуля; месяц без потоков с данными показан нулём.</li>
+          <li>Шкала начинается с нуля; месяц без потоков — ноль, поток без наблюдения — «нет данных», такая точка не рисуется.</li>
           {metric === 'completed' && <li>«Нет данных» — Moodle не отслеживает завершение, такие точки не рисуются.</li>}
           {result.series.length > maxLines && (
             <li>{`Показаны ${maxLines} линий с наибольшим числом обучающихся в последнем месяце из ${result.series.length}; остальные — в таблице строк и в файле.`}</li>
@@ -131,7 +132,12 @@ const DynamicsChart = ({ result, metric }: { result: LearningDynamics; metric: M
               <tr key={month.key}>
                 <th scope="row">{month.label}</th>
                 {lines.map((line) => <td key={line.key}>{cell(line.values[index])}</td>)}
-                <td>{cell(metric === 'participants' ? result.totalParticipants[index] : result.totalCompleted[index])}</td>
+                <td>
+                  {metric === 'participants'
+                    ? cell(result.totalParticipants[index])
+                    : completionBasis(result.totalCompleted[index], result.totalKnown[index], result.totalParticipants[index])}
+                  {result.totalRunsWithoutData[index] > 0 && ` (потоков без данных: ${result.totalRunsWithoutData[index]})`}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -270,9 +276,11 @@ export const LearningDynamicsReport = ({ role, organizationIds, programIds, onSe
                     <th scope="col">Вуз</th>
                     <th scope="col">ИТ-программа</th>
                     <th scope="col">Потоков с данными</th>
+                    <th scope="col">Потоков без данных</th>
                     <th scope="col">Обучающиеся в потоках месяца (Moodle)</th>
                     <th scope="col">Завершили (Moodle)</th>
-                    <th scope="col">Доля завершивших, %</th>
+                    <th scope="col">Доля завершивших среди известных, %</th>
+                    <th scope="col">Основание доли</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -282,9 +290,11 @@ export const LearningDynamicsReport = ({ role, organizationIds, programIds, onSe
                       <td>{row.organizationName}</td>
                       <td>{row.programName}</td>
                       <td>{row.runs}</td>
+                      <td>{row.runsWithoutData}</td>
                       <td>{cell(row.participants)}</td>
                       <td>{cell(row.completed)}</td>
                       <td>{cell(row.completionPercent)}</td>
+                      <td>{row.completionBasis}</td>
                     </tr>
                   ))}
                 </tbody>

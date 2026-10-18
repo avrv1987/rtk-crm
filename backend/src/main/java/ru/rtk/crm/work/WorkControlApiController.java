@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import ru.rtk.crm.access.CurrentProfileService;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.report.ManagerAt;
 import ru.rtk.crm.report.ManagerWorkChange;
 import ru.rtk.crm.report.ReportFilters;
 
@@ -47,7 +48,7 @@ public class WorkControlApiController {
                 managers.contains(UNASSIGNED),
                 values(params, "stage"),
                 null
-        ).withChange(change(params));
+        ).withChange(change(params)).withManagerAt(managerAt(params));
         return workControlService.control(
                 currentProfileService.requireActiveProfile(user),
                 filters,
@@ -86,6 +87,18 @@ public class WorkControlApiController {
         } catch (DateTimeParseException exception) {
             throw new InteractionValidationException(name, "Укажите дату в формате ГГГГ-ММ-ДД");
         }
+    }
+
+    // mode=PERIOD — режим «За период» (КАМ на конец периода), иначе «Сейчас».
+    private static ManagerAt managerAt(MultiValueMap<String, String> params) {
+        List<String> values = values(params, "mode");
+        if (values.isEmpty() || "NOW".equals(values.getFirst().strip())) {
+            return ManagerAt.CURRENT;
+        }
+        if ("PERIOD".equals(values.getFirst().strip())) {
+            return ManagerAt.PERIOD_END;
+        }
+        throw new InteractionValidationException("mode", "Режим «Контроля» — NOW или PERIOD");
     }
 
     private static ManagerWorkChange change(MultiValueMap<String, String> params) {

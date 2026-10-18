@@ -12,7 +12,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 import ru.rtk.crm.access.ContactInteractionMutationAuthorization;
 import ru.rtk.crm.access.CrmProfile;
@@ -144,17 +147,7 @@ public class AttachmentService {
                     profile.id(),
                     now
             );
-            // Исход проверки определяет судьбу файла. REJECTED: вирус найден, содержимое немедленно удаляется, запись
-            // остаётся для истории. UNVERIFIABLE: проверить не удалось (антивирус недоступен, файл слишком большой,
-            // зашифрованный архив): файл хранится, но не скачивается и не привязывается. Только CLEAN можно скачать.
-            if (outcome == AttachmentScanOutcome.REJECTED) {
-                storage.delete(storageKey);
-                attachmentRepository.updateStatus(attachmentId, AttachmentStatus.REJECTED, OffsetDateTime.now());
-            } else if (outcome == AttachmentScanOutcome.UNVERIFIABLE) {
-                attachmentRepository.updateStatus(attachmentId, AttachmentStatus.UNVERIFIABLE, OffsetDateTime.now());
-            } else {
-                attachmentRepository.updateStatus(attachmentId, AttachmentStatus.CLEAN, OffsetDateTime.now());
-            }
+            applyScan(attachmentId, storageKey, outcome);
             Attachment attachment = attachmentRepository.findById(attachmentId)
                     .orElseThrow(AttachmentNotFoundException::new)
                     .attachment();
@@ -164,6 +157,49 @@ public class AttachmentService {
             // При любой ошибке сохранённый файл удаляется: в хранилище не остаётся файлов без записи в БД.
             deleteStoredFile(storageKey);
             throw exception;
+        }
+    }
+
+    // Файл представителя вуза идёт тем же путём, что и загрузка сотрудника: проверка содержимого, запись, антивирус,
+    // та же таблица вложений. Права здесь не проверяются: это делает кабинет вуза до вызова. Если транзакция
+    // вызывающего откатится позже, файл удаляется из хранилища, чтобы не осталось файлов без записи в БД.
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Attachment storeIncoming(UUID interactionId, UUID stageId, MultipartFile file, UUID createdBy, OffsetDateTime now) {
+        AttachmentUploadInspection inspection = contentValidator.inspect(file);
+        UUID attachmentId = UUID.randomUUID();
+        UUID storageKey = UUID.randomUUID();
+        try {
+            store(storageKey, file, inspection);
+            AttachmentScanOutcome outcome = scan(storageKey, inspection.sizeBytes());
+            attachmentRepository.insert(attachmentId, interactionId, stageId, inspection.originalName(), inspection.mediaType(),
+                    inspection.sizeBytes(), storageKey, inspection.checksum(), AttachmentKind.OTHER, 1, null, createdBy, now);
+            applyScan(attachmentId, storageKey, outcome);
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    if (status == STATUS_ROLLED_BACK) {
+                        deleteStoredFile(storageKey);
+                    }
+                }
+            });
+            return attachmentRepository.findById(attachmentId).orElseThrow(AttachmentNotFoundException::new).attachment();
+        } catch (RuntimeException exception) {
+            deleteStoredFile(storageKey);
+            throw exception;
+        }
+    }
+
+    // Исход проверки определяет судьбу файла. REJECTED: вирус найден, содержимое немедленно удаляется, запись
+    // остаётся для истории. UNVERIFIABLE: проверить не удалось (антивирус недоступен, файл слишком большой,
+    // зашифрованный архив): файл хранится, но не скачивается и не привязывается. Только CLEAN можно скачать.
+    private void applyScan(UUID attachmentId, UUID storageKey, AttachmentScanOutcome outcome) {
+        if (outcome == AttachmentScanOutcome.REJECTED) {
+            storage.delete(storageKey);
+            attachmentRepository.updateStatus(attachmentId, AttachmentStatus.REJECTED, OffsetDateTime.now());
+        } else if (outcome == AttachmentScanOutcome.UNVERIFIABLE) {
+            attachmentRepository.updateStatus(attachmentId, AttachmentStatus.UNVERIFIABLE, OffsetDateTime.now());
+        } else {
+            attachmentRepository.updateStatus(attachmentId, AttachmentStatus.CLEAN, OffsetDateTime.now());
         }
     }
 

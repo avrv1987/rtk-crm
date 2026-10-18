@@ -15,6 +15,9 @@ const CRM_SERVICE_USERNAME = 'crm-ws';
 const CRM_ROLE_SHORTNAME = 'crmwsreader';
 const CRM_JURY_USERNAME = 'crm-jury';
 const CRM_JURY_ROLE_SHORTNAME = 'crmjuryviewer';
+const CRM_WRITE_SERVICE_SHORTNAME = 'crm_write';
+const CRM_WRITE_USERNAME = 'crm-ws-write';
+const CRM_WRITE_ROLE_SHORTNAME = 'crmwswriter';
 
 $jurypassword = (string) getenv('MOODLE_JURY_PASSWORD');
 if ($jurypassword === '') {
@@ -294,6 +297,106 @@ foreach ([
 }
 role_assign($juryroleid, $jury->id, context_coursecat::instance($java->category)->id);
 
+// Запись из CRM (передача партии зачисления через API): отдельный пользователь, роль и сервис со своим токеном.
+// У токена чтения этих прав нет. Повторный запуск ничего не дублирует.
+$enabledenrols = array_filter(explode(',', (string) get_config('core', 'enrol_plugins_enabled')));
+if (!in_array('manual', $enabledenrols, true)) {
+    $enabledenrols[] = 'manual';
+    set_config('enrol_plugins_enabled', implode(',', $enabledenrols));
+}
+foreach ([$java, $data, $teach, $web, $empty] as $democourse) {
+    $manual = $DB->get_record('enrol', ['courseid' => $democourse->id, 'enrol' => 'manual']);
+    if (!$manual) {
+        enrol_get_plugin('manual')->add_default_instance($democourse);
+    } else if ((int) $manual->status !== ENROL_INSTANCE_ENABLED) {
+        $DB->set_field('enrol', 'status', ENROL_INSTANCE_ENABLED, ['id' => $manual->id]);
+    }
+}
+
+$writeuser = crm_demo_user(CRM_WRITE_USERNAME, 'CRM', 'Web Service Write');
+$writeroleid = (int) $DB->get_field('role', 'id', ['shortname' => CRM_WRITE_ROLE_SHORTNAME]);
+if (!$writeroleid) {
+    $writeroleid = create_role('CRM: зачисление слушателей', CRM_WRITE_ROLE_SHORTNAME,
+        'Создание учётных записей слушателей и ручное зачисление на курсы из CRM', '');
+}
+set_role_contextlevels($writeroleid, [CONTEXT_SYSTEM]);
+foreach ([
+    'webservice/rest:use',
+    'moodle/user:create',
+    'moodle/user:update',
+    'moodle/user:viewdetails',
+    'moodle/user:viewalldetails',
+    'moodle/course:view',
+    'moodle/course:viewparticipants',
+    'moodle/course:enrolreview',
+    'moodle/course:managegroups',
+    'moodle/site:accessallgroups',
+    'enrol/manual:enrol',
+    'enrol/manual:unenrol',
+    // Без site:viewuseridentity core_user_get_users_by_field по почте отдаёт пустой список: Moodle возвращает
+    // пользователя, только если видит поле поиска, а course:useremail действует лишь при поиске внутри курса.
+    // Без role:assign enrol_manual_enrol_users отвечает wsusercannotassign:
+    // get_assignable_roles пуст, и role_allow_assign ниже не помогает. assign_capability с overwrite добавляет
+    // оба права и уже созданной роли.
+    'moodle/site:viewuseridentity',
+    'moodle/course:useremail',
+    'moodle/role:assign',
+] as $capability) {
+    assign_capability($capability, CAP_ALLOW, $writeroleid, $systemcontext->id, true);
+}
+role_assign($writeroleid, $writeuser->id, $systemcontext->id);
+$studentroleid = (int) $DB->get_field('role', 'id', ['shortname' => 'student'], MUST_EXIST);
+if (!$DB->record_exists('role_allow_assign', ['roleid' => $writeroleid, 'allowassign' => $studentroleid])) {
+    core_role_set_assign_allowed($writeroleid, $studentroleid);
+}
+$systemcontext->mark_dirty();
+
+$writeservice = $DB->get_record('external_services', ['shortname' => CRM_WRITE_SERVICE_SHORTNAME]);
+if (!$writeservice) {
+    $writeserviceid = $webservicemanager->add_external_service((object) [
+        'name' => 'CRM: зачисление слушателей',
+        'shortname' => CRM_WRITE_SERVICE_SHORTNAME,
+        'enabled' => 1,
+        'restrictedusers' => 1,
+        'downloadfiles' => 0,
+        'uploadfiles' => 0,
+        'requiredcapability' => '',
+    ]);
+    $writeservice = $DB->get_record('external_services', ['id' => $writeserviceid], '*', MUST_EXIST);
+}
+foreach ([
+    'core_user_get_users_by_field',
+    'core_user_create_users',
+    'core_user_update_users',
+    'enrol_manual_enrol_users',
+    'enrol_manual_unenrol_users',
+    'core_group_add_group_members',
+    'core_enrol_get_enrolled_users',
+] as $function) {
+    if (!$webservicemanager->service_function_exists($function, $writeservice->id)) {
+        $webservicemanager->add_external_function_to_service($function, $writeservice->id);
+    }
+}
+if (!$DB->record_exists('external_services_users', ['externalserviceid' => $writeservice->id, 'userid' => $writeuser->id])) {
+    $webservicemanager->add_ws_authorised_user((object) ['externalserviceid' => $writeservice->id, 'userid' => $writeuser->id]);
+}
+$writetoken = $DB->get_field('external_tokens', 'token', [
+    'userid' => $writeuser->id,
+    'externalserviceid' => $writeservice->id,
+    'tokentype' => EXTERNAL_TOKEN_PERMANENT,
+], IGNORE_MULTIPLE);
+if (!$writetoken) {
+    $writetoken = \core_external\util::generate_token(
+        EXTERNAL_TOKEN_PERMANENT,
+        $writeservice,
+        $writeuser->id,
+        $systemcontext,
+        0,
+        '',
+        'CRM write'
+    );
+}
+
 purge_caches();
 
 echo 'COURSE_IDS=' . $java->id . ',' . $data->id . ',' . $teach->id . ',' . $web->id . ',' . $empty->id . PHP_EOL;
@@ -303,3 +406,5 @@ echo 'DEMO_TEACH_COURSE=' . $teach->id . PHP_EOL;
 echo 'DEMO_WEB_COURSE=' . $web->id . PHP_EOL;
 echo 'DEMO_EMPTY_COURSE=' . $empty->id . PHP_EOL;
 echo 'TOKEN=' . $token . PHP_EOL;
+echo 'WRITE_TOKEN=' . $writetoken . PHP_EOL;
+echo 'STUDENT_ROLE_ID=' . $studentroleid . PHP_EOL;

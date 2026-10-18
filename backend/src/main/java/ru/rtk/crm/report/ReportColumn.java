@@ -25,7 +25,7 @@ public enum ReportColumn {
     RISK("Риск", null, false, 30, ReportRow::risk),
     MANAGER("Ответственный", "Ответственный на момент события", true, 24, ReportRow::managerName),
     CREATED_AT("Создано", null, false, 18, ReportRow::createdAt),
-    LAST_EVENT_AT("Последнее событие", null, false, 18, ReportRow::lastEventAt),
+    LAST_EVENT_AT("Последнее действие сотрудника", null, "не зафиксировано", 18, ReportRow::lastEventAt),
     NEXT_ACTION("Следующий шаг", null, false, 28, ReportRow::nextAction),
     NEXT_ACTION_AT("Срок", null, false, 18, ReportRow::nextActionAt),
     EVENT_AT("Дата события", null, false, 18, ReportRow::eventAt),
@@ -38,11 +38,13 @@ public enum ReportColumn {
     PAID_STREAMS("Потоки с оплатами (сайт)", 14, ReportRow::paidStreams),
     PARTICIPANTS("Обучающиеся (Moodle)", 14, ReportRow::participants),
     LEARNERS_COMPLETED("Завершили (Moodle)", 14, ReportRow::completed),
-    COMPLETION_SHARE("Доля завершивших, %", 14, ReportRow::completionPercent),
+    COMPLETION_SHARE("Доля завершивших среди известных, %", 14, ReportRow::completionPercent),
+    COMPLETION_BASIS("Основание доли", null, "потоков в периоде нет", 34, ReportRow::completionBasis),
     PARALLEL_RUNS("Параллельные потоки (Moodle)", 14, ReportRow::parallelRuns),
     MARKET_VACANCIES("Спрос рынка: вакансии", 16, ReportRow::marketVacancies),
     MARKET_TREND("Тренд спроса, %", 14, ReportRow::marketTrend),
     TEAM("Команда", null, false, 22, ReportRow::teamName),
+    LAST_STAFF_ACTION("Последнее действие сотрудника по вузу", null, "не зафиксировано", 20, ReportRow::lastEventAt),
     COMPLETED("Завершённых прохождений", 14, ReportRow::completedCount),
     AVG_DAYS("Средняя длительность, дн.", 14, ReportRow::averageDays),
     MAX_DAYS("Максимальная длительность, дн.", 14, ReportRow::maxDays),
@@ -64,7 +66,7 @@ public enum ReportColumn {
     CONFIRMATION_LINKS("Ссылки на подтверждения", null, "", 40, agreement(ReportRow.AgreementLine::confirmationLinks)),
     STAGE_AT_START("Этап на начало периода", null, "—", 24, ReportRow::stageAtStart),
     STAGE_AT_END("Этап на конец периода", null, "—", 24, ReportRow::stageAtEnd),
-    STAGE_POSITION("Положение на маршруте", null, "—", 16, ReportRow::stagePosition),
+    STAGE_POSITION("Положение в маршруте", null, "—", 16, ReportRow::stagePosition),
     TRANSITIONS("Переходов за период", 12, ReportRow::transitions),
     PERIOD_COMMENTS("Комментарии за период", null, "—", 50, ReportRow::periodComments),
     DUE_STATE("Состояние срока", null, "", 24, ReportRow::dueState),
@@ -104,7 +106,7 @@ public enum ReportColumn {
             case SNAPSHOT -> switch (this) {
                 case STAGE -> "Этап на дату";
                 case MANAGER -> "Ответственный на дату";
-                case LAST_EVENT_AT -> "Последнее событие до даты";
+                case LAST_EVENT_AT -> "Последнее действие сотрудника до даты";
                 default -> title;
             };
             case MANAGER_WORK -> switch (this) {

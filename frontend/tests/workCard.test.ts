@@ -37,7 +37,7 @@ test('главная кнопка по контексту: статус, дог�
   assert.deepEqual(blocked, { kind: 'openAgreement', label: 'Перейти к договору', hint: 'Переведите договор' })
   assert.equal(primaryAction({ ...base, hasNextStep: false })?.label, 'Задать следующий шаг')
   assert.deepEqual(primaryAction({ ...base, transitionCount: 0 }), {
-    kind: 'transition', label: 'Перейти на следующий этап', disabled: true, hint: 'Из текущего этапа переходы не разрешены'
+    kind: 'transition', label: 'Перейти на следующий этап', disabled: true, hint: 'Дальше по маршруту переходов нет'
   })
 })
 

@@ -1057,6 +1057,82 @@ class AdminCrmProfileServiceTest {
                 });
     }
 
+    @Test
+    void blockedKamOrganizationsAreListedAndTransferredToTheChosenTeamKamWithTheBlockReason() {
+        UUID secondKam = UUID.fromString("20000000-0000-0000-0000-000000000007");
+        insertProfile(secondKam, "Вера Менеджер", "USER", TEAM_A, true);
+
+        AdminCrmProfileService.OwnedOrganizations owned = adminCrmProfileService.ownedOrganizations(administrator, USER_A);
+        assertThat(owned.organizations()).extracting(OrganizationAssignmentRepository.OwnedOrganization::name)
+                .containsExactly("Университет А", "Университет А-2");
+        assertThat(owned.candidates()).extracting(candidate -> candidate.id()).containsExactly(secondKam);
+        assertThat(adminCrmProfileService.ownedOrganizations(administrator, LEADER_A).candidates()).isEmpty();
+
+        adminCrmProfileService.update(
+                administrator, USER_A, AdminCrmProfileUpdateRequest.active(0, false).setTransferOrganizationsTo(secondKam),
+                "block-with-transfer", REQUEST_ID
+        );
+
+        assertThat(ownerOf(ORGANIZATION_A)).isEqualTo(secondKam);
+        assertThat(ownerOf(ORGANIZATION_A_SECOND)).isEqualTo(secondKam);
+        assertThat(accessRevision(secondKam)).isEqualTo(2);
+        assertThat(organizationAssignmentRepository.findEventsByOrganizationId(ORGANIZATION_A)).singleElement().satisfies(event -> {
+            assertThat(event.previousOwnerManagerId()).isEqualTo(USER_A);
+            assertThat(event.ownerManagerId()).isEqualTo(secondKam);
+            assertThat(event.newOwnerManagerDisplayName()).isEqualTo("Вера Менеджер");
+            assertThat(event.reason()).isEqualTo(OrganizationAssignmentReason.PROFILE_BLOCKED);
+            assertThat(event.actorProfileId()).isEqualTo(ADMIN);
+        });
+    }
+
+    @Test
+    void transferIsRefusedToAnotherTeamOrWithoutLosingOwnershipAndChangesNothing() {
+        assertThatThrownBy(() -> adminCrmProfileService.update(
+                administrator, USER_A, AdminCrmProfileUpdateRequest.active(0, false).setTransferOrganizationsTo(USER_B),
+                "transfer-other-team", REQUEST_ID
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("transferOrganizationsTo"));
+        assertThatThrownBy(() -> adminCrmProfileService.update(
+                administrator, USER_A, new AdminCrmProfileUpdateRequest(0).setDisplayName("Анна").setTransferOrganizationsTo(LEADER_A),
+                "transfer-without-block", REQUEST_ID
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("transferOrganizationsTo"));
+
+        assertThat(profile(USER_A).active()).isTrue();
+        assertThat(ownerOf(ORGANIZATION_A)).isEqualTo(USER_A);
+        assertThat(count("organization_assignment_events")).isZero();
+    }
+
+    @Test
+    void keycloakLoginErrorsOfKnownAccountsGoToTheLoginJournalOnce() {
+        Instant at = Instant.parse("2026-10-18T07:15:00Z");
+        List<KeycloakAccountClient.LoginError> errors = List.of(
+                new KeycloakAccountClient.LoginError("e-1", at, USER_A.toString(), "anna", "10.0.0.7", "invalid_user_credentials"),
+                new KeycloakAccountClient.LoginError("e-2", at, USER_B.toString(), "boris", null, "user_temporarily_disabled"),
+                new KeycloakAccountClient.LoginError("e-3", at, "unknown-subject", "пароль-в-логине", "10.0.0.8", "user_not_found")
+        );
+
+        assertThat(loginJournal.recordLoginErrors(errors)).isEqualTo(2);
+        assertThat(loginJournal.recordLoginErrors(errors)).isZero();
+
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT category, actor_profile_id, object_name, details, occurred_at FROM audit_events WHERE action = 'LOGIN_FAILED' ORDER BY object_name"
+        );
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0)).containsEntry("category", "LOGIN").containsEntry("actor_profile_id", USER_A)
+                .containsEntry("object_name", "anna").containsEntry("details", "неверный пароль; адрес: 10.0.0.7");
+        assertThat(rows.get(1).get("details")).isEqualTo("вход временно заблокирован после неудачных попыток");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM audit_events WHERE details LIKE '%пароль-в-логине%' OR object_name = 'пароль-в-логине'", Integer.class)).isZero();
+
+        when(keycloakAccountClient.configured()).thenReturn(true);
+        when(keycloakAccountClient.loginErrors(any(), eq(0), eq(100))).thenReturn(List.of(
+                new KeycloakAccountClient.LoginError("e-4", at.plusSeconds(60), USER_A.toString(), "anna", null, "invalid_totp")
+        ));
+        loginJournal.importLoginErrors();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM audit_events WHERE action = 'LOGIN_FAILED'", Integer.class)).isEqualTo(3);
+        verify(keycloakAccountClient).loginErrors(eq(java.time.LocalDate.parse("2026-10-18")), eq(0), eq(100));
+    }
+
     private void assertAutomaticDeassignment(OrganizationAssignmentEvent event, UUID organizationId) {
         assertThat(event.organizationId()).isEqualTo(organizationId);
         assertThat(event.previousOwnerManagerId()).isEqualTo(USER_A);

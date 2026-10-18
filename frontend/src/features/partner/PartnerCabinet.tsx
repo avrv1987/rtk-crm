@@ -17,6 +17,8 @@ import {
 } from './partnerApi'
 import { emailHref, phoneHref } from '../../shared/format/links'
 import { ContactLink } from '../../shared/ui/ContactLink'
+import { PartnerRequestCard } from './PartnerRequestCard'
+import { partnerRequestGroups } from './partnerRequestModel'
 import './partner.css'
 
 type PartnerCabinetProps = {
@@ -56,8 +58,10 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
   const [state, setState] = useState<CabinetState>({ kind: 'loading' })
   const [download, setDownload] = useState<DownloadState>({ kind: 'idle' })
 
-  const load = useCallback(async () => {
-    setState({ kind: 'loading' })
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) {
+      setState({ kind: 'loading' })
+    }
     try {
       setState({ kind: 'ready', cabinet: await loadPartnerCabinet() })
     } catch (error) {
@@ -96,7 +100,21 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
     )
   }
 
-  const { organization, manager, works, documents, agreements } = state.cabinet
+  const { organization, manager, works, documents, agreements, requests } = state.cabinet
+  const groups = partnerRequestGroups(requests)
+  const requestCards = (items: typeof requests) => (
+    <ul className="partner-cabinet__list">
+      {items.map((request) => (
+        <PartnerRequestCard
+          key={`${request.id}:${request.version}`}
+          request={request}
+          onChanged={() => void load(true)}
+          onSessionExpired={onSessionExpired}
+          onProfileUnavailable={onProfileUnavailable}
+        />
+      ))}
+    </ul>
+  )
   return (
     <div className="partner-cabinet">
       <section className="partner-cabinet__head" aria-labelledby="partner-organization">
@@ -111,11 +129,15 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
           {manager?.email && <dd><ContactLink href={emailHref(manager.email)} text={manager.email} /></dd>}
         </dl>
         <p className="interaction-field-hint">
-          Кабинет только для просмотра. Чтобы что-то изменить или задать вопрос, напишите своему менеджеру.
+          Здесь — что школа ждёт от вуза и ваши ответы. Чтобы изменить сведения о взаимодействиях, договорах или контактах,
+          напишите своему менеджеру.
         </p>
       </section>
 
       <nav className="partner-cabinet__nav" aria-label="Разделы кабинета">
+        <a href="#partner-required" onClick={(event) => { event.preventDefault(); document.getElementById('partner-required')?.focus() }}>
+          Требуется от вуза ({groups.required.length})
+        </a>
         <a href="#partner-works" onClick={(event) => { event.preventDefault(); document.getElementById('partner-works')?.focus() }}>
           Взаимодействия ({works.length})
         </a>
@@ -126,6 +148,26 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
           Договоры ({agreements.length})
         </a>
       </nav>
+
+      <section className="partner-cabinet__section" aria-labelledby="partner-required">
+        <h3 id="partner-required" tabIndex={-1}>Требуется от вуза</h3>
+        {groups.required.length === 0 ? <p>Сейчас школа ничего не ждёт от вуза.</p> : requestCards(groups.required)}
+      </section>
+
+      {groups.sent.length > 0 && (
+        <section className="partner-cabinet__section" aria-labelledby="partner-sent">
+          <h3 id="partner-sent" tabIndex={-1}>Отправлено нами, ожидает проверки</h3>
+          <p className="interaction-field-hint">Ответ проверяет ваш менеджер. Если он вернёт ответ на доработку, запрос снова появится выше с причиной.</p>
+          {requestCards(groups.sent)}
+        </section>
+      )}
+
+      {groups.closed.length > 0 && (
+        <section className="partner-cabinet__section" aria-labelledby="partner-closed">
+          <h3 id="partner-closed" tabIndex={-1}>Закрытые запросы</h3>
+          {requestCards(groups.closed)}
+        </section>
+      )}
 
       <section className="partner-cabinet__section" aria-labelledby="partner-works">
         <h3 id="partner-works" tabIndex={-1}>Взаимодействия с ИТ Школой</h3>
@@ -146,7 +188,7 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
               </dl>
               {work.passedStages.length > 0 && (
                 <div className="partner-card__stages">
-                  <p>Пройденные этапы</p>
+                  <p>Этапы до текущего (по отметкам в CRM)</p>
                   <ol>
                     {work.passedStages.map((stage) => (
                       <li key={`${stage.name}:${stage.passedOn}`}>
@@ -177,8 +219,11 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
                 <strong className="partner-card__name">{document.name}</strong>
               </div>
               <p className="partner-card__meta">
-                {attachmentKindLabels[document.kind]} · {fileSize(document.sizeBytes)} · {document.workTitle} · {formatMoscowDateTime(document.createdAt)}
+                {attachmentKindLabels[document.kind]} · версия {document.revision}{document.replaced ? ' (есть новая версия)' : ''} · {fileSize(document.sizeBytes)} · {document.workTitle} · {formatMoscowDateTime(document.createdAt)}
               </p>
+              {document.receivedAt !== null && (
+                <p className="partner-card__meta">Получение этой версии подтверждено {formatMoscowDateTime(document.receivedAt)}</p>
+              )}
               {document.downloadable ? (
                 <button
                   type="button"

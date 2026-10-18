@@ -36,6 +36,10 @@ import ru.rtk.crm.interaction.ProductAgreementRules;
 public class ReportRepository {
     private static final int PRODUCT_BATCH_SIZE = 500;
     private static final String NO_ROWS = "1 = 0";
+    // Записи источников (заявки сайта, наблюдения Moodle) создаются командой APPLY_SOURCE_RECORD от имени служебного профиля:
+    // это не действие сотрудника, поэтому последнее действие и комментарии людей считаются без них.
+    private static final String EMPLOYEE_EVENT = " AND NOT EXISTS (SELECT 1 FROM command_idempotency_records source_command"
+            + " WHERE source_command.id = le.command_id AND source_command.operation = 'APPLY_SOURCE_RECORD')";
     private static final String MARKS = "i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note,\n"
             + InteractionIssueRepository.MARK_COLUMNS + ",\n";
     private static final String STAGE_ENTERED = """
@@ -61,7 +65,9 @@ public class ReportRepository {
             """ + MARKS + """
                    o.owner_manager_id AS manager_id, m.display_name AS manager_name,
                    i.created_at, i.next_action, i.next_action_at,
-                   (SELECT MAX(le.occurred_at) FROM interaction_events le WHERE le.interaction_id = i.id) AS last_event_at,
+                   (SELECT MAX(le.occurred_at) FROM interaction_events le WHERE le.interaction_id = i.id
+            """ + EMPLOYEE_EVENT + """
+                   ) AS last_event_at,
             """ + STAGE_ENTERED + " AS stage_entered_at,\n" + EVENT_NULLS;
 
     private static final String PORTFOLIO_FROM = """
@@ -103,7 +109,9 @@ public class ReportRepository {
                                   ORDER BY fa.occurred_at, fa.version LIMIT 1)
                             ELSE so.owner_manager_id END AS manager_id,
                        (SELECT MAX(le.occurred_at) FROM interaction_events le
-                        WHERE le.interaction_id = si.id AND le.occurred_at < :asOfAt) AS last_event_at
+                        WHERE le.interaction_id = si.id AND le.occurred_at < :asOfAt
+            """ + EMPLOYEE_EVENT + """
+                       ) AS last_event_at
                 FROM interactions si
                 JOIN organizations so ON so.id = si.organization_id
                 WHERE si.created_at < :asOfAt
@@ -183,6 +191,13 @@ public class ReportRepository {
                        WHERE fa.organization_id = o.id AND fa.occurred_at >= :%1$s
                        ORDER BY fa.occurred_at, fa.version LIMIT 1)
                  ELSE o.owner_manager_id END""";
+
+    // Последнее действие сотрудника по вузу — любое событие его взаимодействий, кроме автоматических записей источников
+    // (заявки сайта, наблюдения Moodle идут командой APPLY_SOURCE_RECORD).
+    private static final String LAST_STAFF_ACTION = """
+            (SELECT MAX(sa.occurred_at) FROM interaction_events sa JOIN interactions si ON si.id = sa.interaction_id
+             WHERE si.organization_id = o.id AND NOT EXISTS (SELECT 1 FROM command_idempotency_records sc
+                   WHERE sc.id = sa.command_id AND sc.operation = 'APPLY_SOURCE_RECORD'))""";
 
     private static final String MANAGER_WORK_FROM = PORTFOLIO_FROM + "JOIN teams t ON t.id = o.team_id\n";
     // Этап на момент времени: последнее событие, менявшее этап, до границы. Название берётся из снимка в событии,
@@ -468,16 +483,6 @@ public class ReportRepository {
             ReportFilters filters,
             LocalDate from,
             LocalDate to,
-            OffsetDateTime now
-    ) {
-        return findManagerWork(profile, filters, from, to, now, false);
-    }
-
-    public List<ManagerWorkLine> findManagerWork(
-            CrmProfile profile,
-            ReportFilters filters,
-            LocalDate from,
-            LocalDate to,
             OffsetDateTime now,
             boolean managerAtPeriodEnd
     ) {
@@ -497,7 +502,12 @@ public class ReportRepository {
         // Если период уже закончился, менеджер и этап определяются на его конец по истории (передачи вуза, события),
         // а не по текущему состоянию: иначе завершённый период пересчитывался бы по сегодняшнему владельцу вуза.
         boolean historical = managerAtPeriodEnd && toAt != null && toAt.isBefore(now);
-        String managerId = historical ? MANAGER_AT.formatted("toAt") : "o.owner_manager_id";
+        // Отбор по менеджеру идёт по тому же выражению, что и колонка «Менеджер»: в режиме «Сейчас» вуз без действующего
+        // КАМ своей команды — «не назначен» и в отбор прежнего владельца не попадает; экран и файл совпадают строка в строку.
+        String unassigned = OrganizationRepository.requiresAssignment("o");
+        String managerId = historical
+                ? MANAGER_AT.formatted("toAt")
+                : "CASE WHEN " + unassigned + " THEN NULL ELSE o.owner_manager_id END";
         String startStage = fromAt == null ? "CAST(NULL AS VARCHAR(200))" : STAGE_AT.formatted("fromAt");
         String endStage = toAt != null && toAt.isBefore(now) ? STAGE_AT.formatted("toAt") : "s.name";
         // Область: действующие вузы пользователя (архивные не входят) и без служебной организации для оплат
@@ -524,18 +534,17 @@ public class ReportRepository {
             conditions.add("(" + endStage + ") IN (:stages)");
             parameters.put("stages", filters.stages());
         }
-        // Вуз без действующего КАМ своей команды показывается строкой «не назначен», даже если в профиле остался
-        // прежний владелец: прежний сотрудник уже не отвечает за работу.
-        String unassigned = OrganizationRepository.requiresAssignment("o");
-        // «Завершена в периоде»: в периоде работа вошла в последний этап маршрута либо она сейчас завершена и её
-        // статус менялся в периоде.
-        String lastStage = "(SELECT fs.id FROM interaction_stages fs WHERE fs.interaction_id = i.id ORDER BY fs.stage_order DESC LIMIT 1)";
+        // «Завершена в периоде»: последняя в периоде смена статуса перевела работу в COMPLETED. Вход в последний этап
+        // маршрута завершением не считается, а завершение, отменённое повторным открытием в том же периоде, не засчитывается.
+        String completedInPeriod = "(SELECT ke.work_status_after FROM interaction_events ke WHERE ke.interaction_id = i.id"
+                + " AND ke.type = 'STATUS_CHANGED' AND " + inPeriod("ke.occurred_at", fromAt, toAt)
+                + " ORDER BY ke.occurred_at DESC, ke.version DESC LIMIT 1) = 'COMPLETED'";
         String sql = "SELECT * FROM (SELECT i.id AS interaction_id, i.title AS interaction_title, o.id AS organization_id,"
                 + " o.name AS organization_name, t.id AS team_id, t.name AS team_name,"
                 + (historical
                         ? " " + managerId + " AS manager_id,"
                                 + " (SELECT mp.display_name FROM crm_user_profiles mp WHERE mp.id = " + managerId + ") AS manager_name,"
-                        : " CASE WHEN " + unassigned + " THEN NULL ELSE o.owner_manager_id END AS manager_id,"
+                        : " " + managerId + " AS manager_id,"
                                 + " CASE WHEN " + unassigned + " THEN NULL ELSE m.display_name END AS manager_name,")
                 + " d.name AS direction_name, p.name AS program_name, s.name AS stage_name,"
                 + " (SELECT COUNT(*) FROM interaction_stages ps WHERE ps.interaction_id = i.id AND ps.stage_order <= s.stage_order)"
@@ -546,12 +555,7 @@ public class ReportRepository {
                 + " (SELECT COUNT(*) FROM interaction_events te WHERE te.interaction_id = i.id AND te.type = 'TRANSITIONED'"
                 + " AND " + inPeriod("te.occurred_at", fromAt, toAt) + ") AS transitions,"
                 + " CASE WHEN " + inPeriod("i.created_at", fromAt, toAt) + " THEN 1 ELSE 0 END AS new_in_period,"
-                + " CASE WHEN EXISTS (SELECT 1 FROM interaction_events ce WHERE ce.interaction_id = i.id"
-                + " AND ce.type IN ('CREATED', 'TRANSITIONED') AND ce.stage_id = " + lastStage
-                + " AND " + inPeriod("ce.occurred_at", fromAt, toAt) + ")"
-                + " OR i.work_status = 'COMPLETED' AND EXISTS (SELECT 1 FROM interaction_events ke WHERE ke.interaction_id = i.id"
-                + " AND ke.type = 'STATUS_CHANGED' AND " + inPeriod("ke.occurred_at", fromAt, toAt) + ")"
-                + " THEN 1 ELSE 0 END AS completed_in_period "
+                + " CASE WHEN " + completedInPeriod + " THEN 1 ELSE 0 END AS completed_in_period "
                 + MANAGER_WORK_FROM + " WHERE " + String.join(" AND ", conditions) + ") w"
                 + (filters.change() == null ? "" : switch (filters.change()) {
                     case MOVED -> " WHERE w.transitions > 0";
@@ -602,7 +606,8 @@ public class ReportRepository {
         String unassigned = OrganizationRepository.requiresAssignment("o");
         return jdbcClient.sql("SELECT o.id, o.name, t.id AS team_id, t.name AS team_name,"
                         + " CASE WHEN " + unassigned + " THEN NULL ELSE o.owner_manager_id END AS manager_id,"
-                        + " CASE WHEN " + unassigned + " THEN NULL ELSE m.display_name END AS manager_name"
+                        + " CASE WHEN " + unassigned + " THEN NULL ELSE m.display_name END AS manager_name,"
+                        + " " + LAST_STAFF_ACTION + " AS last_action_at"
                         + " FROM organizations o JOIN teams t ON t.id = o.team_id"
                         + " LEFT JOIN crm_user_profiles m ON m.id = o.owner_manager_id"
                         + " WHERE o.id IN (" + scope.get().currentOrganizations() + ") AND o.type <> 'OPEN_ENROLLMENT'"
@@ -615,7 +620,8 @@ public class ReportRepository {
                         resultSet.getObject("team_id", UUID.class),
                         resultSet.getString("team_name"),
                         resultSet.getObject("manager_id", UUID.class),
-                        resultSet.getString("manager_name")
+                        resultSet.getString("manager_name"),
+                        resultSet.getObject("last_action_at", OffsetDateTime.class)
                 ))
                 .list();
     }
@@ -651,15 +657,13 @@ public class ReportRepository {
         }
         Map<UUID, List<String>> comments = new HashMap<>();
         for (int start = 0; start < interactionIds.size(); start += PRODUCT_BATCH_SIZE) {
-            // Автоматические записи источников (заявки сайта, наблюдения Moodle) помечены командой APPLY_SOURCE_RECORD:
-            // в отчёт идут только комментарии людей, без контактов, чтобы не выгружать ФИО, почту и телефоны.
-            jdbcClient.sql("SELECT e.interaction_id, e.occurred_at, NULLIF(e.comment, '') AS event_comment"
-                            + " FROM interaction_events e WHERE e.interaction_id IN (:interactionIds)"
-                            + " AND e.type IN ('COMMENTED', 'TRANSITIONED')"
-                            + " AND NOT EXISTS (SELECT 1 FROM command_idempotency_records source_command"
-                            + " WHERE source_command.id = e.command_id AND source_command.operation = 'APPLY_SOURCE_RECORD')"
-                            + " AND " + inPeriod("e.occurred_at", fromAt, toAt)
-                            + " ORDER BY e.occurred_at, e.version, e.id")
+            // В отчёт идут только комментарии людей (EMPLOYEE_EVENT), без контактов, чтобы не выгружать ФИО, почту и телефоны.
+            jdbcClient.sql("SELECT le.interaction_id, le.occurred_at, NULLIF(le.comment, '') AS event_comment"
+                            + " FROM interaction_events le WHERE le.interaction_id IN (:interactionIds)"
+                            + " AND le.type IN ('COMMENTED', 'TRANSITIONED')"
+                            + EMPLOYEE_EVENT
+                            + " AND " + inPeriod("le.occurred_at", fromAt, toAt)
+                            + " ORDER BY le.occurred_at, le.version, le.id")
                     .params(parameters)
                     .param("interactionIds", interactionIds.subList(start, Math.min(start + PRODUCT_BATCH_SIZE, interactionIds.size())))
                     .query((ResultSet resultSet) -> {
@@ -701,6 +705,7 @@ public class ReportRepository {
                                CAST(SUM(x.participants) AS BIGINT) AS participants,
                                CAST(SUM(x.completed) AS BIGINT) AS completed,
                                CAST(SUM(x.completed_base) AS BIGINT) AS completed_base,
+                               CAST(SUM(x.runs_without_data) AS BIGINT) AS runs_without_data,
                                CAST(SUM(x.parallel_runs) AS BIGINT) AS parallel_runs,
                                CAST(CASE WHEN COUNT(x.paid_order) = 0 THEN NULL ELSE COUNT(DISTINCT x.paid_order) END AS BIGINT)
                                    AS paid_orders,
@@ -828,13 +833,21 @@ public class ReportRepository {
         if (scope.isEmpty()) {
             return List.of();
         }
+        // Порядок — по маршруту шаблона по умолчанию: правка этапов в одном взаимодействии (этап вставлен вторым)
+        // не должна сдвигать этап в общем списке. Этапы вне шаблона идут следом по наименьшему номеру.
         return jdbcClient.sql("""
                 SELECT st.name
                 FROM interaction_stages st
                 JOIN interactions i ON i.id = st.interaction_id
+                LEFT JOIN (
+                    SELECT ts.name AS route_name, MIN(ts.stage_order) AS route_order
+                    FROM workflow_template_stages ts
+                    JOIN workflow_templates t ON t.id = ts.template_id AND t.default_template = TRUE
+                    GROUP BY ts.name
+                ) route ON route.route_name = st.name
                 WHERE i.organization_id IN (SELECT id FROM organizations WHERE %s)
                 GROUP BY st.name
-                ORDER BY MIN(st.stage_order), st.name
+                ORDER BY CASE WHEN MIN(route.route_order) IS NULL THEN 1 ELSE 0 END, MIN(route.route_order), MIN(st.stage_order), st.name
                 """.formatted(scope.get().condition()))
                 .params(scope.get().parameters())
                 .query(String.class)
@@ -1008,16 +1021,20 @@ public class ReportRepository {
         return new Selection(
                 "SELECT r.program_id, CAST(r.applications_count AS BIGINT) AS applications, CAST(NULL AS BIGINT) AS participants,"
                         + " CAST(NULL AS BIGINT) AS completed, CAST(NULL AS BIGINT) AS completed_base,"
-                        + " CAST(NULL AS BIGINT) AS parallel_runs,"
+                        + " CAST(NULL AS BIGINT) AS runs_without_data, CAST(NULL AS BIGINT) AS parallel_runs,"
                         + " CAST(NULL AS VARCHAR(200)) AS paid_order, CAST(NULL AS VARCHAR(64)) AS paid_stream " + DEMAND_FROM
                         + applications.sql()
+                        // Знаменатель доли — C + N, как в «Динамике обучения»: участия без статуса в него не входят.
+                        // Поток без наблюдения на дату считается отдельно, а не нулём обучающихся.
                         + " UNION ALL SELECT s.program_id, CAST(NULL AS BIGINT), CAST(f.participants_count AS BIGINT),"
                         + " CAST(f.completed_count AS BIGINT),"
-                        + " CAST(CASE WHEN f.completed_count IS NULL THEN NULL ELSE f.participants_count END AS BIGINT),"
+                        + " CAST(f.completed_count + f.not_completed_count AS BIGINT),"
+                        + " CAST(CASE WHEN f.mapping_id IS NULL THEN 1 ELSE 0 END AS BIGINT),"
                         + " CAST(CASE WHEN sm.run_starts_on <= :runsAsOf AND :runsAsOf < sm.run_ends_on THEN 1 ELSE 0 END"
                         + " AS BIGINT), CAST(NULL AS VARCHAR(200)), CAST(NULL AS VARCHAR(64)) " + LEARNING_FROM + learning.sql()
                         + " UNION ALL SELECT r.program_id, CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), CAST(NULL AS BIGINT),"
-                        + " CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), CAST(r.external_id AS VARCHAR(200)), CAST(r.payload_hash AS VARCHAR(64)) "
+                        + " CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), CAST(r.external_id AS VARCHAR(200)),"
+                        + " CAST(r.payload_hash AS VARCHAR(64)) "
                         + DEMAND_FROM + paidOrders.sql(),
                 parameters
         );
@@ -1330,7 +1347,10 @@ public class ReportRepository {
                 null,
                 resultSet.getObject("paid_orders", Long.class),
                 resultSet.getObject("paid_streams", Long.class),
-                resultSet.getObject("completed_base", Long.class)
+                resultSet.getObject("completed_base", Long.class),
+                null,
+                null,
+                resultSet.getObject("runs_without_data", Long.class)
         );
     }
 

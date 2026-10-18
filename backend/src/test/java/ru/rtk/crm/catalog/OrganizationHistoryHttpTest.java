@@ -124,6 +124,23 @@ class OrganizationHistoryHttpTest {
     }
 
     @Test
+    void automaticUnassignmentShowsItsReasonInTheFeed() throws Exception {
+        jdbcTemplate.update("""
+                INSERT INTO organization_assignment_events (
+                    id, organization_id, command_id, previous_owner_manager_id, previous_owner_manager_display_name,
+                    owner_manager_id, new_owner_manager_display_name, actor_profile_id, actor_display_name, request_id,
+                    reason, version, occurred_at
+                ) VALUES (?, ?, ?, ?, 'Ирина КАМ', NULL, NULL, ?, 'Администратор', 'request-2', 'PROFILE_BLOCKED', 2, ?)
+                """, UUID.randomUUID(), ORGANIZATION_A, UUID.randomUUID(), KAM_A, LEADER_A,
+                OffsetDateTime.parse("2026-09-20T09:00:00+03:00"));
+
+        mockMvc.perform(get(url(ORGANIZATION_A)).with(login(LEADER_A)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].kind").value("ASSIGNMENT"))
+                .andExpect(jsonPath("$.items[0].description").value("Снято назначение: Ирина КАМ. Причина: блокировка КАМ."));
+    }
+
+    @Test
     void agreementTransitionsJoinTheFeedWithStatusesWorkAndCommentInTheOwnScope() throws Exception {
         UUID agreementA = UUID.randomUUID();
         UUID agreementB = UUID.randomUUID();
@@ -335,7 +352,7 @@ class OrganizationHistoryHttpTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_issues (
+                CREATE TABLE IF NOT EXISTS interaction_issues (last_comment VARCHAR(1000), last_comment_by UUID, last_comment_at TIMESTAMP WITH TIME ZONE,
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
                     description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
                     status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
@@ -348,7 +365,7 @@ class OrganizationHistoryHttpTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (
+                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, type VARCHAR(32) NOT NULL, stage_id UUID,
                     stage_name_snapshot VARCHAR(200) NOT NULL, from_stage_name_snapshot VARCHAR(200), comment TEXT,
                     actor_profile_id UUID NOT NULL, owner_manager_id_snapshot UUID, version INTEGER NOT NULL DEFAULT 0,

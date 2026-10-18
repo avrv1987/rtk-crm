@@ -112,7 +112,7 @@ class ModulesOffHttpTest {
     void learnerPrivacyMethodOfTheEnrolmentModuleAnswersNotFound() throws Exception {
         mockMvc.perform(post("/api/admin/personal-data/learners/{id}/restriction", UUID.randomUUID())
                         .with(login(ADMIN)).with(csrf()).header("Idempotency-Key", "k")
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0,\"restricted\":true}"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0,\"restricted\":true,\"reason\":\"SUBJECT_REQUEST\"}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }

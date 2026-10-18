@@ -54,6 +54,37 @@ export type OrderTarget = 'report' | 'chart'
 
 const totalTitles = ['Команда', 'Менеджер', 'Вузов', 'Взаимодействий', 'Просрочено', 'На этой неделе', 'Без шага или срока', 'Переходов за период']
 
+type GroupTotal = NonNullable<ReportPreview['productTotals']>[number]
+
+// Итоги по продуктам и по вузам; «Всего» последней строкой — по уникальным взаимодействиям, а не сумма строк.
+const GroupTotals = ({ caption, first, rows }: { caption: string; first: string; rows: GroupTotal[] | undefined }) => (
+  rows === undefined || rows.length === 0 ? null : (
+    <div className="reports__table-scroll" role="region" aria-label={caption} tabIndex={0}>
+      <table>
+        <caption>{caption}</caption>
+        <thead>
+          <tr>
+            {[first, ...totalTitles.slice(2)].map((title) => <th key={title} scope="col">{title}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={index}>
+              <td>{row.name}</td>
+              <td>{row.organizations}</td>
+              <td>{row.works}</td>
+              <td>{row.overdue}</td>
+              <td>{row.thisWeek}</td>
+              <td>{row.noNextStep}</td>
+              <td>{row.transitions}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+)
+
 type PreviewState =
   | { kind: 'idle' }
   | { kind: 'loading'; request: ReportPreviewRequest }
@@ -446,6 +477,8 @@ export const ReportBuilder = ({
                           </table>
                         </div>
                       )}
+                      <GroupTotals caption="Итоги по продуктам" first="Продукт" rows={previewState.preview.productTotals} />
+                      <GroupTotals caption="Итоги по вузам" first="Вуз" rows={previewState.preview.organizationTotals} />
                       <div className="reports__pagination">
                         <button
                           type="button"

@@ -141,12 +141,18 @@ export const fieldCodeLabels = (codes: LearnerFieldCode[]) => codes.map((code) =
 
 export const lmsStatusLabel = (learner: Pick<StreamLearner, 'lmsStatus' | 'lmsExportedAt' | 'lmsTransferredAt'>) => {
   if (learner.lmsStatus === 'TRANSFERRED') {
-    return `Передано в LMS ${learner.lmsTransferredAt === null ? '' : formatIsoDate(learner.lmsTransferredAt)}`.trim()
+    return `Принято LMS ${learner.lmsTransferredAt === null ? '' : formatIsoDate(learner.lmsTransferredAt)}`.trim()
   }
   if (learner.lmsStatus === 'EXPORTED') {
-    return `Выгружено ${learner.lmsExportedAt === null ? '' : formatIsoDate(learner.lmsExportedAt)}`.trim()
+    return `Файл сформирован ${learner.lmsExportedAt === null ? '' : formatIsoDate(learner.lmsExportedAt)}`.trim()
   }
-  return 'Ожидает'
+  if (learner.lmsStatus === 'SENT') {
+    return 'Передано, ждём результат LMS'
+  }
+  if (learner.lmsStatus === 'FAILED') {
+    return 'Ошибка LMS'
+  }
+  return 'Ожидает выгрузки'
 }
 
 export const learnerFullName = (values: { lastName: string | null; firstName: string | null; middleName: string | null }) => (

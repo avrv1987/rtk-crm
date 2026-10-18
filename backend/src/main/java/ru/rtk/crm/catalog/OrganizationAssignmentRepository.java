@@ -116,6 +116,19 @@ public class OrganizationAssignmentRepository {
         }
     }
 
+    public List<OwnedOrganization> findOwnedOrganizations(UUID ownerManagerId) {
+        return jdbcClient.sql("SELECT id, name FROM organizations WHERE owner_manager_id = :ownerManagerId ORDER BY name, id")
+                .param("ownerManagerId", ownerManagerId)
+                .query((resultSet, rowNumber) -> new OwnedOrganization(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getString("name")
+                ))
+                .list();
+    }
+
+    public record OwnedOrganization(UUID id, String name) {
+    }
+
     public List<OrganizationAssignmentTarget> lockOwnedOrganizations(UUID ownerManagerId) {
         return jdbcClient.sql("""
                 SELECT id, owner_manager_id, version

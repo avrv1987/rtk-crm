@@ -10,6 +10,7 @@ import {
   demandSorts,
   eventTypeTitles,
   eventTypes,
+  managerAtOptions,
   managerWorkChangeLabels,
   managerWorkChanges,
   maxDaysOnStage,
@@ -189,6 +190,14 @@ export const ReportFilterFields = ({ role, selection, options, update }: FieldsP
           onChange={(change) => update({ change })}
         />
       )}
+      {visible.change && (
+        <ChoiceGroup
+          label="Менеджер"
+          options={managerAtOptions}
+          value={selection.managerAt}
+          onChange={(managerAt) => update({ managerAt })}
+        />
+      )}
       {visible.agreement && (
         <ReportAgreementFilter value={selection.agreement} vendors={options.vendors} onChange={(agreement) => update({ agreement })} />
       )}
@@ -320,6 +329,11 @@ export const activeFilterChips = (
       key: 'change',
       text: managerWorkChangeLabels[selection.change],
       onRemove: () => update({ change: '' })
+    }] : []),
+    ...(visible.change && selection.managerAt === 'CURRENT' ? [{
+      key: 'manager-at',
+      text: 'Менеджер: текущий',
+      onRemove: () => update({ managerAt: 'PERIOD_END' })
     }] : []),
     ...(visible.periodBasis && selection.periodBasis !== 'CREATED' ? [{
       key: 'basis',

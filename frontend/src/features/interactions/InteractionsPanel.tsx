@@ -43,9 +43,12 @@ import { InteractionFlagsForm } from './InteractionFlagsForm'
 import { InteractionMarkBadges } from './InteractionMarkBadges'
 import { InteractionStatusPanel } from './InteractionStatusPanel'
 import { StepCompletion } from '../work/StepCompletion'
+import { ContactMarkFields } from '../work/ContactMarkFields'
+import { type ContactMarkDraft, contactMarkMissingChannel, contactMarkPayload } from '../work/contactMark'
 import { LearningSnapshots } from './LearningSnapshots'
 import { LmsSignalsCard } from '../work/LmsSignals'
 import { OrganizationContacts, type PartnerAccessRights } from './OrganizationContacts'
+import { PartnerRequestsTab } from '../partner/PartnerRequestsTab'
 import { PartnerStepToggle } from '../partner/PartnerStepToggle'
 import { getModules } from '../../shared/modules'
 import { CameraInput } from '../../shared/ui/CameraInput'
@@ -64,6 +67,7 @@ import {
 } from '../documents/documentsApi'
 import { InteractionCycles } from '../training/InteractionCycles'
 import { LmsStageSuggestionPanel } from '../training/LmsStageSuggestion'
+import { lmsStageWarning } from '../training/lmsStageSuggestionRules'
 import { TeacherTrainings } from '../training/TeacherTrainings'
 import { TeacherRoster } from '../training/TeacherRoster'
 import { StageCompletionPanel } from './StageCompletionPanel'
@@ -74,7 +78,16 @@ import { CardDialog, CardSection, CardTabPanel, CardTabs, RequiredMark, type Car
 import { RouteDisclosure, daysLabel, daysSince, stagePath } from './RouteDisclosure'
 import { WorkFacts } from './WorkFacts'
 import { WorkHistoryTab } from './WorkHistoryTab'
-import { agreementFact, isSignedAgreement, primaryAction, primaryShortLabels, signingBlock } from './workCardModel'
+import {
+  agreementFact,
+  cardHash,
+  isSignedAgreement,
+  primaryAction,
+  primaryShortLabels,
+  signingBlock,
+  type TransitionDirection,
+  transitionsToward
+} from './workCardModel'
 import { formatMoscowDateTime, isoFromMoscowInput, moscowInputValue } from './moscowTime'
 import './workCard.css'
 
@@ -459,7 +472,7 @@ const attachmentLimitBytes = attachmentLimitMegabytes * 1024 * 1024
 
 type CardDialogKind = 'contact' | 'create' | 'transition' | 'step' | 'program' | 'comment' | 'upload' | 'status' | 'flags' | 'issues' | 'stageEdit' | 'stageCompletion' | 'details'
 
-type CardTabId = 'history' | 'documents' | 'contract' | 'learning' | 'contacts'
+type CardTabId = 'history' | 'documents' | 'contract' | 'learning' | 'contacts' | 'partner'
 
 type WorksFilter = 'ACTIVE' | 'ALL'
 
@@ -557,6 +570,8 @@ export const InteractionsPanel = ({
   const [commentAttachmentIds, setCommentAttachmentIds] = useState<Attachment['id'][]>([])
   const [commentState, setCommentState] = useState<CommandState>({ kind: 'idle' })
   const [transitionStageId, setTransitionStageId] = useState(restoredCard.transitionStageId)
+  const [transitionDirection, setTransitionDirection] = useState<TransitionDirection>('forward')
+  const [commentContact, setCommentContact] = useState<ContactMarkDraft>(null)
   const [transitionDraft, setTransitionDraft] = useState(restoredCard.transitionDraft)
   const [transitionNextAction, setTransitionNextAction] = useState(restoredCard.transitionNextAction)
   const [transitionNextActionAt, setTransitionNextActionAt] = useState(restoredCard.transitionNextActionAt)
@@ -758,6 +773,12 @@ export const InteractionsPanel = ({
     setDetailState((current) => current.kind === 'ready' && current.interaction.id === id ? current : { kind: 'loading', id })
     try {
       const interaction = await apiClient.getInteraction(id)
+      if (requestVersion === detailRequestVersion.current && interaction.organizationId !== organizationId) {
+        // Взаимодействие другого вуза (старая ссылка с чужим вузом в адресе): переходим на верный адрес, экран вузов
+        // откроет карточку уже под вузом взаимодействия.
+        window.location.replace(cardHash(interaction.organizationId, interaction.id, window.location.hash))
+        return
+      }
       if (requestVersion === detailRequestVersion.current) {
         commentKey.current = null
         transitionKey.current = null
@@ -788,11 +809,10 @@ export const InteractionsPanel = ({
       }
       setDetailState({ kind: 'failed', id, requestId: requestIdOf(error), code: error instanceof ApiError ? error.code : undefined })
     }
-  }, [onProfileUnavailable, onSessionExpired])
+  }, [onProfileUnavailable, onSessionExpired, organizationId])
 
   const openInteraction = useCallback((id: Interaction['id']) => {
-    const query = window.location.hash.split('?')[1]
-    window.history.replaceState(null, '', `#/organizations/${organizationId}/${id}${query ? `?${query}` : ''}`)
+    window.history.replaceState(null, '', cardHash(organizationId, id, window.location.hash))
     if (openedInteractionId.current !== id) {
       const card = loadInteractionCardDraft(profileId, id)
       openedInteractionId.current = id
@@ -802,6 +822,7 @@ export const InteractionsPanel = ({
       setCommentNextAction(card.commentNextAction)
       setCommentNextActionAt(card.commentNextActionAt)
       setCommentAttachmentIds([])
+      setCommentContact(null)
       setCommentState({ kind: 'idle' })
       setTransitionStageId(card.transitionStageId)
       setTransitionDraft(card.transitionDraft)
@@ -1059,6 +1080,10 @@ export const InteractionsPanel = ({
     && (!stageEditNeedsAfter || stageEditAfterExists)
     && (!stageEditNeedsName || stageEditName.trim().length > 0)
     && (stageEditType !== 'MOVE_AFTER' || stageEditId !== stageEditAfterId)
+  const stageEditTarget = currentInteraction?.stages.find((stage) => stage.id === stageEditId)
+  const stageEditLmsWarning = stageEditTarget === undefined || (stageEditType !== 'RENAME' && stageEditType !== 'DELETE')
+    ? null
+    : lmsStageWarning([stageEditTarget.name], stageEditType === 'RENAME' ? [stageEditName] : [])
   const selectedInteractionId = currentInteraction?.id
 
   const issuesOpenedFor = useRef<string | null>(null)
@@ -1353,7 +1378,8 @@ export const InteractionsPanel = ({
       stageId: commentStageId,
       text: comment,
       attachmentIds: commentAttachmentIds,
-      nextStep: nextStepPayload(currentInteraction, commentNextAction, commentNextActionAt)
+      nextStep: nextStepPayload(currentInteraction, commentNextAction, commentNextActionAt),
+      contact: contactMarkPayload(commentContact)
     }
     setCommentState({ kind: 'saving' })
     try {
@@ -1370,6 +1396,7 @@ export const InteractionsPanel = ({
       setCommentNextAction('')
       setCommentNextActionAt('')
       setCommentAttachmentIds([])
+      setCommentContact(null)
       setTransitionAttachmentIds([])
       setCommentState({ kind: 'idle' })
       finish(`Комментарий добавлен в историю этапа «${interaction.stages.find((stage) => stage.id === payload.stageId)?.name ?? interaction.currentStageName}».`, 'history')
@@ -1812,13 +1839,22 @@ export const InteractionsPanel = ({
     attachmentsByEvent.set(attachment.eventId, attachments)
   })
 
-  const openTransition = () => {
-    if (currentInteraction !== undefined && transitionStageId.length === 0) {
-      const next = nextAllowedTransition(currentInteraction)
-      if (next !== undefined) {
-        changeTransitionStage(next.stageId)
-      }
+  const transitionOptions = (direction: TransitionDirection) => currentInteraction === undefined
+    ? []
+    : transitionsToward(currentInteraction.allowedTransitions, currentInteraction.stages, currentInteraction.currentStageId, direction)
+
+  const openTransition = (direction: TransitionDirection = 'forward') => {
+    const options = transitionOptions(direction)
+    if (!options.some((option) => option.stageId === transitionStageId)) {
+      changeTransitionStage(options[0]?.stageId ?? '')
     }
+    setTransitionDirection(direction)
+    setDialog('transition')
+  }
+
+  const moveToStage = (stageId: string) => {
+    changeTransitionStage(stageId)
+    setTransitionDirection(transitionOptions('back').some((option) => option.stageId === stageId) ? 'back' : 'forward')
     setDialog('transition')
   }
 
@@ -2285,7 +2321,7 @@ export const InteractionsPanel = ({
     canEdit: canManageDailyWork,
     status: currentInteraction.marks.status,
     hasNextStep,
-    transitionCount: currentInteraction.allowedTransitions.length,
+    transitionCount: transitionOptions('forward').length,
     agreementStageRole: stageRole,
     agreementCount: work?.agreements.length ?? 0,
     signingBlocked: signingBlockedNext
@@ -2321,8 +2357,11 @@ export const InteractionsPanel = ({
   ] : []
   const moreItems: ActionMenuItem[] = canManageDailyWork ? [
     { label: 'Изменить шаг и срок…', onSelect: () => setDialog('step') },
-    ...(primary?.kind === 'transition' ? [] : [{ label: 'Перейти на этап…', onSelect: openTransition }]),
-    { label: 'Отметить этап выполненным…', onSelect: () => setDialog('stageCompletion') },
+    ...(primary?.kind === 'transition' || transitionOptions('forward').length === 0
+      ? []
+      : [{ label: 'Перейти на следующий этап…', onSelect: () => openTransition('forward') }]),
+    ...(transitionOptions('back').length === 0 ? [] : [{ label: 'Вернуться на этап…', onSelect: () => openTransition('back') }]),
+    { label: 'Отметить этап выполненным (без перехода)…', onSelect: () => setDialog('stageCompletion') },
     { label: 'Чего ждём от вуза или РТК…', onSelect: () => setDialog('flags') },
     { label: 'Проблемы и риски…', onSelect: () => setDialog('issues') },
     { label: 'Изменить данные взаимодействия…', onSelect: () => setDialog('details'), separated: true },
@@ -2341,7 +2380,8 @@ export const InteractionsPanel = ({
     { id: 'documents', label: 'Документы', count: currentInteraction.attachments.length },
     { id: 'contract', label: 'Договор и лицензии', count: (work?.agreements.length ?? 0) + currentInteraction.productAgreements.length },
     { id: 'learning', label: 'Обучение', count: signalCount > 0 ? signalCount : undefined },
-    { id: 'contacts', label: 'Контакты', count: currentInteraction.contactIds.length }
+    { id: 'contacts', label: 'Контакты', count: currentInteraction.contactIds.length },
+    ...(getModules().partner ? [{ id: 'partner' as const, label: 'Запросы вузу' }] : [])
   ]
   const reload = () => {
     if (currentInteraction !== undefined) {
@@ -2493,7 +2533,9 @@ export const InteractionsPanel = ({
                   data-action={primary.kind}
                   onClick={runPrimary}
                   disabled={primary.kind === 'transition' && primary.disabled}
-                  title={'hint' in primary ? primary.hint : undefined}
+                  title={'hint' in primary ? primary.hint : primary.kind === 'transition'
+                    ? 'Работа на этапе закончена: взаимодействие перейдёт на следующий этап маршрута.'
+                    : undefined}
                 >
                   <span className="work-card__primary-full">{primary.label}</span>
                   <span className="work-card__primary-short">{primaryShortLabels[primary.kind]}</span>
@@ -2525,7 +2567,14 @@ export const InteractionsPanel = ({
             {canManageDailyWork && !completingStep && (
               <div className="work-step__actions">
                 {hasStepOrDue && (
-                  <button type="button" className="button--secondary" onClick={() => setCompletingStep(true)}>Шаг выполнен</button>
+                  <button
+                    type="button"
+                    className="button--secondary"
+                    title="Задача из «Следующего шага» сделана: запишите результат и новый шаг. Этап не меняется."
+                    onClick={() => setCompletingStep(true)}
+                  >
+                    Шаг выполнен
+                  </button>
                 )}
                 <button type="button" className="button--secondary" onClick={() => setDialog('step')}>Изменить</button>
               </div>
@@ -2556,6 +2605,7 @@ export const InteractionsPanel = ({
             canEdit={canManageDailyWork}
             onCompleteStage={() => setDialog('stageCompletion')}
             onEditStages={() => setDialog('stageEdit')}
+            onReturnToStage={transitionOptions('back').length === 0 ? undefined : () => openTransition('back')}
           />
 
           {noticeSlot}
@@ -2704,7 +2754,8 @@ export const InteractionsPanel = ({
                   interaction={currentInteraction}
                   canEdit={canManageDailyWork}
                   onChanged={applyUpdatedInteraction}
-                  onOpenTransition={openTransition}
+                  onOpenTransition={() => openTransition('forward')}
+                  onMoveToStage={moveToStage}
                   onOpenCycles={startNewCycle}
                   onSessionExpired={onSessionExpired}
                   onProfileUnavailable={onProfileUnavailable}
@@ -2714,10 +2765,7 @@ export const InteractionsPanel = ({
                     interactionId={currentInteraction.id}
                     version={currentInteraction.version}
                     canEdit={canManageDailyWork}
-                    onMoveToStage={(stageId) => {
-                      changeTransitionStage(stageId)
-                      setDialog('transition')
-                    }}
+                    onMoveToStage={moveToStage}
                     onRecordedAsRisk={(updated) => applyUpdatedInteraction(updated, 'Сигнал LMS записан в реестр проблем и рисков взаимодействия.')}
                     onSessionExpired={onSessionExpired}
                     onProfileUnavailable={onProfileUnavailable}
@@ -2785,6 +2833,16 @@ export const InteractionsPanel = ({
               </div>
             )}
 
+            {cardTab === 'partner' && getModules().partner && (
+              <PartnerRequestsTab
+                key={currentInteraction.id}
+                interaction={currentInteraction}
+                organizationId={organizationId}
+                canManage={canManageDailyWork}
+                onSessionExpired={onSessionExpired}
+                onProfileUnavailable={onProfileUnavailable}
+              />
+            )}
             {cardTab === 'contacts' && (
               <section className="interaction-linked-contacts" aria-labelledby="interaction-linked-contacts-title">
                 <div className="interaction-events__header">
@@ -2839,40 +2897,53 @@ export const InteractionsPanel = ({
 
           {canManageDailyWork && (
             <>
-              <CardDialog open={dialog === 'transition'} title="Перейти на этап" onClose={closeDialog}>
+              <CardDialog
+                open={dialog === 'transition'}
+                title={transitionDirection === 'back' ? 'Вернуться на этап' : 'Перейти на следующий этап'}
+                onClose={closeDialog}
+              >
                 <div className="interaction-commands">
                   <form className="interaction-transition-form" onSubmit={(event) => void submitTransition(event)}>
                     <p className="interaction-stage-choice">Текущий этап: {currentInteraction.currentStageName}.</p>
+                    <p className="interaction-field-hint">
+                      {transitionDirection === 'back'
+                        ? 'Взаимодействие вернётся на прежний этап. Причина обязательна: она попадёт в историю.'
+                        : 'Работа на текущем этапе закончена, взаимодействие идёт дальше по маршруту. Если сделана только задача из'
+                          + ' «Следующего шага» — нажмите «Шаг выполнен». Если сделан другой этап, а этот продолжается, — «Отметить этап выполненным».'}
+                    </p>
                     <label>
-                      <span>Новый этап<RequiredMark /></span>
+                      <span>{transitionDirection === 'back' ? 'На какой этап вернуться' : 'Следующий этап'}<RequiredMark /></span>
                       <select value={transitionStageId} required onChange={(event) => changeTransitionStage(event.target.value)}>
                         <option value="">Выберите этап</option>
-                        {currentInteraction.allowedTransitions.map((option) => (
+                        {transitionOptions(transitionDirection).map((option) => (
                           <option key={option.stageId} value={option.stageId}>
-                            {option.stageName}{option.commentRequired ? ' (нужен комментарий)' : ''}
+                            {option.stageName}{transitionDirection === 'forward' && option.commentRequired ? ' (через этап, нужен комментарий)' : ''}
                           </option>
                         ))}
                       </select>
                     </label>
-                    {currentInteraction.allowedTransitions.length === 0 && (
-                      <p className="interaction-stage-choice">Из текущего этапа переходы не разрешены.</p>
-                    )}
-                    {selectedTransition !== undefined && (
+                    {transitionOptions(transitionDirection).length === 0 && (
                       <p className="interaction-stage-choice">
-                        Выбран этап: {selectedTransition.stageName}{selectedTransition.commentRequired ? '; комментарий обязателен (пропуск или возврат этапа)' : ''}
+                        {transitionDirection === 'back' ? 'Вернуться с текущего этапа некуда.' : 'Дальше по маршруту переходов нет.'}
                       </p>
+                    )}
+                    {selectedTransition !== undefined && transitionDirection === 'forward' && selectedTransition.commentRequired && (
+                      <p className="interaction-stage-choice">Выбран этап: {selectedTransition.stageName}; комментарий обязателен (пропуск этапа).</p>
                     )}
                     {transitionSigningBlock !== null && (
                       <p className="interaction-catalog-message interaction-catalog-message--error work-card__signing" role="alert">{transitionSigningBlock}</p>
                     )}
                     <label>
-                      <span>Комментарий к переходу{selectedTransition?.commentRequired && <RequiredMark />}</span>
+                      <span>
+                        {transitionDirection === 'back' ? 'Причина возврата' : 'Комментарий к переходу'}
+                        {(transitionDirection === 'back' || selectedTransition?.commentRequired) && <RequiredMark />}
+                      </span>
                       <textarea
                         value={transitionDraft}
                         maxLength={4000}
-                        required={selectedTransition?.commentRequired ?? false}
+                        required={transitionDirection === 'back' || (selectedTransition?.commentRequired ?? false)}
                         onChange={(event) => changeTransitionDraft(event.target.value)}
-                        placeholder="Укажите причину или итог перехода, если это необходимо"
+                        placeholder={transitionDirection === 'back' ? 'Почему возвращаемся на прежний этап' : 'Укажите причину или итог перехода, если это необходимо'}
                         {...invalidProps(fieldErrorOf(transitionState, 'comment'), 'interaction-transition-comment-error')}
                       />
                       <FieldError id="interaction-transition-comment-error" message={fieldErrorOf(transitionState, 'comment')} />
@@ -2908,7 +2979,7 @@ export const InteractionsPanel = ({
                       )}
                     </fieldset>
                     <button type="submit" disabled={transitionState.kind === 'saving' || transitionStageId.length === 0}>
-                      {transitionState.kind === 'saving' ? 'Сохраняем…' : 'Перейти на этап'}
+                      {transitionState.kind === 'saving' ? 'Сохраняем…' : transitionDirection === 'back' ? 'Вернуться на этап' : 'Перейти на этап'}
                     </button>
                     {transitionState.kind === 'failed' && (
                       <div className="interaction-command-error" role="alert">
@@ -2976,6 +3047,14 @@ export const InteractionsPanel = ({
                       onNextActionChange={changeCommentNextAction}
                       onNextActionAtChange={changeCommentNextActionAt}
                     />
+                    <ContactMarkFields
+                      organizationId={currentInteraction.organizationId}
+                      value={commentContact}
+                      onChange={(value) => {
+                        commentKey.current = null
+                        setCommentContact(value)
+                      }}
+                    />
                     <fieldset className="interaction-attachment-picker">
                       <legend>Проверенные документы к комментарию</legend>
                       {commentStageId.length === 0 && <p>Сначала выберите этап комментария.</p>}
@@ -3000,7 +3079,11 @@ export const InteractionsPanel = ({
                         </ul>
                       )}
                     </fieldset>
-                    <button type="submit" disabled={commentState.kind === 'saving' || commentStageId.length === 0 || commentDraft.trim().length === 0}>
+                    <button
+                      type="submit"
+                      disabled={commentState.kind === 'saving' || commentStageId.length === 0 || commentDraft.trim().length === 0
+                        || contactMarkMissingChannel(commentContact)}
+                    >
                       {commentState.kind === 'saving' ? 'Сохраняем…' : `Добавить комментарий${commentStage === undefined ? '' : ` к этапу «${commentStage.name}»`}`}
                     </button>
                     {commentState.kind === 'failed' && (
@@ -3118,7 +3201,7 @@ export const InteractionsPanel = ({
                 {contactForm}
               </CardDialog>
 
-              <CardDialog open={dialog === 'stageCompletion'} title="Отметить этап выполненным" onClose={closeDialog}>
+              <CardDialog open={dialog === 'stageCompletion'} title="Отметить этап выполненным (без перехода)" onClose={closeDialog}>
                 <StageCompletionPanel
                   interaction={currentInteraction}
                   signingWarning={work !== null && work.signingRuleEnabled && work.stages.some((stage) => stage.role === 'SIGNING')
@@ -3199,6 +3282,7 @@ export const InteractionsPanel = ({
                       Необязательный этап
                     </label>
                   )}
+                  {stageEditLmsWarning !== null && <p className="notice" role="note">{stageEditLmsWarning}</p>}
                   <button
                     type="submit"
                     className={stageEditType === 'DELETE' ? 'button--danger' : undefined}

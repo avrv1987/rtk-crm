@@ -93,6 +93,9 @@ import ru.rtk.crm.report.ManagerWorkLine;
         WorkflowTemplateService.class,
         WorkflowRolloutRepository.class,
         WorkflowRolloutService.class,
+        ru.rtk.crm.audit.AuditJournalRepository.class,
+        ru.rtk.crm.work.WorkNewsRepository.class,
+        ru.rtk.crm.work.WorkNewsService.class,
         InteractionServiceTest.JsonConfiguration.class
 })
 class InteractionServiceTest {
@@ -150,6 +153,9 @@ class InteractionServiceTest {
     @Autowired
     private WorkflowRolloutService workflowRolloutService;
 
+    @Autowired
+    private ru.rtk.crm.work.WorkNewsService workNewsService;
+
     @BeforeEach
     void setUp() {
         createSchema();
@@ -158,6 +164,7 @@ class InteractionServiceTest {
         jdbcTemplate.update("DELETE FROM interaction_event_contacts");
         jdbcTemplate.update("DELETE FROM organization_assignment_events");
         jdbcTemplate.update("DELETE FROM interaction_issues");
+        jdbcTemplate.update("DELETE FROM interaction_event_views");
         jdbcTemplate.update("DELETE FROM interaction_events");
         jdbcTemplate.update("DELETE FROM command_idempotency_records");
         jdbcTemplate.update("DELETE FROM interaction_contacts");
@@ -1978,7 +1985,7 @@ class InteractionServiceTest {
 
         for (InteractionDue due : InteractionDue.values()) {
             List<UUID> expected = created.entrySet().stream()
-                    .filter(entry -> due.matches(entry.getValue().nextAction(), entry.getValue().nextActionAt(), OffsetDateTime.now()))
+                    .filter(entry -> due.matches(InteractionWorkStatus.ACTIVE, entry.getValue().nextAction(), entry.getValue().nextActionAt(), OffsetDateTime.now()))
                     .map(Map.Entry::getKey)
                     .toList();
             assertThat(ids(profileA, InteractionFilter.from(null, null, due.name(), null))).as(due.name())
@@ -2184,6 +2191,29 @@ class InteractionServiceTest {
                         exception -> assertThat(exception.currentVersion()).isEqualTo(2));
         assertThatThrownBy(() -> interactionService.updatePlan(profileB, created.id(), stale, "details-foreign"))
                 .isInstanceOf(InteractionNotFoundException.class);
+    }
+
+    // Срок — общее правило для «Моей работы», «Контроля» и отчётов: завершённая работа не просрочена и не «без шага»,
+    // приостановленная — по дате возврата; статус после смены пишется в событие для отчётов «за период».
+    @Test
+    void dueFiltersCountOnlyActiveWorkAndPausedWorkByReturnDate() {
+        Interaction completed = createA("Завершена с прошедшим сроком", "due-status-completed");
+        Interaction paused = createA("Приостановлена, срок возврата прошёл", "due-status-paused");
+        Interaction pausedWithoutDate = createA("Приостановлена без даты возврата", "due-status-paused-no-date");
+        interactionService.changeStatus(profileA, completed.id(),
+                new InteractionStatusRequest(0, InteractionWorkStatus.COMPLETED, "Курс передан"), "due-complete");
+        interactionService.changeStatus(profileA, paused.id(), new InteractionStatusRequest(0, InteractionWorkStatus.PAUSED,
+                "Каникулы", LocalDate.now(InteractionDue.ZONE).plusDays(10)), "due-pause");
+        jdbcTemplate.update("UPDATE interactions SET next_action = 'Позвонить', next_action_at = ? WHERE id = ?",
+                OffsetDateTime.now().minusDays(2), completed.id());
+        jdbcTemplate.update("UPDATE interactions SET next_action_at = ? WHERE id = ?", OffsetDateTime.now().minusDays(1), paused.id());
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'PAUSED', next_action = NULL, next_action_at = NULL WHERE id = ?",
+                pausedWithoutDate.id());
+
+        assertThat(ids(profileA, InteractionFilter.from(null, null, "OVERDUE", null, "ALL", null))).containsExactly(paused.id());
+        assertThat(ids(profileA, InteractionFilter.from(null, null, "NO_NEXT_STEP", null, "ALL", null))).isEmpty();
+        assertThat(jdbcTemplate.queryForList("SELECT work_status_after FROM interaction_events WHERE type = 'STATUS_CHANGED'"
+                + " ORDER BY occurred_at", String.class)).containsExactly("COMPLETED", "PAUSED");
     }
 
     @Test
@@ -2505,6 +2535,173 @@ class InteractionServiceTest {
         ), "colleague-write")).isInstanceOf(InteractionNotFoundException.class);
         CrmProfile otherTeam = new CrmProfile(MANAGER_B, UserRole.USER, TEAM_B, 0);
         assertThat(registry(otherTeam, open)).isEmpty();
+    }
+
+    @Test
+    void responsibleColleagueCommentsAndResolvesOnlyHisRecordWithoutAccessToTheWork() {
+        UUID colleagueId = UUID.fromString("00000000-0000-0000-0000-000000000015");
+        insertProfile(colleagueId, "Дмитрий Колеге");
+        jdbcTemplate.update("UPDATE crm_user_profiles SET team_id = ?, role = 'USER', active = TRUE WHERE id IN (?, ?)",
+                TEAM_A, MANAGER_A, colleagueId);
+        CrmProfile colleague = new CrmProfile(colleagueId, UserRole.USER, TEAM_A, 0);
+        Interaction work = createA("Внедрение", "responsible-work");
+        interactionIssueService.create(profileA, work.id(), new InteractionIssueRequest(
+                0, InteractionIssueKind.PROBLEM, "Вендор молчит", null, colleagueId, null
+        ), "responsible-assigned");
+        interactionIssueService.create(profileA, work.id(), new InteractionIssueRequest(
+                1, InteractionIssueKind.RISK, "Чужой риск", InteractionRiskLevel.MEDIUM, MANAGER_A, null
+        ), "responsible-own");
+        InteractionIssueFilter open = InteractionIssueFilter.from(null, null, null, null, false, null);
+        InteractionIssue assigned = registry(colleague, open).getFirst();
+        InteractionIssue foreign = registry(profileA, open).stream()
+                .filter(issue -> issue.description().equals("Чужой риск")).findFirst().orElseThrow();
+
+        InteractionIssue commented = interactionIssueService.commentAsResponsible(
+                colleague, assigned.id(), new InteractionIssueNote("Написал вендору, жду ответа"), "responsible-comment");
+        InteractionIssue replayed = interactionIssueService.commentAsResponsible(
+                colleague, assigned.id(), new InteractionIssueNote("Написал вендору, жду ответа"), "responsible-comment");
+
+        assertThat(commented.lastComment()).isEqualTo("Написал вендору, жду ответа");
+        assertThat(commented.lastCommentByName()).isEqualTo("Дмитрий Колеге");
+        assertThat(commented.organizationAccessible()).isFalse();
+        assertThat(replayed.lastComment()).isEqualTo(commented.lastComment());
+        assertThat(replayed.lastCommentAt().isEqual(commented.lastCommentAt())).isTrue();
+        assertThat(interactionService.events(profileA, work.id()).getLast()).satisfies(event -> {
+            assertThat(event.comment()).isEqualTo("Комментарий ответственного к проблеме «Вендор молчит»: Написал вендору, жду ответа");
+            assertThat(event.actorProfileId()).isEqualTo(colleagueId);
+        });
+
+        InteractionIssue resolved = interactionIssueService.resolveAsResponsible(
+                colleague, assigned.id(), new InteractionIssueNote("Лицензия выдана"), "responsible-resolve");
+        assertThat(resolved.status()).isEqualTo(InteractionIssueStatus.RESOLVED);
+        assertThat(resolved.resolution()).isEqualTo("Лицензия выдана");
+        assertThat(interactionService.get(profileA, work.id()).marks().problemCount()).isZero();
+        assertThatThrownBy(() -> interactionIssueService.resolveAsResponsible(
+                colleague, assigned.id(), new InteractionIssueNote("Ещё раз"), "responsible-resolve-again"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("status"));
+
+        assertThatThrownBy(() -> interactionIssueService.commentAsResponsible(
+                colleague, foreign.id(), new InteractionIssueNote("Не моё"), "responsible-foreign"
+        )).isInstanceOf(InteractionIssueNotFoundException.class);
+        assertThatThrownBy(() -> interactionIssueService.resolveAsResponsible(
+                profileB, foreign.id(), new InteractionIssueNote("Чужая команда"), "responsible-other-team"
+        )).isInstanceOf(InteractionIssueNotFoundException.class);
+        assertThatThrownBy(() -> interactionIssueService.commentAsResponsible(
+                new CrmProfile(colleagueId, UserRole.MANAGEMENT, null, 0), foreign.id(), new InteractionIssueNote("Только чтение"),
+                "responsible-management"
+        )).isInstanceOf(ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException.class);
+        assertThatThrownBy(() -> interactionIssueService.commentAsResponsible(
+                colleague, foreign.id(), new InteractionIssueNote(" "), "responsible-empty"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("text"));
+        assertThatThrownBy(() -> interactionService.get(colleague, work.id())).isInstanceOf(InteractionNotFoundException.class);
+        assertThatThrownBy(() -> interactionIssueService.list(colleague, work.id())).isInstanceOf(InteractionNotFoundException.class);
+        assertThat(organizationRepository.findVisibleById(colleague, ORGANIZATION_A)).isEmpty();
+    }
+
+    @Test
+    void contactMarkRecordsChannelAndParticipantsAndMovesLastContactWhileSourceRecordsDoNot() {
+        Contact dean = contactService.create(
+                profileA, ORGANIZATION_A, new ContactCreateRequest("Пётр Деканов", null, null, null), "mark-dean"
+        );
+        Contact foreign = contactService.create(
+                profileB, ORGANIZATION_B, new ContactCreateRequest("Чужой Контакт", null, null, null), "mark-foreign"
+        );
+        Interaction created = interactionService.create(
+                profileA,
+                new InteractionCreateRequest(ORGANIZATION_A, "Встреча с деканом", "Позвонить декану", null, List.of()),
+                "mark-create"
+        );
+        assertThat(created.lastContactAt()).isNull();
+
+        Interaction afterStep = interactionService.completeStep(profileA, created.id(), new InteractionStepCompletionRequest(
+                0, "Договорились о встрече", new InteractionNextStep("Встреча", null),
+                new InteractionContactMark(InteractionContactChannel.CALL, List.of(dean.id()))
+        ), "mark-step");
+
+        assertThat(afterStep.lastContactAt()).isNotNull();
+        assertThat(interactionService.events(profileA, created.id()).getLast().comment())
+                .isEqualTo("Шаг выполнен: «Позвонить декану». Результат: Договорились о встрече; Был контакт: звонок;"
+                        + " Участники от вуза: «Пётр Деканов»");
+
+        OffsetDateTime earlier = OffsetDateTime.now().minusDays(40).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        jdbcTemplate.update("UPDATE interactions SET last_contact_at = ? WHERE id = ?", earlier, created.id());
+        InteractionCommentResult plain = interactionService.comment(profileA, created.id(),
+                new InteractionCommentRequest(1, created.currentStageId(), "Внутренняя заметка"), "mark-plain");
+        assertThat(plain.interaction().lastContactAt().toInstant()).isEqualTo(earlier.toInstant());
+        UUID sourceCommand = UUID.randomUUID();
+        commandIdempotencyRepository.reserve(sourceCommand, MANAGER_A, CommandOperation.APPLY_SOURCE_RECORD, "mark-source",
+                "source", OffsetDateTime.now());
+        interactionService.appendSourceComment(created.id(), "Заявка с сайта: нужна программа", List.of(), MANAGER_A, MANAGER_A,
+                sourceCommand, OffsetDateTime.now());
+        assertThat(interactionService.get(profileA, created.id()).lastContactAt().toInstant()).isEqualTo(earlier.toInstant());
+        assertThat(interactionService.list(profileA, filterNoContact("30"), new InteractionQuery(0, 25, InteractionSort.UPDATED_DESC))
+                .items()).extracting(InteractionSummary::id).containsExactly(created.id());
+
+        InteractionCommentResult meeting = interactionService.comment(profileA, created.id(), new InteractionCommentRequest(
+                3, created.currentStageId(), "Обсудили план", List.of(), null,
+                new InteractionContactMark(InteractionContactChannel.MEETING, List.of())
+        ), "mark-meeting");
+        assertThat(meeting.interaction().lastContactAt()).isAfter(earlier);
+        assertThat(meeting.event().comment()).isEqualTo("Обсудили план; Был контакт: встреча");
+        assertThat(interactionService.list(profileA, filterNoContact("30"), new InteractionQuery(0, 25, InteractionSort.UPDATED_DESC))
+                .items()).isEmpty();
+
+        assertThatThrownBy(() -> interactionService.comment(profileA, created.id(), new InteractionCommentRequest(
+                4, created.currentStageId(), "Контакт чужого вуза", List.of(), null,
+                new InteractionContactMark(InteractionContactChannel.EMAIL, List.of(foreign.id()))
+        ), "mark-foreign-contact")).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("contactIds"));
+        assertThatThrownBy(() -> interactionService.comment(profileA, created.id(), new InteractionCommentRequest(
+                4, created.currentStageId(), "Без канала", List.of(), null, new InteractionContactMark(null, List.of())
+        ), "mark-no-channel")).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("contact.channel"));
+    }
+
+    @Test
+    void newsListsSourceRecordsOfOwnUniversitiesWithPersonalViewedMark() {
+        Interaction work = createA("Заявка", "news-work");
+        UUID siteCommand = UUID.randomUUID();
+        commandIdempotencyRepository.reserve(siteCommand, MANAGER_A, CommandOperation.APPLY_SOURCE_RECORD, "news-site",
+                "site", OffsetDateTime.now());
+        interactionService.appendSourceComment(work.id(), "Заявка с сайта: нужна программа\nКонтакт: Иван", List.of(), MANAGER_A,
+                MANAGER_A, siteCommand, OffsetDateTime.now());
+        UUID lmsCommand = UUID.randomUUID();
+        commandIdempotencyRepository.reserve(lmsCommand, MANAGER_A, CommandOperation.APPLY_SOURCE_RECORD, "news-lms",
+                "lms", OffsetDateTime.now());
+        interactionService.appendSourceComment(work.id(), "Данные LMS: курс «Сети», обучающихся 12", List.of(), MANAGER_A,
+                MANAGER_A, lmsCommand, OffsetDateTime.now());
+        interactionService.comment(profileA, work.id(), new InteractionCommentRequest(2, work.currentStageId(), "Заявка с сайта: моя запись"),
+                "news-employee");
+
+        ru.rtk.crm.work.WorkNewsService.News news = workNewsService.news(profileA, null);
+        assertThat(news.days()).isEqualTo(7);
+        assertThat(news.unviewed()).isEqualTo(2);
+        assertThat(news.items()).extracting(ru.rtk.crm.work.WorkNewsService.NewsItem::kind, ru.rtk.crm.work.WorkNewsService.NewsItem::summary)
+                .containsExactlyInAnyOrder(
+                        tuple(ru.rtk.crm.work.WorkNewsService.NewsKind.SITE_REQUEST, "Заявка с сайта: нужна программа"),
+                        tuple(ru.rtk.crm.work.WorkNewsService.NewsKind.LMS_DATA, "Данные LMS: курс «Сети», обучающихся 12")
+                );
+        assertThat(workNewsService.news(profileB, null).items()).isEmpty();
+        assertThat(workNewsService.news(leaderA, null).unviewed()).isEqualTo(2);
+
+        UUID siteEvent = news.items().stream().filter(item -> item.kind() == ru.rtk.crm.work.WorkNewsService.NewsKind.SITE_REQUEST)
+                .findFirst().orElseThrow().eventId();
+        assertThatThrownBy(() -> workNewsService.markViewed(profileB, siteEvent)).isInstanceOf(InteractionNotFoundException.class);
+        workNewsService.markViewed(profileA, siteEvent);
+        workNewsService.markViewed(profileA, siteEvent);
+        ru.rtk.crm.work.WorkNewsService.News after = workNewsService.news(profileA, 30);
+        assertThat(after.unviewed()).isEqualTo(1);
+        assertThat(after.items().getLast().viewed()).isTrue();
+        assertThat(workNewsService.news(leaderA, null).unviewed()).isEqualTo(2);
+        UUID employeeEvent = interactionService.events(profileA, work.id()).getLast().id();
+        assertThatThrownBy(() -> workNewsService.markViewed(profileA, employeeEvent)).isInstanceOf(InteractionNotFoundException.class);
+        assertThatThrownBy(() -> workNewsService.news(new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0), null))
+                .isInstanceOf(ru.rtk.crm.work.WorkAccessDeniedException.class);
+        assertThatThrownBy(() -> workNewsService.news(profileA, 91)).isInstanceOf(InteractionValidationException.class);
+    }
+
+    private InteractionFilter filterNoContact(String days) {
+        return InteractionFilter.from(null, null, null, null, null, null, null, null, null, days);
     }
 
     private List<InteractionIssue> registry(CrmProfile profile, InteractionIssueFilter filter) {
@@ -3054,6 +3251,9 @@ class InteractionServiceTest {
                 .isEqualTo(new WorkflowRolloutResult(2, 2));
         assertThat(workflowRolloutService.apply(leaderA, v1.id(), 2, rollout, "rollout-v2"))
                 .isEqualTo(new WorkflowRolloutResult(2, 2));
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT details FROM audit_events WHERE action = 'WORKFLOW_ROLLOUT_APPLIED' AND object_id = ?", String.class, v1.id()))
+                .containsExactly("версия маршрута 2; работ переведено: 2");
         assertThatThrownBy(() -> workflowRolloutService.apply(
                 leaderA, v1.id(), 2, new WorkflowRolloutRequest(null, rollout.works(), true), "rollout-v2"
         )).isInstanceOfSatisfying(InteractionConflictException.class, exception ->
@@ -3248,6 +3448,13 @@ class InteractionServiceTest {
 
     private void createSchema() {
         jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id UUID PRIMARY KEY, category VARCHAR(32) NOT NULL, action VARCHAR(64) NOT NULL, actor_profile_id UUID,
+                    actor_display_name VARCHAR(200) NOT NULL, object_type VARCHAR(32), object_id UUID, object_name VARCHAR(500),
+                    details VARCHAR(2000), request_id VARCHAR(64), occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS teams (
                     id UUID PRIMARY KEY,
                     name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL, default_workflow_template_id UUID
@@ -3359,7 +3566,7 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_issues (
+                CREATE TABLE IF NOT EXISTS interaction_issues (last_comment VARCHAR(1000), last_comment_by UUID, last_comment_at TIMESTAMP WITH TIME ZONE,
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
                     description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
                     status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
@@ -3507,7 +3714,7 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_events (
+                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
                     command_id UUID NOT NULL,
@@ -3525,7 +3732,7 @@ class InteractionServiceTest {
                     actor_profile_id UUID NOT NULL,
                     owner_manager_id_snapshot UUID,
                     version INTEGER NOT NULL,
-                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL, work_status_after VARCHAR(16)
                 )
                 """);
         jdbcTemplate.execute("""
@@ -3534,6 +3741,12 @@ class InteractionServiceTest {
                     contact_id UUID NOT NULL,
                     change_type VARCHAR(16) NOT NULL,
                     PRIMARY KEY (event_id, contact_id)
+                )
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS interaction_event_views (
+                    profile_id UUID NOT NULL, event_id UUID NOT NULL, viewed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    PRIMARY KEY (profile_id, event_id)
                 )
                 """);
         jdbcTemplate.execute("""

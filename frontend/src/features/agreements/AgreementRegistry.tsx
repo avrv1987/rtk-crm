@@ -14,6 +14,8 @@ import {
   emptyRegistryFilters,
   registryTileCounts,
   registryTileFilters,
+  registryFiltersFromQuery,
+  registryTeams,
   registryTileOf,
   registryTiles,
   type AgreementStatus,
@@ -25,6 +27,7 @@ import './agreements.css'
 
 type AgreementRegistryProps = {
   role: Me['role']
+  initialQuery?: string
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
@@ -52,9 +55,9 @@ const loadOrganizations = async () => {
 
 const rowHref = (row: AgreementRegistryRow) => `#/organizations/${row.organizationId}?agreement=${row.id}`
 
-export const AgreementRegistry = ({ role, onSessionExpired, onProfileUnavailable }: AgreementRegistryProps) => {
+export const AgreementRegistry = ({ role, initialQuery = '', onSessionExpired, onProfileUnavailable }: AgreementRegistryProps) => {
   const handleAccessError = useAccessErrorHandler(onSessionExpired, onProfileUnavailable)
-  const [filters, setFilters] = useState<RegistryFilters>(emptyRegistryFilters)
+  const [filters, setFilters] = useState<RegistryFilters>(() => registryFiltersFromQuery(initialQuery, todayInMoscow()))
   const [options, setOptions] = useState<Options | null>(null)
   const [state, setState] = useState<State>({ kind: 'loading' })
   const [downloading, setDownloading] = useState(false)
@@ -62,6 +65,7 @@ export const AgreementRegistry = ({ role, onSessionExpired, onProfileUnavailable
   const [allRows, setAllRows] = useState<AgreementRegistryRow[] | null>(null)
   const version = useRef(0)
   const withManagers = role !== 'USER'
+  const withTeams = role === 'MANAGEMENT'
   const today = todayInMoscow()
 
   useEffect(() => {
@@ -100,6 +104,28 @@ export const AgreementRegistry = ({ role, onSessionExpired, onProfileUnavailable
     }
   }, [handleAccessError])
 
+  // Плитки и список команд считаются по всему реестру: если экран открыт сразу с отбором, весь реестр берётся отдельно.
+  useEffect(() => {
+    if (allRows !== null || JSON.stringify(filters) === JSON.stringify(emptyRegistryFilters)) {
+      return
+    }
+    let active = true
+    agreementsApi.registry(emptyRegistryFilters)
+      .then((rows) => {
+        if (active) {
+          setAllRows(rows)
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          handleAccessError(error)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
   useEffect(() => {
     const timer = window.setTimeout(() => void load(filters), 250)
     return () => window.clearTimeout(timer)
@@ -135,6 +161,7 @@ export const AgreementRegistry = ({ role, onSessionExpired, onProfileUnavailable
           {role === 'USER' ? 'Договоры ваших вузов.' : role === 'LEADER' ? 'Договоры вузов вашей команды.' : 'Договоры всех вузов, только просмотр.'}
           {' '}Сначала — договоры, которые дольше всего в текущем статусе. Строка открывает договор в карточке вуза.
           {' '}«Согласование» — у кого договор, круг, дни на стороне из нормы и общий срок; июль и август не считаются.
+          {' '}Первый круг у вуза идёт от даты отправки, если она введена.
         </HintButton>
         {state.kind === 'ready' && <span className="agreement-registry__count" aria-live="polite">Договоров: {state.rows.length}</span>}
         <ActionMenu
@@ -174,6 +201,15 @@ export const AgreementRegistry = ({ role, onSessionExpired, onProfileUnavailable
               {options?.managers.map((item) => (
                 <option key={item.id} value={item.id}>{item.active ? item.displayName : `${item.displayName} (неактивен)`}</option>
               ))}
+            </select>
+          </label>
+        )}
+        {withTeams && (
+          <label>
+            Команда
+            <select value={filters.teamId} onChange={(event) => update({ teamId: event.target.value })}>
+              <option value="">Все команды</option>
+              {registryTeams(allRows ?? []).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
             </select>
           </label>
         )}
@@ -219,6 +255,7 @@ export const AgreementRegistry = ({ role, onSessionExpired, onProfileUnavailable
                   <th scope="col">Действует до</th>
                   <th scope="col">Предмет</th>
                   <th scope="col">КАМ</th>
+                  {withTeams && <th scope="col">Команда</th>}
                 </tr>
               </thead>
               <tbody>
@@ -238,6 +275,7 @@ export const AgreementRegistry = ({ role, onSessionExpired, onProfileUnavailable
                     <td data-label="Действует до" className="agreement-registry__nowrap">{row.validUntil ? formatDate(row.validUntil) : '—'}</td>
                     <td data-label="Предмет">{row.subject ?? '—'}</td>
                     <td data-label="КАМ" className="agreement-registry__nowrap">{row.managerName ?? 'Без ответственного КАМ'}</td>
+                    {withTeams && <td data-label="Команда" className="agreement-registry__nowrap">{row.teamName ?? '—'}</td>}
                   </tr>
                 ))}
               </tbody>

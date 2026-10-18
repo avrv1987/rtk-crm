@@ -219,6 +219,14 @@ public class SourceSyncService {
                 && (lastSuccessAt == null || lastSuccessAt.isBefore(OffsetDateTime.now().minus(properties.staleAfter())));
     }
 
+    // Снимок идущего потока, не подтверждённый наблюдением за порог устаревания: курс не читается (например, падает
+    // в каждом частичном запуске). Закрытый поток законно хранит последнее наблюдение и устаревшим не считается.
+    boolean staleSnapshot(OffsetDateTime observedAt, LocalDate runEndsOn) {
+        OffsetDateTime now = OffsetDateTime.now();
+        boolean running = runEndsOn == null || now.atZoneSameInstant(ZONE).toLocalDate().isBefore(runEndsOn);
+        return running && observedAt.isBefore(now.minus(properties.staleAfter())) && configured(SourceCode.MOODLE);
+    }
+
     private SyncRunCreated enqueue(SourceCode source, UUID actorProfileId, SyncTrigger trigger) {
         if (!configured(source)) {
             throw SourceException.notConfigured(source);

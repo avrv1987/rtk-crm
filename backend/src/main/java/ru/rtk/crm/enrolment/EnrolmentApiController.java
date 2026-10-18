@@ -36,6 +36,8 @@ public class EnrolmentApiController {
     private final EnrolmentLearnerService learnerService;
     private final QuestionnaireImportService questionnaireImportService;
     private final LmsRosterService lmsRosterService;
+    private final EnrolmentBatchService batchService;
+    private final MoodleTransferService moodleTransferService;
 
     public EnrolmentApiController(
             CurrentProfileService currentProfileService,
@@ -43,7 +45,9 @@ public class EnrolmentApiController {
             EnrolmentStreamService streamService,
             EnrolmentLearnerService learnerService,
             QuestionnaireImportService questionnaireImportService,
-            LmsRosterService lmsRosterService
+            LmsRosterService lmsRosterService,
+            EnrolmentBatchService batchService,
+            MoodleTransferService moodleTransferService
     ) {
         this.currentProfileService = currentProfileService;
         this.paidOrderUploadService = paidOrderUploadService;
@@ -51,6 +55,8 @@ public class EnrolmentApiController {
         this.learnerService = learnerService;
         this.questionnaireImportService = questionnaireImportService;
         this.lmsRosterService = lmsRosterService;
+        this.batchService = batchService;
+        this.moodleTransferService = moodleTransferService;
     }
 
     @PostMapping(path = "/paid-orders", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -131,7 +137,8 @@ public class EnrolmentApiController {
         LmsRoster roster = lmsRosterService.export(currentProfileService.requireActiveProfile(user), id, rosterRequest,
                 RequestId.from(request));
         return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(XLSX))
+                .contentType(roster.format() == RosterFormat.MOODLE_CSV
+                        ? new MediaType("text", "csv", StandardCharsets.UTF_8) : MediaType.parseMediaType(XLSX))
                 .contentLength(roster.content().length)
                 .cacheControl(CacheControl.noStore())
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
@@ -140,6 +147,7 @@ public class EnrolmentApiController {
                         .toString())
                 .header("X-Roster-Export-Id", roster.exportId().toString())
                 .header("X-Roster-Rows", Integer.toString(roster.rows()))
+                .header("X-Roster-Checksum", roster.checksum())
                 .header("X-Content-Type-Options", "nosniff")
                 .body(roster.content());
     }
@@ -152,6 +160,74 @@ public class EnrolmentApiController {
             HttpServletRequest request
     ) {
         return lmsRosterService.markTransferred(currentProfileService.requireActiveProfile(user), id, idempotencyKey,
+                RequestId.from(request));
+    }
+
+    @GetMapping("/batches/{id}")
+    public ResponseEntity<EnrolmentBatchView> batch(@AuthenticationPrincipal OidcUser user, @PathVariable String id,
+                                                    HttpServletRequest request) {
+        return noStore(batchService.batch(currentProfileService.requireActiveProfile(user), id, RequestId.from(request)));
+    }
+
+    @PostMapping("/batches/{id}/results")
+    public ResponseEntity<BatchResultsApplied> recordBatchResults(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody(required = false) BatchResultUpdate update,
+            HttpServletRequest request
+    ) {
+        return noStore(batchService.record(currentProfileService.requireActiveProfile(user), id, update, idempotencyKey,
+                RequestId.from(request)));
+    }
+
+    @PostMapping(path = "/batches/{id}/protocol", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<BatchResultsApplied> importBatchProtocol(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestPart(name = "file", required = false) MultipartFile file,
+            HttpServletRequest request
+    ) {
+        return noStore(batchService.importProtocol(currentProfileService.requireActiveProfile(user), id, file, idempotencyKey,
+                RequestId.from(request)));
+    }
+
+    @PostMapping("/batches/{id}/moodle-transfer")
+    public ResponseEntity<MoodleTransferResult> transferBatchToMoodle(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            HttpServletRequest request
+    ) {
+        return noStore(moodleTransferService.transfer(currentProfileService.requireActiveProfile(user), id, idempotencyKey,
+                RequestId.from(request)));
+    }
+
+    @PostMapping("/enrolments/{id}/moodle-move")
+    public MoodleMoveResult moveEnrolmentInMoodle(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            HttpServletRequest request
+    ) {
+        return moodleTransferService.move(currentProfileService.requireActiveProfile(user), id, idempotencyKey, RequestId.from(request));
+    }
+
+    @GetMapping("/queue")
+    public ResponseEntity<EnrolmentQueue> queue(@AuthenticationPrincipal OidcUser user, HttpServletRequest request) {
+        return noStore(batchService.queue(currentProfileService.requireActiveProfile(user), RequestId.from(request)));
+    }
+
+    @PostMapping("/enrolments/{id}/lms-reconciled")
+    public LmsReconciled reconcileLms(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody(required = false) LmsReconcile reconcile,
+            HttpServletRequest request
+    ) {
+        return batchService.reconcile(currentProfileService.requireActiveProfile(user), id, reconcile, idempotencyKey,
                 RequestId.from(request));
     }
 

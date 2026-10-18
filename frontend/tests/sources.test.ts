@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { draftOf, payloadOf, validate } from '../src/features/sources/sourceConnection.ts'
 import { filterMappings, mappingKindLabel } from '../src/features/sources/sourceMappings.ts'
@@ -138,4 +139,9 @@ test('записи для разбора и сопоставления филь�
 
 test('сводка очереди CRM называет все три состояния', () => {
   assert.equal(queueSummary({ queued: 5, sent: 12, error: 3 }), 'В очереди: 5, отправлено: 12, с ошибкой: 3')
+})
+
+test('история запусков привязана к источнику ключом и при смене вкладки не показывает прежний источник', () => {
+  const card = readFileSync(new URL('../src/features/sources/SourceSyncCard.tsx', import.meta.url), 'utf8')
+  assert.match(card, /<SourceRunHistory key=\{source\.source\}/)
 })

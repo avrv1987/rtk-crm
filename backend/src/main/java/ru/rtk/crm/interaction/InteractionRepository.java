@@ -22,9 +22,11 @@ import ru.rtk.crm.catalog.SearchPattern;
 @Repository
 public class InteractionRepository {
     public static final String EVENT_COMMENT = """
-            NULLIF(CONCAT_WS('; ', e.comment, %s, %s), '')""".formatted(
+            NULLIF(CONCAT_WS('; ', e.comment, %s, %s, %s, %s), '')""".formatted(
             eventContacts("ADDED", "Добавлены контакты: "),
-            eventContacts("REMOVED", "Удалены контакты: ")
+            eventContacts("REMOVED", "Удалены контакты: "),
+            contactChannel(),
+            eventContacts("PARTICIPANT", "Участники от вуза: ")
     );
     private static final String EVENT_SELECT = """
             SELECT e.id, e.type, e.command_id, e.stage_id, e.stage_name_snapshot,
@@ -189,6 +191,12 @@ public class InteractionRepository {
         if (filter.minDaysOnStage() != null) {
             conditions.add(STAGE_ENTERED_AT + " <= :stageEnteredBefore");
             parameters.put("stageEnteredBefore", now.minusDays(filter.minDaysOnStage()));
+        }
+        // Новое взаимодействие без записанного контакта отсчитывает срок от создания, иначе оно попадало бы
+        // в «нет контакта» в первый же день.
+        if (filter.noContactDays() != null) {
+            conditions.add("COALESCE(i.last_contact_at, i.created_at) < :contactBefore");
+            parameters.put("contactBefore", now.minusDays(filter.noContactDays()));
         }
         if (filter.due() != null) {
             conditions.add(filter.due().condition());
@@ -684,6 +692,39 @@ public class InteractionRepository {
                  WHERE event_change.event_id = e.id AND event_change.change_type = '%s')""".formatted(label, changeType);
     }
 
+    // Отметка «был контакт»: канал хранится в событии, участники — строками PARTICIPANT, а дата последнего контакта
+    // двигается только вперёд, чтобы запись задним числом не откатила более позднюю дату, введённую вручную.
+    public void saveContactMark(UUID interactionId, UUID eventId, InteractionContactMark mark, OffsetDateTime contactedAt) {
+        jdbcClient.sql("UPDATE interaction_events SET contact_channel = :channel WHERE id = :eventId")
+                .param("eventId", eventId)
+                .param("channel", mark.channel().name())
+                .update();
+        insertEventContacts(eventId, mark.participantIds(), "PARTICIPANT");
+        jdbcClient.sql("""
+                UPDATE interactions
+                SET last_contact_at = :contactedAt
+                WHERE id = :interactionId AND (last_contact_at IS NULL OR last_contact_at < :contactedAt)
+                """)
+                .param("interactionId", interactionId)
+                .param("contactedAt", contactedAt)
+                .update();
+    }
+
+    private static String contactChannel() {
+        StringBuilder labels = new StringBuilder("CASE e.contact_channel");
+        for (InteractionContactChannel channel : InteractionContactChannel.values()) {
+            labels.append(" WHEN '").append(channel.name()).append("' THEN 'Был контакт: ").append(channel.label()).append("'");
+        }
+        return labels.append(" END").toString();
+    }
+
+    public void updateEventStatusAfter(UUID eventId, InteractionWorkStatus status) {
+        jdbcClient.sql("UPDATE interaction_events SET work_status_after = :status WHERE id = :eventId")
+                .param("eventId", eventId)
+                .param("status", status.name())
+                .update();
+    }
+
     public boolean updateMarks(UUID interactionId, int expectedVersion, InteractionMarks marks, OffsetDateTime updatedAt) {
         return jdbcClient.sql("""
                 UPDATE interactions
@@ -847,6 +888,13 @@ public class InteractionRepository {
                 .update();
     }
 
+    public InteractionEvent findEvent(UUID eventId) {
+        return jdbcClient.sql(EVENT_SELECT + "WHERE e.id = :eventId")
+                .param("eventId", eventId)
+                .query(this::mapEvent)
+                .single();
+    }
+
     public List<InteractionEvent> findEvents(UUID interactionId) {
         return jdbcClient.sql(EVENT_SELECT + """
                 WHERE e.interaction_id = :interactionId
@@ -855,6 +903,25 @@ public class InteractionRepository {
                 .param("interactionId", interactionId)
                 .query(this::mapEvent)
                 .list();
+    }
+
+    public List<InteractionEvent> findRecentEvents(UUID interactionId, int limit) {
+        return jdbcClient.sql(EVENT_SELECT + """
+                WHERE e.interaction_id = :interactionId
+                ORDER BY e.version DESC, e.occurred_at DESC, e.id DESC
+                LIMIT :limit
+                """)
+                .param("interactionId", interactionId)
+                .param("limit", limit)
+                .query(this::mapEvent)
+                .list();
+    }
+
+    public long countEvents(UUID interactionId) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM interaction_events WHERE interaction_id = :interactionId")
+                .param("interactionId", interactionId)
+                .query(Long.class)
+                .single();
     }
 
     private Optional<InteractionRow> findOne(UUID interactionId, boolean forUpdate) {

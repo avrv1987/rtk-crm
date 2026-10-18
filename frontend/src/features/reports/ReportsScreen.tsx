@@ -21,12 +21,13 @@ import { SigningPlanReport } from './SigningPlanReport'
 import { AgreementPeriodReport } from './AgreementPeriodReport'
 import { CardTabPanel, CardTabs } from '../interactions/cardUi'
 import { ReportBuilder, type OrderTarget } from './ReportBuilder'
-import { kindViews, ReportCatalog, viewKind, type ReportView } from './ReportCatalog'
+import { kindViews, ReportCatalog, ReportTasks, viewKind, type ReportView } from './ReportCatalog'
 import type { FilterOption } from './ReportControls'
 import type { FilterOptions, OptionsState } from './ReportFilters'
 import { isFinished, ReportJobs, type DownloadState, type JobsState } from './ReportJobs'
 import { homeTabFromQuery, homeTabHash, jobsLinkHash } from './reportsRoute'
-import { periodOnKindChange } from './reportPeriods'
+import { periodOnKindChange, periodPresets } from './reportPeriods'
+import { reportTaskFor, taskMethod, taskSelection } from './reportTasks'
 import { applyDefinition, chartKinds, groupingsFor, normalizeSelection, type ReportSelection } from './reportSelection'
 import { SavedReportsList, useSavedReports } from './SavedReports'
 import './reports.css'
@@ -91,6 +92,7 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
     return (current === 'manager-work' ? reportSelectionFromControl(stored, query ?? '') : null) ?? stored
   })
   const [transferNotice] = useState(() => (current === 'manager-work' ? skippedNotice(query ?? '') : null))
+  const task = reportTaskFor(current, query ?? '')
   const [optionsState, setOptionsState] = useState<OptionsState>({ kind: 'loading' })
   const [jobsState, setJobsState] = useState<JobsState>({ kind: 'loading' })
   const [pollError, setPollError] = useState<unknown>(null)
@@ -181,6 +183,14 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
   useEffect(() => {
     saveReportSelection(profileId, selection)
   }, [profileId, selection])
+
+  // Экран не пересоздаётся при переходе с вкладки «Задачи» в отчёт, поэтому пресет задачи применяется по смене адреса.
+  useEffect(() => {
+    if (task !== null) {
+      setSelection((currentSelection) => taskSelection(currentSelection, task, periodPresets(todayInMoscow())))
+      setAutoRun(task.preset !== undefined)
+    }
+  }, [task])
 
   useEffect(() => {
     if (current === null) {
@@ -374,6 +384,7 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
           label="Разделы отчётов"
           idPrefix="reports-home"
           tabs={[
+            { id: 'tasks', label: 'Задачи' },
             { id: 'catalog', label: 'Все отчёты' },
             { id: 'saved', label: 'Сохранённые', count: saved.listState.kind === 'ready' ? saved.reports.length : undefined },
             { id: 'jobs', label: 'Выгрузки', count: jobsState.kind === 'ready' ? jobsState.jobs.length : undefined }
@@ -384,6 +395,7 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
           }}
         />
         <CardTabPanel idPrefix="reports-home" active={tab}>
+          {tab === 'tasks' && <ReportTasks role={role} />}
           {tab === 'catalog' && <ReportCatalog role={role} />}
           {tab === 'saved' && <SavedReportsList saved={saved} onOpen={openSavedReport} />}
           {tab === 'jobs' && (
@@ -402,6 +414,11 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
 
   return (
     <>
+      {task !== null && (
+        <p className="notice report-task-notice" role="status">
+          <strong>{task.title}.</strong> {taskMethod(task, selection.from, selection.to, todayInMoscow())}
+        </p>
+      )}
       {content}
       <Toast message={toast} onClose={() => setToast(null)} />
     </>

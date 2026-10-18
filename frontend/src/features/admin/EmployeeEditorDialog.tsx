@@ -1,9 +1,16 @@
-import { useState, type FormEvent } from 'react'
-import { apiClient, createIdempotencyKey, type CrmProfile, type Me } from '../../shared/api/client'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import {
+  apiClient,
+  createIdempotencyKey,
+  type CrmProfile,
+  type CrmProfileOrganizations,
+  type LoginLockoutStatus,
+  type Me
+} from '../../shared/api/client'
 import { getModules } from '../../shared/modules'
 import { CardDialog } from '../interactions/cardUi'
-import { CommandError } from './AdminErrors'
-import { handledSessionError, roleLabels, type SessionHandlers } from './adminShared'
+import { CommandError, LoadFailure } from './AdminErrors'
+import { handledSessionError, requestIdOf, roleLabels, type SessionHandlers } from './adminShared'
 import {
   accessSummary,
   changesAccess,
@@ -13,6 +20,7 @@ import {
   updateOf,
   type ProfileDraft
 } from './employeeEdit'
+import { lockoutText, transferSummary, unassignsOrganizations } from './employeeFilters'
 import type { TeamsState } from './useAdminTeams'
 import './adminUi.css'
 
@@ -26,6 +34,135 @@ type EmployeeEditorDialogProps = SessionHandlers & {
 }
 
 type EditorFormProps = Omit<EmployeeEditorDialogProps, 'profile'> & { profile: CrmProfile }
+
+type Loaded<T> =
+  | { kind: 'loading' }
+  | { kind: 'ready'; value: T }
+  | { kind: 'failed'; requestId?: string }
+
+const VISIBLE_ORGANIZATIONS = 10
+
+// Перед блокировкой, сменой роли или команды КАМ: его вузы и выбор КАМ команды, которому их передать той же командой.
+const OrganizationsTransfer = ({
+  profile,
+  transferTo,
+  disabled,
+  onChange,
+  ...handlers
+}: SessionHandlers & {
+  profile: CrmProfile
+  transferTo: string
+  disabled: boolean
+  onChange: (profileId: string) => void
+}) => {
+  const [state, setState] = useState<Loaded<CrmProfileOrganizations>>({ kind: 'loading' })
+  const { onSessionExpired, onProfileUnavailable } = handlers
+
+  const load = useCallback(async () => {
+    setState({ kind: 'loading' })
+    try {
+      setState({ kind: 'ready', value: await apiClient.listCrmProfileOrganizations(profile.id) })
+    } catch (error) {
+      if (!handledSessionError(error, { onSessionExpired, onProfileUnavailable })) {
+        setState({ kind: 'failed', requestId: requestIdOf(error) })
+      }
+    }
+  }, [onProfileUnavailable, onSessionExpired, profile.id])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  if (state.kind === 'loading') {
+    return <p role="status">Загружаем вузы сотрудника…</p>
+  }
+  if (state.kind === 'failed') {
+    return <LoadFailure text="Не удалось загрузить вузы сотрудника." requestId={state.requestId} onRetry={() => void load()} />
+  }
+  const { organizations, candidates } = state.value
+  const recipient = candidates.find((candidate) => candidate.id === transferTo)?.displayName ?? null
+  return (
+    <div className="employee-transfer">
+      <p>{transferSummary(organizations.length, recipient)}</p>
+      {organizations.length > 0 && (
+        <>
+          <ul>
+            {organizations.slice(0, VISIBLE_ORGANIZATIONS).map((organization) => (
+              <li key={organization.id}><a href={`#/organizations/${organization.id}`}>{organization.name}</a></li>
+            ))}
+            {organizations.length > VISIBLE_ORGANIZATIONS && <li>и ещё {organizations.length - VISIBLE_ORGANIZATIONS}</li>}
+          </ul>
+          <label>
+            Передать вузы
+            <select value={transferTo} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
+              <option value="">Не передавать — вузы останутся без КАМ</option>
+              {candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
+            </select>
+          </label>
+          {candidates.length === 0 && <p className="admin-form__hint">В команде нет другого действующего КАМ.</p>}
+        </>
+      )}
+    </div>
+  )
+}
+
+// Счётчик неудачных входов и временная блокировка Keycloak: в CRM сотрудник остаётся «Активен», а войти не может.
+const LoginLockoutPanel = ({ profile, ...handlers }: SessionHandlers & { profile: CrmProfile }) => {
+  const [state, setState] = useState<Loaded<LoginLockoutStatus>>({ kind: 'loading' })
+  const [releasing, setReleasing] = useState(false)
+  const [error, setError] = useState<unknown>(undefined)
+  const { onSessionExpired, onProfileUnavailable } = handlers
+
+  const load = useCallback(async () => {
+    setState({ kind: 'loading' })
+    try {
+      setState({ kind: 'ready', value: await apiClient.getCrmProfileLoginLockout(profile.id) })
+    } catch (failure) {
+      if (!handledSessionError(failure, { onSessionExpired, onProfileUnavailable })) {
+        setState({ kind: 'failed', requestId: requestIdOf(failure) })
+      }
+    }
+  }, [onProfileUnavailable, onSessionExpired, profile.id])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const release = async () => {
+    setReleasing(true)
+    setError(undefined)
+    try {
+      setState({ kind: 'ready', value: await apiClient.releaseCrmProfileLoginLockout(profile.id) })
+    } catch (failure) {
+      if (!handledSessionError(failure, { onSessionExpired, onProfileUnavailable })) {
+        setError(failure)
+      }
+    } finally {
+      setReleasing(false)
+    }
+  }
+
+  return (
+    <section className="employee-login" aria-label="Вход в систему">
+      <h3>Вход в систему</h3>
+      {state.kind === 'loading' && <p role="status">Спрашиваем Keycloak…</p>}
+      {state.kind === 'failed' && (
+        <LoadFailure text="Не удалось получить неудачные входы из Keycloak." requestId={state.requestId} onRetry={() => void load()} />
+      )}
+      {state.kind === 'ready' && (
+        <>
+          <p role={state.value.locked ? 'alert' : undefined}>{lockoutText(state.value)}</p>
+          {state.value.available && (state.value.locked || state.value.failures > 0) && (
+            <button type="button" className="button--secondary" disabled={releasing} onClick={() => void release()}>
+              {releasing ? 'Снимаем…' : 'Снять блокировку входа'}
+            </button>
+          )}
+        </>
+      )}
+      {error !== undefined && <CommandError error={error} />}
+    </section>
+  )
+}
 
 const EditorForm = ({
   profile,
@@ -42,6 +179,7 @@ const EditorForm = ({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(undefined)
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null)
+  const [transferTo, setTransferTo] = useState('')
   const isCurrentProfile = profile.id === currentProfile.id
   const partner = profile.role === 'PARTNER'
   const update = updateOf(profile, draft)
@@ -54,6 +192,15 @@ const EditorForm = ({
   const change = (changes: Partial<ProfileDraft>) => {
     setDraft((current) => ({ ...current, ...changes }))
     setConfirming(false)
+    setError(undefined)
+    setIdempotencyKey(null)
+    setTransferTo('')
+  }
+
+  const unassigns = unassignsOrganizations(profile, update)
+
+  const changeTransfer = (profileId: string) => {
+    setTransferTo(profileId)
     setError(undefined)
     setIdempotencyKey(null)
   }
@@ -72,7 +219,8 @@ const EditorForm = ({
     setError(undefined)
     setIdempotencyKey(key)
     try {
-      onSaved(await apiClient.updateCrmProfile(profile.id, update, key))
+      const payload = unassigns && transferTo !== '' ? { ...update, transferOrganizationsTo: transferTo } : update
+      onSaved(await apiClient.updateCrmProfile(profile.id, payload, key))
     } catch (failure) {
       if (!handledSessionError(failure, { onSessionExpired, onProfileUnavailable })) {
         setSaving(false)
@@ -136,7 +284,7 @@ const EditorForm = ({
       </label>
       {partner && (
         <p className="admin-form__hint admin-form__wide">
-          Представитель вуза «{profile.partnerOrganizationName}». Здесь доступ можно только закрыть; открывают его
+          Координатор вуза «{profile.partnerOrganizationName}». Здесь доступ можно только закрыть; открывают его
           ответственный КАМ или руководитель команды в карточке вуза, во вкладке «Контакты».
         </p>
       )}
@@ -168,6 +316,16 @@ const EditorForm = ({
           <ul>
             {accessSummary(profile, update, teamOptions).map((line) => <li key={line}>{line}</li>)}
           </ul>
+          {unassigns && (
+            <OrganizationsTransfer
+              profile={profile}
+              transferTo={transferTo}
+              disabled={saving}
+              onChange={changeTransfer}
+              onSessionExpired={onSessionExpired}
+              onProfileUnavailable={onProfileUnavailable}
+            />
+          )}
           <div className="admin-form__actions">
             <button type="button" className="button--secondary" disabled={saving} onClick={() => setConfirming(false)}>
               Вернуться к форме
@@ -202,5 +360,13 @@ export const EmployeeEditorDialog = ({ profile, ...rest }: EmployeeEditorDialogP
     onClose={rest.onClose}
   >
     {profile !== null && <EditorForm key={profile.id} profile={profile} {...rest} />}
+    {profile !== null && (
+      <LoginLockoutPanel
+        key={`login-${profile.id}`}
+        profile={profile}
+        onSessionExpired={rest.onSessionExpired}
+        onProfileUnavailable={rest.onProfileUnavailable}
+      />
+    )}
   </CardDialog>
 )

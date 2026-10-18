@@ -1,5 +1,6 @@
 import type { Me, ReportKind } from '../../shared/api/client'
 import { getModules } from '../../shared/modules'
+import { reportTasks, taskHref } from './reportTasks'
 
 export type ReportView =
   | 'manager-work'
@@ -76,8 +77,8 @@ export const reportCatalog = (role: Me['role']): CatalogCard[] => [
   {
     group: 'Контроль',
     view: 'duration',
-    title: 'Длительность этапов и цикла',
-    purpose: 'Сколько дней взаимодействия проводят на каждом этапе и во всём цикле — чтобы найти, где они застревают.',
+    title: 'Длительность этапов и время до входа в последний этап',
+    purpose: 'Сколько дней взаимодействия проводят на каждом этапе и сколько проходит от создания до входа в последний этап — чтобы найти, где они застревают. Вход в последний этап — не подтверждённое завершение.',
     data: 'Средние и максимальные сроки по командам, программам и этапам'
   },
   {
@@ -151,6 +152,35 @@ export type ReportMeta = { title: string; group: string; data: string }
 export const reportMeta = (role: Me['role'], view: ReportView): ReportMeta => {
   const card = reportCatalog(role).find((item) => item.view === view)
   return { title: card?.title ?? '', group: card?.group ?? 'Служебные', data: card?.data ?? '' }
+}
+
+// Первый уровень раздела: четыре задачи, каждая ведёт в преднастроенный отчёт и называет его методику. Связанные
+// отчёты показываются, только если они есть в каталоге роли, поэтому права не расширяются.
+export const ReportTasks = ({ role }: { role: Me['role'] }) => {
+  const titles = new Map(reportCatalog(role).map((card) => [card.view, card.title]))
+  return (
+    <section className="report-tasks" aria-label="Задачи">
+      <ul className="report-tasks__list">
+        {reportTasks.filter((task) => titles.has(task.view)).map((task) => (
+          <li key={task.id} className="report-task">
+            <h3 className="report-task__title">{task.title}</h3>
+            <p className="report-task__question">{task.question}</p>
+            <p className="report-task__method">{task.method}</p>
+            <a className="button-link report-task__open" href={taskHref(task)}>{task.linkLabel}</a>
+            {task.related.some((view) => titles.has(view)) && (
+              <p className="report-task__related">
+                Ещё:{' '}
+                {task.related.filter((view) => titles.has(view)).map((view, index) => (
+                  <span key={view}>{index > 0 && ', '}<a href={`#/reports/${view}`}>{titles.get(view)}</a></span>
+                ))}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+      <p className="report-tasks__all">Остальные отчёты, конструктор и диаграммы — на вкладке <a href="#/reports?tab=catalog">«Все отчёты»</a>.</p>
+    </section>
+  )
 }
 
 // В каталоге у отчёта одна строка «для чего»; строка «какие данные» ушла в «?» на странице отчёта.

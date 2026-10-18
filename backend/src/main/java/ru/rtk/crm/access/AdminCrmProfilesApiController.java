@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import ru.rtk.crm.access.EmployeeAccountService.AccountCredentials;
 import ru.rtk.crm.access.EmployeeAccountService.AccountEmailRequest;
+import ru.rtk.crm.access.EmployeeAccountService.LoginLockoutStatus;
 import ru.rtk.crm.access.EmployeeAccountService.NewEmployeeRequest;
 import ru.rtk.crm.audit.AuditAction;
 import ru.rtk.crm.audit.AuditJournalRepository;
@@ -118,6 +119,27 @@ public class AdminCrmProfilesApiController {
     ) {
         return employeeAccountService.resetSecondFactor(
                 currentProfileService.requireActiveProfile(user), parseProfileId(id), idempotencyKey, RequestId.from(httpRequest)
+        );
+    }
+
+    @GetMapping("/{id}/organizations")
+    public AdminCrmProfileService.OwnedOrganizations organizations(@AuthenticationPrincipal OidcUser user, @PathVariable String id) {
+        return adminCrmProfileService.ownedOrganizations(currentProfileService.requireActiveProfile(user), parseProfileId(id));
+    }
+
+    @GetMapping("/{id}/login-lockout")
+    public LoginLockoutStatus loginLockout(@AuthenticationPrincipal OidcUser user, @PathVariable String id) {
+        return employeeAccountService.loginLockout(currentProfileService.requireActiveProfile(user), parseProfileId(id));
+    }
+
+    @PostMapping("/{id}/login-lockout-release")
+    public LoginLockoutStatus releaseLoginLockout(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            HttpServletRequest httpRequest
+    ) {
+        return employeeAccountService.releaseLoginLockout(
+                currentProfileService.requireActiveProfile(user), parseProfileId(id), RequestId.from(httpRequest)
         );
     }
 

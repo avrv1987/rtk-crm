@@ -1,6 +1,7 @@
 package ru.rtk.crm.access;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
@@ -10,6 +11,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.AccountSyncRepository.Account;
@@ -21,6 +24,7 @@ import ru.rtk.crm.interaction.CommandIdempotencyRepository;
 import ru.rtk.crm.interaction.CommandOperation;
 import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.mail.MailInvitationService;
 
 @Service
 public class EmployeeAccountService {
@@ -37,6 +41,8 @@ public class EmployeeAccountService {
     private final KeycloakAccountClient keycloakAccountClient;
     private final AuditJournalRepository auditJournalRepository;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher events;
+    private final ObjectProvider<MailInvitationService> mailInvitations;
 
     public EmployeeAccountService(
             AdminCrmProfileRepository adminCrmProfileRepository,
@@ -45,7 +51,9 @@ public class EmployeeAccountService {
             CommandIdempotencyRepository commandIdempotencyRepository,
             KeycloakAccountClient keycloakAccountClient,
             AuditJournalRepository auditJournalRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ApplicationEventPublisher events,
+            ObjectProvider<MailInvitationService> mailInvitations
     ) {
         this.adminCrmProfileRepository = adminCrmProfileRepository;
         this.adminTeamRepository = adminTeamRepository;
@@ -54,6 +62,15 @@ public class EmployeeAccountService {
         this.keycloakAccountClient = keycloakAccountClient;
         this.auditJournalRepository = auditJournalRepository;
         this.objectMapper = objectMapper;
+        this.events = events;
+        this.mailInvitations = mailInvitations;
+    }
+
+    // При включённом модуле почты пароль на экран не выдаётся: сотрудник получает письмо со ссылкой и видит временный
+    // пароль сам. Пустой результат — модуль выключен или почта неизвестна: пароль показывается администратору, как раньше.
+    private Optional<String> invite(UUID actorId, UUID profileId, String login, String email, boolean newAccount, String requestId) {
+        MailInvitationService invitations = mailInvitations.getIfAvailable();
+        return invitations == null ? Optional.empty() : invitations.invite(actorId, profileId, login, email, newAccount, requestId);
     }
 
     @Transactional
@@ -64,7 +81,7 @@ public class EmployeeAccountService {
         UUID commandId = UUID.randomUUID();
         Optional<AdminCrmProfile> replayed = reserve(commandId, actor, CommandOperation.CREATE_EMPLOYEE_ACCOUNT, idempotencyKey, employee);
         if (replayed.isPresent()) {
-            return new AccountCredentials(replayed.get(), replayed.get().login(), null);
+            return new AccountCredentials(replayed.get(), replayed.get().login(), null, null);
         }
         if (employee.teamId() != null
                 && adminTeamRepository.findByIdForUpdate(employee.teamId()).filter(team -> !team.archived()).isEmpty()) {
@@ -93,9 +110,11 @@ public class EmployeeAccountService {
                 0,
                 now
         );
+        Optional<String> invitationSentTo = invite(actor.id(), profileId, employee.login(), employee.email(), true, auditRequestId);
         auditJournalRepository.record(
                 AuditAction.ACCOUNT_CREATED, actor.id(), "PROFILE", profileId, employee.displayName(),
-                "сотрудник; логин " + employee.login() + "; временный пароль выдан", auditRequestId
+                "сотрудник; логин " + employee.login() + (invitationSentTo.isPresent() ? "; приглашение отправлено на почту" : "; временный пароль выдан"),
+                auditRequestId
         );
         String roleError = null;
         try {
@@ -125,7 +144,7 @@ public class EmployeeAccountService {
                 created = created.withAccountSyncError(exception.getMessage());
             }
         }
-        return new AccountCredentials(created, employee.login(), password);
+        return new AccountCredentials(created, employee.login(), invitationSentTo.isPresent() ? null : password, invitationSentTo.orElse(null));
     }
 
     @Transactional
@@ -138,17 +157,19 @@ public class EmployeeAccountService {
                 commandId, actor, CommandOperation.RESET_ACCOUNT_PASSWORD, idempotencyKey, new ProfileCommand(profileId, null)
         );
         if (replayed.isPresent()) {
-            return new AccountCredentials(replayed.get(), replayed.get().login(), null);
+            return new AccountCredentials(replayed.get(), replayed.get().login(), null, null);
         }
         AdminCrmProfile target = lockTarget(profileId);
         requireNotAdministrator(target);
         String password = TemporaryPassword.generate();
         keycloakAccountClient.resetTemporaryPassword(subject(profileId), password);
+        Optional<String> invitationSentTo = invite(actor.id(), profileId, target.login(), null, false, auditRequestId);
         auditJournalRepository.record(
                 AuditAction.ACCOUNT_PASSWORD_RESET, actor.id(), "PROFILE", profileId, target.displayName(),
-                "временный пароль выдан", auditRequestId
+                invitationSentTo.isPresent() ? "ссылка на новый пароль отправлена на почту" : "временный пароль выдан", auditRequestId
         );
-        return new AccountCredentials(complete(commandId, profileId), target.login(), password);
+        return new AccountCredentials(complete(commandId, profileId), target.login(), invitationSentTo.isPresent() ? null : password,
+                invitationSentTo.orElse(null));
     }
 
     @Transactional
@@ -166,6 +187,9 @@ public class EmployeeAccountService {
         AdminCrmProfile target = lockTarget(profileId);
         keycloakAccountClient.logout(subject(profileId));
         int crmSessions = target.login() == null ? 0 : adminCrmProfileRepository.deleteSessions(target.login());
+        // «Завершить сеансы» не меняет access_revision, поэтому сеансы подключаемых каналов (мини-приложение MAX)
+        // закрываются по событию в этой же транзакции.
+        events.publishEvent(new ProfileSessionsEnded(profileId));
         auditJournalRepository.record(
                 AuditAction.ACCOUNT_SESSIONS_ENDED, actor.id(), "PROFILE", profileId, target.displayName(),
                 "сеансы Keycloak завершены; сеансов CRM завершено: " + crmSessions, auditRequestId
@@ -230,6 +254,35 @@ public class EmployeeAccountService {
                 AuditAction.ACCOUNT_EMAIL_CHANGED, actor.id(), "PROFILE", profileId, target.displayName(), null, auditRequestId
         );
         return complete(commandId, profileId);
+    }
+
+    @Transactional(readOnly = true)
+    public LoginLockoutStatus loginLockout(CrmProfile actor, UUID profileId) {
+        AdminAuthorization.requireAdmin(actor);
+        String subject = subject(requiredProfileId(profileId));
+        if (!keycloakAccountClient.configured()) {
+            return LoginLockoutStatus.NOT_CONFIGURED;
+        }
+        return LoginLockoutStatus.of(keycloakAccountClient.loginLockout(subject));
+    }
+
+    // Снятие блокировки обнуляет счётчик неудачных входов в Keycloak; пароль и сеансы не меняются. Повтор безвреден,
+    // поэтому ключ идемпотентности не нужен.
+    @Transactional
+    public LoginLockoutStatus releaseLoginLockout(CrmProfile actor, UUID profileId, String requestId) {
+        AdminAuthorization.requireAdmin(actor);
+        String auditRequestId = AdminAuthorization.requiredRequestId(requestId);
+        AdminCrmProfile target = adminCrmProfileRepository.findById(requiredProfileId(profileId))
+                .orElseThrow(AdminCrmProfileNotFoundException::new);
+        String subject = subject(profileId);
+        KeycloakAccountClient.LoginLockout before = keycloakAccountClient.loginLockout(subject);
+        keycloakAccountClient.releaseLoginLockout(subject);
+        auditJournalRepository.record(
+                AuditAction.ACCOUNT_LOCKOUT_RELEASED, actor.id(), "PROFILE", profileId, target.displayName(),
+                "неудачных попыток подряд: " + before.failures() + (before.locked() ? "; вход был временно заблокирован" : ""),
+                auditRequestId
+        );
+        return LoginLockoutStatus.of(keycloakAccountClient.loginLockout(subject));
     }
 
     private Optional<AdminCrmProfile> reserve(
@@ -323,7 +376,19 @@ public class EmployeeAccountService {
     public record AccountEmailRequest(String email) {
     }
 
-    public record AccountCredentials(AdminCrmProfile profile, String login, String temporaryPassword) {
+    // invitationSentTo — маска адреса, куда ушла ссылка на пароль; тогда temporaryPassword пустой.
+    public record AccountCredentials(AdminCrmProfile profile, String login, String temporaryPassword, String invitationSentTo) {
+    }
+
+    public record LoginLockoutStatus(boolean available, int failures, boolean locked, OffsetDateTime lastFailureAt) {
+        static final LoginLockoutStatus NOT_CONFIGURED = new LoginLockoutStatus(false, 0, false, null);
+
+        static LoginLockoutStatus of(KeycloakAccountClient.LoginLockout lockout) {
+            return new LoginLockoutStatus(
+                    true, lockout.failures(), lockout.locked(),
+                    lockout.lastFailureAt() == null ? null : lockout.lastFailureAt().atOffset(ZoneOffset.UTC)
+            );
+        }
     }
 
     private record ProfileCommand(UUID profileId, String email) {

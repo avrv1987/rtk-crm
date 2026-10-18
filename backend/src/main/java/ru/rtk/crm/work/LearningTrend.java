@@ -17,6 +17,8 @@ public record LearningTrend(
         List<Item> falling,
         int runsWithoutData
 ) {
-    public record Item(UUID id, String name, long start, long end, long change, int runsWithoutData) {
+    // start, end и change — по сопоставимым потокам, у которых есть значение на начало периода; endWithoutBase —
+    // обучающиеся на конец в потоках без базы сравнения (runsWithoutData), в изменение они не входят.
+    public record Item(UUID id, String name, long start, long end, long change, int runsWithoutData, long endWithoutBase) {
     }
 }

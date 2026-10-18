@@ -16,7 +16,7 @@ import ru.rtk.crm.report.ReportRepository.StageEntry;
 
 final class DurationReport {
     static final String ALL_PROGRAMS = "Все программы";
-    static final String WHOLE_CYCLE = "Весь цикл";
+    static final String WHOLE_CYCLE = "Время до входа в последний этап";
 
     private static final BigDecimal SECONDS_PER_DAY = BigDecimal.valueOf(86_400);
     private static final Comparator<Map.Entry<Key, Stats>> ORDER = Comparator

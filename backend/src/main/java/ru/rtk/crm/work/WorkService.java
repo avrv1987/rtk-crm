@@ -26,6 +26,9 @@ import ru.rtk.crm.work.WorkRepository.WorkCounts;
 @Service
 public class WorkService {
     private static final int MAX_STUCK_DAYS = 3650;
+    // Сигнал о вузах, оставшихся без КАМ после его блокировки, гаснет при назначении КАМ или через 30 дней:
+    // дальше такие вузы видны в плитке «Вузов без КАМ».
+    private static final int UNASSIGNED_SIGNAL_DAYS = 30;
 
     private final OrganizationRepository organizationRepository;
     private final OrganizationAssignmentRepository organizationAssignmentRepository;
@@ -153,7 +156,10 @@ public class WorkService {
                 ),
                 properties.agreementNoticeDays(),
                 workRepository.findExpiringAgreements(scope, today.plusDays(properties.agreementNoticeDays()), limit),
-                workRepository.countFeed(scope, now)
+                workRepository.countFeed(scope, now),
+                profile.role() == UserRole.LEADER
+                        ? workRepository.findUnassignedAfterBlock(scope, now.minusDays(UNASSIGNED_SIGNAL_DAYS), limit)
+                        : List.of()
         );
     }
 

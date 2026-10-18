@@ -253,6 +253,38 @@ class EmployeeAccountHttpTest {
     }
 
     @Test
+    void administratorSeesKeycloakLockoutAndReleasesItWithAJournalRecord() throws Exception {
+        when(keycloakAccountClient.configured()).thenReturn(true);
+        when(keycloakAccountClient.loginLockout("kc-" + KAM)).thenReturn(
+                new KeycloakAccountClient.LoginLockout(16, true, java.time.Instant.parse("2026-10-18T07:15:00Z")),
+                new KeycloakAccountClient.LoginLockout(16, true, java.time.Instant.parse("2026-10-18T07:15:00Z")),
+                new KeycloakAccountClient.LoginLockout(0, false, null)
+        );
+
+        mockMvc.perform(get("/api/admin/crm-profiles/{id}/login-lockout", KAM).with(login(ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.available").value(true))
+                .andExpect(jsonPath("$.failures").value(16))
+                .andExpect(jsonPath("$.locked").value(true));
+        mockMvc.perform(post("/api/admin/crm-profiles/{id}/login-lockout-release", KAM).with(login(ADMIN)).with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.locked").value(false))
+                .andExpect(jsonPath("$.failures").value(0));
+
+        verify(keycloakAccountClient).releaseLoginLockout("kc-" + KAM);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT details FROM audit_events WHERE action = 'ACCOUNT_LOCKOUT_RELEASED'", String.class))
+                .isEqualTo("неудачных попыток подряд: 16; вход был временно заблокирован");
+        mockMvc.perform(post("/api/admin/crm-profiles/{id}/login-lockout-release", KAM).with(login(KAM)).with(csrf()))
+                .andExpect(status().isForbidden());
+
+        when(keycloakAccountClient.configured()).thenReturn(false);
+        mockMvc.perform(get("/api/admin/crm-profiles/{id}/login-lockout", KAM).with(login(ADMIN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.available").value(false));
+    }
+
+    @Test
     void newAdministratorMustUseSecondFactorAndFailureIsShownWithoutLosingTheAccount() throws Exception {
         String admin = NEW_EMPLOYEE.replace("\"role\":\"USER\"", "\"role\":\"ADMIN\"");
         when(keycloakAccountClient.configured()).thenReturn(true);

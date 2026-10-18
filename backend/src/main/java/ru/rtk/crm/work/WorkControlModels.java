@@ -7,6 +7,7 @@ import java.util.UUID;
 
 import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
 import ru.rtk.crm.agreement.AgreementModels.Approval;
+import ru.rtk.crm.agreement.AgreementModels.RegistryRow;
 import ru.rtk.crm.interaction.InteractionWorkStatus;
 import ru.rtk.crm.report.ManagerWorkDue;
 import ru.rtk.crm.report.ManagerWorkOrganization;
@@ -22,8 +23,13 @@ public final class WorkControlModels {
             boolean byTeams,
             List<TeamBlock> teams,
             Totals total,
-            List<ManagerWorkOrganization> idleOrganizations
+            List<ManagerWorkOrganization> idleOrganizations,
+            List<RegistryRow> agreements
     ) {
+        public Control(OffsetDateTime calculatedAt, LocalDate from, LocalDate to, boolean byTeams, List<TeamBlock> teams, Totals total,
+                       List<ManagerWorkOrganization> idleOrganizations) {
+            this(calculatedAt, from, to, byTeams, teams, total, idleOrganizations, List.of());
+        }
     }
 
     public record TeamBlock(UUID teamId, String teamName, Totals totals, List<ManagerBlock> managers) {

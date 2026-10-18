@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { EnrolmentBatchView } from './EnrolmentBatchView'
 import { EnrolmentStreamView } from './EnrolmentStreamView'
 import { EnrolmentStreamsList } from './EnrolmentStreamsList'
 import { LearnerCardView } from './LearnerCardView'
@@ -55,6 +56,9 @@ export const EnrolmentScreen = ({ onSessionExpired, onProfileUnavailable }: Enro
           onOpenLearner={(learnerId) => go({ kind: 'learner', learnerId, streamId: route.streamId })}
           onAccessError={onAccessError}
         />
+      )}
+      {route.kind === 'batch' && (
+        <EnrolmentBatchView key={route.batchId} batchId={route.batchId} onAccessError={onAccessError} />
       )}
       {route.kind === 'learner' && (
         <LearnerCardView

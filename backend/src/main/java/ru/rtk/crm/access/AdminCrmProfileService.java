@@ -16,9 +16,12 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import ru.rtk.crm.access.AdminCrmProfileRepository.ProfileState;
+import ru.rtk.crm.catalog.OrganizationAssignmentCandidate;
 import ru.rtk.crm.catalog.OrganizationAssignmentEvent;
+import ru.rtk.crm.catalog.OrganizationAssignmentProfile;
 import ru.rtk.crm.catalog.OrganizationAssignmentReason;
 import ru.rtk.crm.catalog.OrganizationAssignmentRepository;
+import ru.rtk.crm.catalog.OrganizationAssignmentRepository.OwnedOrganization;
 import ru.rtk.crm.catalog.OrganizationAssignmentTarget;
 import ru.rtk.crm.interaction.CommandFingerprint;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
@@ -84,6 +87,24 @@ public class AdminCrmProfileService {
         return adminCrmProfileRepository.findEventsByProfileId(profileId);
     }
 
+    // Вузы сотрудника и КАМ его команды, которым их можно передать до блокировки, смены роли или команды.
+    @Transactional(readOnly = true)
+    public OwnedOrganizations ownedOrganizations(CrmProfile actor, UUID profileId) {
+        AdminAuthorization.requireAdmin(actor);
+        AdminCrmProfile target = adminCrmProfileRepository.findById(requiredProfileId(profileId))
+                .orElseThrow(AdminCrmProfileNotFoundException::new);
+        List<OwnedOrganization> organizations = organizationAssignmentRepository.findOwnedOrganizations(profileId);
+        List<OrganizationAssignmentCandidate> candidates = organizations.isEmpty() || target.teamId() == null
+                ? List.of()
+                : organizationAssignmentRepository.findCandidates(target.teamId(), null).stream()
+                        .filter(candidate -> !candidate.id().equals(profileId))
+                        .toList();
+        return new OwnedOrganizations(organizations, candidates);
+    }
+
+    public record OwnedOrganizations(List<OwnedOrganization> organizations, List<OrganizationAssignmentCandidate> candidates) {
+    }
+
     // Порядок команды, когда меняется роль или требование второго фактора:
     // 1) короткая транзакция с блокировками проверяет команду и ставит признак «требует сверки»;
     // 2) вне транзакции изменение записывается в Keycloak;
@@ -109,7 +130,8 @@ public class AdminCrmProfileService {
                 request.teamIdPresent(),
                 request.teamId(),
                 request.active(),
-                request.enrolmentOperator()
+                request.enrolmentOperator(),
+                request.transferOrganizationsTo()
         );
         if (!command.changesAnything()) {
             throw new InteractionValidationException(
@@ -237,15 +259,21 @@ public class AdminCrmProfileService {
                 .orElseThrow(() -> new IllegalStateException("Administrator profile is unavailable for audit"));
         // Закреплённые за сотрудником вузы снимаются, если он перестал быть действующим КАМ или руководителем
         // своей команды: вуз не должен оставаться за тем, кто не может с ним работать. Причина сохраняется в истории.
-        boolean keepsOwnership = next.active() && (next.role() == UserRole.USER || next.role() == UserRole.LEADER)
-                && Objects.equals(previous.teamId(), next.teamId());
-        if (!keepsOwnership) {
+        // Если администратор выбрал КАМ команды, вузы переходят к нему той же записью истории, что и при передаче
+        // руководителем; иначе остаются «без КАМ», и руководитель видит их в колокольчике.
+        if (!keepsOwnership(previous, next)) {
             OrganizationAssignmentReason reason = !next.active()
                     ? OrganizationAssignmentReason.PROFILE_BLOCKED
                     : next.role() != previous.role()
                             ? OrganizationAssignmentReason.PROFILE_ROLE_CHANGED
                             : OrganizationAssignmentReason.PROFILE_TEAM_CHANGED;
-            unassignOwnedOrganizations(target, actor.id(), actorDisplayName, commandId, auditRequestId, reason, now);
+            if (validated.transferTo() != null) {
+                transferOwnedOrganizations(
+                        target, validated.transferTo(), actor.id(), actorDisplayName, commandId, auditRequestId, reason, now
+                );
+            } else {
+                unassignOwnedOrganizations(target, actor.id(), actorDisplayName, commandId, auditRequestId, reason, now);
+            }
         }
         AdminCrmProfile updated = adminCrmProfileRepository.findById(profileId)
                 .orElseThrow(AdminCrmProfileNotFoundException::new);
@@ -309,7 +337,39 @@ public class AdminCrmProfileService {
         if (removesAdministrator && activeAdministrators.stream().noneMatch(id -> !id.equals(profileId))) {
             throw InteractionConflictException.lastActiveAdministrator();
         }
-        return new Validated(target, next);
+        return new Validated(target, next, transferTarget(command, target, previous, next));
+    }
+
+    private static boolean keepsOwnership(ProfileState previous, ProfileState next) {
+        return next.active() && (next.role() == UserRole.USER || next.role() == UserRole.LEADER)
+                && Objects.equals(previous.teamId(), next.teamId());
+    }
+
+    private OrganizationAssignmentProfile transferTarget(
+            ProfileUpdateCommand command,
+            AdminCrmProfile target,
+            ProfileState previous,
+            ProfileState next
+    ) {
+        UUID transferTo = command.transferOrganizationsTo();
+        if (transferTo == null) {
+            return null;
+        }
+        if (keepsOwnership(previous, next)) {
+            throw new InteractionValidationException(
+                    "transferOrganizationsTo", "Вузы передаются только при блокировке, смене роли или команды сотрудника"
+            );
+        }
+        OrganizationAssignmentProfile recipient = transferTo.equals(target.id())
+                ? null
+                : organizationAssignmentRepository.lockProfileForUpdate(transferTo).orElse(null);
+        if (recipient == null || !recipient.active() || recipient.role() != UserRole.USER
+                || previous.teamId() == null || !previous.teamId().equals(recipient.teamId())) {
+            throw new InteractionValidationException(
+                    "transferOrganizationsTo", "Передать вузы можно только действующему КАМ той же команды"
+            );
+        }
+        return recipient;
     }
 
     // Вызывается при входе: роль в Keycloak главнее роли в CRM. Если профиль ждёт сверки (CRM записывает роль в
@@ -432,6 +492,36 @@ public class AdminCrmProfileService {
         }
     }
 
+    private void transferOwnedOrganizations(
+            AdminCrmProfile target,
+            OrganizationAssignmentProfile recipient,
+            UUID actorProfileId,
+            String actorDisplayName,
+            UUID rootCommandId,
+            String requestId,
+            OrganizationAssignmentReason reason,
+            OffsetDateTime occurredAt
+    ) {
+        for (OrganizationAssignmentTarget organization : organizationAssignmentRepository.lockOwnedOrganizations(target.id())) {
+            // Условие team_id = команда получателя: вуз чужой команды КАМ не передаётся, команда откатывается целиком.
+            if (!organizationAssignmentRepository.updateOwner(
+                    organization.organizationId(), recipient.teamId(), organization.version(), recipient.id(), null, occurredAt
+            )) {
+                throw new InteractionValidationException(
+                        "transferOrganizationsTo", "Часть вузов сотрудника в другой команде; передайте их из карточки вуза"
+                );
+            }
+            organizationAssignmentRepository.incrementAccessRevisions(null, recipient.id());
+            organizationAssignmentRepository.endOpenDeputy(organization.organizationId(), occurredAt, actorProfileId, actorDisplayName)
+                    .ifPresent(deputy -> organizationAssignmentRepository.incrementAccessRevisions(deputy, null));
+            organizationAssignmentRepository.insertEvent(
+                    UUID.randomUUID(), organization.organizationId(), rootCommandId, target.id(), target.displayName(),
+                    recipient.id(), recipient.displayName(), actorProfileId, actorDisplayName, requestId, reason, null,
+                    organization.version() + 1, occurredAt
+            );
+        }
+    }
+
     private UUID requiredProfileId(UUID profileId) {
         if (profileId == null) {
             throw new InteractionValidationException("id", "Укажите профиль");
@@ -500,7 +590,7 @@ public class AdminCrmProfileService {
     private record KeycloakChange(String subject, boolean role, boolean privileged, ProfileState next) {
     }
 
-    private record Validated(AdminCrmProfile target, ProfileState next) {
+    private record Validated(AdminCrmProfile target, ProfileState next, OrganizationAssignmentProfile transferTo) {
     }
 
     private record ProfileUpdateCommand(
@@ -511,7 +601,8 @@ public class AdminCrmProfileService {
             boolean teamIdPresent,
             UUID teamId,
             Boolean active,
-            Boolean enrolmentOperator
+            Boolean enrolmentOperator,
+            UUID transferOrganizationsTo
     ) {
         boolean changesAccess() {
             return role != null || teamIdPresent || active != null;

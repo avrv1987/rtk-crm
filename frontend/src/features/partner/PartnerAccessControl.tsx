@@ -94,7 +94,19 @@ export const PartnerAccessControl = ({
         </div>
       )}
       {state.kind === 'saving' && <p role="status">Обращаемся к Keycloak…</p>}
-      {state.kind === 'granted' && (
+      {state.kind === 'granted' && state.granted.invitationSentTo && (
+        <div className="partner-access__granted" role="status">
+          <p>
+            <strong>Доступ открыт.</strong> Ссылка на временный пароль отправлена на {state.granted.invitationSentTo}.
+            Пароль увидит только представитель вуза; ссылка одноразовая и действует 72 часа.
+          </p>
+          <dl>
+            <div><dt>Логин</dt><dd><code>{state.granted.login}</code></dd></div>
+          </dl>
+          <button type="button" onClick={() => setState({ kind: 'idle' })}>Скрыть</button>
+        </div>
+      )}
+      {state.kind === 'granted' && !state.granted.invitationSentTo && (
         <div className="partner-access__granted" role="status">
           <p><strong>Доступ открыт.</strong> Передайте представителю вуза логин и временный пароль по защищённому каналу.</p>
           <dl>

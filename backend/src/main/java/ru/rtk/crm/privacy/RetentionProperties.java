@@ -12,6 +12,7 @@ public record RetentionProperties(
         Duration inactiveContacts,
         Duration dismissedProfiles,
         Duration auditEvents,
+        Duration agentPlans,
         Period learnerProfiles
 ) {
 }

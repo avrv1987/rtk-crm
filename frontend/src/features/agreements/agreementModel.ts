@@ -89,6 +89,7 @@ export type RegistryFilters = {
   expiresBefore: string
   reviewLongerThanDays: string
   delayed: boolean
+  teamId: string
 }
 
 export const emptyRegistryFilters: RegistryFilters = {
@@ -97,7 +98,8 @@ export const emptyRegistryFilters: RegistryFilters = {
   managerId: '',
   expiresBefore: '',
   reviewLongerThanDays: '',
-  delayed: false
+  delayed: false,
+  teamId: ''
 }
 
 export const registrySearch = (filters: RegistryFilters) => {
@@ -109,7 +111,8 @@ export const registrySearch = (filters: RegistryFilters) => {
     ['organizationId', filters.organizationId],
     ['managerId', filters.managerId],
     ['expiresBefore', filters.expiresBefore],
-    ['reviewLongerThanDays', filters.reviewLongerThanDays.trim()]
+    ['reviewLongerThanDays', filters.reviewLongerThanDays.trim()],
+    ['teamId', filters.teamId]
   ]
   for (const [key, value] of scalars) {
     if (value !== '') {
@@ -239,7 +242,21 @@ export const registryTileOf = (filters: RegistryFilters, today: string): Registr
   return tile?.key ?? null
 }
 
+// Ссылка из сводки «Руководства» открывает реестр с отбором: команда и плитка в адресе (#/agreements?team=…&tile=…).
+export const registryFiltersFromQuery = (query: string, today: string): RegistryFilters => {
+  const params = new URLSearchParams(query)
+  const tile = registryTiles.find((item) => item.key === params.get('tile'))?.key ?? null
+  return { ...emptyRegistryFilters, ...registryTileFilters(tile, today), teamId: params.get('team') ?? '' }
+}
+
 export const agreementNoticeDays = 90
+
+// Команды для отбора реестра у «Руководства» — из самих строк реестра: отдельного справочника команд роли не нужно.
+export const registryTeams = (rows: readonly { teamId?: string | null; teamName?: string | null }[]) => (
+  [...new Map(rows.filter((row) => row.teamId).map((row) => [row.teamId as string, row.teamName ?? 'Команда без названия'])).entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+)
 
 export type AgreementTerm = 'expired' | 'expiring' | null
 

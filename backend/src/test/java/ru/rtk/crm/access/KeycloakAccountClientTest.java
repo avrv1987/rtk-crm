@@ -23,6 +23,7 @@ class KeycloakAccountClientTest {
     private static final String USER = "7d7c2f0e-1111-4c1a-9a55-000000000001";
 
     private final List<String> requests = new CopyOnWriteArrayList<>();
+    private final List<String> queries = new CopyOnWriteArrayList<>();
     private HttpServer server;
     private volatile int userStatus = 204;
     private volatile String slowPath;
@@ -361,6 +362,43 @@ class KeycloakAccountClientTest {
                 .hasMessageContaining("Keycloak недоступен");
     }
 
+    @Test
+    void loginLockoutIsReadAndReleasedThroughAttackDetection() {
+        String path = "/admin/realms/rtk-crm/attack-detection/brute-force/users/" + USER;
+        lookup = "{\"numFailures\":12,\"disabled\":true,\"lastIPFailure\":\"10.0.0.7\",\"lastFailure\":1792300000000}";
+
+        KeycloakAccountClient.LoginLockout lockout = client("sync-secret").loginLockout(USER);
+        client("sync-secret").releaseLoginLockout(USER);
+
+        assertThat(lockout).isEqualTo(new KeycloakAccountClient.LoginLockout(12, true, java.time.Instant.ofEpochMilli(1792300000000L)));
+        assertThat(requests.get(1)).isEqualTo("GET " + path + " Bearer service-token ");
+        assertThat(requests.get(3)).isEqualTo("DELETE " + path + " Bearer service-token ");
+        userStatus = 404;
+        client("sync-secret").releaseLoginLockout(USER);
+        lookup = "{}";
+        assertThat(client("sync-secret").loginLockout(USER)).isEqualTo(new KeycloakAccountClient.LoginLockout(0, false, null));
+    }
+
+    @Test
+    void loginErrorsAreReadFromRealmEventsAndEventsWithoutUserAreSkipped() {
+        lookup = """
+                [{"id":"ev-1","time":1792300000000,"type":"LOGIN_ERROR","userId":"%s","ipAddress":"10.0.0.7",
+                  "error":"invalid_user_credentials","details":{"username":"anna"}},
+                 {"time":1792300001000,"type":"LOGIN_ERROR","ipAddress":"10.0.0.8","error":"user_not_found",
+                  "details":{"username":"nobody"}},
+                 {"time":1792300002000,"type":"LOGIN_ERROR","userId":"%s","error":"user_temporarily_disabled"}]
+                """.formatted(USER, USER);
+
+        List<KeycloakAccountClient.LoginError> errors = client("sync-secret").loginErrors(java.time.LocalDate.parse("2026-10-18"), 100, 100);
+
+        assertThat(queries).last().isEqualTo("type=LOGIN_ERROR&dateFrom=2026-10-18&first=100&max=100");
+        assertThat(requests).last().asString().startsWith("GET /admin/realms/rtk-crm/events Bearer service-token");
+        assertThat(errors).extracting(KeycloakAccountClient.LoginError::id).containsExactly("ev-1", "1792300002000-" + USER);
+        assertThat(errors.get(0).username()).isEqualTo("anna");
+        assertThat(errors.get(0).address()).isEqualTo("10.0.0.7");
+        assertThat(errors.get(1).error()).isEqualTo("user_temporarily_disabled");
+    }
+
     private KeycloakAccountClient client(String secret) {
         return client(secret, Duration.ofSeconds(2));
     }
@@ -376,6 +414,7 @@ class KeycloakAccountClientTest {
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         String authorization = exchange.getRequestHeaders().getFirst("Authorization");
         String path = exchange.getRequestURI().getPath();
+        queries.add(String.valueOf(exchange.getRequestURI().getRawQuery()));
         requests.add(exchange.getRequestMethod() + " " + path + " "
                 + (authorization == null ? "" : authorization + " ") + body);
         if (path.equals(slowPath) && slowResponses.getAndDecrement() > 0) {

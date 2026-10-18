@@ -1,0 +1,65 @@
+.agent-plan {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 760px;
+}
+
+.agent-plan h2,
+.agent-plan h3,
+.agent-plan p {
+  margin: 0;
+}
+
+.agent-plan__status {
+  border-left: 4px solid var(--color-warning-accent);
+  padding-left: var(--space-3);
+}
+
+.agent-plan__facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+}
+
+.agent-plan__facts dt {
+  color: var(--color-text-muted);
+}
+
+.agent-plan__facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-plan__note {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--color-surface-muted);
+  padding: var(--space-3);
+}
+
+.agent-plan__diff {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.agent-plan__diff caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: var(--space-2);
+}
+
+.agent-plan__diff th,
+.agent-plan__diff td {
+  border: 1px solid var(--color-border);
+  padding: var(--space-2);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.agent-plan__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}

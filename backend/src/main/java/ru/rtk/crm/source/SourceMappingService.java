@@ -8,6 +8,8 @@ import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import ru.rtk.crm.access.CrmProfile;
+import ru.rtk.crm.audit.AuditAction;
+import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.source.SourceRepository.RunDates;
 import ru.rtk.crm.source.SourceRepository.StoredMapping;
@@ -19,11 +21,18 @@ public class SourceMappingService {
     private final SourceRepository repository;
     private final MoodleSnapshotApplier moodleApplier;
     private final SourceSyncService syncService;
+    private final AuditJournalRepository auditJournalRepository;
 
-    public SourceMappingService(SourceRepository repository, MoodleSnapshotApplier moodleApplier, SourceSyncService syncService) {
+    public SourceMappingService(
+            SourceRepository repository,
+            MoodleSnapshotApplier moodleApplier,
+            SourceSyncService syncService,
+            AuditJournalRepository auditJournalRepository
+    ) {
         this.repository = repository;
         this.moodleApplier = moodleApplier;
         this.syncService = syncService;
+        this.auditJournalRepository = auditJournalRepository;
     }
 
     public List<SourceMappingView> mappings(CrmProfile profile) {
@@ -62,6 +71,7 @@ public class SourceMappingService {
             syncService.reresolveLinked(mapping.source(), "program_id", mapping.programId(),
                     item -> mapping.externalKey().equals(SiteRecord.programKey(item.programName())), profile.id());
         }
+        journal(profile, mapping, "сопоставление изменено");
         return view(mappingId);
     }
 
@@ -73,8 +83,10 @@ public class SourceMappingService {
         }
         if (mapping.learning()) {
             moodleApplier.removeRun(mapping, profile.id());
+            journal(profile, mapping, "поток удалён");
             return;
         }
+        journal(profile, mapping, "сопоставление удалено");
         repository.deleteMapping(mappingId);
         if (mapping.kind().equals("ORGANIZATION")) {
             syncService.reresolveLinked(mapping.source(), "organization_id", mapping.organizationId(),
@@ -98,6 +110,7 @@ public class SourceMappingService {
                 request.runEndsOn());
         UUID created = moodleApplier.addRun(mapping, request.organizationId(), request.programId(), run, request.runKind(),
                 profile.id(), OffsetDateTime.now());
+        journal(profile, mapping, "добавлен поток");
         return view(created);
     }
 
@@ -110,6 +123,15 @@ public class SourceMappingService {
         if (repository.deleteSnapshot(mappingId) == 0) {
             throw new InteractionValidationException("id", "У этого потока нет сохранённого снимка");
         }
+        journal(profile, mapping, "снимок обучения удалён");
+    }
+
+    // Внешний ключ — код курса, группы, организации или программы в источнике; персональных данных в нём нет.
+    private void journal(CrmProfile profile, StoredMapping mapping, String change) {
+        auditJournalRepository.record(
+                AuditAction.SOURCE_MAPPING_CHANGED, profile.id(), "SOURCE", mapping.id(), mapping.externalKey(),
+                mapping.source().title() + ": " + change, null
+        );
     }
 
     private void updateReference(StoredMapping mapping, UUID organizationId, UUID programId, CrmProfile profile,

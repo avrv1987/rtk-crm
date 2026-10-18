@@ -7,8 +7,10 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -358,7 +360,10 @@ public class AgreementRepository {
                 .query(OffsetDateTime.class)
                 .optional()
                 .orElse(null);
-        OffsetDateTime occurredAt = last != null && !now.isAfter(last) ? last.plusNanos(1_000) : now;
+        // Сравнивать нужно то, что будет записано: база хранит микросекунды и округляет остаток, а часы Windows дают
+        // сотни наносекунд. Без усечения «позже на 0,3 мкс» после округления становилось тем же временем.
+        OffsetDateTime candidate = now.truncatedTo(ChronoUnit.MICROS);
+        OffsetDateTime occurredAt = last != null && !candidate.isAfter(last) ? last.plus(1, ChronoUnit.MICROS) : candidate;
         jdbcClient.sql("""
                 INSERT INTO agreement_status_events (
                     id, agreement_id, from_status, to_status, comment, actor_profile_id, interaction_id, occurred_at
@@ -825,6 +830,11 @@ public class AgreementRepository {
             conditions.add("o.owner_manager_id = :managerId");
             parameters.put("managerId", query.managerId());
         }
+        // Своё имя параметра: «teamId» уже занят областью руководителя, и отбор подменил бы его область.
+        if (query.teamId() != null) {
+            conditions.add("o.team_id = :registryTeamId");
+            parameters.put("registryTeamId", query.teamId());
+        }
         if (query.expiresBefore() != null) {
             conditions.add("ag.valid_until IS NOT NULL AND ag.valid_until <= :expiresBefore");
             parameters.put("expiresBefore", query.expiresBefore());
@@ -838,6 +848,26 @@ public class AgreementRepository {
         }
         List<RegistryRow> rows = registryRows(String.join(" AND ", conditions), parameters, today);
         return query.delayed() ? rows.stream().filter(row -> row.approval() != null && row.approval().delayed()).toList() : rows;
+    }
+
+    // Договоры на согласовании, корректировке и подписании для плитки «Контроля»: та же область и те же статусы, что у
+    // плиток реестра, поэтому числа «Контроля» и реестра совпадают.
+    public List<RegistryRow> findInProgress(VisibilityScope scope, LocalDate today) {
+        return registryRows("ag.organization_id IN (SELECT id FROM organizations WHERE " + scope.condition() + ")"
+                + " AND ag.status IN ('REVIEW', 'CORRECTION', 'SIGNING')", new HashMap<>(scope.parameters()), today, false);
+    }
+
+    public Set<UUID> findOrganizationsWithAgreementInProgress(Collection<UUID> organizationIds) {
+        if (organizationIds.isEmpty()) {
+            return Set.of();
+        }
+        return new HashSet<>(jdbcClient.sql("""
+                SELECT DISTINCT organization_id FROM agreements
+                WHERE organization_id IN (:ids) AND status IN ('REVIEW', 'CORRECTION', 'SIGNING')
+                """)
+                .param("ids", organizationIds)
+                .query(UUID.class)
+                .list());
     }
 
     public List<RegistryRow> findSignedBetween(VisibilityScope scope, LocalDate from, LocalDate to, LocalDate today) {
@@ -934,15 +964,22 @@ public class AgreementRepository {
     }
 
     private List<RegistryRow> registryRows(String condition, Map<String, Object> parameters, LocalDate today) {
+        return registryRows(condition, parameters, today, true);
+    }
+
+    // withSubjects = false — облегчённый набор для плитки «Контроля»: без предмета и даты подписания, остальное как в реестре.
+    private List<RegistryRow> registryRows(String condition, Map<String, Object> parameters, LocalDate today, boolean withSubjects) {
         List<RegistryRow> rows = jdbcClient.sql("""
                 SELECT ag.id, ag.organization_id, o.name AS organization_name, ag.number, ag.status, ag.status_changed_at, ag.sent_on,
-                       ag.concluded_on, ag.valid_until, o.owner_manager_id, m.display_name AS manager_name
+                       %s AS concluded_on, ag.valid_until, o.owner_manager_id, m.display_name AS manager_name, o.team_id,
+                       t.name AS team_name
                 FROM agreements ag
                 JOIN organizations o ON o.id = ag.organization_id
                 LEFT JOIN crm_user_profiles m ON m.id = o.owner_manager_id
+                LEFT JOIN teams t ON t.id = o.team_id
                 WHERE %s
                 ORDER BY ag.status_changed_at, o.name, ag.number, ag.id
-                """.formatted(condition))
+                """.formatted(withSubjects ? "ag.concluded_on" : "CAST(NULL AS DATE)", condition))
                 .params(parameters)
                 .query((resultSet, rowNumber) -> {
                     OffsetDateTime changedAt = resultSet.getObject("status_changed_at", OffsetDateTime.class);
@@ -960,11 +997,13 @@ public class AgreementRepository {
                             null,
                             resultSet.getObject("owner_manager_id", UUID.class),
                             resultSet.getString("manager_name"),
-                            null
+                            null,
+                            resultSet.getObject("team_id", UUID.class),
+                            resultSet.getString("team_name")
                     );
                 })
                 .list();
-        Map<UUID, List<String>> subjects = findSubjectNames(rows.stream().map(RegistryRow::id).toList());
+        Map<UUID, List<String>> subjects = withSubjects ? findSubjectNames(rows.stream().map(RegistryRow::id).toList()) : Map.of();
         Map<UUID, List<StatusEntry>> entries = findStatusEntries(rows.stream()
                 .filter(row -> AgreementApproval.inProgress(row.status())).map(RegistryRow::id).toList());
         return rows.stream()
@@ -972,7 +1011,8 @@ public class AgreementRepository {
                         row.statusChangedAt(), row.daysInStatus(), row.sentOn(), row.concludedOn(), row.validUntil(),
                         subjects.containsKey(row.id()) ? String.join("; ", subjects.get(row.id())) : null,
                         row.managerId(), row.managerName(),
-                        approval(row.id(), row.status(), row.statusChangedAt(), row.sentOn(), entries, today)))
+                        approval(row.id(), row.status(), row.statusChangedAt(), row.sentOn(), entries, today),
+                        row.teamId(), row.teamName()))
                 .toList();
     }
 

@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiClient, type InteractionIssue, type InteractionListParams, type ReminderDigest, type ReminderFeed } from '../../shared/api/client'
+import {
+  apiClient,
+  type InteractionIssue,
+  type InteractionListParams,
+  type PageInteraction,
+  type ReminderDigest,
+  type ReminderFeed,
+  type WorkNews
+} from '../../shared/api/client'
+import { WorkNewsFeed } from './WorkNewsFeed'
+import { readNoContactDays, saveNoContactDays } from './contactMark'
 import { StatTiles, type StatTile } from '../../shared/ui/StatTiles'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { ReminderAgreements } from './ReminderCenter'
 import { StepCompletion } from './StepCompletion'
 import { isIssueOverdue, issueTitle, myIssueHref } from '../issues/issueModel'
 import { type FeedGroupData, feedGroups, type PausedGroups, pausedGroups, shownOf } from './deadlines'
-import { type FeedGroup, feedGroupLinks, feedGroupsFor, type KamTile } from './workView'
-import { type AccessHandlers, formatDate, formatDateTime, handledAccessError, requestIdOf, todayIso } from './workShared'
+import { browserStorage, type FeedGroup, feedGroupLinks, feedGroupsFor, type KamTile } from './workView'
+import { type AccessHandlers, daysLabel, formatDate, formatDateTime, handledAccessError, requestIdOf, todayIso } from './workShared'
 import './workControl.css'
 
 type KamDeskProps = AccessHandlers & {
@@ -32,6 +42,8 @@ type DeskState =
     issues: InteractionIssue[]
     issuesTotal: number
     paused: PausedGroups
+    news: WorkNews | null
+    noContact: PageInteraction
   }
   | { kind: 'failed'; requestId?: string }
 
@@ -55,12 +67,13 @@ export const KamDesk = ({ profileId, refreshKey, licenseActive, onChanged, onSho
   const [expanded, setExpanded] = useState<ReadonlySet<FeedGroup>>(new Set())
   const [completing, setCompleting] = useState<string | null>(null)
   const [message, setMessage] = useState('')
+  const [noContactDays, setNoContactDays] = useState(() => readNoContactDays(browserStorage()))
   const requestVersion = useRef(0)
 
   const load = useCallback(async () => {
     const version = ++requestVersion.current
     try {
-      const [digest, overdue, todayPage, week, later, noStep, signals, issues, paused] = await Promise.all([
+      const [digest, overdue, todayPage, week, later, noStep, signals, issues, paused, news, noContact] = await Promise.all([
         apiClient.getReminders(),
         page('OVERDUE'),
         page('TODAY'),
@@ -69,7 +82,9 @@ export const KamDesk = ({ profileId, refreshKey, licenseActive, onChanged, onSho
         page('NO_NEXT_STEP'),
         apiClient.listLmsSignals().then((result) => result.items.length, () => null),
         apiClient.listIssues({ responsible: profileId, size: 100 }),
-        apiClient.listInteractions({ status: 'PAUSED', size: 100, sort: 'nextActionAt,asc' })
+        apiClient.listInteractions({ status: 'PAUSED', size: 100, sort: 'nextActionAt,asc' }),
+        apiClient.getWorkNews().catch(() => null),
+        apiClient.listInteractions({ noContactDays, size: 100, sort: 'updatedAt,asc' })
       ])
       const licenses = await total({ licenseExpiresBy: digest.licenseExpiresBy, status: 'ALL' })
       if (version !== requestVersion.current) {
@@ -85,7 +100,9 @@ export const KamDesk = ({ profileId, refreshKey, licenseActive, onChanged, onSho
         groups: feedGroups({ overdue, today: todayPage, week, later, noStep }, digest.feed, Date.now()),
         issues: issues.items,
         issuesTotal: issues.total,
-        paused: pausedGroups(paused.items, Date.now())
+        paused: pausedGroups(paused.items, Date.now()),
+        news,
+        noContact
       })
     } catch (error) {
       if (version !== requestVersion.current || handledAccessError(error, { onSessionExpired, onProfileUnavailable })) {
@@ -93,7 +110,7 @@ export const KamDesk = ({ profileId, refreshKey, licenseActive, onChanged, onSho
       }
       setState({ kind: 'failed', requestId: requestIdOf(error) })
     }
-  }, [onProfileUnavailable, onSessionExpired, profileId])
+  }, [noContactDays, onProfileUnavailable, onSessionExpired, profileId])
 
   useEffect(() => {
     void load()
@@ -129,7 +146,9 @@ export const KamDesk = ({ profileId, refreshKey, licenseActive, onChanged, onSho
       value: state.issuesTotal,
       tone: state.issues.some((issue) => isIssueOverdue(issue, today)) ? 'danger' : 'warning'
     },
-    { key: 'RESUME', label: 'Вернуться к работе', value: state.feed.resumeDue + state.feed.resumeNoDate, tone: 'warning' }
+    { key: 'RESUME', label: 'Вернуться к работе', value: state.feed.resumeDue + state.feed.resumeNoDate, tone: 'warning' },
+    { key: 'NO_CONTACT', label: `Нет контакта больше ${daysLabel(noContactDays)}`, value: state.noContact.total, tone: 'warning' },
+    { key: 'NEWS', label: state.news === null ? 'Новое по вузам недоступно' : 'Новое по моим вузам', value: state.news?.unviewed ?? null, tone: 'warning' }
   ]
   const selected: KamTile | null = tile ?? (licenseActive ? 'LICENSES' : null)
 
@@ -247,6 +266,24 @@ export const KamDesk = ({ profileId, refreshKey, licenseActive, onChanged, onSho
           )
         })}
         {(tile === null || tile === 'ISSUES') && <MyIssues issues={state.issues} total={state.issuesTotal} profileId={profileId} today={today} />}
+        {(tile === null || tile === 'NEWS') && state.news !== null && (
+          <WorkNewsFeed
+            news={state.news}
+            onViewed={(news) => setState((current) => current.kind === 'ready' ? { ...current, news } : current)}
+            onSessionExpired={onSessionExpired}
+            onProfileUnavailable={onProfileUnavailable}
+          />
+        )}
+        {(tile === null || tile === 'NO_CONTACT') && (
+          <NoContactFeed
+            page={state.noContact}
+            days={noContactDays}
+            onDaysChange={(days) => {
+              saveNoContactDays(browserStorage(), days)
+              setNoContactDays(days)
+            }}
+          />
+        )}
         {(tile === null || tile === 'RESUME') && <PausedFeed paused={state.paused} feed={state.feed} />}
         {(tile === null || tile === 'AGREEMENTS') && state.agreements.length > 0 && (
           <section className="desk-feed__group" aria-labelledby="desk-feed-agreements">
@@ -286,6 +323,48 @@ const MyIssues = ({ issues, total, profileId, today }: { issues: InteractionIssu
         {shown !== null && <span>{shown}</span>}
         <a href={`#/issues?${new URLSearchParams({ responsible: profileId }).toString()}`}>Все мои проблемы и риски в реестре</a>
       </p>
+    </section>
+  )
+}
+
+const noContactDayOptions = [14, 30, 45, 60, 90]
+
+// Порог N выбирает сам КАМ (по умолчанию 30); «последний контакт» — отметка «был контакт» или дата из данных
+// взаимодействия, у нового взаимодействия без контакта срок идёт от создания.
+const NoContactFeed = ({ page, days, onDaysChange }: { page: PageInteraction; days: number; onDaysChange: (days: number) => void }) => {
+  const options = noContactDayOptions.includes(days) ? noContactDayOptions : [...noContactDayOptions, days].sort((a, b) => a - b)
+  return (
+    <section className="desk-feed__group" aria-labelledby="desk-feed-no-contact">
+      <h3 id="desk-feed-no-contact">Нет контакта с вузом <span className="desk-feed__count">{page.total}</span></h3>
+      <label className="desk-feed__threshold">
+        Дольше
+        <select value={days} onChange={(event) => onDaysChange(Number(event.target.value))}>
+          {options.map((value) => <option key={value} value={value}>{daysLabel(value)}</option>)}
+        </select>
+      </label>
+      {page.items.length === 0 ? (
+        <p className="work-control__message">Со всеми вузами был контакт за {daysLabel(days)}.</p>
+      ) : (
+        <ul className="desk-feed__list">
+          {page.items.slice(0, feedLimit).map((item) => (
+            <li key={item.id} className="desk-feed__item">
+              <div className="desk-feed__step">
+                <strong><a href={`#/organizations/${item.organizationId}/${item.id}`}>{item.title}</a></strong>
+                <span><a href={`#/organizations/${item.organizationId}`}>{item.organizationName}</a> · {item.currentStageName}</span>
+              </div>
+              <span className="status status--missing">
+                {item.lastContactAt === null ? 'Контакт не записан' : `Последний контакт ${formatDate(todayIso(new Date(item.lastContactAt)))}`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {page.total > 0 && (
+        <p className="desk-feed__more">
+          {shownOf(Math.min(page.items.length, feedLimit), page.total) !== null && <span>{shownOf(Math.min(page.items.length, feedLimit), page.total)}</span>}
+          <a href={`#/work?noContactDays=${days}`}>Показать все в списке</a>
+        </p>
+      )}
     </section>
   )
 }

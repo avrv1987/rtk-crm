@@ -14,6 +14,9 @@ import { PersonalDataPanel } from './PersonalDataPanel'
 import { RetentionPanel } from './RetentionPanel'
 import { SourcesPanel } from './SourcesPanel'
 import { WorkflowTemplatesPanel } from './WorkflowTemplatesPanel'
+import { getModules } from '../../shared/modules'
+import { MaxAdminPanel } from '../max/MaxAdminPanel'
+import { MailAdminPanel } from '../mail/MailAdminPanel'
 import { handledSessionError, type SessionHandlers } from './adminShared'
 import { canonicalAdminHash, resolveAdminAddress, type AdminNavRole, type AdminSectionSlug } from './adminSections'
 import { catalogTabFrom, type CatalogsTabSlug } from './catalogTabs'
@@ -69,16 +72,18 @@ const useAdminSummary = (role: AdminNavRole, refreshKey: string, handlers: Sessi
     const results = await Promise.allSettled([
       apiClient.listCrmProfiles({ size: 1 }),
       apiClient.listDataSources(),
-      apiClient.listCrmExchangeEvents()
+      apiClient.listCrmExchangeEvents(),
+      apiClient.getBackupStatus()
     ])
     if (results.some(handled)) {
       return
     }
-    const [profiles, sources, events] = results
+    const [profiles, sources, events, backup] = results
     setSummary({
       pendingProfiles: profiles.status === 'fulfilled' ? profiles.value.pendingTotal : undefined,
       sources: sources.status === 'fulfilled' ? sources.value : undefined,
       crmEvents: events.status === 'fulfilled' ? events.value.counts : undefined,
+      backup: backup.status === 'fulfilled' ? backup.value : undefined,
       failed: results.some((result) => result.status === 'rejected')
     })
   }, [onProfileUnavailable, onSessionExpired, role])
@@ -147,6 +152,8 @@ export const AdminScreen = ({ profile, slug, query = '', onSessionExpired, onPro
         {section === 'workflow-templates' && <WorkflowTemplatesPanel role={profile.role} {...handlers} />}
         {section === 'catalog-import' && <CatalogImportPanel {...handlers} />}
         {section === 'sources' && <SourcesPanel {...handlers} onSynced={() => setSourcesRevision((value) => value + 1)} />}
+        {section === 'sources' && getModules().max === true && <MaxAdminPanel {...handlers} />}
+        {section === 'mail' && <MailAdminPanel enabled={getModules().mail === true} {...handlers} />}
         {section === 'journal' && <AuditJournalPanel {...handlers} />}
         {section === 'personal-data' && <PersonalDataPanel {...handlers} />}
         {section === 'retention' && <RetentionPanel {...handlers} />}

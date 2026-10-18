@@ -99,6 +99,8 @@ defaults=(
     'SOURCES_SYNC_CRON=0 0 * * * *'
     ENROLMENT_ACTIVE_KEY_VERSION=v1
     MFA_REQUIRED_FOR_PRIVILEGED=false
+    MCP_ENABLED=false
+    MCP_REDIRECT_URIS=http://127.0.0.1:8976/callback,http://localhost:6274/oauth/callback,http://localhost:6274/oauth/callback/debug
 )
 secrets=(
     POSTGRES_SUPERUSER_PASSWORD
@@ -137,7 +139,7 @@ done
 [[ ${values[DEMO_LMS]} == true || ${values[DEMO_LMS]} == false ]] || fail 'DEMO_LMS must be true or false'
 [[ ${values[MFA_REQUIRED_FOR_PRIVILEGED]} == true || ${values[MFA_REQUIRED_FOR_PRIVILEGED]} == false ]] \
     || fail 'MFA_REQUIRED_FOR_PRIVILEGED must be true or false'
-for key in MODULE_ENROLMENT_ENABLED MODULE_PARTNER_ENABLED; do
+for key in MODULE_ENROLMENT_ENABLED MODULE_PARTNER_ENABLED MCP_ENABLED; do
     [[ ${values[$key]} == true || ${values[$key]} == false ]] || fail "$key must be true or false"
 done
 write_env_file
@@ -368,7 +370,76 @@ if [[ -z $sync_client_id ]]; then
 fi
 sync_client_id=$(single_id 'CRM account sync client' "$sync_client_id")
 printf '%s' "$sync_client_definition" | kcadm update "clients/$sync_client_id" -r rtk-crm -f -
-kcadm add-roles -r rtk-crm --uusername service-account-crm-account-sync --cclientid realm-management --rolename manage-users
+# view-events: CRM переносит неудачные входы (события LOGIN_ERROR) в журнал. Сохранение событий realm включает
+# rtk-crm-realm.json (eventsEnabled), который применяется выше при каждом запуске.
+kcadm add-roles -r rtk-crm --uusername service-account-crm-account-sync --cclientid realm-management --rolename manage-users \
+    --rolename view-events
+
+# MCP для ИИ-агентов (docs/mcp.md). Клиентский scope crm-mcp кладёт в access token aud=crm-mcp и роли CRM; публичный
+# клиент crm-mcp-client входит по PKCE с экраном согласия, без offline_access. Регистрации клиентов «на лету» (DCR) нет:
+# адреса возврата клиентов перечисляются в MCP_REDIRECT_URIS. При MCP_ENABLED=false уже заведённый клиент отключается,
+# а realm не пересоздаётся ни в каком случае.
+ensure_scope_mapper() {
+    local mapper_id definition
+    definition=$(printf '{"name":"%s","protocol":"openid-connect",%s' "$2" "${3#\{}")
+    mapper_id=$(kcadm get "client-scopes/$1/protocol-mappers/models" -r rtk-crm --fields id,name --format csv --noquotes \
+        | awk -F, -v name="$2" '$2 == name { print $1 } $1 == name { print $2 }')
+    if [[ -z $mapper_id ]]; then
+        printf '%s' "$definition" | kcadm create "client-scopes/$1/protocol-mappers/models" -r rtk-crm -f -
+    else
+        printf '{"id":"%s",%s' "$mapper_id" "${definition#\{}" | kcadm update "client-scopes/$1/protocol-mappers/models/$mapper_id" -r rtk-crm -f -
+    fi
+}
+
+scope_id_by_name() {
+    kcadm get client-scopes -r rtk-crm --fields id,name --format csv --noquotes | awk -F, -v name="$1" '$2 == name { print $1 }'
+}
+
+configure_mcp() {
+    local client_id scope_id write_scope_id offline_id definition uri
+    local redirect_uris=()
+    client_id=$(kcadm get clients -r rtk-crm -q clientId=crm-mcp-client --fields id --format csv --noquotes)
+    if [[ ${values[MCP_ENABLED]} != true ]]; then
+        [[ -z $client_id ]] || kcadm update "clients/$(single_id 'MCP client' "$client_id")" -r rtk-crm -s enabled=false
+        return 0
+    fi
+    scope_id=$(scope_id_by_name crm-mcp)
+    if [[ -z $scope_id ]]; then
+        scope_id=$(printf '%s' '{"name":"crm-mcp","protocol":"openid-connect","attributes":{"include.in.token.scope":"true","display.on.consent.screen":"true","consent.screen.text":"Доступ ИИ-агента к CRM от вашего имени, только чтение"}}' \
+            | kcadm create client-scopes -r rtk-crm -f - -i)
+    fi
+    scope_id=$(single_id 'MCP client scope' "$scope_id")
+    ensure_scope_mapper "$scope_id" 'crm-mcp audience' \
+        '{"protocolMapper":"oidc-audience-mapper","config":{"included.custom.audience":"crm-mcp","access.token.claim":"true","id.token.claim":"false","introspection.token.claim":"true"}}'
+    ensure_scope_mapper "$scope_id" 'crm realm roles' \
+        '{"protocolMapper":"oidc-usermodel-realm-role-mapper","config":{"claim.name":"realm_access.roles","multivalued":"true","jsonType.label":"String","id.token.claim":"false","access.token.claim":"true","userinfo.token.claim":"false","introspection.token.claim":"true"}}'
+    IFS=',' read -r -a uris <<< "${values[MCP_REDIRECT_URIS]}"
+    for uri in "${uris[@]}"; do
+        [[ -z $uri ]] || redirect_uris+=("$(json_string "$uri")")
+    done
+    definition=$(printf '{"clientId":"crm-mcp-client","name":"MCP: ИИ-агенты","enabled":true,"protocol":"openid-connect","publicClient":true,"standardFlowEnabled":true,"implicitFlowEnabled":false,"directAccessGrantsEnabled":false,"serviceAccountsEnabled":false,"consentRequired":true,"redirectUris":[%s],"webOrigins":["+"],"attributes":{"pkce.code.challenge.method":"S256","access.token.lifespan":"300","oauth2.device.authorization.grant.enabled":"false"}}' \
+        "$(join_by , "${redirect_uris[@]}")")
+    if [[ -z $client_id ]]; then
+        client_id=$(printf '%s' "$definition" | kcadm create clients -r rtk-crm -f - -i)
+    fi
+    client_id=$(single_id 'MCP client' "$client_id")
+    printf '%s' "$definition" | kcadm update "clients/$client_id" -r rtk-crm -f -
+    kcadm update "clients/$client_id/default-client-scopes/$scope_id" -r rtk-crm
+    # Scope записи — необязательный: клиент получает его, только если явно запросил, а сотрудник согласился. Он даёт
+    # лишь подготовку плана; записывает план сам сотрудник на экране CRM. Без него у клиента остаётся чтение.
+    write_scope_id=$(scope_id_by_name crm-mcp.write)
+    if [[ -z $write_scope_id ]]; then
+        write_scope_id=$(printf '%s' '{"name":"crm-mcp.write","protocol":"openid-connect","attributes":{"include.in.token.scope":"true","display.on.consent.screen":"true","consent.screen.text":"Подготовка записей ИИ-агентом; записываете вы сами на экране CRM"}}'             | kcadm create client-scopes -r rtk-crm -f - -i)
+    fi
+    write_scope_id=$(single_id 'MCP write scope' "$write_scope_id")
+    kcadm update "clients/$client_id/optional-client-scopes/$write_scope_id" -r rtk-crm
+    offline_id=$(scope_id_by_name offline_access)
+    if [[ -n $offline_id ]] && kcadm get "clients/$client_id/optional-client-scopes" -r rtk-crm --fields id --format csv --noquotes \
+        | grep -qx "$offline_id"; then
+        kcadm delete "clients/$client_id/optional-client-scopes/$offline_id" -r rtk-crm
+    fi
+}
+configure_mcp
 
 demo_identities=(
     'kam-a|КАМ А|USER|team-a'
@@ -518,6 +589,10 @@ YAML
       - name: 'Институт без ответственного (демо)'
         type: UNIVERSITY
         team-key: 'team-c'
+      - name: 'Технологический университет (демо)'
+        type: UNIVERSITY
+        team-key: 'team-a'
+        owner-key: 'kam-a'
 YAML
         if [[ ${values[MOODLE_BASE_URL]-} == "$moodle_demo_url" ]] \
             && ! is_blank "${values[MOODLE_DEMO_JAVA_COURSE]-}" && ! is_blank "${values[MOODLE_DEMO_DATA_GROUP]-}"; then

@@ -4,6 +4,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -43,6 +44,7 @@ public class InteractionIssueRepository {
                    i.title AS interaction_title, i.organization_id, o.name AS organization_name,
                    owner_profile.display_name AS owner_manager_name, responsible.display_name AS responsible_name,
                    creator.display_name AS created_by_name, resolver.display_name AS resolved_by_name,
+                   ii.last_comment, commenter.display_name AS last_comment_by_name, ii.last_comment_at,
                    %s AS organization_accessible
             FROM interaction_issues ii
             JOIN interactions i ON i.id = ii.interaction_id
@@ -51,6 +53,7 @@ public class InteractionIssueRepository {
             JOIN crm_user_profiles responsible ON responsible.id = ii.responsible_profile_id
             JOIN crm_user_profiles creator ON creator.id = ii.created_by
             LEFT JOIN crm_user_profiles resolver ON resolver.id = ii.resolved_by
+            LEFT JOIN crm_user_profiles commenter ON commenter.id = ii.last_comment_by
             """.formatted(organizationAccessible);
     }
 
@@ -76,6 +79,34 @@ public class InteractionIssueRepository {
                 .param("issueId", issueId)
                 .query(this::mapIssue)
                 .optional();
+    }
+
+    public Optional<InteractionIssue> findForViewer(VisibilityScope scope, UUID issueId) {
+        return jdbcClient.sql(select(inScope(scope)) + "WHERE ii.id = :issueId")
+                .params(scope.parameters())
+                .param("issueId", issueId)
+                .query(this::mapIssue)
+                .optional();
+    }
+
+    public Optional<UUID> findOwnerManagerId(UUID organizationId) {
+        return jdbcClient.sql("SELECT owner_manager_id FROM organizations WHERE id = :organizationId")
+                .param("organizationId", organizationId)
+                .query((resultSet, rowNumber) -> Optional.ofNullable(resultSet.getObject("owner_manager_id", UUID.class)))
+                .single();
+    }
+
+    public void comment(UUID id, String comment, UUID commentedBy, OffsetDateTime commentedAt) {
+        jdbcClient.sql("""
+                UPDATE interaction_issues
+                SET last_comment = :comment, last_comment_by = :commentedBy, last_comment_at = :commentedAt
+                WHERE id = :id
+                """)
+                .param("id", id)
+                .param("comment", comment)
+                .param("commentedBy", commentedBy)
+                .param("commentedAt", commentedAt)
+                .update();
     }
 
     public List<InteractionIssue> findVisible(
@@ -138,7 +169,9 @@ public class InteractionIssueRepository {
         // внутри взаимодействия строго растёт.
         OffsetDateTime last = jdbcClient.sql("SELECT MAX(created_at) FROM interaction_issues WHERE interaction_id = :interactionId")
                 .param("interactionId", interactionId).query(OffsetDateTime.class).optional().orElse(null);
-        OffsetDateTime at = last != null && !createdAt.isAfter(last) ? last.plusNanos(1_000) : createdAt;
+        // Сравнивается записываемое значение: база хранит микросекунды (см. AgreementRepository.insertStatusEvent).
+        OffsetDateTime candidate = createdAt.truncatedTo(ChronoUnit.MICROS);
+        OffsetDateTime at = last != null && !candidate.isAfter(last) ? last.plus(1, ChronoUnit.MICROS) : candidate;
         jdbcClient.sql("""
                 INSERT INTO interaction_issues (
                     id, interaction_id, kind, description, risk_level, responsible_profile_id, due_on, status, created_by, created_at
@@ -248,7 +281,10 @@ public class InteractionIssueRepository {
                 resultSet.getObject("created_at", OffsetDateTime.class),
                 resultSet.getString("resolved_by_name"),
                 resultSet.getObject("resolved_at", OffsetDateTime.class),
-                resultSet.getBoolean("organization_accessible")
+                resultSet.getBoolean("organization_accessible"),
+                resultSet.getString("last_comment"),
+                resultSet.getString("last_comment_by_name"),
+                resultSet.getObject("last_comment_at", OffsetDateTime.class)
         );
     }
 

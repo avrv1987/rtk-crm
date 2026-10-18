@@ -10,10 +10,13 @@ import type {
   WorkControlTotals
 } from '../../shared/api/client'
 import { formatMoscowDateTime } from '../../shared/format/datetime'
-import { agreementNoticeDays, agreementStatusLabels, approvalDelayed } from '../agreements/agreementModel'
+import { agreementNoticeDays, agreementStatusLabels, approvalDelayed, approvalText } from '../agreements/agreementModel'
+import type { AgreementRegistryRow } from '../agreements/agreementsApi'
 import { AgreementTermMark, ApprovalMark } from '../agreements/agreementUi'
 import {
   changeNotes,
+  compactManagers,
+  compactTeams,
   type ControlTile,
   dueLabels,
   dueTones,
@@ -23,6 +26,10 @@ import {
   managerKey,
   routeLabel,
   routeShare,
+  type ShownTotals,
+  shownTotals,
+  shownTotalsText,
+  shownWorks,
   sortedManagers,
   teamKey
 } from './controlModel'
@@ -57,10 +64,10 @@ const WorkRow = ({ item, withPeriod }: { item: WorkControlItem; withPeriod: bool
       </td>
       <td data-label="Этап">
         <span className="control-route__head">
-          <strong>{routeLabel(item)}</strong>
-          <span>{item.stage}</span>
+          <strong>{item.stage}</strong>
         </span>
         <span className="control-route__bar" aria-hidden="true"><span style={{ width: `${routeShare(item)}%` }} /></span>
+        {item.stageTotal > 0 && <span className="control-muted">{routeLabel(item)}</span>}
         {item.daysOnStage !== null && item.daysOnStage !== undefined && (
           <span className="control-muted">на этапе {item.daysOnStage} дн.</span>
         )}
@@ -134,16 +141,22 @@ const Count = ({ label, value, tone, onPick }: { label: string; value: number; t
   )
 }
 
-const TotalsLine = ({ totals, withPeriod, stuck, lms, stuckDays, onPick }: {
+const Selected = ({ totals }: { totals: ShownTotals | undefined }) => (
+  totals === undefined ? null : <strong className="control-totals__selected">{shownTotalsText(totals)}</strong>
+)
+
+const TotalsLine = ({ totals, withPeriod, stuck, lms, stuckDays, onPick, selected }: {
   totals: WorkControlTotals
   withPeriod: boolean
   stuck?: number
   lms?: number
   stuckDays: number
   onPick?: (tile: ControlTile | null) => void
+  selected?: ShownTotals
 }) => (
   <span className="control-totals">
-    <span>вузов {totals.organizations}</span>
+    <Selected totals={selected} />
+    <span>{selected === undefined ? '' : 'всего: '}вузов {totals.organizations}</span>
     <Count label="взаимодействий" value={totals.works} onPick={onPick && (() => onPick(null))} />
     <Count label="просрочено" value={totals.overdue} tone="danger" onPick={onPick && (() => onPick('OVERDUE'))} />
     <Count label="на этой неделе" value={totals.thisWeek} onPick={onPick && (() => onPick('THIS_WEEK'))} />
@@ -156,9 +169,10 @@ const TotalsLine = ({ totals, withPeriod, stuck, lms, stuckDays, onPick }: {
   </span>
 )
 
-const ManagerBlock = ({ teamId, manager, withPeriod, stuckDays, open, onPick, assignHref, onAssign }: {
+const ManagerBlock = ({ teamId, manager, full, withPeriod, stuckDays, open, onPick, assignHref, onAssign }: {
   teamId: string | null | undefined
   manager: WorkControlManager
+  full: WorkControlManager | undefined
   withPeriod: boolean
   stuckDays: number
   open: MatrixOpenState
@@ -167,7 +181,8 @@ const ManagerBlock = ({ teamId, manager, withPeriod, stuckDays, open, onPick, as
   onAssign?: AssignHandler
 }) => {
   const key = managerKey(teamId, manager.managerId)
-  const counts = managerCounts(manager, stuckDays)
+  // Под плиткой строки менеджера отобраны, а итоги — по всем его взаимодействиям; счётчики берутся оттуда же.
+  const counts = managerCounts(full ?? manager, stuckDays)
   return (
     <details
       className={`control-manager${manager.managerId === null ? ' control-manager--unassigned' : ''}`}
@@ -183,6 +198,7 @@ const ManagerBlock = ({ teamId, manager, withPeriod, stuckDays, open, onPick, as
           lms={counts.lms}
           stuckDays={stuckDays}
           onPick={(tile) => onPick(manager.managerId, tile)}
+          selected={full === undefined ? undefined : shownTotals(manager.works)}
         />
       </summary>
       {manager.managerId === null && onAssign !== undefined && (
@@ -216,9 +232,11 @@ const ManagerBlock = ({ teamId, manager, withPeriod, stuckDays, open, onPick, as
   )
 }
 
-const TeamStats = ({ row, stuckDays }: { row: TeamSummary; stuckDays: number }) => (
+// Сводка команд приходит без фильтров экрана, поэтому при любом отборе она подписана «всего, без фильтров».
+const TeamStats = ({ row, stuckDays, selected }: { row: TeamSummary; stuckDays: number; selected?: ShownTotals }) => (
   <span className="control-totals">
-    <span>вузов {row.organizations}</span>
+    <Selected totals={selected} />
+    <span>{selected === undefined ? '' : 'всего, без фильтров: '}вузов {row.organizations}</span>
     <span className={row.unassignedOrganizations > 0 ? 'control-totals__overdue' : undefined}>без КАМ {row.unassignedOrganizations}</span>
     <span>взаимодействий {row.interactions}</span>
     <span className={row.overdue > 0 ? 'control-totals__overdue' : undefined}>просрочено {row.overdue}</span>
@@ -234,22 +252,30 @@ const TeamStats = ({ row, stuckDays }: { row: TeamSummary; stuckDays: number }) 
 
 type MatrixProps = {
   control: WorkControl
+  // Полная матрица до отбора плиткой; без плитки не передаётся.
+  full?: WorkControl
+  // Включён ли хоть один фильтр или плитка: тогда сводка команд, посчитанная без фильтров, отличается от строк.
+  filtered: boolean
   withPeriod: boolean
   stuckDays: number
   summary: TeamsSummary | null
   hotTeamId: string | null | undefined
   open: MatrixOpenState
+  // Телефон: группы свёрнуты, «горящие» менеджеры и команды сверху.
+  compact?: boolean
   onPick: PickHandler
   assignHref: string | null
   onAssign?: AssignHandler
 }
 
 const TeamBlock = ({ team, props }: { team: WorkControlTeam; props: MatrixProps }) => {
-  const managers = sortedManagers(team.managers).map((manager) => (
+  const fullTeam = props.full?.teams.find((item) => item.teamId === team.teamId)
+  const managers = (props.compact ? compactManagers(team.managers) : sortedManagers(team.managers)).map((manager) => (
     <ManagerBlock
       key={manager.managerId ?? 'unassigned'}
       teamId={team.teamId}
       manager={manager}
+      full={fullTeam?.managers.find((item) => item.managerId === manager.managerId)}
       withPeriod={props.withPeriod}
       stuckDays={props.stuckDays}
       open={props.open}
@@ -263,6 +289,7 @@ const TeamBlock = ({ team, props }: { team: WorkControlTeam; props: MatrixProps 
   }
   const row = props.summary?.teams.find((item) => item.teamId === team.teamId)
   const key = teamKey(team.teamId)
+  const selected = shownTotals(team.managers.flatMap((manager) => manager.works))
   return (
     <details
       className="control-team control-team--group"
@@ -272,8 +299,8 @@ const TeamBlock = ({ team, props }: { team: WorkControlTeam; props: MatrixProps 
       <summary className="control-team__head">
         <h2>{team.teamName ?? 'Команда без названия'}</h2>
         {row === undefined
-          ? <TotalsLine totals={team.totals} withPeriod={props.withPeriod} stuckDays={props.stuckDays} />
-          : <TeamStats row={row} stuckDays={props.stuckDays} />}
+          ? <TotalsLine totals={team.totals} withPeriod={props.withPeriod} stuckDays={props.stuckDays} selected={props.full === undefined ? undefined : selected} />
+          : <TeamStats row={row} stuckDays={props.stuckDays} selected={props.filtered ? selected : undefined} />}
       </summary>
       <div className="control-team__managers">{managers}</div>
     </details>
@@ -283,15 +310,36 @@ const TeamBlock = ({ team, props }: { team: WorkControlTeam; props: MatrixProps 
 export const ControlMatrix = (props: MatrixProps) => (
   props.control.teams.length === 0 ? <p className="control-empty">По этим фильтрам взаимодействий нет.</p> : (
     <div className="control-matrix">
-      {props.control.teams.map((team) => <TeamBlock key={team.teamId ?? 'team'} team={team} props={props} />)}
+      {(props.compact ? compactTeams(props.control.teams) : props.control.teams)
+        .map((team) => <TeamBlock key={team.teamId ?? 'team'} team={team} props={props} />)}
       {props.control.byTeams && props.summary !== null && (
         <div className="control-team__all">
           <strong>Все команды</strong>
-          <TeamStats row={props.summary.total} stuckDays={props.stuckDays} />
+          <TeamStats row={props.summary.total} stuckDays={props.stuckDays} selected={props.filtered ? shownTotals(shownWorks(props.control)) : undefined} />
         </div>
       )}
     </div>
   )
+)
+
+// Договоры под плиткой «Договор на согласовании»: тот же набор, что в её числе, с цветом согласования, как в реестре.
+export const AgreementsInProgress = ({ rows, byTeams }: { rows: AgreementRegistryRow[]; byTeams: boolean }) => (
+  <section className="control-manager control-agreements" aria-label="Договоры на согласовании">
+    <p className="control-manager__name">{`Договоры на согласовании: ${rows.length}`} <a href="#/agreements">Реестр договоров</a></p>
+    {rows.length === 0 ? <p className="control-manager__empty">Договоров на согласовании нет.</p> : (
+      <ul className="control-unassigned">
+        {rows.map((row) => (
+          <li key={row.id}>
+            <a href={`#/organizations/${row.organizationId}?agreement=${row.id}`}>{`№ ${row.number}`}</a>
+            <span>{row.organizationName}</span>
+            <span className={`control-agreement control-agreement--${row.status.toLowerCase()}`}>{agreementStatusLabels[row.status]}</span>
+            {row.approval && <span className="control-muted">{approvalText(row.approval)} <ApprovalMark approval={row.approval} /></span>}
+            <span className="control-muted">{row.managerName ?? 'Без ответственного КАМ'}{byTeams && row.teamName ? ` · ${row.teamName}` : ''}</span>
+          </li>
+        ))}
+      </ul>
+    )}
+  </section>
 )
 
 const unassignedReason = (organization: Organization) => (

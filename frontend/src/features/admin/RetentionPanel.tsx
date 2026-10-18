@@ -34,6 +34,7 @@ const policyRows = (policy: RetentionPolicy, enrolment: boolean): [string, strin
   ['Контакты вузов без взаимодействий', `обезличиваются через ${policy.inactiveContactsDays} дн. без изменений взаимодействий и контактов`],
   ['Профили уволенных сотрудников', `обезличиваются через ${policy.dismissedProfilesDays} дн. после блокировки`],
   ['Журнал', `записи удаляются через ${policy.auditEventsDays} дн.`],
+  ['Планы записи ИИ-агента', `удаляются через ${policy.agentPlansDays} дн. после решения или истечения срока подтверждения`],
   ...(enrolment
     ? [
         ['Анкеты слушателей', `обезличиваются через ${policy.learnerProfilesTerm} после окончания последнего потока слушателя`],
@@ -165,7 +166,8 @@ export const RetentionPanel = ({ onSessionExpired, onProfileUnavailable }: Sessi
         <p className="security-success" role="status">
           Удалено файлов отчётов: {runState.run.reportFilesDeleted}, обезличено контактов: {runState.run.contactsAnonymized},
           профилей: {runState.run.profilesAnonymized}, {enrolment && `анкет слушателей: ${runState.run.learnersAnonymized}, `}удалено записей
-          журнала: {runState.run.auditEventsDeleted}.
+          журнала: {runState.run.auditEventsDeleted}, планов ИИ-агента: {runState.run.agentPlansDeleted} (истекло без
+          подтверждения: {runState.run.agentPlansExpired}).
         </p>
       )}
       {runState.kind === 'failed' && (

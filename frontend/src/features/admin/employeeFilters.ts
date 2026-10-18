@@ -1,4 +1,5 @@
-import type { CrmProfile, CrmProfileListParams } from '../../shared/api/client'
+import type { CrmProfile, CrmProfileListParams, CrmProfileUpdate, LoginLockoutStatus } from '../../shared/api/client'
+import { formatMoscowDateTime } from '../../shared/format/datetime.ts'
 
 export type EmployeeStatus = NonNullable<CrmProfileListParams['status']>
 
@@ -96,4 +97,36 @@ export const roleSourceLabel = (profile: Pick<CrmProfile, 'roleSyncedAt' | 'pend
     return 'из Keycloak'
   }
   return profile.pendingActivation ? null : 'в Keycloak не перенесена'
+}
+
+// Те же условия, что на сервере: вузы остаются за сотрудником, только если он действующий КАМ или руководитель
+// и команда не меняется.
+export const unassignsOrganizations = (profile: Pick<CrmProfile, 'role' | 'active'>, update: CrmProfileUpdate) => {
+  const nextRole = update.role ?? profile.role
+  const nextActive = update.active ?? profile.active
+  return (profile.role === 'USER' || profile.role === 'LEADER')
+    && (update.teamId !== undefined || (nextRole !== 'USER' && nextRole !== 'LEADER') || !nextActive)
+}
+
+export const transferSummary = (organizations: number, recipient: string | null) => {
+  if (organizations === 0) {
+    return 'За сотрудником нет вузов.'
+  }
+  return recipient === null
+    ? `Вузы сотрудника (${organizations}) останутся без КАМ: руководитель команды увидит их в колокольчике, в истории вуза будет причина.`
+    : `Вузы сотрудника (${organizations}) перейдут к КАМ «${recipient}»; в истории каждого вуза будет причина.`
+}
+
+export const lockoutText = (status: Pick<LoginLockoutStatus, 'available' | 'failures' | 'locked' | 'lastFailureAt'>) => {
+  if (!status.available) {
+    return 'Связь с Keycloak не настроена: неудачные входы не видны.'
+  }
+  if (status.locked) {
+    return `Вход временно заблокирован Keycloak после неудачных попыток (подряд: ${status.failures}). С верным паролем сотрудник тоже не войдёт, пока блокировка не истечёт или её не снимут.`
+  }
+  if (status.failures > 0) {
+    const last = status.lastFailureAt === null ? '' : `, последняя — ${formatMoscowDateTime(status.lastFailureAt)}`
+    return `Неудачных попыток входа подряд: ${status.failures}${last}. Ещё несколько ошибок — и Keycloak временно заблокирует вход.`
+  }
+  return 'Неудачных попыток входа нет, вход не заблокирован.'
 }

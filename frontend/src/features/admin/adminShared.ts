@@ -11,7 +11,7 @@ export const roleLabels: Record<CrmProfile['role'], string> = {
   LEADER: 'Руководитель команды',
   ADMIN: 'Администратор',
   MANAGEMENT: 'Руководство (только чтение)',
-  PARTNER: 'Представитель вуза (кабинет)'
+  PARTNER: 'Координатор вуза (кабинет)'
 }
 
 /** @deprecated используйте formatMoscowDateTime из shared/format/datetime — оставлено для совместимости импортов. */

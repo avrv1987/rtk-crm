@@ -8,6 +8,7 @@ public record RetentionPolicy(
         long inactiveContactsDays,
         long dismissedProfilesDays,
         long auditEventsDays,
+        long agentPlansDays,
         String learnerProfilesTerm,
         String schedule,
         AuditEntry lastRun,

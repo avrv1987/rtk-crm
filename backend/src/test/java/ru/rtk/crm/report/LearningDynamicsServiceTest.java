@@ -93,19 +93,23 @@ class LearningDynamicsServiceTest {
                 tuple("2026-05", LocalDate.parse("2026-05-31")), tuple("2026-06", TO));
         assertThat(leader.totalParticipants()).containsExactly(0L, 10L, 12L, 12L, 12L, 7L);
         assertThat(leader.totalCompleted()).containsExactly(null, 0L, 2L, 2L, 9L, null);
+        assertThat(leader.totalRunsWithoutData()).containsExactly(0L, 0L, 0L, 1L, 1L, 0L);
+        // П15: поток «Института без КАМ» идёт с апреля, а первое наблюдение — в июне: апрель и май — «нет данных», не ноль.
         assertThat(leader.series()).extracting(LearningDynamics.Series::label, LearningDynamics.Series::participants)
                 .containsExactly(
-                        tuple("Институт без КАМ", List.of(0L, 0L, 0L, 0L, 0L, 7L)),
+                        tuple("Институт без КАМ", java.util.Arrays.asList(0L, 0L, 0L, null, null, 7L)),
                         tuple("Университет «Альфа»", List.of(0L, 10L, 12L, 12L, 12L, 0L)));
         assertThat(leader.rows()).extracting(LearningDynamics.Row::month, LearningDynamics.Row::organizationName,
-                        LearningDynamics.Row::runs, LearningDynamics.Row::participants, LearningDynamics.Row::completed,
-                        LearningDynamics.Row::completionPercent)
+                        LearningDynamics.Row::runs, LearningDynamics.Row::runsWithoutData, LearningDynamics.Row::participants,
+                        LearningDynamics.Row::completed, LearningDynamics.Row::completionPercent)
                 .containsExactly(
-                        tuple("2026-02", "Университет «Альфа»", 1L, 10L, 0L, 0L),
-                        tuple("2026-03", "Университет «Альфа»", 1L, 12L, 2L, 17L),
-                        tuple("2026-04", "Университет «Альфа»", 1L, 12L, 2L, 17L),
-                        tuple("2026-05", "Университет «Альфа»", 1L, 12L, 9L, 75L),
-                        tuple("2026-06", "Институт без КАМ", 1L, 7L, null, null));
+                        tuple("2026-02", "Университет «Альфа»", 1L, 0L, 10L, 0L, 0L),
+                        tuple("2026-03", "Университет «Альфа»", 1L, 0L, 12L, 2L, 17L),
+                        tuple("2026-04", "Институт без КАМ", 0L, 1L, null, null, null),
+                        tuple("2026-04", "Университет «Альфа»", 1L, 0L, 12L, 2L, 17L),
+                        tuple("2026-05", "Институт без КАМ", 0L, 1L, null, null, null),
+                        tuple("2026-05", "Университет «Альфа»", 1L, 0L, 12L, 9L, 75L),
+                        tuple("2026-06", "Институт без КАМ", 1L, 0L, 7L, null, null));
 
         LearningDynamics byProgram = service.dynamics(MANAGER_B_PROFILE, FROM, TO, SeriesBy.PROGRAM, null, null);
         assertThat(byProgram.series()).singleElement().satisfies(series -> {
@@ -120,6 +124,46 @@ class LearningDynamicsServiceTest {
             assertThat(empty.totalParticipants()).containsOnly(0L);
         });
         assertThat(leader.notes()).anyMatch(note -> note.contains("действовавшему на конец последнего дня месяца"));
+    }
+
+    // П14 и П15: C=16, N=4, U=80 — доля 80 % только среди известных, покрытие 20 из 100; поток без наблюдения не ноль.
+    @Test
+    void completionShareShowsNumeratorDenominatorAndCoverage() {
+        UUID tracked = run(ORGANIZATION_B, PROGRAM, "2026-07-01", "2026-08-01", "STUDENTS");
+        observeCounts(tracked, "2026-07-20", 20, 16, 4);
+        UUID untracked = run(ORGANIZATION_B, PROGRAM, "2026-07-01", "2026-08-01", "STUDENTS");
+        observeCounts(untracked, "2026-07-20", 80, null, null);
+        run(ORGANIZATION_B, PROGRAM, "2026-07-01", "2026-08-01", "STUDENTS");
+        CrmProfile management = new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0);
+        LocalDate july = LocalDate.parse("2026-07-01");
+
+        LearningDynamics dynamics = service.dynamics(management, july, LocalDate.parse("2026-07-31"), null,
+                List.of(ORGANIZATION_B), List.of(PROGRAM));
+
+        assertThat(dynamics.rows()).singleElement().satisfies(row -> {
+            assertThat(row.runs()).isEqualTo(2);
+            assertThat(row.runsWithoutData()).isEqualTo(1);
+            assertThat(row.participants()).isEqualTo(100L);
+            assertThat(row.completed()).isEqualTo(16L);
+            assertThat(row.known()).isEqualTo(20L);
+            assertThat(row.completionPercent()).isEqualTo(80L);
+            assertThat(row.completionBasis()).isEqualTo("16 из 20 с известным статусом; данные по 20 из 100");
+        });
+        assertThat(dynamics.totalKnown()).containsExactly(20L);
+        assertThat(dynamics.totalRunsWithoutData()).containsExactly(1L);
+
+        UUID silentOrganization = UUID.randomUUID();
+        ReportTestData.organization(jdbcTemplate, silentOrganization, "Колледж без наблюдений", ReportTestData.TEAM_B,
+                ReportTestData.MANAGER_B);
+        run(silentOrganization, PROGRAM, "2026-07-01", "2026-08-01", "STUDENTS");
+        LearningDynamics silent = service.dynamics(management, july, LocalDate.parse("2026-07-31"), null,
+                List.of(silentOrganization), null);
+        assertThat(silent.totalParticipants()).containsExactly((Long) null);
+        assertThat(silent.series()).singleElement().satisfies(series -> assertThat(series.participants()).containsExactly((Long) null));
+        assertThat(silent.rows()).singleElement().satisfies(row -> {
+            assertThat(row.participants()).isNull();
+            assertThat(row.completionBasis()).isEqualTo("нет данных: у потоков нет наблюдений");
+        });
     }
 
     @Test
@@ -138,7 +182,7 @@ class LearningDynamicsServiceTest {
 
         assertThat(leader.teams()).extracting(LearningTrend.Item::name).containsExactly("Команда А");
         assertThat(leader.programs()).extracting(LearningTrend.Item::name).doesNotContain("Анализ данных");
-        assertThat(leader.total().end()).isEqualTo(14L + 7L);
+        assertThat(leader.total().end() + leader.total().endWithoutBase()).isEqualTo(14L + 7L);
         assertThat(everyone.teams()).extracting(LearningTrend.Item::name).contains("Команда А", "Команда Б");
         assertThat(everyone.programs()).extracting(LearningTrend.Item::name).contains("Анализ данных");
         assertThat(everyone.total().end()).isGreaterThan(leader.total().end());
@@ -172,12 +216,16 @@ class LearningDynamicsServiceTest {
             Sheet sheet = workbook.getSheetAt(0);
             int header = dynamics.notes().size() + 2;
             assertThat(sheet.getRow(0).getCell(0).getStringCellValue()).isEqualTo(LearningDynamics.TITLE);
-            assertThat(sheet.getRow(header).getCell(4).getStringCellValue()).isEqualTo("Обучающиеся в потоках месяца (Moodle)");
-            assertThat(sheet.getRow(header + 1).getCell(4).getNumericCellValue()).isEqualTo(10d);
-            assertThat(sheet.getRow(header).getCell(6).getStringCellValue()).isEqualTo("Доля завершивших, %");
-            assertThat(sheet.getRow(header + 2).getCell(6).getNumericCellValue()).isEqualTo(17d);
-            assertThat(sheet.getRow(header + 5).getCell(5).getStringCellValue()).isEqualTo(ReportColumn.NO_DATA);
-            assertThat(sheet.getRow(header + 5).getCell(6).getStringCellValue()).isEqualTo(ReportColumn.NO_DATA);
+            assertThat(sheet.getRow(header).getCell(5).getStringCellValue()).isEqualTo("Обучающиеся в потоках месяца (Moodle)");
+            assertThat(sheet.getRow(header + 1).getCell(5).getNumericCellValue()).isEqualTo(10d);
+            assertThat(sheet.getRow(header).getCell(8).getStringCellValue()).isEqualTo("Доля завершивших среди известных, %");
+            assertThat(sheet.getRow(header + 2).getCell(8).getNumericCellValue()).isEqualTo(17d);
+            assertThat(sheet.getRow(header + 2).getCell(9).getStringCellValue())
+                    .isEqualTo("2 из 12 с известным статусом; данные по 12 из 12");
+            assertThat(sheet.getRow(header + 3).getCell(4).getNumericCellValue()).isEqualTo(1d);
+            assertThat(sheet.getRow(header + 3).getCell(5).getStringCellValue()).isEqualTo(ReportColumn.NO_DATA);
+            assertThat(sheet.getRow(header + 7).getCell(6).getStringCellValue()).isEqualTo(ReportColumn.NO_DATA);
+            assertThat(sheet.getRow(header + 7).getCell(8).getStringCellValue()).isEqualTo(ReportColumn.NO_DATA);
         }
         ByteArrayOutputStream pdf = new ByteArrayOutputStream();
         service.write(dynamics, ReportFormat.PDF, pdf);
@@ -196,6 +244,17 @@ class LearningDynamicsServiceTest {
                 ) VALUES (?, 'MOODLE', 'COURSE', ?, ?, ?, ?, ?, ?)
                 """, id, id.toString(), organizationId, programId, LocalDate.parse(startsOn), LocalDate.parse(endsOn), kind);
         return id;
+    }
+
+    private void observeCounts(UUID run, String observedOn, int participants, Integer completed, Integer notCompleted) {
+        OffsetDateTime at = OffsetDateTime.parse(observedOn + "T12:00:00+03:00");
+        jdbcTemplate.update("""
+                INSERT INTO learning_observations (
+                    mapping_id, observed_from, confirmed_at, participants_count, teachers_count, completed_count,
+                    not_completed_count, unknown_count, groups_count
+                ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, 0)
+                """, run, at, at.plusDays(3), participants, completed, notCompleted,
+                participants - (completed == null ? 0 : completed + notCompleted));
     }
 
     private void observe(UUID run, String observedOn, int participants, Integer completed) {

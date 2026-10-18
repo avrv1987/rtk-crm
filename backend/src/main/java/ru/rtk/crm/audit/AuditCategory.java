@@ -11,5 +11,9 @@ public enum AuditCategory {
     RETENTION,
     ACCOUNT,
     LOGIN,
-    LEARNER
+    LEARNER,
+    AGENT,
+    MESSENGER,
+    SETTINGS,
+    MAIL
 }

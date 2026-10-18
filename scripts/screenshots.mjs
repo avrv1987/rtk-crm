@@ -12,7 +12,6 @@ const desktop = { width: 1440, height: 900, mobile: false }
 const phone = { width: 390, height: 844, mobile: true }
 const loginButtonVisible = "Boolean([...document.querySelectorAll('button')].find((button) => button.textContent.includes('Войти')))"
 const keycloakFormVisible = "Boolean(document.querySelector('#username') && document.querySelector('#password') && document.querySelector('#kc-login'))"
-const baseStages = ['Поиск контакта', 'Уточнение актуальности', 'Встреча', 'Обмен документами', 'Подписание', 'Занятия', 'Повышение квалификации']
 
 const saved = []
 let phase = 'startup'
@@ -119,6 +118,10 @@ const checkOption = async (page, legend, label) => {
 }
 
 const listedOptions = async (page, legend) => {
+  if (!(await page.evaluate(filterPanelOpen))) {
+    await page.evaluate("document.querySelector('.filter-button').click()")
+    await page.waitFor(() => page.evaluate(filterPanelOpen), 'Filter panel did not open')
+  }
   const group = `[...document.querySelectorAll('.report-filter-group')].find((item) => item.querySelector('.report-filter-group__label')?.textContent === ${JSON.stringify(legend)})`
   await page.waitFor(() => page.evaluate(`Boolean(${group})`), 'Filter is absent: ' + legend)
   if (!(await page.evaluate(`Boolean(${group}.querySelector('.report-filter-group__options'))`))) {
@@ -173,13 +176,13 @@ try {
   await clickButton(kam, 'Изменить', "document.querySelector('.work-step__actions')")
   await shoot(kam, 'next-step', "Boolean(document.querySelector('dialog[open] .interaction-plan-form'))", 'dialog[open]')
   await clickButton(kam, 'Закрыть', "document.querySelector('dialog[open]')")
-  await kam.evaluate("(document.querySelector('.work-card__primary[data-action=transition]') ?? [...document.querySelectorAll('.work-card__more [role=menuitem]')].find((item) => item.textContent.trim() === 'Перейти на этап…')).click()")
+  await kam.evaluate("(document.querySelector('.work-card__primary[data-action=transition]') ?? [...document.querySelectorAll('.work-card__more [role=menuitem]')].find((item) => item.textContent.trim() === 'Перейти на следующий этап…')).click()")
   await fillFields(kam, 'dialog[open] form.interaction-transition-form select', [1])
   await fillFields(kam, 'dialog[open] form.interaction-transition-form textarea', [
     'Проректор подтвердил интерес к программе, договорились о встрече.',
     'Провести встречу с проректором и показать программу'
   ])
-  await shoot(kam, 'transition', "Boolean(document.querySelector('dialog[open] form.interaction-transition-form')?.innerText.includes('Выбран этап'))", 'dialog[open]')
+  await shoot(kam, 'transition', "Boolean(document.querySelector('dialog[open] form.interaction-transition-form select')?.value)", 'dialog[open]')
   await clickButton(kam, 'Закрыть', "document.querySelector('dialog[open]')")
   // Заполненное окно перехода оставляет черновик, и его плашка закрыла бы следующие снимки: черновики удаляются,
   // а полная загрузка страницы (адрес без #) сбрасывает плашку.
@@ -204,7 +207,8 @@ try {
   phase = 'reports'
   const reportsReady = "Boolean(document.querySelector('.reports__form .filter-button'))"
   await navigate(kam, '#/reports/portfolio', reportsReady)
-  for (const stage of baseStages) {
+  // Все этапы из самого фильтра: демо-взаимодействия стоят и на этапах, которых нет в базовом списке.
+  for (const stage of await listedOptions(kam, 'Этап')) {
     await checkOption(kam, 'Этап', stage)
   }
   // Все программы, кроме «Не указано»: тестовые взаимодействия проверочных скриптов создаются без программы.

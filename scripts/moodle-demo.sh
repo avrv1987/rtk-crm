@@ -83,22 +83,25 @@ MOODLE_JURY_PASSWORD=$(env_value "$moodle_env_file" MOODLE_JURY_PASSWORD)
 export MOODLE_JURY_PASSWORD
 setup_output=$(compose exec -T -e MOODLE_JURY_PASSWORD -u daemon moodle /opt/bitnami/php/bin/php \
     < "$project_root/infra/moodle/demo-setup.php") || {
-    printf '%s\n' "$setup_output" | grep -v '^TOKEN=' >&2 || true
+    printf '%s\n' "$setup_output" | grep -v 'TOKEN=' >&2 || true
     fail 'Moodle demo setup script failed'
 }
 course_ids=$(printf '%s\n' "$setup_output" | sed -n 's/^COURSE_IDS=//p' | tr -d '\r')
 token=$(printf '%s\n' "$setup_output" | sed -n 's/^TOKEN=//p' | tr -d '\r')
+write_token=$(printf '%s\n' "$setup_output" | sed -n 's/^WRITE_TOKEN=//p' | tr -d '\r')
+student_role=$(printf '%s\n' "$setup_output" | sed -n 's/^STUDENT_ROLE_ID=//p' | tr -d '\r')
 java_course=$(printf '%s\n' "$setup_output" | sed -n 's/^DEMO_JAVA_COURSE=//p' | tr -d '\r')
 data_group=$(printf '%s\n' "$setup_output" | sed -n 's/^DEMO_DATA_GROUP=//p' | tr -d '\r')
 teach_course=$(printf '%s\n' "$setup_output" | sed -n 's/^DEMO_TEACH_COURSE=//p' | tr -d '\r')
 web_course=$(printf '%s\n' "$setup_output" | sed -n 's/^DEMO_WEB_COURSE=//p' | tr -d '\r')
 empty_course=$(printf '%s\n' "$setup_output" | sed -n 's/^DEMO_EMPTY_COURSE=//p' | tr -d '\r')
-[[ -n $course_ids && -n $token && -n $java_course && -n $data_group && -n $teach_course && -n $web_course && -n $empty_course ]] \
+[[ -n $course_ids && -n $token && -n $write_token && -n $student_role && -n $java_course && -n $data_group && -n $teach_course && -n $web_course && -n $empty_course ]] \
     || fail 'Moodle demo setup did not report course ids, demo mapping keys and token'
 
 write_env "$crm_env_file" "MOODLE_BASE_URL=$crm_moodle_url" "MOODLE_TOKEN=$token" "MOODLE_COURSE_IDS=$course_ids" \
     "MOODLE_DEMO_JAVA_COURSE=$java_course" "MOODLE_DEMO_DATA_GROUP=$data_group" "MOODLE_DEMO_TEACH_COURSE=$teach_course" \
-    "MOODLE_DEMO_WEB_COURSE=$web_course" "MOODLE_DEMO_EMPTY_COURSE=$empty_course"
+    "MOODLE_DEMO_WEB_COURSE=$web_course" "MOODLE_DEMO_EMPTY_COURSE=$empty_course" \
+    "MOODLE_WRITE_ENABLED=true" "MOODLE_WRITE_TOKEN=$write_token" "MOODLE_STUDENT_ROLE_ID=$student_role"
 printf 'Moodle demo is ready at http://localhost:%s (compose project %s), courses %s.\n' \
     "${MOODLE_HTTP_PORT:-8082}" "$compose_project" "$course_ids"
 printf 'MOODLE_BASE_URL, MOODLE_TOKEN and MOODLE_COURSE_IDS are written to %s; Moodle credentials are in %s\n' \

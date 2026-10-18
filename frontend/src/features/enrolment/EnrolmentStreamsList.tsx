@@ -1,6 +1,7 @@
 import { type FormEvent, Fragment, useCallback, useEffect, useState } from 'react'
 import { apiClient, type EnrolmentStreams, type LearnerSearch, type LearnerSummary } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { EnrolmentQueuePanel } from './EnrolmentQueuePanel'
 import { PaidOrdersUpload } from './PaidOrdersUpload'
 import { type AccessErrorReporter, formatIsoDate, requestIdOf, responseErrorMessage } from './enrolmentShared'
 
@@ -10,7 +11,7 @@ const stageSteps = (stream: StreamRow): { label: string; value: number }[] => [
   { label: 'Оплачено', value: stream.paid },
   { label: 'Анкета заполнена', value: stream.profilesComplete },
   { label: 'Выгружено в LMS', value: stream.exported },
-  { label: 'Передано', value: stream.transferred }
+  { label: 'Принято LMS', value: stream.transferred }
 ]
 
 const stageTotalsOf = (streams: StreamRow[]) => streams.reduce((totals, stream) => {
@@ -137,6 +138,8 @@ export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessErro
             </p>
           )}
 
+          <EnrolmentQueuePanel onAccessError={onAccessError} />
+
           <PaidOrdersUpload onUploaded={() => void load()} onAccessError={onAccessError} />
 
           <section className="enrolment__section" aria-labelledby="enrolment-streams-title">
@@ -146,10 +149,10 @@ export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessErro
             ) : (
               <>
                 <p className="enrolment__hint">
-                  «Выгружено в LMS» — файл для LMS сформирован. «Передано» — оператор нажал «Отметить переданными» после того, как файл попал в LMS.
+                  «Выгружено в LMS» — файл для LMS сформирован. «Принято LMS» — строка принята по протоколу LMS или отметке оператора; отметка «передано» без результата приёмом не считается.
                 </p>
                 <dl className="enrolment__funnel" aria-label="Итог по стадиям зачисления, все потоки">
-                  {['Оплачено', 'Анкета заполнена', 'Выгружено в LMS', 'Передано'].map((label, index) => (
+                  {['Оплачено', 'Анкета заполнена', 'Выгружено в LMS', 'Принято LMS'].map((label, index) => (
                     <div key={label}>
                       <dt>{label}</dt>
                       <dd>{stageTotalsOf(state.data.streams)[index]}</dd>
@@ -200,7 +203,7 @@ export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessErro
                                 <dl className="enrolment__details">
                                   <div><dt>Оплачено</dt><dd>{stream.paid}</dd></div>
                                   <div><dt>Выгружено</dt><dd>{stream.exported}</dd></div>
-                                  <div><dt>Передано</dt><dd>{stream.transferred}</dd></div>
+                                  <div><dt>Принято LMS</dt><dd>{stream.transferred}</dd></div>
                                   <div><dt>Ожидает</dt><dd>{stream.pending}</dd></div>
                                   <div><dt>Хранить до</dt><dd>{stream.keepUntil === null ? 'срок не определён' : formatIsoDate(stream.keepUntil)}</dd></div>
                                 </dl>

@@ -11,6 +11,7 @@ export type WorkFilters = {
   responsible: string
   status: InteractionWorkStatusFilter
   minDaysOnStage: number | null
+  noContactDays: number | null
   page: number
 }
 
@@ -48,6 +49,7 @@ export const emptyWorkFilters: WorkFilters = {
   responsible: '',
   status: 'ACTIVE',
   minDaysOnStage: null,
+  noContactDays: null,
   page: 0
 }
 
@@ -81,6 +83,7 @@ export const filtersFromQuery = (query: string): WorkFilters => {
     responsible: params.get('responsible') ?? '',
     status: isStatus(status) ? status : 'ACTIVE',
     minDaysOnStage: positiveInteger(params.get('minDaysOnStage')),
+    noContactDays: positiveInteger(params.get('noContactDays')),
     page: positiveInteger(params.get('page')) ?? 0
   }
 }
@@ -101,6 +104,7 @@ export const queryFromFilters = (filters: WorkFilters) => {
   set('responsible', filters.responsible)
   set('status', filters.status, 'ACTIVE')
   set('minDaysOnStage', filters.minDaysOnStage === null ? '' : filters.minDaysOnStage.toString())
+  set('noContactDays', filters.noContactDays === null ? '' : filters.noContactDays.toString())
   set('page', filters.page > 0 ? filters.page.toString() : '')
   return params.toString()
 }
@@ -112,6 +116,7 @@ export const activeFilterCount = (filters: WorkFilters) => [
   filters.responsible.length > 0,
   filters.status !== 'ACTIVE',
   filters.minDaysOnStage !== null,
+  filters.noContactDays !== null,
   filters.flag !== '',
   filters.licenseExpiresBy !== ''
 ].filter(Boolean).length

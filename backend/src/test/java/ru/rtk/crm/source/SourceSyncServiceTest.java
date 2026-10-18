@@ -112,6 +112,7 @@ import ru.rtk.crm.training.TrainingRepository;
 import ru.rtk.crm.training.TrainingService;
 import ru.rtk.crm.module.ModuleDisabledException;
 import ru.rtk.crm.module.ModuleProperties;
+import ru.rtk.crm.enrolment.EnrolmentBatchTestSchema;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 @JdbcTest(properties = {
@@ -679,10 +680,15 @@ class SourceSyncServiceTest {
             assertThat(record.error()).contains("не сопоставлен");
         });
         UUID applicationId = problems.stream().filter(record -> record.externalId().equals("la-2")).findFirst().orElseThrow().id();
+        String appliedAt = "SELECT applied_at FROM source_records WHERE id = ?";
+        assertThat(jdbcTemplate.queryForObject(appliedAt, OffsetDateTime.class, applicationId)).isNull();
 
         SourceRecordApplyResult result = service.apply(admin, applicationId, new SourceRecordApplyRequest(ORGANIZATION_A, null, null, null));
 
         assertThat(result.record().status()).isEqualTo(SourceRecordStatus.APPLIED);
+        // По времени применения уходит «Заявка с сайта»: оно ставится при сопоставлении и не сдвигается повторной синхронизацией.
+        OffsetDateTime applied = jdbcTemplate.queryForObject(appliedAt, OffsetDateTime.class, applicationId);
+        assertThat(applied).isNotNull();
         assertThat(result.record().organizationId()).isEqualTo(ORGANIZATION_A);
         assertThat(result.reappliedCount()).isEqualTo(1);
         assertThat(recordStatus("pr-3")).isEqualTo("APPLIED");
@@ -694,6 +700,7 @@ class SourceSyncServiceTest {
 
         assertThat(sync().needsMappingCount()).isZero();
         assertThat(interactionIds(ORGANIZATION_A)).hasSize(2);
+        assertThat(jdbcTemplate.queryForObject(appliedAt, OffsetDateTime.class, applicationId)).isEqualTo(applied);
     }
 
     @Test
@@ -1064,6 +1071,34 @@ class SourceSyncServiceTest {
         assertThat(allFailed.status()).isEqualTo(SyncRunStatus.FAILED);
         assertThat(allFailed.errorCode()).isEqualTo("SOURCE_UNAUTHORIZED");
         assertThat(allFailed.errorMessage()).startsWith("Данные не получены ни по одному курсу");
+    }
+
+    @Test
+    void courseFailingInEveryPartialRunIsShownStaleByItsSnapshotTime() throws IOException {
+        syncMoodle();
+        UUID javaRecord = moodleRecordId("moodle_course", Long.toString(JAVA_COURSE));
+        UUID dataRecord = moodleRecordId("moodle_course", Long.toString(DATA_COURSE));
+        service.apply(admin, javaRecord, moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
+        service.apply(admin, dataRecord, moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
+        jdbcTemplate.update("UPDATE learning_snapshots SET observed_at = ?", OffsetDateTime.now().minusHours(30));
+        MOODLE_BODIES.put("core_group_get_course_groups:" + DATA_COURSE, fixture("error-function-not-in-service.json"));
+
+        SyncRunView partial = syncMoodle();
+
+        assertThat(partial.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(partial.failedCount()).isEqualTo(1);
+        assertThat(sourceView(SourceCode.MOODLE).stale()).as("the run itself succeeded").isFalse();
+        assertThat(card.snapshots(kamA, existingInteractionA))
+                .extracting(CardSourcesService.LearningSnapshotView::courseId, CardSourcesService.LearningSnapshotView::stale)
+                .containsExactlyInAnyOrder(tuple(JAVA_COURSE, false), tuple(DATA_COURSE, true));
+        assertThat(card.status(kamA, existingInteractionA).lms().stale()).isTrue();
+
+        jdbcTemplate.update("UPDATE source_mappings SET run_ends_on = ? WHERE id = (SELECT mapping_id FROM learning_snapshots"
+                + " WHERE source_record_id = ?)", TODAY, dataRecord);
+
+        assertThat(card.status(kamA, existingInteractionA).lms().stale())
+                .as("closed run keeps its last observation and is not stale")
+                .isFalse();
     }
 
     @Test
@@ -1580,12 +1615,15 @@ class SourceSyncServiceTest {
         assertThat(demandOn(TODAY.minusDays(25))).containsExactly(tuple("Java-разработчик", null, null, 1L));
         assertThat(reportService.document(kamA, new ReportRequest(ReportKind.DEMAND, null, TODAY.minusDays(10), null,
                 ReportFilters.none(), null, null, null, null)).columnTitles())
-                .containsEntry(ReportColumn.PARTICIPANTS, "Обучающиеся в потоках периода (Moodle, на "
+                .containsEntry(ReportColumn.PARTICIPANTS, "Обучающиеся в потоках периода (Moodle, участия — не уникальные люди, на "
                         + TODAY.minusDays(10).format(DateTimeFormatter.ofPattern("dd.MM.yyyy")) + ")");
 
         mappingService.deleteSnapshot(admin, run);
 
         assertThat(history(run)).isEmpty();
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT details FROM audit_events WHERE action = 'SOURCE_MAPPING_CHANGED' AND object_id = ?", String.class, run))
+                .containsExactly("LMS Moodle: снимок обучения удалён");
     }
 
     private List<Tuple> history(UUID run) {
@@ -1917,8 +1955,7 @@ class SourceSyncServiceTest {
         assertThat(reportService.document(kamA, new ReportRequest(ReportKind.DEMAND, null, null, null, universityOnly, null, null,
                 null, null)).rows()).isEmpty();
         assertThat(reportService.preview(kamA, all, 0, 50).columns()).extracting(ReportColumnView::title)
-                .contains("Оплаченные заявки (сайт, за всё время: период не применяется)",
-                        "Потоки с оплатами (сайт, за всё время: период не применяется)");
+                .contains("Оплаченные заявки (сайт, без ограничения периода)", "Потоки с оплатами (сайт, без ограничения периода)");
         assertThat(demandApplications(kamA)).isZero();
     }
 
@@ -2352,7 +2389,7 @@ class SourceSyncServiceTest {
         MoodleClient moodleClient = new MoodleClient(properties, objectMapper, 14);
         SourceSettingsService settings = new SourceSettingsService(properties, sourceSettingsRepository,
                 new SourceTokenCipher(properties), auditJournalRepository, moodleClient, siteApiClient,
-                new CrmClient(properties, objectMapper), event -> { });
+                new CrmClient(properties, objectMapper), event -> { }, null);
         return new SourceSyncService(repository, siteRecordApplier, crmRecordApplier, crmExchangeService, paidOrderEnrolment,
                 siteApiClient, moodleSnapshotApplier, moodleClient, laborMarketSync, sourceSyncExecutor, properties, settings,
                 objectMapper);
@@ -2861,7 +2898,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_issues (
+                CREATE TABLE IF NOT EXISTS interaction_issues (last_comment VARCHAR(1000), last_comment_by UUID, last_comment_at TIMESTAMP WITH TIME ZONE,
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
                     description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
                     status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
@@ -2939,7 +2976,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (
+                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, external_key VARCHAR(200) UNIQUE, interaction_id UUID NOT NULL,
                     command_id UUID NOT NULL, type VARCHAR(32) NOT NULL, stage_id UUID NOT NULL,
                     stage_name_snapshot VARCHAR(200) NOT NULL, from_stage_id UUID, from_stage_name_snapshot VARCHAR(200),
@@ -3035,7 +3072,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), contact_id UUID, 
+                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), applied_at TIMESTAMP WITH TIME ZONE, contact_id UUID, 
                     id UUID PRIMARY KEY, source VARCHAR(16) NOT NULL, record_type VARCHAR(64) NOT NULL,
                     external_id VARCHAR(200) NOT NULL, external_updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     submitted_at TIMESTAMP WITH TIME ZONE NOT NULL, external_status VARCHAR(64), payload VARCHAR(100000) NOT NULL,
@@ -3123,13 +3160,15 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS learner_enrolments (
+                CREATE TABLE IF NOT EXISTS learner_enrolments (lms_synced_version INTEGER, lms_reconcile_reason VARCHAR(500),
                     id UUID PRIMARY KEY, learner_id UUID NOT NULL, stream_id UUID NOT NULL, source_record_id UUID NOT NULL UNIQUE,
                     lms_export_id UUID, lms_exported_at TIMESTAMP WITH TIME ZONE, lms_transferred_at TIMESTAMP WITH TIME ZONE,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     UNIQUE (learner_id, stream_id)
                 )
                 """,
+                EnrolmentBatchTestSchema.BATCHES,
+                EnrolmentBatchTestSchema.ITEMS,
                 """
                 CREATE TABLE IF NOT EXISTS interaction_cycles (
                     interaction_id UUID PRIMARY KEY, previous_interaction_id UUID NOT NULL UNIQUE, starts_on DATE NOT NULL,

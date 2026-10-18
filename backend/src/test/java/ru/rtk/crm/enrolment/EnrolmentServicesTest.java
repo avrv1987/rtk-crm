@@ -1,5 +1,6 @@
 package ru.rtk.crm.enrolment;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
@@ -32,6 +33,12 @@ import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import ru.rtk.crm.source.MoodleWriteTarget;
+import ru.rtk.crm.source.SourceSettingsService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.jdbc.JdbcTest;
@@ -80,10 +87,15 @@ import ru.rtk.crm.privacy.RetentionProperties;
         EnrolmentLearnerService.class,
         QuestionnaireImportService.class,
         LmsRosterService.class,
+        EnrolmentBatchRepository.class,
+        EnrolmentBatchService.class,
+        MoodleTransferService.class,
+        MoodleWriteClient.class,
         LearnerWorkbookReader.class,
         LmsRosterWorkbookWriter.class,
         EnrolmentServicesTest.Configuration.class
 })
+@ExtendWith(OutputCaptureExtension.class)
 class EnrolmentServicesTest {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final String KEY = randomKey();
@@ -116,6 +128,18 @@ class EnrolmentServicesTest {
     private LmsRosterService rosters;
 
     @Autowired
+    private EnrolmentBatchService batches;
+
+    @Autowired
+    private EnrolmentBatchRepository batchRepository;
+
+    @Autowired
+    private MoodleTransferService moodle;
+
+    @MockitoBean
+    private SourceSettingsService sourceSettings;
+
+    @Autowired
     private LearnerService learnerService;
 
     @Autowired
@@ -145,8 +169,8 @@ class EnrolmentServicesTest {
     @BeforeEach
     void setUp() {
         createSchema();
-        for (String table : List.of("learner_enrolments", "learners", "enrolment_streams", "source_records", "audit_events",
-                "command_idempotency_records", "source_mappings", "programs", "crm_user_profiles")) {
+        for (String table : List.of("enrolment_batch_items", "enrolment_batches", "learner_enrolments", "learners", "enrolment_streams", "source_records", "audit_events",
+                "command_idempotency_records", "source_mappings", "organizations", "programs", "crm_user_profiles")) {
             jdbcTemplate.update("DELETE FROM " + table);
         }
         SCAN.set(AttachmentScanOutcome.CLEAN);
@@ -587,14 +611,15 @@ class EnrolmentServicesTest {
         accept(order("ORD-7-NOEMAIL", PROMPT, 3, "Восьмова", "Лада", null, "+79000000044", null));
         String stream = streamId(PROMPT, 3).toString();
 
-        LmsRoster excluded = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.EXCLUDE), "rq-x");
+        LmsRoster excluded = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.EXCLUDE, null), "rq-x");
 
         assertThat(excluded.fileName()).isEqualTo("LMS_" + PROMPT + "_поток3_" + LocalDate.now(EnrolmentLearnerService.ZONE) + ".xlsx");
         assertThat(lastNames(excluded)).containsExactly("Второв", "Первова", "Шестаков", "Шестакова");
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learner_enrolments WHERE lms_export_id = ?", Long.class,
                 excluded.exportId())).isEqualTo(4);
         assertThat(journal("LMS_ROSTER_EXPORTED")).containsExactly("STREAM|" + PROMPT + ", поток 3|строк: 4; выгрузка: "
-                + excluded.exportId() + "; режим: только не переданные; анкеты без обязательных полей: исключены|Оператор зачисления");
+                + excluded.exportId() + "; режим: только не переданные; анкеты без обязательных полей: исключены; формат: XLSX по шаблону; SHA-256: "
+                + excluded.checksum() + "|Оператор зачисления");
 
         RosterExportMarked marked = rosters.markTransferred(OPERATOR, excluded.exportId().toString(), "mark-1", "rq-m1");
         RosterExportMarked again = rosters.markTransferred(OPERATOR, excluded.exportId().toString(), "mark-2", "rq-m2");
@@ -605,23 +630,27 @@ class EnrolmentServicesTest {
         assertThat(journal("LMS_ROSTER_MARKED")).hasSize(1);
         assertThatThrownBy(() -> rosters.markTransferred(OPERATOR, UUID.randomUUID().toString(), "mark-3", "rq"))
                 .isInstanceOf(EnrolmentNotFoundException.class);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learner_enrolments WHERE lms_transferred_at IS NOT NULL",
+                Long.class)).isZero();
+        acceptAll(excluded.exportId(), "accept-excluded");
 
-        LmsRoster withEmptyCells = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE),
+        LmsRoster withEmptyCells = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null),
                 "rq-y");
-        LmsRoster all = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.ALL, IncompleteProfiles.INCLUDE), "rq-z");
+        LmsRoster all = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.ALL, IncompleteProfiles.INCLUDE, null), "rq-z");
 
         assertThat(lastNames(withEmptyCells)).containsExactly("Восьмова");
         assertThat(lastNames(all)).containsExactly("Восьмова", "Второв", "Первова", "Шестаков", "Шестакова");
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learner_enrolments WHERE lms_export_id = ?", Long.class,
                 excluded.exportId())).isEqualTo(4);
         rosters.markTransferred(OPERATOR, all.exportId().toString(), "mark-all", "rq");
-        assertThatThrownBy(() -> rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE),
+        acceptAll(all.exportId(), "accept-all");
+        assertThatThrownBy(() -> rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null),
                 "rq"))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.getMessage())
                         .isEqualTo("Анкеты этих слушателей не выгружаются: обработка ограничена или анкета обезличена"));
         EnrolmentStreamLearners view = streams.learners(OPERATOR, stream, "rq");
         assertThat(view.exports()).extracting(RosterExport::rows, RosterExport::transferred)
-                .containsExactlyInAnyOrder(tuple(4, 4), tuple(1, 1));
+                .containsExactlyInAnyOrder(tuple(4, 4), tuple(1, 0), tuple(5, 5));
         assertThat(view.stream().transferred()).isEqualTo(5);
         assertThat(view.stream().pending()).isEqualTo(1);
     }
@@ -641,8 +670,13 @@ class EnrolmentServicesTest {
                 () -> learners.update(KAM, boris.id().toString(), new LearnerUpdate(0, Map.of("APARTMENT", "1")), "k", "rq"),
                 () -> learners.move(KAM, boris.id().toString(), new LearnerMove("11223344595", 0, null), "k", "rq"),
                 () -> learners.history(KAM, boris.id().toString()),
-                () -> rosters.export(KAM, stream, new LmsRosterRequest(RosterMode.ALL, IncompleteProfiles.INCLUDE), "rq"),
-                () -> rosters.markTransferred(KAM, UUID.randomUUID().toString(), "k", "rq")
+                () -> rosters.export(KAM, stream, new LmsRosterRequest(RosterMode.ALL, IncompleteProfiles.INCLUDE, null), "rq"),
+                () -> rosters.markTransferred(KAM, UUID.randomUUID().toString(), "k", "rq"),
+                () -> batches.batch(KAM, UUID.randomUUID().toString(), "rq"),
+                () -> batches.queue(KAM, "rq"),
+                () -> batches.record(KAM, UUID.randomUUID().toString(), new BatchResultUpdate(List.of()), "k", "rq"),
+                () -> batches.reconcile(KAM, UUID.randomUUID().toString(), new LmsReconcile(EnrolmentQueueKind.MOVED_AFTER_TRANSFER, null),
+                        "k", "rq")
         );
         for (Runnable call : calls) {
             assertThatThrownBy(call::run).isInstanceOf(EnrolmentAccessDeniedException.class);
@@ -651,7 +685,7 @@ class EnrolmentServicesTest {
         assertThatThrownBy(() -> questionnaires.preview(ADMIN, stream, template(), "rq")).isInstanceOf(EnrolmentAccessDeniedException.class);
         EnrolmentAccess moduleOff = new EnrolmentAccess(new ModuleProperties(new ModuleProperties.Toggle(false), null), userProfileRepository);
         EnrolmentStreamService offStreams = new EnrolmentStreamService(moduleOff, enrolmentRepository, learnerService,
-                learnerPrivacyService, retentionProperties, auditJournalRepository, commands);
+                learnerPrivacyService, retentionProperties, auditJournalRepository, commands, batchRepository);
         assertThatThrownBy(() -> offStreams.streams(OPERATOR)).isInstanceOf(ModuleDisabledException.class);
         assertThatThrownBy(() -> offStreams.learners(OPERATOR, "not-an-id", "rq")).isInstanceOf(ModuleDisabledException.class);
         assertThat(journal("LEARNER_VIEWED")).isEmpty();
@@ -659,12 +693,321 @@ class EnrolmentServicesTest {
         learners.reveal(OPERATOR, boris.id().toString(), new LearnerReveal(Set.of(LearnerFieldGroup.MAIN)), "rq-reveal");
         update(boris, Map.of("SNILS", "123-456-789 64"), "snils");
         questionnaires.preview(OPERATOR, stream, template(), "rq-preview");
-        rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.ALL, IncompleteProfiles.INCLUDE), "rq-export");
+        rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.ALL, IncompleteProfiles.INCLUDE, null), "rq-export");
 
         String database = databaseDump();
         for (String value : List.of("Второв", "Борис", "Первова", "Шестакова", "boris.vtorov", "egor.sh", "9000000002", "12345678964",
                 "123-456-789 64")) {
             assertThat(database).doesNotContain(value);
+        }
+    }
+
+    // E-04 и ER-01/ER-02: повторная партия до подтверждения не стирает прежнюю; отметка партии не принимает строки.
+    @Test
+    void repeatedBatchBeforeConfirmationKeepsTheFirstBatchReproducible() {
+        seedPromptStream();
+        String stream = streamId(PROMPT, 3).toString();
+        LmsRoster first = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq-a");
+        LmsRoster second = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq-b");
+
+        EnrolmentBatchView batchA = batches.batch(OPERATOR, first.exportId().toString(), "rq");
+        EnrolmentBatchView batchB = batches.batch(OPERATOR, second.exportId().toString(), "rq");
+        assertThat(batchA.rows()).isEqualTo(5);
+        assertThat(batchB.rows()).isEqualTo(5);
+        assertThat(batchA.items()).extracting(EnrolmentBatchItemView::enrolmentId)
+                .containsExactlyElementsOf(batchB.items().stream().map(EnrolmentBatchItemView::enrolmentId).toList());
+        assertThat(batchA.items()).extracting(EnrolmentBatchItemView::rowNo).containsExactly(2, 3, 4, 5, 6);
+        assertThat(batchA.checksum()).hasSize(64);
+
+        assertThat(rosters.markTransferred(OPERATOR, first.exportId().toString(), "mark-a", "rq").marked()).isEqualTo(5);
+        EnrolmentBatchItemView firstRow = batchA.items().getFirst();
+        batches.record(OPERATOR, first.exportId().toString(), new BatchResultUpdate(List.of(
+                new BatchResultItem(firstRow.id(), BatchItemResult.ACCEPTED, null))), "accept-a", "rq");
+
+        EnrolmentBatchView afterA = batches.batch(OPERATOR, first.exportId().toString(), "rq");
+        assertThat(afterA.sentAt()).isNotNull();
+        assertThat(afterA.accepted()).isEqualTo(1);
+        assertThat(afterA.pending()).isEqualTo(4);
+        EnrolmentBatchView afterB = batches.batch(OPERATOR, second.exportId().toString(), "rq");
+        assertThat(afterB.pending()).isEqualTo(5);
+        assertThat(afterB.sentAt()).isNull();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learner_enrolments WHERE lms_transferred_at IS NOT NULL", Long.class))
+                .isEqualTo(1);
+    }
+
+    // E-03, E-11, E-12: из 100 строк приняты 95, ошибки видны по строкам; файл и отметка «передано» — не приём.
+    @Test
+    void protocolOfLmsAcceptsNinetyFiveRowsAndKeepsFiveErrorsForRepeat() {
+        for (int index = 0; index < 100; index++) {
+            accept(order("ORD-100-" + index, TESTER, 1, "Слушатель" + (char) ('А' + index % 30), "Номер" + index, null,
+                    String.format("+7900100%04d", index), "learner" + index + "@example.test"));
+        }
+        String stream = streamId(TESTER, 1).toString();
+        LmsRoster roster = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+
+        assertThat(group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.NOT_SENT).total()).isEqualTo(100);
+        assertThat(streams.learners(OPERATOR, stream, "rq").learners()).extracting(StreamLearner::lmsStatus).containsOnly(LmsStatus.EXPORTED);
+        rosters.markTransferred(OPERATOR, roster.exportId().toString(), "mark", "rq");
+        EnrolmentQueue sent = batches.queue(OPERATOR, "rq");
+        assertThat(group(sent, EnrolmentQueueKind.AWAITING_RESULT).total()).isEqualTo(100);
+        assertThat(group(sent, EnrolmentQueueKind.AWAITING_RESULT).items()).hasSize(EnrolmentBatchService.QUEUE_ITEMS);
+        assertThat(streams.learners(OPERATOR, stream, "rq").stream().transferred()).isZero();
+
+        StringBuilder protocol = new StringBuilder("строка;результат;ошибка\n");
+        for (int row = 2; row <= 101; row++) {
+            protocol.append(row).append(row <= 96 ? ";принята;\n" : ";ошибка;\"Пользователь с такой почтой уже есть\"\n");
+        }
+        protocol.append("999;принята;\n");
+        MockMultipartFile file = new MockMultipartFile("file", "protocol.csv", "text/csv", protocol.toString().getBytes(UTF_8));
+        BatchResultsApplied applied = batches.importProtocol(OPERATOR, roster.exportId().toString(), file, "protocol-1", "rq");
+
+        assertThat(applied.changed()).isEqualTo(100);
+        assertThat(applied.batch().accepted()).isEqualTo(95);
+        assertThat(applied.batch().failed()).isEqualTo(5);
+        assertThat(applied.batch().pending()).isZero();
+        assertThat(applied.skipped()).containsExactly("строка 999: такой строки в партии нет");
+        BatchResultsApplied replayed = batches.importProtocol(OPERATOR, roster.exportId().toString(), file, "protocol-1", "rq");
+        assertThat(replayed.changed()).isEqualTo(100);
+        assertThat(replayed.batch().accepted()).isEqualTo(95);
+        assertThat(batches.importProtocol(OPERATOR, roster.exportId().toString(), file, "protocol-2", "rq").changed()).isZero();
+
+        EnrolmentQueue queue = batches.queue(OPERATOR, "rq");
+        assertThat(group(queue, EnrolmentQueueKind.LMS_ERROR).total()).isEqualTo(5);
+        assertThat(group(queue, EnrolmentQueueKind.LMS_ERROR).items().getFirst().detail()).isEqualTo("Пользователь с такой почтой уже есть");
+        assertThat(group(queue, EnrolmentQueueKind.AWAITING_RESULT).total()).isZero();
+        assertThat(streams.learners(OPERATOR, stream, "rq").stream().transferred()).isEqualTo(95);
+        LmsRoster repeat = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+        assertThat(repeat.rows()).isEqualTo(5);
+        assertThat(journal("LMS_RESULTS_RECORDED")).hasSize(2);
+        assertThat(journal("LMS_RESULTS_RECORDED").getFirst()).contains("принято: 95, ошибок: 5, ожидает: 0").doesNotContain("Слушатель");
+    }
+
+    // E-02, E-05, E-06, E-07: очередь исключений с причиной и сверка после передачи.
+    @Test
+    void queueShowsMissingAmbiguousMovedAndChangedAfterTransferUntilReconciled() {
+        seedPromptStream();
+        accept(order("ORD-7-NOEMAIL", PROMPT, 3, "Восьмова", "Лада", null, "+79000000044", null));
+        Learner daria = learner("Пятакова", "Дарья");
+        learnerRepository.updateStatus(daria.id(), daria.version(), PersonalDataStatus.RESTRICTED, OffsetDateTime.now());
+        String stream = streamId(PROMPT, 3).toString();
+
+        EnrolmentQueue before = batches.queue(OPERATOR, "rq-q");
+        assertThat(names(before, EnrolmentQueueKind.MISSING_DATA)).containsExactly("Восьмова");
+        assertThat(names(before, EnrolmentQueueKind.AMBIGUOUS_MATCH)).containsExactlyInAnyOrder("Шестаков", "Шестакова");
+        assertThat(names(before, EnrolmentQueueKind.READY)).containsExactlyInAnyOrder("Первова", "Второв");
+        assertThat(before.groups().stream().flatMap(group -> group.items().stream()).map(EnrolmentQueueItem::lastName))
+                .doesNotContain("Пятакова");
+        assertThat(count("learners")).isEqualTo(6);
+        assertThat(journal("LEARNER_LIST_VIEWED")).anyMatch(entry -> entry.startsWith("ENROLMENT_QUEUE|"));
+
+        LmsRoster roster = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.EXCLUDE, null), "rq");
+        assertThat(lastNamesOf(roster)).doesNotContain("Пятакова", "Восьмова");
+        rosters.markTransferred(OPERATOR, roster.exportId().toString(), "mark", "rq");
+        acceptAll(roster.exportId(), "accept");
+
+        Learner pervova = learner("Первова", "Анна");
+        update(pervova, Map.of("APARTMENT", "12"), "pervova-flat");
+        EnrolmentQueueItem changed = group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.CHANGED_AFTER_TRANSFER).items().getFirst();
+        assertThat(changed.lastName()).isEqualTo("Первова");
+        assertThat(changed.detail()).contains("в LMS ушла версия");
+        assertThatThrownBy(() -> batches.reconcile(OPERATOR, changed.enrolmentId().toString(),
+                new LmsReconcile(EnrolmentQueueKind.CHANGED_AFTER_TRANSFER, changed.learnerVersion() - 1), "rec-old", "rq"))
+                .isInstanceOf(InteractionConflictException.class);
+        batches.reconcile(OPERATOR, changed.enrolmentId().toString(),
+                new LmsReconcile(EnrolmentQueueKind.CHANGED_AFTER_TRANSFER, changed.learnerVersion()), "rec-changed", "rq");
+        assertThat(group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.CHANGED_AFTER_TRANSFER).total()).isZero();
+
+        accept(order("ORD-D-02", PROMPT, 4, "Второв", "Борис", null, "+79000000002", "BORIS.VTOROV@EXAMPLE.TEST"));
+        EnrolmentQueueItem moved = group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.MOVED_AFTER_TRANSFER).items().getFirst();
+        assertThat(moved.lastName()).isEqualTo("Второв");
+        assertThat(moved.streamTitle()).isEqualTo(PROMPT + ", поток 4");
+        assertThat(moved.detail()).contains("поток 3").contains("LMS");
+        assertThat(batches.batch(OPERATOR, roster.exportId().toString(), "rq").items())
+                .extracting(EnrolmentBatchItemView::lastName).contains("Второв");
+        batches.reconcile(OPERATOR, moved.enrolmentId().toString(), new LmsReconcile(EnrolmentQueueKind.MOVED_AFTER_TRANSFER, null),
+                "rec-moved", "rq");
+        assertThat(group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.MOVED_AFTER_TRANSFER).total()).isZero();
+        assertThat(journal("LMS_RECONCILED")).hasSize(2);
+    }
+
+    // E-08, E-10: второй оператор не перезаписывает принятую строку; снятый флаг закрывает партии и очередь.
+    @Test
+    void secondOperatorCannotOverwriteAcceptedRowAndRevokedOperatorLosesAccess() {
+        UUID secondId = UUID.fromString("82000000-0000-0000-0000-000000000004");
+        CrmProfile second = new CrmProfile(secondId, UserRole.LEADER, null, 0);
+        profile(secondId, "Второй оператор", "LEADER", true);
+        seedPromptStream();
+        String stream = streamId(PROMPT, 3).toString();
+        LmsRoster roster = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+        EnrolmentBatchItemView row = batches.batch(OPERATOR, roster.exportId().toString(), "rq").items().getFirst();
+
+        batches.record(OPERATOR, roster.exportId().toString(), new BatchResultUpdate(List.of(
+                new BatchResultItem(row.id(), BatchItemResult.ACCEPTED, null))), "first", "rq");
+        BatchResultsApplied late = batches.record(second, roster.exportId().toString(), new BatchResultUpdate(List.of(
+                new BatchResultItem(row.id(), BatchItemResult.FAILED, "Ошибка"))), "second", "rq");
+
+        assertThat(late.changed()).isZero();
+        assertThat(late.skipped()).containsExactly("строка " + row.rowNo() + ": уже принята LMS, не изменена");
+        assertThat(late.batch().accepted()).isEqualTo(1);
+        assertThatThrownBy(() -> batches.record(OPERATOR, roster.exportId().toString(), new BatchResultUpdate(List.of(
+                new BatchResultItem(UUID.randomUUID(), BatchItemResult.ACCEPTED, null))), "foreign", "rq"))
+                .isInstanceOf(InteractionValidationException.class);
+
+        jdbcTemplate.update("UPDATE crm_user_profiles SET enrolment_operator = FALSE WHERE id = ?", secondId);
+        assertThatThrownBy(() -> batches.batch(second, roster.exportId().toString(), "rq")).isInstanceOf(EnrolmentAccessDeniedException.class);
+        assertThatThrownBy(() -> batches.queue(second, "rq")).isInstanceOf(EnrolmentAccessDeniedException.class);
+        assertThatThrownBy(() -> rosters.export(second, stream, new LmsRosterRequest(RosterMode.ALL, IncompleteProfiles.INCLUDE, null), "rq"))
+                .isInstanceOf(EnrolmentAccessDeniedException.class);
+    }
+
+    @Test
+    void moodleCsvCarriesOnlyAccountFieldsAndChecksumOfTheFile() throws Exception {
+        seedPromptStream();
+        update(learner("Второв", "Борис"), Map.of("SNILS", "123-456-789 64"), "snils-csv");
+        String stream = streamId(PROMPT, 3).toString();
+        LmsRoster csv = rosters.export(OPERATOR, stream,
+                new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, RosterFormat.MOODLE_CSV), "rq");
+
+        String text = new String(csv.content(), UTF_8);
+        assertThat(csv.fileName()).endsWith(".csv");
+        assertThat(text.lines().toList().getFirst()).isEqualTo("username,firstname,lastname,middlename,email,phone1");
+        assertThat(text).contains("boris.vtorov@example.test,Борис,Второв,,boris.vtorov@example.test,+79000000002");
+        assertThat(text).doesNotContain("12345678964", "123-456-789");
+        assertThat(csv.checksum()).isEqualTo(java.util.HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(csv.content())));
+        assertThat(batches.batch(OPERATOR, csv.exportId().toString(), "rq").format()).isEqualTo(RosterFormat.MOODLE_CSV);
+        assertThat(MoodleCsvWriter.cell("=SUM(A1)")).isEqualTo("'=SUM(A1)");
+        assertThat(MoodleCsvWriter.cell("Иванов, Иван")).isEqualTo("\"Иванов, Иван\"");
+    }
+
+    private void acceptAll(UUID batchId, String key) {
+        List<BatchResultItem> items = batchRepository.findItems(batchId).stream()
+                .map(item -> new BatchResultItem(item.id(), BatchItemResult.ACCEPTED, null))
+                .toList();
+        batches.record(OPERATOR, batchId.toString(), new BatchResultUpdate(items), key, "rq");
+    }
+
+    private static EnrolmentQueueGroup group(EnrolmentQueue queue, EnrolmentQueueKind kind) {
+        return queue.groups().stream().filter(group -> group.kind() == kind).findFirst().orElseThrow();
+    }
+
+    private static List<String> names(EnrolmentQueue queue, EnrolmentQueueKind kind) {
+        return group(queue, kind).items().stream().map(EnrolmentQueueItem::lastName).toList();
+    }
+
+    private static List<String> lastNamesOf(LmsRoster roster) {
+        try {
+            return lastNames(roster);
+        } catch (IOException exception) {
+            throw new java.io.UncheckedIOException(exception);
+        }
+    }
+
+    // Этап передачи через API Moodle: E-03 по ответам Moodle, повтор только ошибок без второго пользователя, E-11 и
+    // перенос E-06; в Moodle уходят только поля учётной записи, токен не попадает в журнал и вывод.
+    @Test
+    void moodleApiAcceptsRowsByResponsesRepeatsOnlyErrorsAndMovesBetweenCourses(CapturedOutput output) throws Exception {
+        MoodleStub stub = MoodleStub.start();
+        try {
+            org.mockito.Mockito.when(sourceSettings.moodleWrite()).thenReturn(java.util.Optional.of(new MoodleWriteTarget(stub.url(),
+                    "write-secret-token-0001", 5, Duration.ofSeconds(2), Duration.ofSeconds(5), DataSize.ofMegabytes(1))));
+            UUID openEnrollment = UUID.randomUUID();
+            jdbcTemplate.update("INSERT INTO organizations (id, type) VALUES (?, 'OPEN_ENROLLMENT')", openEnrollment);
+            mapCourse(PROMPT, openEnrollment, "42", "42:7");
+            mapCourse(TESTER, openEnrollment, "43");
+            accept(order("ORD-M-1", PROMPT, 3, "Первова", "Анна", null, "+79000000101", "anna.m@example.test"));
+            accept(order("ORD-M-2", PROMPT, 3, "Второв", "Борис", null, "+79000000102", "boris.m@example.test"));
+            accept(order("ORD-M-3", PROMPT, 3, "Шестаков", "Егор", null, "+79000000103", "egor.m@example.test"));
+            update(learner("Второв", "Борис"), Map.of("SNILS", "123-456-789 64"), "snils-moodle");
+            stub.existing("egor.m@example.test", 900L);
+            stub.rejectCreate("boris.m@example.test");
+            String stream = streamId(PROMPT, 3).toString();
+            LmsRoster roster = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+            assertThat(batches.batch(OPERATOR, roster.exportId().toString(), "rq").moodleTransferAvailable()).isTrue();
+
+            MoodleTransferResult first = moodle.transfer(OPERATOR, roster.exportId().toString(), "moodle-1", "rq");
+
+            assertThat(first.sent()).isEqualTo(3);
+            assertThat(first.accepted()).isEqualTo(2);
+            assertThat(first.failed()).isEqualTo(1);
+            assertThat(first.batch().items()).filteredOn(item -> item.result() == BatchItemResult.FAILED)
+                    .singleElement().satisfies(item -> assertThat(item.error()).contains("уже есть", "(invalidparameter)")
+                            .doesNotContain("Username already exists"));
+            assertThat(stub.calls("core_user_create_users")).isEqualTo(2);
+            assertThat(stub.calls("enrol_manual_enrol_users")).isEqualTo(2);
+            assertThat(stub.calls("core_group_add_group_members")).isEqualTo(2);
+            assertThat(stub.calls("core_enrol_get_enrolled_users")).isEqualTo(1);
+            assertThat(stub.bodies()).noneMatch(body -> body.contains("12345678964") || body.contains("snils") || body.contains("passport"));
+            assertThat(stub.bodies()).allMatch(body -> body.contains("wstoken=write-secret-token-0001"));
+
+            stub.allowCreate("boris.m@example.test");
+            MoodleTransferResult repeat = moodle.transfer(OPERATOR, roster.exportId().toString(), "moodle-2", "rq");
+            assertThat(repeat.sent()).isEqualTo(1);
+            assertThat(repeat.batch().accepted()).isEqualTo(3);
+            assertThat(stub.calls("core_user_create_users")).isEqualTo(3);
+            assertThat(moodle.transfer(OPERATOR, roster.exportId().toString(), "moodle-2", "rq").sent()).isEqualTo(1);
+
+            accept(order("ORD-M-1", TESTER, 1, "Первова", "Анна", null, "+79000000101", "anna.m@example.test"));
+            EnrolmentQueueItem moved = group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.MOVED_AFTER_TRANSFER).items().getFirst();
+            MoodleMoveResult move = moodle.move(OPERATOR, moved.enrolmentId().toString(), "move-1", "rq");
+            assertThat(move.courseFrom()).isEqualTo(42L);
+            assertThat(move.courseTo()).isEqualTo(43L);
+            assertThat(stub.calls("enrol_manual_unenrol_users")).isEqualTo(1);
+            assertThat(group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.MOVED_AFTER_TRANSFER).total()).isZero();
+
+            LmsRoster another = rosters.export(OPERATOR, streamId(TESTER, 1).toString(),
+                    new LmsRosterRequest(RosterMode.ALL, IncompleteProfiles.INCLUDE, null), "rq");
+            stub.stop();
+            MoodleTransferResult offline = moodle.transfer(OPERATOR, another.exportId().toString(), "moodle-3", "rq");
+            assertThat(offline.stoppedReason()).contains("Moodle недоступен");
+            assertThat(offline.batch().pending()).isEqualTo(1);
+            assertThat(offline.batch().accepted()).isZero();
+
+            assertThat(journal("LMS_API_TRANSFER")).hasSize(3).allMatch(entry -> !entry.contains("@example.test") && !entry.contains("Борис"));
+            assertThat(databaseDump()).doesNotContain("write-secret-token-0001");
+            assertThat(output.getAll()).doesNotContain("write-secret-token-0001");
+
+            org.mockito.Mockito.when(sourceSettings.moodleWrite()).thenReturn(java.util.Optional.empty());
+            assertThat(batches.batch(OPERATOR, roster.exportId().toString(), "rq").moodleTransferAvailable()).isFalse();
+            assertThatThrownBy(() -> moodle.transfer(OPERATOR, roster.exportId().toString(), "moodle-off", "rq"))
+                    .isInstanceOf(InteractionValidationException.class);
+            assertThatThrownBy(() -> moodle.transfer(KAM, roster.exportId().toString(), "moodle-kam", "rq"))
+                    .isInstanceOf(EnrolmentAccessDeniedException.class);
+        } finally {
+            stub.stop();
+        }
+    }
+
+    // Курс сайта совпал с программой по названию: явного сопоставления сайта нет, программа потока — из оплат, как на
+    // экране потока. Явное сопоставление сайта главнее программы оплат.
+    @Test
+    void moodleCourseOfStreamFollowsPaymentProgramWhenSiteCourseMatchedProgramByName() {
+        UUID openEnrollment = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO organizations (id, type) VALUES (?, 'OPEN_ENROLLMENT')", openEnrollment);
+        UUID byName = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO programs (id, name) VALUES (?, ?)", byName, PROMPT);
+        jdbcTemplate.update("""
+                INSERT INTO source_mappings (id, source, kind, external_key, program_id, organization_id) VALUES (?, 'MOODLE', 'COURSE', '44', ?, ?)
+                """, UUID.randomUUID(), byName, openEnrollment);
+        accept(order("ORD-N-1", PROMPT, 2, "Названова", "Нина", null, "+79000000201", "nina.n@example.test"));
+        jdbcTemplate.update("UPDATE source_records SET program_id = ? WHERE external_id = 'ORD-N-1'", byName);
+        UUID stream = streamId(PROMPT, 2);
+
+        assertThat(moodle.course(stream)).isEqualTo(new MoodleTransferService.Course(44L, null));
+
+        mapCourse(PROMPT, openEnrollment, "45");
+        assertThat(moodle.course(stream)).isEqualTo(new MoodleTransferService.Course(45L, null));
+    }
+
+    private void mapCourse(String course, UUID organization, String... moodleKeys) {
+        UUID program = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO programs (id, name) VALUES (?, ?)", program, "Программа " + course);
+        jdbcTemplate.update("INSERT INTO source_mappings (id, source, kind, external_key, program_id) VALUES (?, 'WEBSITE', 'PROGRAM', ?, ?)",
+                UUID.randomUUID(), courseKey(course), program);
+        for (String key : moodleKeys) {
+            jdbcTemplate.update("""
+                    INSERT INTO source_mappings (id, source, kind, external_key, program_id, organization_id) VALUES (?, 'MOODLE', ?, ?, ?, ?)
+                    """, UUID.randomUUID(), key.contains(":") ? "GROUP" : "COURSE", key, program, organization);
         }
     }
 
@@ -840,8 +1183,11 @@ class EnrolmentServicesTest {
                 """
                 CREATE TABLE IF NOT EXISTS source_mappings (
                     id UUID PRIMARY KEY, source VARCHAR(16) NOT NULL, kind VARCHAR(16) NOT NULL, external_key VARCHAR(310) NOT NULL,
-                    program_id UUID
+                    program_id UUID, organization_id UUID, run_kind VARCHAR(16) DEFAULT 'STUDENTS' NOT NULL
                 )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS organizations (id UUID PRIMARY KEY, type VARCHAR(16) NOT NULL)
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS audit_events (
@@ -864,6 +1210,8 @@ class EnrolmentServicesTest {
         statements.add(LearnerStorageTest.LEARNER_SCHEMA_LEARNERS);
         statements.add("CREATE UNIQUE INDEX IF NOT EXISTS learners_snils_key ON learners (snils_hmac)");
         statements.add(LearnerStorageTest.LEARNER_SCHEMA_ENROLMENTS);
+        statements.add(EnrolmentBatchTestSchema.BATCHES);
+        statements.add(EnrolmentBatchTestSchema.ITEMS);
         statements.forEach(jdbcTemplate::execute);
     }
 
@@ -887,7 +1235,7 @@ class EnrolmentServicesTest {
         @Bean
         RetentionProperties retentionProperties() {
             return new RetentionProperties("-", Duration.ofDays(7), Duration.ofDays(1095), Duration.ofDays(365), Duration.ofDays(1095),
-                    Period.ofYears(3));
+                    Duration.ofDays(30), Period.ofYears(3));
         }
 
         @Bean

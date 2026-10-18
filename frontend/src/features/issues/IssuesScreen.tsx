@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
+  ApiError,
   apiClient,
+  createIdempotencyKey,
   type InteractionIssue,
   type Me,
   type Organization,
@@ -10,14 +12,17 @@ import { todayInMoscow } from '../../shared/format/datetime'
 import { ActionMenu } from '../../shared/ui/ActionMenu'
 import { FilterButton, FilterPanel } from '../../shared/ui/FilterPanel'
 import { HintButton } from '../../shared/ui/HintButton'
+import { CardDialog } from '../interactions/cardUi'
 import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { terms } from '../../shared/ui/terms'
 import { saveFile } from '../admin/saveFile'
 import { FilterChips, type ActiveChip } from '../control/FilterFields'
-import { daysLabel, formatDate, handledAccessError, requestIdOf } from '../work/workShared'
+import { commandErrorText, daysLabel, formatDate, formatDateTime, handledAccessError, requestIdOf } from '../work/workShared'
 import {
   calendarDaysBetween,
+  canRespond,
+  closedOrganizationHint,
   emptyIssueFilters,
   type IssueFilters,
   isIssueOverdue,
@@ -77,6 +82,7 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
   const [options, setOptions] = useState<Options>({ organizations: [], managers: [] })
   const [download, setDownload] = useState<DownloadState>({ kind: 'idle' })
   const [panelOpen, setPanelOpen] = useState(false)
+  const [responding, setResponding] = useState<{ issue: InteractionIssue; resolve: boolean } | null>(null)
   const requestVersion = useRef(0)
   const handlers = { onSessionExpired, onProfileUnavailable }
 
@@ -278,6 +284,7 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
                 <th scope="col">Кто решает</th>
                 <th scope="col">Срок</th>
                 <th scope="col">Возраст</th>
+                <th scope="col"><span className="visually-hidden">Действия</span></th>
               </tr>
             </thead>
             <tbody>
@@ -291,7 +298,7 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
                   <td data-label="Вуз">
                     {issue.organizationAccessible
                       ? <a href={`#/organizations/${issue.organizationId}`}>{issue.organizationName}</a>
-                      : <>{issue.organizationName}<span className="work-control__hint">вуз ведёт коллега, карточка вам недоступна</span></>}
+                      : <>{issue.organizationName}<span className="work-control__hint">{closedOrganizationHint(issue)}</span></>}
                   </td>
                   <td data-label="КАМ вуза">{issue.ownerManagerName ?? 'Требует назначения'}</td>
                   <td data-label="Вид">
@@ -302,6 +309,13 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
                     {issue.organizationAccessible
                       ? <a className="issues-page__open" href={issuesHref(issue.organizationId, issue.interactionId)}>{issue.description}</a>
                       : issue.description}
+                    {issue.lastComment !== null && (
+                      <span className="work-control__hint">
+                        Комментарий ответственного{issue.lastCommentByName === null ? '' : ` (${issue.lastCommentByName}`}
+                        {issue.lastCommentAt === null ? '' : `, ${formatDateTime(issue.lastCommentAt)}`}{issue.lastCommentByName === null ? '' : ')'}: {issue.lastComment}
+                      </span>
+                    )}
+                    {issue.resolution !== null && <span className="work-control__hint">Как решили: {issue.resolution}</span>}
                   </td>
                   <td data-label="Кто решает">{issue.responsibleName}</td>
                   <td data-label="Срок" className={`issues-page__due${isIssueOverdue(issue, today) ? ' issues-page__overdue' : ''}`}>
@@ -309,12 +323,33 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
                     {isIssueOverdue(issue, today) && <span className="work-control__hint">срок прошёл</span>}
                   </td>
                   <td data-label="Возраст">{daysLabel(ageOf(issue, today))}</td>
+                  <td data-label="Действия">
+                    {canRespond(issue, profile) && (
+                      <span className="issues-page__actions">
+                        <button type="button" className="button--secondary" onClick={() => setResponding({ issue, resolve: false })}>Комментарий</button>
+                        <button type="button" className="button--secondary" onClick={() => setResponding({ issue, resolve: true })}>Решено</button>
+                      </span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      <IssueResponseDialog
+        target={responding}
+        onClose={() => setResponding(null)}
+        onSaved={(updated) => {
+          setResponding(null)
+          setListState((state) => state.kind === 'ready'
+            ? { ...state, items: state.items.map((item) => item.id === updated.id ? updated : item) }
+            : state)
+        }}
+        onSessionExpired={onSessionExpired}
+        onProfileUnavailable={onProfileUnavailable}
+      />
 
       {listState.kind === 'ready' && (
         <Pagination
@@ -327,5 +362,76 @@ export const IssuesScreen = ({ profile, initialQuery, onSessionExpired, onProfil
         />
       )}
     </section>
+  )
+}
+
+type IssueResponseDialogProps = {
+  target: { issue: InteractionIssue; resolve: boolean } | null
+  onClose: () => void
+  onSaved: (issue: InteractionIssue) => void
+  onSessionExpired: () => void
+  onProfileUnavailable: (requestId: string) => void
+}
+
+// Ответ ответственного из реестра: комментарий или «Решено» с обязательным «Как решили». Пишется и в историю
+// взаимодействия, чтобы КАМ вуза увидел ответ.
+const IssueResponseDialog = ({ target, onClose, onSaved, onSessionExpired, onProfileUnavailable }: IssueResponseDialogProps) => {
+  const [text, setText] = useState('')
+  const [state, setState] = useState<{ kind: 'idle' } | { kind: 'saving' } | { kind: 'failed'; error: unknown }>({ kind: 'idle' })
+  const commandKey = useRef<string | null>(null)
+
+  useEffect(() => {
+    setText('')
+    setState({ kind: 'idle' })
+    commandKey.current = null
+  }, [target])
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (target === null || text.trim().length === 0) {
+      return
+    }
+    setState({ kind: 'saving' })
+    const key = commandKey.current ?? (commandKey.current = createIdempotencyKey())
+    try {
+      const updated = target.resolve
+        ? await apiClient.resolveIssueAsResponsible(target.issue.id, { text: text.trim() }, key)
+        : await apiClient.commentIssueAsResponsible(target.issue.id, { text: text.trim() }, key)
+      onSaved(updated)
+    } catch (error) {
+      if (!handledAccessError(error, { onSessionExpired, onProfileUnavailable })) {
+        setState({ kind: 'failed', error })
+      }
+    }
+  }
+
+  return (
+    <CardDialog open={target !== null} title={target?.resolve ? 'Решено' : 'Комментарий ответственного'} onClose={onClose}>
+      {target !== null && (
+        <form className="issues-page__response" onSubmit={(event) => void submit(event)}>
+          <p>{issueTitle(target.issue)}: {target.issue.description}</p>
+          <label>
+            {target.resolve ? 'Как решили' : 'Комментарий'}<span className="required-mark" aria-hidden="true"> *</span>
+            <textarea value={text} maxLength={1000} required onChange={(event) => {
+              commandKey.current = null
+              setText(event.target.value)
+            }} />
+          </label>
+          <p className="work-control__hint">Запись появится в истории взаимодействия; КАМ вуза её увидит.</p>
+          {state.kind === 'failed' && (
+            <div className="notice notice--error" role="alert">
+              <p>{commandErrorText(state.error, target.resolve ? 'закрыть запись' : 'сохранить комментарий')}</p>
+              <SupportDetails requestId={requestIdOf(state.error)} code={state.error instanceof ApiError ? state.error.code : undefined} />
+            </div>
+          )}
+          <div className="issues-page__response-actions">
+            <button type="submit" disabled={state.kind === 'saving' || text.trim().length === 0}>
+              {state.kind === 'saving' ? 'Сохраняем…' : target.resolve ? 'Отметить решённой' : 'Сохранить комментарий'}
+            </button>
+            <button type="button" className="button--secondary" onClick={onClose}>Отмена</button>
+          </div>
+        </form>
+      )}
+    </CardDialog>
   )
 }

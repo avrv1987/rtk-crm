@@ -5,6 +5,7 @@ export type Role = Me['role']
 
 export type Section =
   | 'control' | 'work' | 'issues' | 'organizations' | 'agreements' | 'reports' | 'admin' | 'enrolment' | 'partner' | 'help'
+  | 'agent-plans' | 'summary'
 
 export type Route = {
   section: string
@@ -21,7 +22,7 @@ export type NavItem = {
 }
 
 export type WorkTab = {
-  key: 'control' | 'work' | 'issues'
+  key: 'summary' | 'control' | 'work' | 'issues'
   label: string
   href: string
 }
@@ -57,13 +58,19 @@ export const sectionsFor = (role: Role, enrolmentOperator: boolean, modules: Mod
   if (role === 'PARTNER') {
     return modules.partner ? ['partner', 'help'] : ['help']
   }
-  const sections: Section[] = seesTeams(role) ? ['control'] : []
+  // Первый экран «Руководства» — сводка команд с долями и изменениями, операционный «Контроль» — следующей вкладкой.
+  const sections: Section[] = role === 'MANAGEMENT' ? ['summary', 'control'] : seesTeams(role) ? ['control'] : []
   sections.push('work', 'issues', 'organizations', 'agreements', 'reports')
   if (enrolmentVisible(enrolmentOperator, modules)) {
     sections.push('enrolment')
   }
   if (role === 'LEADER') {
     sections.push('admin')
+  }
+  // Экран подтверждения плана ИИ-агента открывается только по ссылке, в меню его нет. Планы готовят КАМ и руководитель.
+  // Без модуля MCP агентов нет вовсе, и ссылка ведёт на первый доступный раздел, а не на «План не найден».
+  if (modules.mcp && (role === 'USER' || role === 'LEADER')) {
+    sections.push('agent-plans')
   }
   sections.push('help')
   return sections
@@ -74,7 +81,9 @@ export const navFor = (role: Role, enrolmentOperator: boolean, modules: Modules)
     return []
   }
   const items: NavItem[] = [
-    seesTeams(role)
+    role === 'MANAGEMENT'
+      ? { label: 'Работа', href: '#/summary', sections: ['summary', 'control', 'issues'], phone: true }
+      : seesTeams(role)
       ? { label: 'Работа', href: '#/control', sections: ['control', 'issues'], phone: true }
       : { label: 'Работа', href: '#/work', sections: ['work', 'issues'], phone: true },
     { label: 'Вузы', href: '#/organizations', sections: ['organizations'], phone: true },
@@ -101,6 +110,7 @@ export const workTabsFor = (role: Role): WorkTab[] => {
     return []
   }
   return [
+    ...(role === 'MANAGEMENT' ? [{ key: 'summary' as const, label: 'Сводка команд', href: '#/summary' }] : []),
     { key: 'control', label: 'Контроль', href: '#/control' },
     { key: 'issues', label: 'Проблемы и риски', href: '#/issues' }
   ]
@@ -115,7 +125,7 @@ export const withoutView = (query: string) => {
 }
 
 export const activeWorkTab = (section: Section): WorkTab['key'] | null => {
-  return section === 'control' || section === 'work' || section === 'issues' ? section : null
+  return section === 'summary' || section === 'control' || section === 'work' || section === 'issues' ? section : null
 }
 
 export const workRedirect = (hash: string, role: Role): string | null => {
@@ -136,8 +146,10 @@ const titles: Record<Section, string> = {
   reports: 'Отчёты',
   admin: 'Администрирование',
   enrolment: 'Зачисление',
-  partner: 'Кабинет вуза',
-  help: 'Справка'
+  partner: 'Сотрудничество с ИТ Школой РТК',
+  help: 'Справка',
+  'agent-plans': 'План ИИ-агента',
+  summary: 'Сводка команд'
 }
 
 export const sectionTitle = (section: Section, role: Role): string => {
@@ -152,7 +164,7 @@ const roleNames: Record<Role, string> = {
   LEADER: 'Руководитель команды',
   ADMIN: 'Администратор',
   MANAGEMENT: 'Руководство',
-  PARTNER: 'Представитель вуза'
+  PARTNER: 'Координатор вуза'
 }
 
 export const roleName = (role: Role) => roleNames[role]

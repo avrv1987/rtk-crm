@@ -56,7 +56,8 @@ public class CardSourcesService {
                         snapshot.runEndsOn(),
                         snapshot.observedAt(),
                         snapshot.changedAt(),
-                        snapshot.unit().activity()
+                        snapshot.unit().activity(),
+                        syncService.staleSnapshot(snapshot.observedAt(), snapshot.runEndsOn())
                 ))
                 .toList();
     }
@@ -121,12 +122,14 @@ public class CardSourcesService {
         UUID organizationId = repository.findInteractionOrganizationId(interactionId).orElseThrow(InteractionNotFoundException::new);
         OffsetDateTime observedAt = snapshots.stream().map(LearningSnapshotView::observedAt).max(Comparator.naturalOrder())
                 .orElse(null);
-        SourceState lms = sourceState(SourceCode.MOODLE, organizationId, observedAt);
-        SourceState site = sourceState(SourceCode.WEBSITE, organizationId, null);
+        // Частичный запуск сдвигает «последний успешный», поэтому устаревание LMS видно и по снимкам идущих потоков.
+        boolean staleRun = snapshots.stream().anyMatch(LearningSnapshotView::stale);
+        SourceState lms = sourceState(SourceCode.MOODLE, organizationId, observedAt, staleRun);
+        SourceState site = sourceState(SourceCode.WEBSITE, organizationId, null, false);
         return new InteractionSourceStatus(lms, site, learningState(interactionId, snapshots, lms));
     }
 
-    private SourceState sourceState(SourceCode source, UUID organizationId, OffsetDateTime dataObservedAt) {
+    private SourceState sourceState(SourceCode source, UUID organizationId, OffsetDateTime dataObservedAt, boolean staleRun) {
         OffsetDateTime lastSuccessAt = repository.findLastSuccessAtFor(source, organizationId).orElse(null);
         Optional<SyncRunView> failed = repository.findLatestFinishedRunFor(source, organizationId)
                 .filter(run -> run.status() == SyncRunStatus.FAILED);
@@ -136,7 +139,7 @@ public class CardSourcesService {
                 failed.map(SyncRunView::finishedAt).orElse(null),
                 failed.map(SyncRunView::errorCode).orElse(null),
                 failed.map(SyncRunView::errorMessage).orElse(null),
-                syncService.stale(source, lastSuccessAt),
+                staleRun || syncService.stale(source, lastSuccessAt),
                 dataObservedAt
         );
     }
@@ -210,7 +213,8 @@ public class CardSourcesService {
             LocalDate runEndsOn,
             OffsetDateTime observedAt,
             OffsetDateTime changedAt,
-            LearningUnit.Activity activity
+            LearningUnit.Activity activity,
+            boolean stale
     ) {
     }
 

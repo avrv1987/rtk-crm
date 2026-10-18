@@ -143,6 +143,9 @@ class AgreementServiceTest {
     private AgreementRepository agreementRepository;
 
     @Autowired
+    private OrganizationRepository organizationRepository;
+
+    @Autowired
     private JdbcTemplate jdbc;
 
     @BeforeEach
@@ -537,6 +540,22 @@ class AgreementServiceTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_events", Integer.class)).isEqualTo(1);
     }
 
+    // Часы дают доли микросекунды, база хранит микросекунды: два перехода в пределах одной микросекунды не должны
+    // получить одинаковое время, иначе порядок истории решает случайный id.
+    @Test
+    void statusEventsStayStrictlyOrderedWithinOneMicrosecond() {
+        Agreement draft = agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "Д-мкс", null, List.of()),
+                "c-micro", "req");
+        agreementRepository.insertStatusEvent(draft.id(), AgreementStatus.DRAFT, AgreementStatus.REVIEW, null, MANAGER_A, null,
+                OffsetDateTime.parse("2099-01-01T00:00:00.0000012Z"));
+        agreementRepository.insertStatusEvent(draft.id(), AgreementStatus.REVIEW, AgreementStatus.CORRECTION, null, MANAGER_A, null,
+                OffsetDateTime.parse("2099-01-01T00:00:00.0000014Z"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(DISTINCT occurred_at) FROM agreement_status_events WHERE agreement_id = ?",
+                Integer.class, draft.id())).isEqualTo(3);
+        assertThat(agreementService.get(managerA, draft.id()).history()).extracting(AgreementModels.StatusEvent::toStatus)
+                .containsExactly(AgreementStatus.CORRECTION, AgreementStatus.REVIEW, AgreementStatus.DRAFT);
+    }
+
     @Test
     void contractGoesThroughApprovalWithHistoryReturnsNeedACommentAndActiveNeedsASignatureDate() {
         Agreement draft = agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "Д-1", null, List.of(INTERACTION_A)),
@@ -835,8 +854,24 @@ class AgreementServiceTest {
         assertThat(registryService.registry(leaderA, new AgreementModels.RegistryQuery(null, null, MANAGER_A,
                 LocalDate.now(AgreementService.ZONE).plusDays(30), null, false))).extracting(AgreementModels.RegistryRow::number)
                 .containsExactly("Р-2");
-        assertThat(registryService.registry(new CrmProfile(uuid(16), UserRole.MANAGEMENT, null, 0),
+        CrmProfile management = new CrmProfile(uuid(16), UserRole.MANAGEMENT, null, 0);
+        assertThat(registryService.registry(management,
                 new AgreementModels.RegistryQuery(null, null, null, null, null, false))).hasSize(3);
+        assertThat(registryService.registry(management, new AgreementModels.RegistryQuery(null, null, null, null, null, false, TEAM_B)))
+                .singleElement().satisfies(row -> {
+                    assertThat(row.number()).isEqualTo("Б-1");
+                    assertThat(row.teamName()).isEqualTo("Команда Б");
+                });
+        assertThat(registryService.registry(leaderA, new AgreementModels.RegistryQuery(null, null, null, null, null, false, TEAM_B)))
+                .as("отбор по команде не расширяет область руководителя").isEmpty();
+        // Плитка «Контроля» берёт договоры на согласовании по тому же правилу, что плитки реестра.
+        LocalDate today = LocalDate.now(AgreementService.ZONE);
+        for (CrmProfile profile : List.of(leaderA, management)) {
+            long inRegistry = registryService.registry(profile, new AgreementModels.RegistryQuery(null, null, null, null, null, false))
+                    .stream().filter(row -> AgreementApproval.inProgress(row.status())).count();
+            assertThat(organizationRepository.visibilityScope(profile).map(scope -> agreementRepository.findInProgress(scope, today))
+                    .orElseThrow()).hasSize((int) inRegistry).isNotEmpty();
+        }
         assertThatThrownBy(() -> registryService.registry(admin, new AgreementModels.RegistryQuery(null, null, null, null, null, false)))
                 .isInstanceOfSatisfying(AgreementException.class, exception -> assertThat(exception.status().value()).isEqualTo(403));
         assertThatThrownBy(() -> registryService.registry(managerA, new AgreementModels.RegistryQuery(null, null, null, null, 0, false)))
@@ -1131,7 +1166,7 @@ class AgreementServiceTest {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_issues (
+                CREATE TABLE IF NOT EXISTS interaction_issues (last_comment VARCHAR(1000), last_comment_by UUID, last_comment_at TIMESTAMP WITH TIME ZONE,
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
                     description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
                     status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
@@ -1182,7 +1217,7 @@ class AgreementServiceTest {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), 
+                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), applied_at TIMESTAMP WITH TIME ZONE, 
                     id UUID PRIMARY KEY,
                     source VARCHAR(16) NOT NULL,
                     external_id VARCHAR(200) NOT NULL

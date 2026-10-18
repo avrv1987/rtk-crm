@@ -249,13 +249,13 @@ class ReportViewsTest {
                         ReportRow::completedCount, ReportRow::averageDays, ReportRow::maxDays, ReportRow::currentCount,
                         ReportRow::currentMaxDays)
                 .containsExactly(
-                        tuple("Команда А", "Все программы", "Весь цикл", 1L, days("26.1"), days("26.1"), 2L, days("20.0")),
+                        tuple("Команда А", "Все программы", "Время до входа в последний этап", 1L, days("26.1"), days("26.1"), 2L, days("20.0")),
                         tuple("Команда А", "Все программы", "Поиск контакта", 1L, days("26.1"), days("26.1"), 2L, days("20.0")),
                         tuple("Команда А", "Все программы", "Встреча", 0L, null, null, 1L, days("15.5")),
-                        tuple("Команда А", "Java-разработчик", "Весь цикл", 1L, days("26.1"), days("26.1"), 1L, days("5.6")),
+                        tuple("Команда А", "Java-разработчик", "Время до входа в последний этап", 1L, days("26.1"), days("26.1"), 1L, days("5.6")),
                         tuple("Команда А", "Java-разработчик", "Поиск контакта", 1L, days("26.1"), days("26.1"), 1L, days("5.6")),
                         tuple("Команда А", "Java-разработчик", "Встреча", 0L, null, null, 1L, days("15.5")),
-                        tuple("Команда А", null, "Весь цикл", 0L, null, null, 1L, days("20.0")),
+                        tuple("Команда А", null, "Время до входа в последний этап", 0L, null, null, 1L, days("20.0")),
                         tuple("Команда А", null, "Поиск контакта", 0L, null, null, 1L, days("20.0"))
                 );
         assertThat(ReportColumn.AVG_DAYS.text(rows.getFirst())).isEqualTo("26,1");
@@ -264,14 +264,14 @@ class ReportViewsTest {
 
         List<ReportRow> afterCompletion = rows(LEADER_A_PROFILE, duration(LocalDate.parse("2026-09-06"), SEPTEMBER_TWENTIETH, List.of()));
         assertThat(afterCompletion.getFirst()).extracting(ReportRow::stageName, ReportRow::completedCount, ReportRow::currentCount)
-                .containsExactly("Весь цикл", 0L, 2L);
+                .containsExactly("Время до входа в последний этап", 0L, 2L);
 
         assertThat(rows(LEADER_A_PROFILE, duration(SEPTEMBER_FIRST, SEPTEMBER_TWENTIETH, List.of("Встреча"))))
-                .extracting(ReportRow::stageName).containsOnly("Весь цикл", "Встреча");
+                .extracting(ReportRow::stageName).containsOnly("Время до входа в последний этап", "Встреча");
         assertThat(rows(MANAGER_A_PROFILE, duration(SEPTEMBER_FIRST, SEPTEMBER_TWENTIETH, List.of())))
                 .filteredOn(row -> row.programName() != null && row.programName().equals("Java-разработчик"))
                 .extracting(ReportRow::stageName, ReportRow::currentCount)
-                .containsExactly(tuple("Весь цикл", 0L), tuple("Поиск контакта", 0L), tuple("Встреча", 1L));
+                .containsExactly(tuple("Время до входа в последний этап", 0L), tuple("Поиск контакта", 0L), tuple("Встреча", 1L));
         assertThat(rows(MANAGER_B_PROFILE, duration(SEPTEMBER_FIRST, SEPTEMBER_TWENTIETH, List.of())))
                 .extracting(ReportRow::teamName).containsOnly("Команда Б");
 

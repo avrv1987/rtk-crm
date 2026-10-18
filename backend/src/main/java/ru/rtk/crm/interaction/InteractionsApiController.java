@@ -67,7 +67,8 @@ public class InteractionsApiController {
             @RequestParam(required = false) String flag,
             @RequestParam(required = false) Integer licenseExpiresBy,
             @RequestParam(required = false) String responsible,
-            @RequestParam(required = false) String minDaysOnStage
+            @RequestParam(required = false) String minDaysOnStage,
+            @RequestParam(required = false) String noContactDays
     ) {
         return interactionService.list(
                 currentProfileService.requireActiveProfile(user),
@@ -80,7 +81,8 @@ public class InteractionsApiController {
                         flag,
                         licenseExpiresBy,
                         responsible,
-                        minDaysOnStage
+                        minDaysOnStage,
+                        noContactDays
                 ),
                 InteractionQuery.from(page, size, sort)
         );

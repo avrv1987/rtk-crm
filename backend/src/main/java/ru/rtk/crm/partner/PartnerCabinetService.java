@@ -2,6 +2,7 @@ package ru.rtk.crm.partner;
 
 import java.io.InputStream;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
@@ -33,29 +34,35 @@ import ru.rtk.crm.partner.PartnerModels.PartnerWork;
 
 @Service
 public class PartnerCabinetService {
-    private static final ZoneId MOSCOW = ZoneId.of("Europe/Moscow");
+    static final ZoneId MOSCOW = ZoneId.of("Europe/Moscow");
     private static final Logger LOGGER = LoggerFactory.getLogger(PartnerCabinetService.class);
 
     private final PartnerCabinetRepository partnerCabinetRepository;
     private final AttachmentStorage attachmentStorage;
     private final AuditJournalRepository auditJournalRepository;
     private final KeycloakAccountClient keycloakAccountClient;
+    private final PartnerRequestService partnerRequestService;
 
     public PartnerCabinetService(
             PartnerCabinetRepository partnerCabinetRepository,
             AttachmentStorage attachmentStorage,
             AuditJournalRepository auditJournalRepository,
-            KeycloakAccountClient keycloakAccountClient
+            KeycloakAccountClient keycloakAccountClient,
+            PartnerRequestService partnerRequestService
     ) {
         this.partnerCabinetRepository = partnerCabinetRepository;
         this.attachmentStorage = attachmentStorage;
         this.auditJournalRepository = auditJournalRepository;
         this.keycloakAccountClient = keycloakAccountClient;
+        this.partnerRequestService = partnerRequestService;
     }
 
     @Transactional(readOnly = true)
     public PartnerCabinet cabinet(CrmProfile partner) {
-        UUID organizationId = requireOrganization(partner);
+        PartnerCabinetRepository.PartnerScope scope = partnerCabinetRepository.findScope(partner.id())
+                .orElseThrow(PartnerException::accessClosed);
+        UUID organizationId = scope.organizationId();
+        Map<UUID, OffsetDateTime> receipts = partnerRequestService.receipts(partner.id());
         OrganizationRow organization = partnerCabinetRepository.findOrganization(organizationId);
         Map<UUID, List<String>> products = partnerCabinetRepository.findProducts(organizationId).stream()
                 .collect(Collectors.groupingBy(
@@ -104,8 +111,11 @@ public class PartnerCabinetService {
                 new PartnerOrganization(organization.id(), organization.name(), organization.type()),
                 organization.managerName() == null ? null : manager(organization),
                 works,
-                partnerCabinetRepository.findDocuments(organizationId),
-                agreements
+                partnerCabinetRepository.findDocuments(organizationId).stream()
+                        .map(document -> document.withReceivedAt(receipts.get(document.id())))
+                        .toList(),
+                agreements,
+                partnerRequestService.forPartner(organizationId, scope.contactId())
         );
     }
 

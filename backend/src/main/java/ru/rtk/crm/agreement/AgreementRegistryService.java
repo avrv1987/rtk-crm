@@ -39,8 +39,8 @@ public class AgreementRegistryService {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
     private static final List<String> REGISTRY_COLUMNS = List.of("Номер", "Вуз", "Статус", "Дней в статусе", "Отправлен на согласование",
-            "Согласование", "Подписан", "Действует до", "Предмет", "Менеджер");
-    private static final int[] REGISTRY_WIDTHS = {12, 28, 16, 10, 14, 26, 12, 12, 34, 20};
+            "Согласование", "Подписан", "Действует до", "Предмет", "Менеджер", "Команда");
+    private static final int[] REGISTRY_WIDTHS = {12, 28, 16, 10, 14, 26, 12, 12, 34, 20, 18};
     private static final List<String> TRANSITION_COLUMNS = List.of("Дата и время (МСК)", "Вуз", "Договор", "Из статуса", "В статус",
             "Кто", "Комментарий");
     private static final int[] TRANSITION_WIDTHS = {14, 26, 12, 16, 16, 18, 34};
@@ -205,7 +205,7 @@ public class AgreementRegistryService {
                 + (row.status().expired(row.validUntil(), LocalDate.now(AgreementService.ZONE)) ? " · срок истёк" : "");
         return List.of(row.number(), row.organizationName(), status, Long.toString(row.daysInStatus()), date(row.sentOn()),
                 approvalText(row.approval()), date(row.concludedOn()), date(row.validUntil()), row.subject() == null ? "" : row.subject(),
-                row.managerName() == null ? "Не назначен" : row.managerName());
+                row.managerName() == null ? "Не назначен" : row.managerName(), row.teamName() == null ? "" : row.teamName());
     }
 
     // Та же строка, что на экране: сторона и круг, дни на стороне из нормы, общий срок и оценка.

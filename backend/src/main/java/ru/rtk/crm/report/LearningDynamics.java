@@ -16,6 +16,8 @@ public record LearningDynamics(
         List<Series> series,
         List<Long> totalParticipants,
         List<Long> totalCompleted,
+        List<Long> totalKnown,
+        List<Long> totalRunsWithoutData,
         List<Row> rows
 ) {
     public static final String TITLE = "Динамика обучения по вузам и ИТ-программам";
@@ -39,9 +41,12 @@ public record LearningDynamics(
             UUID programId,
             String programName,
             long runs,
-            long participants,
+            long runsWithoutData,
+            Long participants,
             Long completed,
-            Long completionPercent
+            Long known,
+            Long completionPercent,
+            String completionBasis
     ) {
     }
 }

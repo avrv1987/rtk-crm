@@ -32,6 +32,8 @@ import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 @ConditionalOnWebApplication(type = Type.SERVLET)
 public class ApiSecurityConfiguration {
     private static final AntPathRequestMatcher API_MATCHER = new AntPathRequestMatcher("/api/**");
+    private static final AntPathRequestMatcher MAX_WEBHOOK_MATCHER = new AntPathRequestMatcher("/api/max/webhook", "POST");
+    private static final AntPathRequestMatcher MAIL_INVITATION_MATCHER = new AntPathRequestMatcher("/api/mail/invitations", "POST");
 
     @Bean
     RequestIdFilter requestIdFilter() {
@@ -120,7 +122,13 @@ public class ApiSecurityConfiguration {
         csrfTokenRepository.setHeaderName("X-CSRF-TOKEN");
         http.csrf(csrf -> csrf
                         .csrfTokenRepository(csrfTokenRepository)
-                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()))
+                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                        // Вебхук MAX приходит с сервера MAX без cookie и CSRF; подлинность проверяет контроллер модуля
+                        // по секрету в заголовке X-Max-Bot-Api-Secret.
+                        .ignoringRequestMatchers(MAX_WEBHOOK_MATCHER)
+                        // Приглашение из письма открывает человек без входа: сессии и cookie нет, подделывать нечего,
+                        // а доступ даёт только одноразовый токен в адресе.
+                        .ignoringRequestMatchers(MAIL_INVITATION_MATCHER))
                 .addFilterBefore(requestIdFilter, SecurityContextHolderFilter.class)
                 .authorizeHttpRequests(authorize -> authorize
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
@@ -128,6 +136,8 @@ public class ApiSecurityConfiguration {
                         .requestMatchers("/openapi.yaml", "/swagger-ui/**", "/v3/api-docs/swagger-config").permitAll()
                         .requestMatchers("/api/config").permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/authorization/*", "/api/auth/callback/*").permitAll()
+                        .requestMatchers(MAX_WEBHOOK_MATCHER).permitAll()
+                        .requestMatchers(MAIL_INVITATION_MATCHER).permitAll()
                         .requestMatchers("/api/**").authenticated()
                         // Всё, что не перечислено выше, закрыто: новый путь без явного правила не станет публичным по ошибке.
                         .anyRequest().denyAll())

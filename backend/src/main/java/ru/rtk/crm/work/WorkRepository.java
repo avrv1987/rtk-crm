@@ -21,6 +21,7 @@ import ru.rtk.crm.work.WorkModels.ReminderLicense;
 import ru.rtk.crm.work.WorkModels.ReminderStep;
 import ru.rtk.crm.work.WorkModels.ReminderQualification;
 import ru.rtk.crm.work.WorkModels.ReminderTraining;
+import ru.rtk.crm.work.WorkModels.ReminderUnassigned;
 
 @Repository
 public class WorkRepository {
@@ -259,6 +260,34 @@ public class WorkRepository {
                         resultSet.getString("vendor_name"),
                         resultSet.getString("contract_number"),
                         resultSet.getInt("license_expiry_year")
+                ))
+                .list();
+    }
+
+    // Последнее событие назначения вуза — снятие из-за блокировки КАМ, и с тех пор КАМ не назначен.
+    public List<ReminderUnassigned> findUnassignedAfterBlock(VisibilityScope scope, OffsetDateTime since, int limit) {
+        return jdbcClient.sql("""
+                SELECT o.id, o.name, e.previous_owner_manager_display_name, e.occurred_at
+                FROM organizations o
+                JOIN organization_assignment_events e ON e.organization_id = o.id
+                WHERE o.id IN (SELECT id FROM organizations WHERE %s)
+                  AND o.owner_manager_id IS NULL
+                  AND e.reason = 'PROFILE_BLOCKED' AND e.owner_manager_id IS NULL AND e.occurred_at >= :since
+                  AND NOT EXISTS (
+                      SELECT 1 FROM organization_assignment_events later
+                      WHERE later.organization_id = o.id AND later.occurred_at > e.occurred_at
+                  )
+                ORDER BY e.occurred_at DESC, o.name, o.id
+                LIMIT :limit
+                """.formatted(scope.condition()))
+                .params(scope.parameters())
+                .param("since", since)
+                .param("limit", limit)
+                .query((resultSet, rowNumber) -> new ReminderUnassigned(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getString("name"),
+                        resultSet.getString("previous_owner_manager_display_name"),
+                        resultSet.getObject("occurred_at", OffsetDateTime.class)
                 ))
                 .list();
     }

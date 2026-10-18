@@ -8,6 +8,7 @@ export type AdminSectionSlug =
   | 'workflow-templates'
   | 'pending-source-records'
   | 'sources'
+  | 'mail'
   | 'journal'
   | 'personal-data'
   | 'retention'
@@ -30,6 +31,7 @@ export const adminSections: AdminSectionEntry[] = [
   { slug: 'workflow-templates', label: 'Шаблоны этапов', group: 'Данные', roles: adminAndLeader },
   { slug: 'pending-source-records', label: 'Заявки с сайта', group: 'Данные', roles: leaderOnly },
   { slug: 'sources', label: 'Источники данных', group: 'Интеграции', roles: adminOnly },
+  { slug: 'mail', label: 'Почта', group: 'Интеграции', roles: adminOnly },
   { slug: 'journal', label: 'Журнал', group: 'Безопасность', roles: adminOnly },
   { slug: 'personal-data', label: 'Персональные данные', group: 'Безопасность', roles: adminOnly },
   { slug: 'retention', label: 'Сроки хранения', group: 'Безопасность', roles: adminOnly }

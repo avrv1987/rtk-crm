@@ -77,9 +77,10 @@ type RouteDisclosureProps = {
   canEdit: boolean
   onCompleteStage: () => void
   onEditStages: () => void
+  onReturnToStage?: () => void
 }
 
-export const RouteDisclosure = ({ interaction, items, canEdit, onCompleteStage, onEditStages }: RouteDisclosureProps) => {
+export const RouteDisclosure = ({ interaction, items, canEdit, onCompleteStage, onEditStages, onReturnToStage }: RouteDisclosureProps) => {
   const [open, setOpen] = useState(false)
   const panelId = useId()
   const currentIndex = items.findIndex((item) => item.status === 'current')
@@ -174,7 +175,17 @@ export const RouteDisclosure = ({ interaction, items, canEdit, onCompleteStage, 
         </div>
         {canEdit && (
           <div className="work-card__inline-actions">
-            <button type="button" className="button--secondary" onClick={onCompleteStage}>Отметить этап выполненным</button>
+            <button
+              type="button"
+              className="button--secondary"
+              title="Этап сделан, но взаимодействие остаётся на текущем этапе: для работ, которые идут параллельно."
+              onClick={onCompleteStage}
+            >
+              Отметить этап выполненным
+            </button>
+            {onReturnToStage !== undefined && (
+              <button type="button" className="button--secondary" onClick={onReturnToStage}>Вернуться на этап…</button>
+            )}
             <button type="button" className="button--secondary" onClick={onEditStages}>Изменить этапы</button>
           </div>
         )}

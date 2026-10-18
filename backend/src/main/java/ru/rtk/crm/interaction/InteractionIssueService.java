@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -203,6 +204,92 @@ public class InteractionIssueService {
         return record(profile, target, commandId, version, text, now);
     }
 
+    @Transactional
+    public InteractionIssue commentAsResponsible(CrmProfile profile, UUID issueId, InteractionIssueNote request, String idempotencyKey) {
+        return respond(profile, issueId, request, idempotencyKey, false);
+    }
+
+    @Transactional
+    public InteractionIssue resolveAsResponsible(CrmProfile profile, UUID issueId, InteractionIssueNote request, String idempotencyKey) {
+        return respond(profile, issueId, request, idempotencyKey, true);
+    }
+
+    // Ответственному из другого вуза открывается только сама запись: прокомментировать и закрыть её. Карточка
+    // взаимодействия и вуз остаются вне его области, поэтому ответ — строка реестра, а не взаимодействие. Запись
+    // попадает и в историю взаимодействия, чтобы КАМ вуза увидел ответ коллеги.
+    private InteractionIssue respond(
+            CrmProfile profile, UUID issueId, InteractionIssueNote request, String idempotencyKey, boolean resolve
+    ) {
+        ContactInteractionMutationAuthorization.requireCardEditor(profile);
+        String text = requiredText(request == null ? null : request.text(), "text",
+                resolve ? "Напишите, как решили" : "Напишите комментарий");
+        CommandOperation operation = resolve ? CommandOperation.RESOLVE_ISSUE_AS_RESPONSIBLE : CommandOperation.COMMENT_ISSUE_AS_RESPONSIBLE;
+        String key = interactionService.requiredIdempotencyKey(idempotencyKey);
+        String fingerprint = CommandFingerprint.of(objectMapper, new RespondIssueCommand(issueId, resolve, text));
+        UUID commandId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
+        if (!commandIdempotencyRepository.reserve(commandId, profile.id(), operation, key, fingerprint, now)) {
+            return replayIssue(profile.id(), operation, key, fingerprint);
+        }
+        VisibilityScope scope = organizationRepository.visibilityScope(profile).orElseThrow(InteractionIssueNotFoundException::new);
+        UUID interactionId = issueRepository.findForViewer(scope, issueId)
+                .filter(found -> found.responsibleId().equals(profile.id()))
+                .map(InteractionIssue::interactionId)
+                .orElseThrow(InteractionIssueNotFoundException::new);
+        // Блокировка взаимодействия — та же, что у команд карточки: «Решено» из карточки и из реестра не пройдут оба.
+        InteractionRepository.InteractionRow row = interactionRepository.findByIdForUpdate(interactionId)
+                .orElseThrow(InteractionIssueNotFoundException::new);
+        InteractionIssue issue = issueRepository.findForViewer(scope, issueId)
+                .filter(found -> found.responsibleId().equals(profile.id()))
+                .orElseThrow(InteractionIssueNotFoundException::new);
+        if (issue.status() == InteractionIssueStatus.RESOLVED) {
+            throw new InteractionValidationException("status", "Запись уже решена");
+        }
+        String history;
+        if (resolve) {
+            issueRepository.resolve(issueId, text, profile.id(), now);
+            history = (issue.kind() == InteractionIssueKind.PROBLEM ? "Решена проблема" : "Решён риск")
+                    + " «" + issue.description() + "» (ответственный). Решение: " + text;
+        } else {
+            issueRepository.comment(issueId, text, profile.id(), now);
+            history = "Комментарий ответственного к " + (issue.kind() == InteractionIssueKind.PROBLEM ? "проблеме" : "риску")
+                    + " «" + issue.description() + "»: " + text;
+        }
+        if (!interactionRepository.touchVersion(row.id(), row.version(), now)) {
+            throw InteractionConflictException.version(row.version());
+        }
+        InteractionStage currentStage = interactionRepository.findStages(row.id()).stream()
+                .filter(stage -> stage.id().equals(row.currentStageId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("Current interaction stage is unavailable"));
+        interactionRepository.insertEvent(UUID.randomUUID(), row.id(), commandId, InteractionEventType.DETAILS_UPDATED, currentStage,
+                null, null, history, null, profile.id(), issueRepository.findOwnerManagerId(row.organizationId()).orElse(null),
+                row.version() + 1, now);
+        InteractionIssue result = issueRepository.findForViewer(scope, issueId).orElseThrow(InteractionIssueNotFoundException::new);
+        try {
+            commandIdempotencyRepository.complete(commandId, objectMapper.writeValueAsString(result));
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Issue command result could not be stored", exception);
+        }
+        return result;
+    }
+
+    private InteractionIssue replayIssue(UUID actorProfileId, CommandOperation operation, String key, String fingerprint) {
+        CommandIdempotencyRepository.CommandRecord command = commandIdempotencyRepository.find(actorProfileId, operation, key)
+                .orElseThrow(() -> new IllegalStateException("Reserved issue command is unavailable"));
+        if (!fingerprint.equals(command.requestFingerprint())) {
+            throw InteractionConflictException.idempotency();
+        }
+        if (command.resultJson() == null) {
+            throw new IllegalStateException("Reserved issue command has no result");
+        }
+        try {
+            return objectMapper.readValue(command.resultJson(), InteractionIssue.class);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Stored issue command result is unreadable", exception);
+        }
+    }
+
     private Target visible(CrmProfile profile, UUID interactionId, boolean forUpdate) {
         InteractionRepository.InteractionRow row = (forUpdate
                 ? interactionRepository.findByIdForUpdate(interactionId)
@@ -336,5 +423,8 @@ public class InteractionIssueService {
     }
 
     private record ResolveIssueCommand(UUID interactionId, UUID issueId, int version, String resolution) {
+    }
+
+    private record RespondIssueCommand(UUID issueId, boolean resolve, String text) {
     }
 }

@@ -145,6 +145,7 @@ export const WorkList = ({ role, path, initialQuery, refreshSignal, title, onTot
         responsible: current.responsible || undefined,
         status: current.status === 'ACTIVE' ? undefined : current.status,
         minDaysOnStage: current.minDaysOnStage ?? undefined,
+        noContactDays: current.noContactDays ?? undefined,
         page: current.page,
         size: pageSize,
         sort: 'nextActionAt,asc'
@@ -279,6 +280,11 @@ export const WorkList = ({ role, path, initialQuery, refreshSignal, title, onTot
       key: 'days',
       label: `На этапе дольше ${daysLabel(filters.minDaysOnStage)}`,
       onRemove: () => changeFilter({ minDaysOnStage: null })
+    },
+    filters.noContactDays !== null && {
+      key: 'noContact',
+      label: `Нет контакта больше ${daysLabel(filters.noContactDays)}`,
+      onRemove: () => changeFilter({ noContactDays: null })
     }
   ].filter((chip): chip is ActiveChip => chip !== false)
 
@@ -390,6 +396,17 @@ export const WorkList = ({ role, path, initialQuery, refreshSignal, title, onTot
           <select value={filters.minDaysOnStage ?? ''} onChange={(event) => changeFilter({ minDaysOnStage: positiveInteger(event.target.value) })}>
             <option value="">Любой срок</option>
             {stageDays.map((days) => <option key={days} value={days}>дольше {daysLabel(days)}</option>)}
+          </select>
+        </label>
+        <label>
+          Нет контакта с вузом
+          <select value={filters.noContactDays ?? ''} onChange={(event) => changeFilter({ noContactDays: positiveInteger(event.target.value) })}>
+            <option value="">Не важно</option>
+            {(filters.noContactDays === null || stageDayOptions.includes(filters.noContactDays)
+              ? stageDayOptions
+              : [...stageDayOptions, filters.noContactDays].sort((a, b) => a - b)).map((days) => (
+              <option key={days} value={days}>больше {daysLabel(days)}</option>
+            ))}
           </select>
         </label>
         {optionsState.kind === 'failed' && (

@@ -242,6 +242,9 @@ export const OrganizationsScreen = ({
   }, [filters.q, searchText])
 
   const detailOrganizationId = detailState.kind === 'ready' ? detailState.organization.id : undefined
+  // Пока загружается вуз из нового адреса, прежний вуз ещё «готов»: без этой сверки его панель получила бы
+  // взаимодействие другого вуза и записала бы в адрес и черновики чужой вуз.
+  const detailMatchesRoute = detailOrganizationId === undefined || detailOrganizationId === selectedOrganizationId
 
   useEffect(() => {
     if (detailOrganizationId !== undefined && selectedInteractionId === undefined) {
@@ -501,7 +504,7 @@ export const OrganizationsScreen = ({
           {selectedOrganizationId !== undefined && (
             <nav className="card-crumbs" aria-label="Путь по разделу">
               <a href={`#/organizations${listSuffix}`}>← Все вузы</a>
-              {selectedInteractionId !== undefined && detailState.kind === 'ready' && (
+              {selectedInteractionId !== undefined && detailMatchesRoute && detailState.kind === 'ready' && (
                 <>
                   <span aria-hidden="true">/</span>
                   <a href={`#/organizations/${detailState.organization.id}${listSuffix}`}>{detailState.organization.name}</a>
@@ -531,7 +534,7 @@ export const OrganizationsScreen = ({
               </div>
             </>
           )}
-          {detailState.kind === 'ready' && selectedInteractionId !== undefined && (
+          {detailMatchesRoute && detailState.kind === 'ready' && selectedInteractionId !== undefined && (
             <InteractionsPanel
               key={`card:${detailState.organization.id}`}
               view="card"
@@ -546,7 +549,7 @@ export const OrganizationsScreen = ({
               onProfileUnavailable={onProfileUnavailable}
             />
           )}
-          {detailState.kind === 'ready' && selectedInteractionId === undefined && (
+          {detailMatchesRoute && detailState.kind === 'ready' && selectedInteractionId === undefined && (
             <div className="org-card">
               <OrganizationCardHeader
                 key={`header:${detailState.organization.id}`}

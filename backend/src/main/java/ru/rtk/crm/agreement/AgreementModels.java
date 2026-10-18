@@ -323,8 +323,13 @@ public final class AgreementModels {
             UUID managerId,
             LocalDate expiresBefore,
             Integer reviewLongerThanDays,
-            boolean delayed
+            boolean delayed,
+            UUID teamId
     ) {
+        public RegistryQuery(List<AgreementStatus> statuses, UUID organizationId, UUID managerId, LocalDate expiresBefore,
+                             Integer reviewLongerThanDays, boolean delayed) {
+            this(statuses, organizationId, managerId, expiresBefore, reviewLongerThanDays, delayed, null);
+        }
     }
 
     public record RegistryRow(
@@ -341,8 +346,16 @@ public final class AgreementModels {
             String subject,
             UUID managerId,
             String managerName,
-            Approval approval
+            Approval approval,
+            UUID teamId,
+            String teamName
     ) {
+        public RegistryRow(UUID id, UUID organizationId, String organizationName, String number, AgreementStatus status,
+                           OffsetDateTime statusChangedAt, long daysInStatus, LocalDate sentOn, LocalDate concludedOn,
+                           LocalDate validUntil, String subject, UUID managerId, String managerName, Approval approval) {
+            this(id, organizationId, organizationName, number, status, statusChangedAt, daysInStatus, sentOn, concludedOn, validUntil,
+                    subject, managerId, managerName, approval, null, null);
+        }
     }
 
     public record Activity(

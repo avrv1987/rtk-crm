@@ -41,17 +41,37 @@ class LearningTrendServiceTest {
 
         LearningTrend trend = LearningTrendService.trend(observations, FROM, TO, 92);
 
-        assertThat(trend.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change)
-                .containsExactly(23L, 72L, -1L);
+        assertThat(trend.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change,
+                        LearningTrend.Item::endWithoutBase)
+                .containsExactly(23L, 22L, -1L, 50L);
         assertThat(trend.runsWithoutData()).isEqualTo(1);
-        assertThat(trend.teams()).extracting(LearningTrend.Item::name, LearningTrend.Item::start, LearningTrend.Item::end)
-                .containsExactly(tuple("Команда А", 10L, 69L), tuple("Команда Б", 13L, 3L));
+        assertThat(trend.teams()).extracting(LearningTrend.Item::name, LearningTrend.Item::start, LearningTrend.Item::end,
+                        LearningTrend.Item::endWithoutBase)
+                .containsExactly(tuple("Команда А", 10L, 19L, 50L), tuple("Команда Б", 13L, 3L, 0L));
         assertThat(trend.programs()).extracting(LearningTrend.Item::name, LearningTrend.Item::change)
                 .containsExactly(tuple("Java", 9L), tuple("Данные", -10L));
         assertThat(trend.growing()).extracting(LearningTrend.Item::name, LearningTrend.Item::change)
                 .containsExactly(tuple("Вуз В", 5L), tuple("Вуз А", 4L));
         assertThat(trend.falling()).extracting(LearningTrend.Item::name, LearningTrend.Item::change)
                 .containsExactly(tuple("Вуз Б", -6L), tuple("Вуз Г", -4L));
+    }
+
+    // П17: «сопоставимые потоки: 10 → 12, +2» и отдельно «без базы сравнения: 20» — не «10 → 32 (+2)».
+    @Test
+    void comparableRunsAndRunsWithoutBaseAreShownApart() {
+        UUID comparable = UUID.randomUUID();
+        UUID withoutBase = UUID.randomUUID();
+        List<Observation> observations = List.of(
+                observation(comparable, "Вуз А", TEAM_A, "Команда А", JAVA, "Java", "2026-02-01", "2027-01-01", "2026-05-15", 10),
+                observation(comparable, "Вуз А", TEAM_A, "Команда А", JAVA, "Java", "2026-02-01", "2027-01-01", "2026-08-01", 12),
+                observation(withoutBase, "Вуз Б", TEAM_A, "Команда А", JAVA, "Java", "2026-02-01", "2027-01-01", "2026-07-15", 20)
+        );
+
+        LearningTrend trend = LearningTrendService.trend(observations, FROM, TO, 92);
+
+        assertThat(trend.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change,
+                        LearningTrend.Item::runsWithoutData, LearningTrend.Item::endWithoutBase)
+                .containsExactly(10L, 12L, 2L, 1, 20L);
     }
 
     @Test
@@ -66,11 +86,13 @@ class LearningTrendServiceTest {
 
         LearningTrend trend = LearningTrendService.trend(observations, FROM, TO, 92);
 
-        assertThat(trend.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change)
-                .containsExactly(10L, 15L, 2L);
+        assertThat(trend.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change,
+                        LearningTrend.Item::endWithoutBase)
+                .containsExactly(10L, 12L, 2L, 3L);
         assertThat(trend.runsWithoutData()).isEqualTo(1);
-        assertThat(trend.teams()).extracting(LearningTrend.Item::name, LearningTrend.Item::end, LearningTrend.Item::runsWithoutData)
-                .containsExactly(tuple("Команда А", 12L, 0), tuple("Команда Б", 3L, 1));
+        assertThat(trend.teams()).extracting(LearningTrend.Item::name, LearningTrend.Item::end, LearningTrend.Item::runsWithoutData,
+                        LearningTrend.Item::endWithoutBase)
+                .containsExactly(tuple("Команда А", 12L, 0, 0L), tuple("Команда Б", 0L, 1, 3L));
     }
 
     @Test
@@ -105,8 +127,9 @@ class LearningTrendServiceTest {
         assertThat(longPeriod.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change)
                 .containsExactly(0L, 13L, 13L);
         assertThat(longPeriod.runsWithoutData()).isEqualTo(0);
-        assertThat(midPeriod.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change)
-                .containsExactly(0L, 13L, 0L);
+        assertThat(midPeriod.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change,
+                        LearningTrend.Item::endWithoutBase)
+                .containsExactly(0L, 0L, 0L, 13L);
         assertThat(midPeriod.runsWithoutData()).isEqualTo(1);
         assertThat(shortPeriod.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change)
                 .containsExactly(13L, 13L, 0L);
@@ -129,6 +152,6 @@ class LearningTrendServiceTest {
                                            String program, String startsOn, String endsOn, String observedOn, int participants) {
         return new Observation(run, LocalDate.parse(startsOn), LocalDate.parse(endsOn),
                 UUID.nameUUIDFromBytes(organization.getBytes()), organization, teamId, team, programId, program,
-                OffsetDateTime.parse(observedOn + "T12:00:00+03:00"), participants, null);
+                OffsetDateTime.parse(observedOn + "T12:00:00+03:00"), participants, null, null);
     }
 }

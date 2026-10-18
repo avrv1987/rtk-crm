@@ -43,6 +43,7 @@ public class EnrolmentStreamService {
     private final RetentionProperties retentionProperties;
     private final AuditJournalRepository auditJournalRepository;
     private final EnrolmentCommands commands;
+    private final EnrolmentBatchRepository batchRepository;
 
     EnrolmentStreamService(
             EnrolmentAccess enrolmentAccess,
@@ -51,7 +52,8 @@ public class EnrolmentStreamService {
             LearnerPrivacyService learnerPrivacyService,
             RetentionProperties retentionProperties,
             AuditJournalRepository auditJournalRepository,
-            EnrolmentCommands commands
+            EnrolmentCommands commands,
+            EnrolmentBatchRepository batchRepository
     ) {
         this.enrolmentAccess = enrolmentAccess;
         this.enrolmentRepository = enrolmentRepository;
@@ -60,6 +62,7 @@ public class EnrolmentStreamService {
         this.retentionProperties = retentionProperties;
         this.auditJournalRepository = auditJournalRepository;
         this.commands = commands;
+        this.batchRepository = batchRepository;
     }
 
     EnrolmentStreamsView streams(CrmProfile actor) {
@@ -138,17 +141,9 @@ public class EnrolmentStreamService {
                         .thenComparing(StreamLearner::firstName, RUSSIAN)
                         .thenComparing(StreamLearner::enrolmentId))
                 .toList();
-        List<RosterExport> exports = rows.stream()
-                .filter(row -> row.lmsExportId() != null)
-                .collect(Collectors.groupingBy(StreamEnrolmentRow::lmsExportId))
-                .entrySet().stream()
-                .map(entry -> new RosterExport(
-                        entry.getKey(),
-                        entry.getValue().stream().map(StreamEnrolmentRow::lmsExportedAt).max(Comparator.naturalOrder()).orElseThrow(),
-                        entry.getValue().size(),
-                        (int) entry.getValue().stream().filter(row -> row.lmsTransferredAt() != null).count()
-                ))
-                .sorted(Comparator.comparing(RosterExport::exportedAt).reversed())
+        List<RosterExport> exports = batchRepository.findByStream(streamId).stream()
+                .map(batch -> new RosterExport(batch.id(), batch.createdAt(), batch.rows(), batch.accepted(), batch.failed(),
+                        batch.pending(), batch.sentAt(), batch.format(), batch.checksum(), batch.legacy()))
                 .toList();
         RosterSummary roster = new RosterSummary(
                 scope(rows.stream().filter(row -> row.lmsTransferredAt() == null).toList()),
@@ -214,10 +209,11 @@ public class EnrolmentStreamService {
                 completeness.complete(),
                 row.status() == PersonalDataStatus.ANONYMIZED ? Set.of() : LearnerRules.missingForLms(row.missingFields()),
                 row.emailHmac() != null && emails.getOrDefault(row.emailHmac(), 0L) > 1,
-                LmsStatus.of(row.lmsExportedAt(), row.lmsTransferredAt()),
+                row.lmsStatus(),
                 row.lmsExportId(),
                 row.lmsExportedAt(),
-                row.lmsTransferredAt()
+                row.lmsTransferredAt(),
+                row.lmsTransferredAt() == null && row.lmsResult() == BatchItemResult.FAILED ? row.lmsError() : null
         );
     }
 

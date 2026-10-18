@@ -5,6 +5,7 @@ import {
   apiClient,
   createIdempotencyKey,
   type AnonymizationResult,
+  type PersonalDataReason,
   type SubjectContact,
   type SubjectExportFormat,
   type SubjectLearner,
@@ -13,14 +14,13 @@ import {
   type SubjectSearchResult
 } from '../../shared/api/client'
 import { ActionMenu } from '../../shared/ui/ActionMenu'
-import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { EmptyState } from '../../shared/ui/EmptyState'
 import { HintButton } from '../../shared/ui/HintButton'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { Toast } from '../../shared/ui/Toast'
 import { terms } from '../../shared/ui/terms'
 import { CardDialog } from '../interactions/cardUi'
-import { commandErrorMessage, formatDateTime, handledSessionError, requestIdOf, type SessionHandlers } from './adminShared'
+import { commandErrorMessage, formatDateTime, handledSessionError, type SessionHandlers } from './adminShared'
 import { saveFile, today } from './saveFile'
 import './adminUi.css'
 import './adminSecurity.css'
@@ -62,16 +62,51 @@ type Selection = {
   learnerIds: string[]
 }
 
+type ReasonDraft = { reason: PersonalDataReason | ''; comment: string }
+
 type AnonymizeState =
   | { kind: 'idle' }
-  | { kind: 'confirming'; idempotencyKey: string }
-  | { kind: 'running'; idempotencyKey: string }
-  | { kind: 'failed'; idempotencyKey: string; error: unknown }
+  | { kind: 'previewing' }
+  | { kind: 'confirming'; preview: AnonymizationResult; draft: ReasonDraft; idempotencyKey: string; running: boolean; error?: unknown }
+  | { kind: 'failed'; error: unknown }
 
-type ActionError = { id: string; error: unknown }
+type RestrictTarget =
+  | { kind: 'contact'; contact: SubjectContact; restricted: boolean }
+  | { kind: 'learner'; learner: SubjectLearner; title: string; restricted: boolean }
+
+type RestrictState = { target: RestrictTarget; draft: ReasonDraft; saving: boolean; error?: unknown; idempotencyKey: string }
 
 const emptyDraft: QueryDraft = { name: '', email: '', phone: '', snils: '', otherSpellings: '' }
 const emptySelection: Selection = { contactIds: [], profileIds: [], attachmentIds: [], learnerIds: [] }
+const emptyReason: ReasonDraft = { reason: '', comment: '' }
+
+const reasonLabels: Record<PersonalDataReason, string> = {
+  SUBJECT_REQUEST: 'Обращение субъекта ПДн',
+  CONSENT_WITHDRAWN: 'Отзыв согласия',
+  PURPOSE_ACHIEVED: 'Достигнута цель обработки',
+  UNLAWFUL_PROCESSING: 'Выявлена неправомерная обработка',
+  REGULATOR_REQUEST: 'Требование Роскомнадзора',
+  OTHER: 'Другое (опишите в комментарии)'
+}
+
+const reasonReady = (draft: ReasonDraft) => draft.reason !== '' && (draft.reason !== 'OTHER' || draft.comment.trim() !== '')
+
+const reasonPayload = (draft: ReasonDraft) => ({
+  reason: draft.reason as PersonalDataReason,
+  comment: draft.comment.trim() || null
+})
+
+const previewLines = (preview: AnonymizationResult) => [
+  ['Контакты', preview.contacts],
+  ['Профили сотрудников', preview.profiles],
+  ['Анкеты слушателей', preview.learners],
+  ['Упоминания в карточках взаимодействий', preview.mentions],
+  ['Имена файлов — будут переименованы', preview.attachmentsRenamed],
+  ['Записи источников', preview.sourceRecords],
+  ['Служебные записи: журнал, снимки команд и импорта', preview.technicalRecords],
+  ['Файлы вложений — будут удалены', preview.attachmentsDeleted],
+  ['Готовые отчёты — будут удалены', preview.reportFilesDeleted]
+] as const
 
 const statusLabels: Record<SubjectContact['status'], string> = {
   ACTIVE: 'Обрабатывается',
@@ -95,7 +130,8 @@ const placeLabels: Record<SubjectMention['place'], string> = {
   COMMENT: 'Комментарий',
   PLAN_HISTORY: 'Следующий шаг в истории',
   NEXT_ACTION: 'Текущий следующий шаг',
-  TITLE: 'Название карточки'
+  TITLE: 'Название карточки',
+  AGENT_PLAN: 'План записи ИИ-агента'
 }
 
 const recordTypeLabels: Record<string, string> = {
@@ -147,6 +183,37 @@ const ErrorBox = ({ error }: { error: unknown }) => (
   </div>
 )
 
+const ReasonFields = ({ draft, disabled, onChange }: { draft: ReasonDraft; disabled: boolean; onChange: (draft: ReasonDraft) => void }) => (
+  <>
+    <label>
+      Основание *
+      <select
+        value={draft.reason}
+        required
+        disabled={disabled}
+        onChange={(event) => onChange({ ...draft, reason: event.target.value as ReasonDraft['reason'] })}
+      >
+        <option value="">Выберите основание</option>
+        {(Object.keys(reasonLabels) as PersonalDataReason[]).map((reason) => (
+          <option key={reason} value={reason}>{reasonLabels[reason]}</option>
+        ))}
+      </select>
+    </label>
+    <label>
+      Комментарий{draft.reason === 'OTHER' ? ' *' : ''}
+      <textarea
+        value={draft.comment}
+        maxLength={500}
+        rows={2}
+        disabled={disabled}
+        placeholder="Например, номер и дата обращения — без ФИО"
+        onChange={(event) => onChange({ ...draft, comment: event.target.value })}
+      />
+    </label>
+    <p className="admin-form__hint">Основание и комментарий записываются в журнал.</p>
+  </>
+)
+
 const Group = ({ id, title, count, open, children }: { id: string; title: string; count: number; open: boolean; children: ReactNode }) => (
   <details className="pd-group" open={open}>
     <summary><h3 id={id}>{title}: {count}</h3></summary>
@@ -160,12 +227,13 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
   const [search, setSearch] = useState<SearchState>({ kind: 'idle' })
   const [selection, setSelection] = useState<Selection>(emptySelection)
   const [edit, setEdit] = useState<ContactEdit | null>(null)
-  const [busyId, setBusyId] = useState<string | null>(null)
-  const [actionError, setActionError] = useState<ActionError | null>(null)
+  const [restriction, setRestriction] = useState<RestrictState | null>(null)
   const [anonymize, setAnonymize] = useState<AnonymizeState>({ kind: 'idle' })
   const [outcome, setOutcome] = useState<AnonymizationResult | null>(null)
   const [exporting, setExporting] = useState(false)
-  const [exportError, setExportError] = useState<string | undefined | null>(null)
+  const [exportError, setExportError] = useState<unknown>(null)
+  const [mailTo, setMailTo] = useState<string | null>(null)
+  const [mailNotice, setMailNotice] = useState<string | null>(null)
 
   const handleError = useCallback((error: unknown) => (
     handledSessionError(error, { onSessionExpired, onProfileUnavailable })
@@ -175,7 +243,6 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
     setSearch({ kind: 'searching' })
     setSelection(emptySelection)
     setEdit(null)
-    setActionError(null)
     try {
       setSearch({ kind: 'ready', query, result: await apiClient.searchPersonalData(query) })
     } catch (error) {
@@ -231,7 +298,31 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
       saveFile(blob, `Сведения о субъекте ПДн ${today()}.${format === 'PDF' ? 'pdf' : 'json'}`)
     } catch (error) {
       if (!handleError(error)) {
-        setExportError(requestIdOf(error) ?? '')
+        setExportError(error)
+      }
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  // Те же сведения PDF уходят письмом на адрес, который субъект указал в запросе; вложение в журнале почты не хранится.
+  const mailSubject = async (event: FormEvent, query: SubjectQuery) => {
+    event.preventDefault()
+    if (exporting || mailTo === null) {
+      return
+    }
+    setExporting(true)
+    setExportError(null)
+    setMailNotice(null)
+    try {
+      const row = await apiClient.sendSubjectReportByMail(mailTo.trim(), query)
+      setMailNotice(row.status === 'SENT'
+        ? `Сведения отправлены на ${row.recipient ?? 'указанный адрес'}${row.transport === 'STUB' ? ' (заглушка: письмо в журнале почты, наружу не ушло)' : ''}.`
+        : `Письмо поставлено в очередь${row.error ? `: ${row.error}` : ''}. Статус — в «Администрирование → Почта».`)
+      setMailTo(null)
+    } catch (error) {
+      if (!handleError(error)) {
+        setExportError(error)
       }
     } finally {
       setExporting(false)
@@ -239,7 +330,6 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
   }
 
   const beginEdit = (contact: SubjectContact) => {
-    setActionError(null)
     setEdit({
       contact,
       draft: {
@@ -284,63 +374,73 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
     }
   }
 
-  const restrict = async (contact: SubjectContact, restricted: boolean) => {
-    setBusyId(contact.id)
-    setActionError(null)
+  const openRestriction = (target: RestrictTarget) => {
+    setRestriction({ target, draft: emptyReason, saving: false, idempotencyKey: createIdempotencyKey() })
+  }
+
+  const submitRestriction = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (restriction === null || restriction.saving || !reasonReady(restriction.draft)) {
+      return
+    }
+    const { target, draft, idempotencyKey } = restriction
+    setRestriction({ ...restriction, saving: true, error: undefined })
     try {
-      replaceContact(await apiClient.restrictPersonalDataContact(
-        contact.id,
-        { version: contact.version, restricted },
-        createIdempotencyKey()
-      ))
+      if (target.kind === 'contact') {
+        replaceContact(await apiClient.restrictPersonalDataContact(
+          target.contact.id,
+          { version: target.contact.version, restricted: target.restricted, ...reasonPayload(draft) },
+          idempotencyKey
+        ))
+      } else {
+        replaceLearner(await apiClient.restrictPersonalDataLearner(
+          target.learner.id,
+          { version: target.learner.version, restricted: target.restricted, ...reasonPayload(draft) },
+          idempotencyKey
+        ))
+      }
+      setRestriction(null)
     } catch (error) {
       if (!handleError(error)) {
-        setActionError({ id: contact.id, error })
+        setRestriction((current) => (current === null ? current : { ...current, saving: false, error }))
       }
-    } finally {
-      setBusyId(null)
     }
   }
 
-  const restrictLearner = async (learner: SubjectLearner, restricted: boolean) => {
-    setBusyId(learner.id)
-    setActionError(null)
+  // Сначала предпросмотр: администратор видит, сколько записей каких видов изменится, и только потом подтверждает.
+  const startAnonymize = async (query: SubjectQuery) => {
+    setAnonymize({ kind: 'previewing' })
     try {
-      replaceLearner(await apiClient.restrictPersonalDataLearner(
-        learner.id,
-        { version: learner.version, restricted },
-        createIdempotencyKey()
-      ))
+      const preview = await apiClient.previewPersonalDataAnonymization({ subject: query, ...selection })
+      setAnonymize({ kind: 'confirming', preview, draft: emptyReason, idempotencyKey: createIdempotencyKey(), running: false })
     } catch (error) {
       if (!handleError(error)) {
-        setActionError({ id: learner.id, error })
+        setAnonymize({ kind: 'failed', error })
       }
-    } finally {
-      setBusyId(null)
     }
   }
 
-  const runAnonymize = async (query: SubjectQuery, idempotencyKey: string) => {
-    setAnonymize({ kind: 'running', idempotencyKey })
+  const runAnonymize = async (event: FormEvent<HTMLFormElement>, query: SubjectQuery) => {
+    event.preventDefault()
+    if (anonymize.kind !== 'confirming' || anonymize.running || !reasonReady(anonymize.draft)) {
+      return
+    }
+    const current = anonymize
+    setAnonymize({ ...current, running: true, error: undefined })
     try {
-      const result = await apiClient.anonymizePersonalData({ subject: query, ...selection }, idempotencyKey)
+      const result = await apiClient.anonymizePersonalData(
+        { subject: query, ...selection, ...reasonPayload(current.draft) },
+        current.idempotencyKey
+      )
       setAnonymize({ kind: 'idle' })
       setOutcome(result)
       await runSearch(query)
     } catch (error) {
       if (!handleError(error)) {
-        setAnonymize({ kind: 'failed', idempotencyKey, error })
+        setAnonymize({ ...current, running: false, error })
       }
     }
   }
-
-  const errorRow = (id: string, columns: number) => (
-    actionError?.id === id && (
-      <tr className="admin-table__detail">
-        <td colSpan={columns}><ErrorBox error={actionError.error} /></td>
-      </tr>
-    )
-  )
 
   const renderContacts = (contacts: SubjectContact[]) => (
     <div className="admin-table-wrap">
@@ -358,7 +458,6 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
         <tbody>
           {contacts.map((contact) => {
             const anonymized = contact.status === 'ANONYMIZED'
-            const busy = busyId === contact.id
             return (
               <Fragment key={contact.id}>
                 <tr>
@@ -389,10 +488,10 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
                         <ActionMenu
                           label={`Действия: ${contact.name}`}
                           items={[
-                            { label: 'Уточнить', onSelect: () => { if (!busy) beginEdit(contact) } },
+                            { label: 'Уточнить', onSelect: () => beginEdit(contact) },
                             {
                               label: contact.status === 'RESTRICTED' ? 'Снять ограничение' : 'Ограничить обработку',
-                              onSelect: () => { if (!busy) void restrict(contact, contact.status !== 'RESTRICTED') }
+                              onSelect: () => openRestriction({ kind: 'contact', contact, restricted: contact.status !== 'RESTRICTED' })
                             }
                           ]}
                         />
@@ -400,7 +499,6 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
                     )}
                   </td>
                 </tr>
-                {errorRow(contact.id, 6)}
               </Fragment>
             )
           })}
@@ -423,7 +521,6 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
         <tbody>
           {learners.map((learner, index) => {
             const anonymized = learner.status === 'ANONYMIZED'
-            const busy = busyId === learner.id
             return (
               <Fragment key={learner.id}>
                 <tr>
@@ -457,14 +554,15 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
                           label={`Действия: слушатель №${index + 1}`}
                           items={[{
                             label: learner.status === 'RESTRICTED' ? 'Снять ограничение' : 'Ограничить обработку',
-                            onSelect: () => { if (!busy) void restrictLearner(learner, learner.status !== 'RESTRICTED') }
+                            onSelect: () => openRestriction({
+                              kind: 'learner', learner, title: `слушатель №${index + 1}`, restricted: learner.status !== 'RESTRICTED'
+                            })
                           }]}
                         />
                       </div>
                     )}
                   </td>
                 </tr>
-                {errorRow(learner.id, 4)}
               </Fragment>
             )
           })}
@@ -489,8 +587,7 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
     const firstKey = counts.find(([, count]) => count > 0)?.[0]
     // Мало записей — все группы раскрыты; много — только первая, остальные по заголовку.
     const isOpen = (key: string) => total <= 20 || key === firstKey
-    const canAnonymize = selectedCount > 0 || result.mentions.length > 0 || result.sourceRecords.length > 0
-    const running = anonymize.kind === 'running'
+    const previewing = anonymize.kind === 'previewing'
     return (
       <div className="pd-result">
         {result.truncated && (
@@ -671,41 +768,61 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
             <button
               type="button"
               className="button--danger"
-              disabled={!canAnonymize || running}
-              onClick={() => setAnonymize({ kind: 'confirming', idempotencyKey: createIdempotencyKey() })}
+              disabled={selectedCount === 0 || previewing}
+              onClick={() => void startAnonymize(query)}
             >
-              {running ? 'Обезличиваем…' : 'Обезличить'}
+              {previewing ? 'Считаем…' : 'Обезличить…'}
             </button>
-            <p>Действие необратимо.</p>
+            <p>Сначала CRM покажет, что изменится, и спросит основание.</p>
             <HintButton label="Что делает обезличивание">
-              Обезличивание заменяет ФИО, почту и телефон субъекта маркером «Контакт обезличен» или «Сотрудник обезличен»
-              в выбранных контактах и профилях, комментариях, следующих шагах и записях источников. История взаимодействий
-              сохраняется, выбранные файлы удаляются, заказанные файлы отчётов удаляются. У выбранных анкет слушателей
-              удаляются все поля, зачисления остаются в статистике. Действие необратимо.
+              Обезличивание заменяет ФИО целиком, почту и телефон отмеченных субъектов маркером «Контакт обезличен» или
+              «Сотрудник обезличен» только в их записях: в контакте или профиле, во взаимодействиях, вложениях, записях
+              источников и журнале их вузов. Отдельные слова ФИО не заменяются, записи других вузов не меняются. Отмеченные
+              файлы удаляются. Готовые отчёты удаляются только у тех, кто видел эти вузы, — владелец увидит пометку
+              «сформирован до обезличивания». У отмеченных анкет слушателей удаляются все поля, зачисления остаются
+              в статистике. Действие необратимо.
             </HintButton>
             {selectedCount > 0 && <span className="admin-table__sub">Отмечено для обезличивания: {selectedCount}</span>}
           </div>
         )}
-        {anonymize.kind === 'failed' && (
-          <>
-            <ErrorBox error={anonymize.error} />
-            <div className="admin-form__actions">
-              <button type="button" className="button--secondary" onClick={() => void runAnonymize(query, anonymize.idempotencyKey)}>Повторить</button>
-            </div>
-          </>
-        )}
-        <ConfirmDialog
+        {anonymize.kind === 'failed' && <ErrorBox error={anonymize.error} />}
+        <CardDialog
           open={anonymize.kind === 'confirming'}
           title="Обезличить данные субъекта?"
-          description={`Будут обезличены: контактов ${selection.contactIds.length}, профилей ${selection.profileIds.length}, анкет слушателей ${selection.learnerIds.length}, упоминания и записи источников с этими данными; удалено файлов: ${selection.attachmentIds.length}. Восстановить данные будет нельзя.`}
-          confirmLabel="Обезличить"
-          onConfirm={() => {
-            if (anonymize.kind === 'confirming') {
-              void runAnonymize(query, anonymize.idempotencyKey)
+          onClose={() => {
+            if (anonymize.kind === 'confirming' && !anonymize.running) {
+              setAnonymize({ kind: 'idle' })
             }
           }}
-          onCancel={() => setAnonymize({ kind: 'idle' })}
-        />
+        >
+          {anonymize.kind === 'confirming' && (
+            <form className="admin-form" aria-label="Подтверждение обезличивания" onSubmit={(event) => void runAnonymize(event, query)}>
+              <p>Будет изменено:</p>
+              <ul className="pd-preview">
+                {previewLines(anonymize.preview).map(([label, count]) => (
+                  <li key={label}>{label}: <strong>{count}</strong></li>
+                ))}
+              </ul>
+              <p className="admin-form__hint">
+                Меняются только записи отмеченных субъектов и их вузов. Восстановить данные будет нельзя.
+              </p>
+              <ReasonFields
+                draft={anonymize.draft}
+                disabled={anonymize.running}
+                onChange={(draft) => setAnonymize({ ...anonymize, draft, error: undefined, idempotencyKey: createIdempotencyKey() })}
+              />
+              {anonymize.error !== undefined && <ErrorBox error={anonymize.error} />}
+              <div className="admin-form__actions">
+                <button type="button" className="button--secondary" disabled={anonymize.running} onClick={() => setAnonymize({ kind: 'idle' })}>
+                  Отмена
+                </button>
+                <button type="submit" className="button--danger" disabled={anonymize.running || !reasonReady(anonymize.draft)}>
+                  {anonymize.running ? 'Обезличиваем…' : 'Обезличить'}
+                </button>
+              </div>
+            </form>
+          )}
+        </CardDialog>
       </div>
     )
   }
@@ -728,17 +845,26 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
             toggle={`${terms.export} ▾`}
             items={[
               { label: 'Выгрузить сведения PDF', onSelect: () => void exportSubject(search.query, 'PDF') },
-              { label: 'Выгрузить сведения JSON', onSelect: () => void exportSubject(search.query, 'JSON') }
+              { label: 'Выгрузить сведения JSON', onSelect: () => void exportSubject(search.query, 'JSON') },
+              ...(getModules().mail === true ? [{ label: 'Отправить сведения на почту субъекта', onSelect: () => setMailTo('') }] : [])
             ]}
           />
         )}
       </div>
       {exporting && <p className="admin-form__hint" role="status">Готовим файл…</p>}
-      {exportError !== null && (
-        <div className="organizations-message organizations-message--error" role="alert">
-          <p>Не удалось выгрузить сведения. Повторите попытку.</p>
-          <SupportDetails requestId={exportError || undefined} />
-        </div>
+      {exportError !== null && <ErrorBox error={exportError} />}
+      {mailNotice !== null && <p className="admin-form__hint" role="status">{mailNotice}</p>}
+      {search.kind === 'ready' && mailTo !== null && (
+        <form className="admin-form" aria-label="Отправить сведения на почту субъекта" onSubmit={(event) => void mailSubject(event, search.query)}>
+          <label>
+            Почта субъекта из его запроса
+            <input type="email" required maxLength={254} value={mailTo} onChange={(event) => setMailTo(event.target.value)} />
+          </label>
+          <div className="security-actions">
+            <button type="submit" disabled={exporting}>Отправить PDF</button>
+            <button type="button" className="button--secondary" onClick={() => setMailTo(null)}>Отмена</button>
+          </div>
+        </form>
       )}
 
       <form className="admin-form pd-search" onSubmit={submit} aria-label="Поиск данных субъекта">
@@ -858,13 +984,51 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
         )}
       </CardDialog>
 
+      <CardDialog
+        open={restriction !== null}
+        title={restriction === null ? '' : `${restriction.target.restricted ? 'Ограничить обработку' : 'Снять ограничение'}: ${
+          restriction.target.kind === 'contact' ? restriction.target.contact.name : restriction.target.title}`}
+        onClose={() => {
+          if (restriction?.saving !== true) {
+            setRestriction(null)
+          }
+        }}
+      >
+        {restriction !== null && (
+          <form className="admin-form" aria-label="Основание действия с персональными данными" onSubmit={(event) => void submitRestriction(event)}>
+            <p>
+              {!restriction.target.restricted
+                ? 'Обработка данных возобновится.'
+                : restriction.target.kind === 'contact'
+                  ? 'Контакт останется в истории, но его нельзя будет связать с новыми взаимодействиями.'
+                  : 'Анкета останется в статистике, но оператор зачисления не сможет её открыть или изменить.'}
+            </p>
+            <ReasonFields
+              draft={restriction.draft}
+              disabled={restriction.saving}
+              onChange={(draft) => setRestriction({ ...restriction, draft, error: undefined, idempotencyKey: createIdempotencyKey() })}
+            />
+            {restriction.error !== undefined && <ErrorBox error={restriction.error} />}
+            <div className="admin-form__actions">
+              <button type="button" className="button--secondary" disabled={restriction.saving} onClick={() => setRestriction(null)}>
+                Отмена
+              </button>
+              <button type="submit" disabled={restriction.saving || !reasonReady(restriction.draft)}>
+                {restriction.saving ? 'Сохраняем…' : restriction.target.restricted ? 'Ограничить обработку' : 'Снять ограничение'}
+              </button>
+            </div>
+          </form>
+        )}
+      </CardDialog>
+
       <Toast
         persistent
         message={outcome === null ? null : (
           <>
             Обезличено контактов: {outcome.contacts}, профилей: {outcome.profiles}, анкет слушателей:
             {' '}{outcome.learners}, упоминаний:
-            {' '}{outcome.mentions}, записей источников: {outcome.sourceRecords}, служебных записей:
+            {' '}{outcome.mentions}, переименовано файлов: {outcome.attachmentsRenamed}, записей источников:
+            {' '}{outcome.sourceRecords}, служебных записей:
             {' '}{outcome.technicalRecords}; удалено файлов: {outcome.attachmentsDeleted}, файлов отчётов:
             {' '}{outcome.reportFilesDeleted}.
           </>

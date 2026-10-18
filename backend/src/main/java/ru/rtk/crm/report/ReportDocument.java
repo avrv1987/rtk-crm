@@ -11,8 +11,21 @@ public record ReportDocument(
         List<String> notes,
         List<ReportRow> rows,
         Map<ReportColumn, String> columnTitles,
-        List<ManagerWorkTotal> groupTotals
+        List<ManagerWorkTotal> groupTotals,
+        List<ManagerWorkGroupTotal> productTotals,
+        List<ManagerWorkGroupTotal> organizationTotals
 ) {
+    public ReportDocument(
+            ReportRequest request,
+            OffsetDateTime generatedAt,
+            List<String> notes,
+            List<ReportRow> rows,
+            Map<ReportColumn, String> columnTitles,
+            List<ManagerWorkTotal> groupTotals
+    ) {
+        this(request, generatedAt, notes, rows, columnTitles, groupTotals, List.of(), List.of());
+    }
+
     public ReportDocument(ReportRequest request, OffsetDateTime generatedAt, List<String> notes, List<ReportRow> rows) {
         this(request, generatedAt, notes, rows, Map.of(), List.of());
     }

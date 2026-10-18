@@ -72,6 +72,7 @@ export type ReportSelection = {
   eventTypes: ReportEventType[]
   minDaysOnStage: string
   change: ManagerWorkChange | ''
+  managerAt: ManagerAt
   columns: Record<ReportKind, ReportColumn[]>
   groupBy: StatisticsGroupBy
   chartType: ChartType
@@ -91,7 +92,7 @@ export const kindLabels: Record<ReportKind, string> = {
   PORTFOLIO: 'Портфель взаимодействий',
   EVENTS: 'События за период',
   SNAPSHOT: 'Состояние портфеля на дату',
-  DURATION: 'Длительность этапов и цикла',
+  DURATION: 'Длительность этапов и время до входа в последний этап',
   DEMAND: 'Востребованность программ',
   AGREEMENTS: 'Реализация договоров',
   MANAGER_WORK: 'Работа менеджеров за период'
@@ -149,6 +150,14 @@ const chartTypes: readonly ChartType[] = ['BAR', 'LINE']
 
 export const managerWorkChanges: readonly (ManagerWorkChange | '')[] = ['', 'MOVED', 'NEW', 'COMPLETED']
 
+// Чей КАМ в «Работе менеджеров»: на конец периода (как режим «Контроля» «За период») или текущий («Сейчас»).
+export type ManagerAt = 'PERIOD_END' | 'CURRENT'
+
+export const managerAtOptions: { id: ManagerAt; label: string }[] = [
+  { id: 'PERIOD_END', label: 'На конец периода («За период»)' },
+  { id: 'CURRENT', label: 'Текущий («Сейчас»)' }
+]
+
 export const managerWorkChangeLabels: Record<ManagerWorkChange | '', string> = {
   '': 'Все взаимодействия',
   MOVED: 'Перешли на другой этап',
@@ -167,7 +176,7 @@ export const reportColumns: Record<ReportKind, readonly ReportColumn[]> = {
   ],
   DEMAND: [
     'DIRECTION', 'PROGRAM', 'APPLICATIONS', 'PAID_ORDERS', 'PAID_STREAMS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'COMPLETION_SHARE',
-    'PARALLEL_RUNS', 'MARKET_VACANCIES', 'MARKET_TREND'
+    'COMPLETION_BASIS', 'PARALLEL_RUNS', 'MARKET_VACANCIES', 'MARKET_TREND'
   ],
   SNAPSHOT: ['ORGANIZATION', 'INTERACTION', 'DIRECTION', 'PROGRAM', 'PRODUCTS', 'STAGE', 'MANAGER', 'CREATED_AT', 'LAST_EVENT_AT'],
   DURATION: ['TEAM', 'PROGRAM', 'STAGE', 'COMPLETED', 'AVG_DAYS', 'MAX_DAYS', 'CURRENT', 'CURRENT_MAX_DAYS'],
@@ -203,7 +212,7 @@ const columnTitles: Record<ReportColumn, string> = {
   RISK: 'Риск',
   MANAGER: 'Ответственный',
   CREATED_AT: 'Создано',
-  LAST_EVENT_AT: 'Последнее событие',
+  LAST_EVENT_AT: 'Последнее действие сотрудника',
   NEXT_ACTION: 'Следующий шаг',
   NEXT_ACTION_AT: 'Срок',
   EVENT_AT: 'Дата события',
@@ -211,12 +220,13 @@ const columnTitles: Record<ReportColumn, string> = {
   FROM_STAGE: 'Из этапа',
   COMMENT: 'Комментарий',
   AUTHOR: 'Автор',
-  APPLICATIONS: 'Заявки (сайт)',
-  PAID_ORDERS: 'Оплаченные заявки (сайт)',
-  PAID_STREAMS: 'Потоки с оплатами (сайт)',
-  PARTICIPANTS: 'Обучающиеся (Moodle)',
-  LEARNERS_COMPLETED: 'Завершили (Moodle)',
-  COMPLETION_SHARE: 'Доля завершивших, %',
+  APPLICATIONS: 'Заявки (сайт, по дате подачи)',
+  PAID_ORDERS: 'Оплаченные заявки (сайт, без ограничения периода)',
+  PAID_STREAMS: 'Потоки с оплатами (сайт, без ограничения периода)',
+  PARTICIPANTS: 'Обучающиеся (Moodle, участия — не уникальные люди)',
+  LEARNERS_COMPLETED: 'Завершили (Moodle, участия)',
+  COMPLETION_SHARE: 'Доля завершивших среди известных, % (Moodle, участия)',
+  COMPLETION_BASIS: 'Основание доли (Moodle, участия)',
   PARALLEL_RUNS: 'Параллельные потоки (Moodle)',
   MARKET_VACANCIES: 'Спрос рынка: вакансии',
   MARKET_TREND: 'Тренд спроса, %',
@@ -243,20 +253,21 @@ const columnTitles: Record<ReportColumn, string> = {
   CONFIRMATION_LINKS: 'Ссылки на подтверждения',
   STAGE_AT_START: 'Этап на начало периода',
   STAGE_AT_END: 'Этап на конец периода',
-  STAGE_POSITION: 'Положение на маршруте',
+  STAGE_POSITION: 'Положение в маршруте',
   TRANSITIONS: 'Переходов за период',
   PERIOD_COMMENTS: 'Комментарии за период',
   DUE_STATE: 'Состояние срока',
   OVERDUE_DAYS: 'Просрочено, дн.',
   LMS_LEARNING: 'Обучение (LMS) сейчас',
-  LMS_CHECK: 'Сверка этапа с LMS'
+  LMS_CHECK: 'Сверка этапа с LMS',
+  LAST_STAFF_ACTION: 'Последнее действие сотрудника по вузу'
 }
 
 const kindColumnTitles: Partial<Record<ReportKind, Partial<Record<ReportColumn, string>>>> = {
   EVENTS: { MANAGER: 'Ответственный на момент события' },
-  SNAPSHOT: { STAGE: 'Этап на дату', MANAGER: 'Ответственный на дату', LAST_EVENT_AT: 'Последнее событие до даты' },
-  DEMAND: { PARTICIPANTS: 'Обучающиеся в потоках периода (Moodle)' },
-  MANAGER_WORK: { MANAGER: 'Менеджер на конец периода' }
+  SNAPSHOT: { STAGE: 'Этап на дату', MANAGER: 'Ответственный на дату', LAST_EVENT_AT: 'Последнее действие сотрудника до даты' },
+  DEMAND: { PARTICIPANTS: 'Обучающиеся в потоках периода (Moodle, участия — не уникальные люди)' },
+  MANAGER_WORK: { MANAGER: 'Менеджер' }
 }
 
 export const columnTitle = (kind: ReportKind, column: ReportColumn) => (
@@ -288,6 +299,7 @@ export const defaultSelection = (today: Date = new Date(), kind: ReportKind = 'P
   eventTypes: [],
   minDaysOnStage: '',
   change: '',
+  managerAt: 'PERIOD_END',
   columns: {
     PORTFOLIO: reportColumns.PORTFOLIO.filter((column) => !agreementColumns.includes(column)),
     EVENTS: [...reportColumns.EVENTS],
@@ -362,6 +374,7 @@ export const normalizeSelection = (value: unknown, today: Date = new Date()): Re
     eventTypes: strings(record.eventTypes).filter((type): type is ReportEventType => eventTypes.some((item) => item === type)),
     minDaysOnStage: daysValue(record.minDaysOnStage),
     change: oneOf(record.change, managerWorkChanges, ''),
+    managerAt: oneOf(record.managerAt, managerAtOptions.map((option) => option.id), 'PERIOD_END'),
     columns: {
       PORTFOLIO: columnList(columns.PORTFOLIO, 'PORTFOLIO'),
       EVENTS: columnList(columns.EVENTS, 'EVENTS'),
@@ -412,6 +425,7 @@ export const applyDefinition = (selection: ReportSelection, definition: ReportPr
     eventTypes: filters.eventTypes ?? [],
     minDaysOnStage: filters.minDaysOnStage ?? '',
     change: filters.change ?? '',
+    managerAt: filters.managerAt ?? 'PERIOD_END',
     sortBy: definition.sortBy ?? selection.sortBy
   })
   const columns = definition.columns === undefined || definition.columns.length === 0
@@ -442,7 +456,7 @@ export const groupingProblem = (selection: ReportSelection): string | null => {
     return 'Для отчёта «Работа менеджеров за период» диаграмма не строится.'
   }
   if (selection.kind === 'DURATION') {
-    return 'Для отчёта «Длительность этапов и цикла» диаграмма не строится: показатели уже сгруппированы по командам, программам и этапам и видны в таблице.'
+    return 'Для отчёта «Длительность этапов и время до входа в последний этап» диаграмма не строится: показатели уже сгруппированы по командам, программам и этапам и видны в таблице.'
   }
   if (selection.kind === 'PORTFOLIO' && selection.periodBasis !== 'CREATED' && selection.groupBy === 'MONTH') {
     return `Группировка по месяцам недоступна для отбора «${selection.periodBasis === 'ACTIVE' ? 'Активные в периоде' : 'С событиями в периоде'}»: месяц создания взаимодействия может лежать вне периода. Выберите отбор «Созданные в периоде» или вид «События за период».`
@@ -496,7 +510,7 @@ const baseRequest = (selection: ReportSelection) => {
       workStatuses: selection.kind === 'PORTFOLIO' ? selection.workStatuses : [],
       flags: selection.kind === 'PORTFOLIO' ? selection.flags : [],
       ...(demand || agreements || managerWork ? {} : { agreement: toAgreementFilters(selection.agreement) }),
-      ...(managerWork ? { change: selection.change === '' ? null : selection.change } : {}),
+      ...(managerWork ? { change: selection.change === '' ? null : selection.change, managerAt: selection.managerAt } : {}),
       eventTypes: selection.kind === 'EVENTS' ? selection.eventTypes : [],
       minDaysOnStage: selection.kind === 'PORTFOLIO' && selection.minDaysOnStage !== '' ? Number(selection.minDaysOnStage) : null
     }

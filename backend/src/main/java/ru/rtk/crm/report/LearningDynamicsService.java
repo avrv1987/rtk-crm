@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.apache.poi.ss.usermodel.Cell;
@@ -29,7 +30,9 @@ import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.report.LearningDynamics.SeriesBy;
+import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
 import ru.rtk.crm.report.LearningHistoryRepository.Observation;
+import ru.rtk.crm.report.LearningHistoryRepository.Run;
 import ru.rtk.crm.report.ReportRepository.CatalogTable;
 
 @Service
@@ -39,9 +42,10 @@ public class LearningDynamicsService {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     private static final DateTimeFormatter MONTH_KEY = DateTimeFormatter.ofPattern("yyyy-MM");
     private static final DateTimeFormatter MONTH_LABEL = DateTimeFormatter.ofPattern("LLLL yyyy", Locale.forLanguageTag("ru"));
-    private static final List<String> COLUMNS = List.of("Месяц", "Вуз", "ИТ-программа", "Потоков с данными", "Обучающиеся в потоках месяца (Moodle)",
-            "Завершили (Moodle)", "Доля завершивших, %");
-    private static final int[] WIDTHS = {12, 30, 30, 10, 12, 12, 12};
+    private static final List<String> COLUMNS = List.of("Месяц", "Вуз", "ИТ-программа", "Потоков с данными", "Потоков без данных",
+            "Обучающиеся в потоках месяца (Moodle)", "Завершили (Moodle)", "Статус завершения известен",
+            "Доля завершивших среди известных, %", "Основание доли");
+    private static final int[] WIDTHS = {12, 26, 26, 10, 10, 12, 12, 12, 12, 34};
 
     private final LearningHistoryRepository historyRepository;
     private final OrganizationRepository organizationRepository;
@@ -81,8 +85,12 @@ public class LearningDynamicsService {
         SeriesBy by = seriesBy == null ? SeriesBy.ORGANIZATION : seriesBy;
         List<UUID> organizations = organizationIds == null ? List.of() : List.copyOf(organizationIds);
         List<UUID> programs = programIds == null ? List.of() : List.copyOf(programIds);
-        List<Observation> observations = organizationRepository.visibilityScope(profile)
-                .map(scope -> historyRepository.findObservations(scope, start, end, organizations, programs))
+        Optional<VisibilityScope> scope = organizationRepository.visibilityScope(profile);
+        List<Observation> observations = scope
+                .map(visible -> historyRepository.findObservations(visible, start, end, organizations, programs))
+                .orElse(List.of());
+        List<Run> runs = scope
+                .map(visible -> historyRepository.findRuns(visible, start, end, organizations, programs))
                 .orElse(List.of());
 
         List<LearningDynamics.Month> months = new ArrayList<>();
@@ -91,26 +99,28 @@ public class LearningDynamicsService {
             months.add(new LearningDynamics.Month(MONTH_KEY.format(month), MONTH_LABEL.format(month), asOf));
         }
         int size = months.size();
-        long[] totalParticipants = new long[size];
-        Long[] totalCompleted = new Long[size];
+        Counts[] totals = new Counts[size];
         Map<String, RowTotals> rows = new LinkedHashMap<>();
         Map<String, SeriesTotals> series = new LinkedHashMap<>();
         for (int index = 0; index < size; index++) {
             LearningDynamics.Month month = months.get(index);
             LocalDate firstDay = YearMonth.parse(month.key()).atDay(1);
             LocalDate monthStart = firstDay.isBefore(start) ? start : firstDay;
-            for (Observation observation : LearningHistoryRepository.inForce(observations, month.asOf()).values()) {
-                if (!observation.runEndsOn().isAfter(monthStart)) {
+            Map<UUID, Observation> inForce = LearningHistoryRepository.inForce(observations, month.asOf());
+            totals[index] = new Counts();
+            // Поток, шедший в месяце, учитывается и без наблюдения: тогда он «без данных», а не ноль обучающихся.
+            for (Run run : runs) {
+                if (!run.runEndsOn().isAfter(monthStart) || run.runStartsOn().isAfter(month.asOf())) {
                     continue;
                 }
-                rows.computeIfAbsent(month.key() + "|" + observation.organizationId() + "|" + observation.programId(),
-                        key -> new RowTotals(month, observation)).add(observation);
-                String seriesKey = (by == SeriesBy.PROGRAM ? observation.programId() : observation.organizationId()).toString();
+                Observation observation = inForce.get(run.mappingId());
+                rows.computeIfAbsent(month.key() + "|" + run.organizationId() + "|" + run.programId(),
+                        key -> new RowTotals(month, run)).counts.add(observation);
+                String seriesKey = (by == SeriesBy.PROGRAM ? run.programId() : run.organizationId()).toString();
                 series.computeIfAbsent(seriesKey, key -> new SeriesTotals(key,
-                        by == SeriesBy.PROGRAM ? observation.programName() : observation.organizationName(), size))
+                        by == SeriesBy.PROGRAM ? run.programName() : run.organizationName(), size))
                         .add(index, observation);
-                totalParticipants[index] += observation.participants();
-                totalCompleted[index] = plus(totalCompleted[index], observation.completed());
+                totals[index].add(observation);
             }
         }
         OffsetDateTime generatedAt = OffsetDateTime.now();
@@ -123,12 +133,14 @@ public class LearningDynamicsService {
                 notes(profile, generatedAt, start, end, organizations, programs),
                 months,
                 series.values().stream()
-                        .sorted(Comparator.comparingLong((SeriesTotals totals) -> -totals.participants[size - 1])
-                                .thenComparing(totals -> totals.label, String.CASE_INSENSITIVE_ORDER))
+                        .sorted(Comparator.comparingLong((SeriesTotals item) -> -item.counts[size - 1].observedParticipants())
+                                .thenComparing(item -> item.label, String.CASE_INSENSITIVE_ORDER))
                         .map(SeriesTotals::view)
                         .toList(),
-                Arrays.stream(totalParticipants).boxed().toList(),
-                Arrays.asList(totalCompleted),
+                Arrays.stream(totals).map(Counts::participants).toList(),
+                Arrays.stream(totals).map(Counts::completed).toList(),
+                Arrays.stream(totals).map(Counts::known).toList(),
+                Arrays.stream(totals).map(counts -> counts.runsWithoutData).toList(),
                 rows.values().stream()
                         .map(RowTotals::view)
                         .sorted(Comparator.comparing(LearningDynamics.Row::month)
@@ -150,8 +162,8 @@ public class LearningDynamicsService {
                 layout.table(COLUMNS, WIDTHS);
                 for (LearningDynamics.Row row : dynamics.rows()) {
                     layout.row(List.of(row.monthLabel(), row.organizationName(), row.programName(), Long.toString(row.runs()),
-                            Long.toString(row.participants()), row.completed() == null ? ReportColumn.NO_DATA : row.completed().toString(),
-                            row.completionPercent() == null ? ReportColumn.NO_DATA : row.completionPercent().toString()));
+                            Long.toString(row.runsWithoutData()), text(row.participants()), text(row.completed()), text(row.known()),
+                            text(row.completionPercent()), row.completionBasis()));
                 }
                 if (dynamics.rows().isEmpty()) {
                     layout.gap(PdfLayout.NOTE_SIZE);
@@ -192,17 +204,12 @@ public class LearningDynamicsService {
                 text(cells.createCell(1), row.organizationName(), quoted);
                 text(cells.createCell(2), row.programName(), quoted);
                 cells.createCell(3).setCellValue(row.runs());
-                cells.createCell(4).setCellValue(row.participants());
-                if (row.completed() == null) {
-                    cells.createCell(5).setCellValue(ReportColumn.NO_DATA);
-                } else {
-                    cells.createCell(5).setCellValue(row.completed());
-                }
-                if (row.completionPercent() == null) {
-                    cells.createCell(6).setCellValue(ReportColumn.NO_DATA);
-                } else {
-                    cells.createCell(6).setCellValue(row.completionPercent());
-                }
+                cells.createCell(4).setCellValue(row.runsWithoutData());
+                number(cells.createCell(5), row.participants());
+                number(cells.createCell(6), row.completed());
+                number(cells.createCell(7), row.known());
+                number(cells.createCell(8), row.completionPercent());
+                cells.createCell(9).setCellValue(row.completionBasis());
             }
             sheet.createRow(rowIndex + 1).createCell(0).setCellValue("Строк в отчёте: " + dynamics.rows().size());
             sheet.createFreezePane(0, headerRow + 1);
@@ -232,8 +239,9 @@ public class LearningDynamicsService {
                 "Период: " + DATE.format(start) + " – " + DATE.format(end) + "; в месяц входят потоки занятий студентов"
                         + " Moodle, шедшие в нём хотя бы один день, по наблюдению, действовавшему на конец последнего дня месяца"
                         + " (у последнего месяца — на конец дня окончания периода)",
-                "Обучающиеся и завершившие — участия (не уникальные люди); «нет данных» — завершение в Moodle не отслеживается;"
-                        + " поток без наблюдения и обучение преподавателей не учитываются",
+                "Обучающиеся и завершившие — участия (не уникальные люди). Доля завершивших — среди участий с известным"
+                        + " статусом; основание показывает, у скольких участий статус известен. Поток без наблюдения — «нет"
+                        + " данных», а не ноль, он считается в «Потоках без данных»; обучение преподавателей не учитывается",
                 "Фильтры: " + (filters.isEmpty() ? "не заданы" : String.join("; ", filters)) + "; архивные вузы не входят"
         );
     }
@@ -245,62 +253,116 @@ public class LearningDynamicsService {
         }
     }
 
-    private static Long plus(Long total, Integer value) {
+    private static String text(Long value) {
+        return value == null ? ReportColumn.NO_DATA : value.toString();
+    }
+
+    private static void number(Cell cell, Long value) {
         if (value == null) {
-            return total;
+            cell.setCellValue(ReportColumn.NO_DATA);
+        } else {
+            cell.setCellValue(value);
         }
-        return (total == null ? 0L : total) + value;
+    }
+
+    // «16 из 20 с известным статусом; данные по 20 из 100»: доля считается только среди участий с известным статусом,
+    // а покрытие показывает, на какую часть всех участий она опирается.
+    static String completionBasis(Long completed, Long known, Long participants) {
+        if (participants == null) {
+            return "нет данных: у потоков нет наблюдений";
+        }
+        if (known == null) {
+            return "нет данных: завершение в Moodle не отслеживается";
+        }
+        return completed + " из " + known + " с известным статусом; данные по " + known + " из " + participants;
+    }
+
+    // Счётчики одной ячейки: C — завершили, N — не завершили, участия без статуса — остальное. Поток без наблюдения
+    // увеличивает только runsWithoutData.
+    static final class Counts {
+        private long runs;
+        private long runsWithoutData;
+        private long participants;
+        private long completed;
+        private long notCompleted;
+        private boolean tracked;
+
+        void add(Observation observation) {
+            if (observation == null) {
+                runsWithoutData++;
+                return;
+            }
+            runs++;
+            participants += observation.participants();
+            if (observation.completed() != null) {
+                tracked = true;
+                completed += observation.completed();
+                notCompleted += observation.notCompleted() == null ? 0 : observation.notCompleted();
+            }
+        }
+
+        long observedParticipants() {
+            return participants;
+        }
+
+        // Ноль — потоков в месяце не было; null — потоки были, но ни у одного нет наблюдения.
+        Long participants() {
+            return runs == 0 && runsWithoutData > 0 ? null : participants;
+        }
+
+        Long completed() {
+            return tracked ? completed : null;
+        }
+
+        Long known() {
+            return tracked ? completed + notCompleted : null;
+        }
+
+        Long percent() {
+            return ReportRow.percentOf(completed(), known());
+        }
+
+        String basis() {
+            return completionBasis(completed(), known(), participants());
+        }
     }
 
     private static final class RowTotals {
         private final LearningDynamics.Month month;
-        private final Observation first;
-        private long runs;
-        private long participants;
-        private Long completed;
-        private Long completedBase;
+        private final Run run;
+        private final Counts counts = new Counts();
 
-        private RowTotals(LearningDynamics.Month month, Observation first) {
+        private RowTotals(LearningDynamics.Month month, Run run) {
             this.month = month;
-            this.first = first;
-        }
-
-        private void add(Observation observation) {
-            runs++;
-            participants += observation.participants();
-            completed = plus(completed, observation.completed());
-            if (observation.completed() != null) {
-                completedBase = plus(completedBase, observation.participants());
-            }
+            this.run = run;
         }
 
         private LearningDynamics.Row view() {
-            return new LearningDynamics.Row(month.key(), month.label(), first.organizationId(), first.organizationName(),
-                    first.programId(), first.programName(), runs, participants, completed,
-                    ReportRow.percentOf(completed, completedBase));
+            return new LearningDynamics.Row(month.key(), month.label(), run.organizationId(), run.organizationName(),
+                    run.programId(), run.programName(), counts.runs, counts.runsWithoutData, counts.participants(),
+                    counts.completed(), counts.known(), counts.percent(), counts.basis());
         }
     }
 
     private static final class SeriesTotals {
         private final String key;
         private final String label;
-        private final long[] participants;
-        private final Long[] completed;
+        private final Counts[] counts;
 
         private SeriesTotals(String key, String label, int size) {
             this.key = key;
             this.label = label;
-            this.participants = new long[size];
-            this.completed = new Long[size];
+            this.counts = new Counts[size];
+            Arrays.setAll(counts, index -> new Counts());
         }
 
         private void add(int index, Observation observation) {
-            participants[index] += observation.participants();
-            completed[index] = plus(completed[index], observation.completed());
+            counts[index].add(observation);
         }
 
         private LearningDynamics.Series view() {
-            return new LearningDynamics.Series(key, label, Arrays.stream(participants).boxed().toList(), Arrays.asList(completed));
+            return new LearningDynamics.Series(key, label, Arrays.stream(counts).map(Counts::participants).toList(),
+                    Arrays.stream(counts).map(Counts::completed).toList());
         }
     }
 }

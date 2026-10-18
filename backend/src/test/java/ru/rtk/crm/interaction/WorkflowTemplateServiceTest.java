@@ -29,6 +29,7 @@ import ru.rtk.crm.access.UserRole;
         WorkflowTemplateRepository.class,
         CommandIdempotencyRepository.class,
         WorkflowTemplateService.class,
+        ru.rtk.crm.audit.AuditJournalRepository.class,
         WorkflowTemplateServiceTest.JsonConfiguration.class
 })
 class WorkflowTemplateServiceTest {
@@ -200,6 +201,16 @@ class WorkflowTemplateServiceTest {
         workflowTemplateService.delete(leaderA, updated.id(), updated.version(), "template-delete");
         assertThat(workflowTemplateService.listAvailable(userA, WorkflowTemplateQuery.from(0, 25, "name,asc"))
                 .items()).isEmpty();
+        // Повтор команды по тому же ключу не дублирует запись журнала; удаление остаётся в журнале и без версий шаблона.
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT details FROM audit_events
+                WHERE action = 'WORKFLOW_TEMPLATE_CHANGED' AND object_id = ? AND actor_profile_id = ?
+                """, String.class, created.id(), leaderA.id()))
+                .containsExactlyInAnyOrder(
+                        "создан; версия маршрута 1, этапов: 2",
+                        "изменён, прежнее название «Процесс команды»; версия маршрута 2, этапов: 3",
+                        "удалён"
+                );
     }
 
     @Test
@@ -407,6 +418,14 @@ class WorkflowTemplateServiceTest {
     }
 
     private void createSchema() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id UUID PRIMARY KEY, category VARCHAR(32) NOT NULL, action VARCHAR(64) NOT NULL, actor_profile_id UUID,
+                    actor_display_name VARCHAR(200) NOT NULL, object_type VARCHAR(32), object_id UUID, object_name VARCHAR(500),
+                    details VARCHAR(2000), request_id VARCHAR(64), occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS crm_user_profiles (id UUID PRIMARY KEY, display_name VARCHAR(200))");
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS teams (
                     id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL,

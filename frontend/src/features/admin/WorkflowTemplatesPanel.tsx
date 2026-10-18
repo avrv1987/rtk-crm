@@ -18,6 +18,7 @@ import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { Toast } from '../../shared/ui/Toast'
 import { CardDialog } from '../interactions/cardUi'
+import { templateLmsWarning } from '../training/lmsStageSuggestionRules'
 import { WorkflowTemplateVersions } from './WorkflowTemplateVersions'
 import { canEditTemplate, isEffectiveDefault, templateRowActions, templateScopeLabel, type RowMenuKey } from './workflowTemplateRows'
 import { parseRouteFile } from './workflowVersions'
@@ -225,6 +226,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
   const [pageIndex, setPageIndex] = useState(0)
   const [editorOpen, setEditorOpen] = useState(false)
   const [editingTemplate, setEditingTemplate] = useState<WorkflowTemplate | null>(null)
+  const [sourceTemplate, setSourceTemplate] = useState<{ stages: { name: string }[] } | null>(null)
   const [draft, setDraft] = useState<TemplateDraft>(emptyDraft)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const [commandState, setCommandState] = useState<CommandState>({ kind: 'idle' })
@@ -313,9 +315,10 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     }
   }
 
-  const openEditor = (template: WorkflowTemplate | null, next: TemplateDraft) => {
+  const openEditor = (template: WorkflowTemplate | null, next: TemplateDraft, source: { stages: { name: string }[] } | null = template) => {
     saveKey.current = null
     setEditingTemplate(template)
+    setSourceTemplate(source)
     setPendingDelete(null)
     setCommandState({ kind: 'idle' })
     setStageNotice(null)
@@ -338,7 +341,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     if (canEditTemplate(role, template)) {
       openEditor(template, { ...draftFromTemplate(version), name: template.name, comment: `Возврат к версии ${version.number}` })
     } else {
-      openEditor(null, { ...draftFromTemplate(version), name: `${template.name} — копия команды` })
+      openEditor(null, { ...draftFromTemplate(version), name: `${template.name} — копия команды` }, version)
     }
   }
 
@@ -377,7 +380,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
   const beginCreate = () => openEditor(null, emptyDraft())
 
   const beginCopy = (template: WorkflowTemplate) => (
-    openEditor(null, { ...draftFromTemplate(template), name: `${template.name} — копия команды` })
+    openEditor(null, { ...draftFromTemplate(template), name: `${template.name} — копия команды` }, template)
   )
 
   const beginEdit = (template: WorkflowTemplate) => openEditor(template, draftFromTemplate(template))
@@ -610,6 +613,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
   const teamDefaultTemplateId = templatesState.kind === 'ready' ? templatesState.page.teamDefaultTemplateId : null
   const commandError = commandState.kind === 'failed' ? commandState.error : undefined
   const hasConflict = commandError instanceof ApiError && commandError.status === 409
+  const lmsWarning = templateLmsWarning(sourceTemplate, draft)
   const deleteFailed = commandState.kind === 'failed' && commandState.action === 'delete'
   const editorFailed = commandState.kind === 'failed' && commandState.action !== 'delete'
 
@@ -861,6 +865,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
             />
           </label>
           {problem !== null && <p className="admin-form__hint" role="status">{problem}</p>}
+          {lmsWarning !== null && <p className="notice" role="note">{lmsWarning}</p>}
           {editorFailed && (
             <div className="interaction-command-error" role="alert">
               <p>{commandMessage(commandState.error)}</p>

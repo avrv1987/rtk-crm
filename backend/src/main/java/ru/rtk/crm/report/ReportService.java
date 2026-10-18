@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -46,13 +47,20 @@ public class ReportService {
     // Примечания на экране и в файлах держим в одной-двух строках; полное описание методики — в справке.
     private static final String DEMAND_NOTE = "Заявки — с сайта по дате подачи, отозванные не учитываются. Обучающиеся и"
             + " завершившие — участия (не уникальные люди) в потоках Moodle, шедших в периоде, по наблюдению на %s;"
-            + " «нет данных» — источник не дал значения, это не ноль; подробнее — в справке";
+            + " «нет данных» — источник не дал значения, это не ноль; колонки — отдельные шкалы с разными единицами и периодами,"
+            + " их отношение не показывает, сколько заявок дошло до обучения; подробнее — в справке";
+    private static final String COMPLETION_NOTE = "Доля завершивших — C / (C + N) по участиям с известным статусом"
+            + " завершения (C — завершили, N — не завершили), как в «Динамике обучения»; основание — «C из C + N с известным"
+            + " статусом; данные по C + N из всех участий», то есть покрытие; поток периода без наблюдения на дату в долю не"
+            + " входит и назван в основании, программа только с такими потоками — «нет данных», а не ноль";
     private static final String MARKET_NOTE = "Спрос рынка труда — только для направлений с признаком: вакансии — на последний"
             + " срез периода, тренд — изменение этого числа в процентах за период; «не применяется» и «нет данных» — не ноль,"
             + " в рейтинг спрос не входит";
-    private static final String DURATION_NOTE = "Длительность — календарные дни от входа в этап до перехода в следующий; цикл —"
-            + " от создания взаимодействия до входа в последний этап; «нет данных» — в периоде не завершилось ни одного прохождения,"
-            + " это не ноль";
+    private static final String DURATION_NOTE = "Длительность — календарные дни от входа в этап до перехода в следующий;"
+            + " время до входа в последний этап — от создания взаимодействия до первого входа в последний этап маршрута, это не"
+            + " подтверждённое завершение; «нет данных» — в периоде не закончилось ни одного прохождения, это не ноль";
+    private static final String EMPLOYEE_ACTION_NOTE = "последнее действие сотрудника — последнее событие взаимодействия без"
+            + " автоматических записей источников (Moodle, сайт); «не зафиксировано» — таких действий нет";
     private static final Map<ReportEventType, String> EVENT_TYPE_TITLES = Map.ofEntries(
             Map.entry(ReportEventType.CREATED, "создание"),
             Map.entry(ReportEventType.TRANSITIONED, "переход"),
@@ -72,6 +80,12 @@ public class ReportService {
             + " действующего КАМ. Этап на начало и конец периода — по истории переходов. Комментарии — только людей."
             + " Итоги по менеджерам, командам и всего — отдельной таблицей и листом, в число строк не входят."
             + " «Обучение (LMS)» — последние данные Moodle по идущим потокам на момент формирования";
+    static final String GROUP_TOTALS_NOTE = "Итоги по продуктам и по вузам — отдельными таблицами и листами. Одно взаимодействие"
+            + " может относиться к нескольким продуктам, поэтому сумма строк по продуктам бывает больше «Всего»: «Всего» считается"
+            + " по уникальным взаимодействиям";
+    private static final String IDLE_NOTE = "Строка — вуз с КАМ без идущего взаимодействия (группа «Без работы» «Контроля»);"
+            + " последнее действие сотрудника — последнее событие взаимодействий вуза, кроме автоматических записей источников;"
+            + " «не зафиксировано» — событий нет, это не значит, что работы не было";
     private static final Map<ManagerWorkTile, String> TILE_NOTES = Map.of(
             ManagerWorkTile.OVERDUE, "просрочено",
             ManagerWorkTile.THIS_WEEK, "срок на этой неделе",
@@ -80,7 +94,8 @@ public class ReportService {
             ManagerWorkTile.AGREEMENT, "договор на согласовании",
             ManagerWorkTile.UNASSIGNED, "вузы без КАМ",
             ManagerWorkTile.STUCK, "на этапе дольше %d дн.",
-            ManagerWorkTile.LMS, "сигналы LMS"
+            ManagerWorkTile.LMS, "сигналы LMS",
+            ManagerWorkTile.IDLE, "вузы без идущего взаимодействия"
     );
     private static final String AGREEMENTS_NOTE = "Строка — мероприятие плана договора (договор без мероприятий — одна строка);"
             + " объёмы — числа без ФИО. Обучающиеся — участия в потоках Moodle связанных взаимодействий, пересекающихся с мероприятием"
@@ -116,16 +131,15 @@ public class ReportService {
         ReportRequest normalized = normalize(request);
         OffsetDateTime generatedAt = OffsetDateTime.now();
         List<ReportRow> rows;
-        List<ManagerWorkTotal> groupTotals = List.of();
+        ManagerWorkRows managerWork = ManagerWorkRows.EMPTY;
         long total;
         if (normalized.kind() == ReportKind.DURATION || normalized.kind() == ReportKind.MANAGER_WORK) {
             List<ReportRow> all;
             if (normalized.kind() == ReportKind.DURATION) {
                 all = durationRows(profile, normalized, generatedAt);
             } else {
-                ManagerWorkRows managerWork = managerWorkRows(profile, normalized, generatedAt);
+                managerWork = managerWorkRows(profile, normalized, generatedAt);
                 all = managerWork.rows();
-                groupTotals = managerWork.totals();
             }
             long offset = (long) page * size;
             rows = offset >= all.size() ? List.of() : all.subList((int) offset, (int) Math.min(all.size(), offset + size));
@@ -146,7 +160,9 @@ public class ReportService {
                 page,
                 size,
                 total,
-                groupTotals
+                managerWork.totals(),
+                managerWork.productTotals(),
+                managerWork.organizationTotals()
         );
     }
 
@@ -154,14 +170,13 @@ public class ReportService {
     public ReportDocument document(CrmProfile profile, ReportRequest request) {
         ReportRequest normalized = normalize(request);
         OffsetDateTime generatedAt = OffsetDateTime.now();
-        List<ManagerWorkTotal> groupTotals = List.of();
+        ManagerWorkRows managerWork = ManagerWorkRows.EMPTY;
         List<ReportRow> rows;
         switch (normalized.kind()) {
             case DURATION -> rows = durationRows(profile, normalized, generatedAt);
             case MANAGER_WORK -> {
-                ManagerWorkRows managerWork = managerWorkRows(profile, normalized, generatedAt);
+                managerWork = managerWorkRows(profile, normalized, generatedAt);
                 rows = managerWork.rows();
-                groupTotals = managerWork.totals();
             }
             default -> rows = repository.findRows(profile, normalized, generatedAt, properties.maxRows() + 1, 0);
         }
@@ -169,7 +184,8 @@ public class ReportService {
             throw ReportException.rowLimit(properties.maxRows());
         }
         return new ReportDocument(normalized, generatedAt, notes(profile, normalized, generatedAt), rows,
-                columnTitles(normalized, generatedAt), groupTotals);
+                columnTitles(normalized, generatedAt), managerWork.totals(), managerWork.productTotals(),
+                managerWork.organizationTotals());
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -243,20 +259,22 @@ public class ReportService {
 
     private Map<ReportColumn, String> columnTitles(ReportRequest request, OffsetDateTime generatedAt) {
         if (request.kind() == ReportKind.MANAGER_WORK) {
-            return Map.of(ReportColumn.MANAGER, request.toAt() != null && request.toAt().isBefore(generatedAt)
-                    ? "Менеджер на конец периода" : "Текущий менеджер");
+            return request.filters().tile() == ManagerWorkTile.IDLE
+                    ? Map.of(ReportColumn.MANAGER, "КАМ вуза")
+                    : Map.of(ReportColumn.MANAGER, historicalManager(request, generatedAt) ? "Менеджер на конец периода" : "Текущий менеджер");
         }
         if (request.kind() != ReportKind.DEMAND) {
             return Map.of();
         }
         String snapshot = "на " + date(request.runsAsOf());
         return Map.of(
-                ReportColumn.APPLICATIONS, "Заявки (сайт, " + applicationPeriod(request) + ")",
-                ReportColumn.PAID_ORDERS, "Оплаченные заявки (сайт, за всё время: период не применяется)",
-                ReportColumn.PAID_STREAMS, "Потоки с оплатами (сайт, за всё время: период не применяется)",
-                ReportColumn.PARTICIPANTS, "Обучающиеся в потоках периода (Moodle, " + snapshot + ")",
-                ReportColumn.LEARNERS_COMPLETED, "Завершили (Moodle, " + snapshot + ")",
-                ReportColumn.COMPLETION_SHARE, "Доля завершивших, % (Moodle, " + snapshot + ")",
+                ReportColumn.APPLICATIONS, "Заявки (сайт, по дате подачи: " + applicationPeriod(request) + ")",
+                ReportColumn.PAID_ORDERS, "Оплаченные заявки (сайт, без ограничения периода)",
+                ReportColumn.PAID_STREAMS, "Потоки с оплатами (сайт, без ограничения периода)",
+                ReportColumn.PARTICIPANTS, "Обучающиеся в потоках периода (Moodle, участия — не уникальные люди, " + snapshot + ")",
+                ReportColumn.LEARNERS_COMPLETED, "Завершили (Moodle, участия, " + snapshot + ")",
+                ReportColumn.COMPLETION_SHARE, "Доля завершивших среди известных, % (Moodle, участия, " + snapshot + ")",
+                ReportColumn.COMPLETION_BASIS, "Основание доли (Moodle, участия, " + snapshot + ")",
                 ReportColumn.PARALLEL_RUNS, "Параллельные потоки (Moodle, на " + date(request.runsAsOf()) + ")"
         );
     }
@@ -290,40 +308,65 @@ public class ReportService {
         );
     }
 
-    private record ManagerWorkRows(List<ReportRow> rows, List<ManagerWorkTotal> totals) {
+    private record ManagerWorkRows(List<ReportRow> rows, List<ManagerWorkTotal> totals, List<ManagerWorkGroupTotal> productTotals,
+                                   List<ManagerWorkGroupTotal> organizationTotals) {
+        static final ManagerWorkRows EMPTY = new ManagerWorkRows(List.of(), List.of(), List.of(), List.of());
     }
 
     private ManagerWorkRows managerWorkRows(CrmProfile profile, ReportRequest request, OffsetDateTime generatedAt) {
+        if (request.filters().tile() == ManagerWorkTile.IDLE) {
+            List<ManagerWorkOrganization> idle = repository.findOrganizationsWithoutActiveWork(profile).stream()
+                    .filter(organization -> organization.managerId() != null && organization.selected(request.filters()))
+                    .toList();
+            return new ManagerWorkRows(ManagerWorkReport.idleRows(idle), ManagerWorkReport.totals(List.of(), idle, generatedAt),
+                    List.of(), List.of());
+        }
         List<ManagerWorkLine> found = repository.findManagerWork(
-                profile, request.filters(), request.from(), request.to(), generatedAt, true
+                profile, request.filters(), request.from(), request.to(), generatedAt, managerAtPeriodEnd(request)
         );
         List<UUID> foundIds = found.stream().map(ManagerWorkLine::interactionId).toList();
         ManagerWorkTile tile = request.filters().tile();
         boolean withLearning = tile == ManagerWorkTile.LMS
                 || request.columns().contains(ReportColumn.LMS_LEARNING) || request.columns().contains(ReportColumn.LMS_CHECK);
-        boolean withAgreements = tile == ManagerWorkTile.AGREEMENT || tile == ManagerWorkTile.STUCK
+        boolean withAgreements = tile == ManagerWorkTile.STUCK
                 || request.columns().contains(ReportColumn.AGREEMENT) || request.columns().contains(ReportColumn.AGREEMENT_STATUS);
         Map<UUID, WorkLearning> learning = withLearning ? lmsWorkLearningService.byWork(profile, foundIds) : Map.of();
         Map<UUID, WorkAgreementStatus> agreements = withAgreements ? agreementRepository.findWorkStatuses(foundIds) : null;
         int stuckDays = Objects.requireNonNullElse(request.filters().minDaysOnStage(), ManagerWorkReport.DEFAULT_STUCK_DAYS);
+        Set<UUID> agreementOrganizations = tile == ManagerWorkTile.AGREEMENT
+                ? agreementRepository.findOrganizationsWithAgreementInProgress(
+                        found.stream().map(ManagerWorkLine::organizationId).collect(Collectors.toSet()))
+                : Set.of();
         List<ManagerWorkLine> lines = tile == null ? found : found.stream()
                 .filter(line -> ManagerWorkReport.matches(line, tile, stuckDays,
                         agreements == null ? null : agreements.get(line.interactionId()), learning.get(line.interactionId()),
-                        generatedAt))
+                        agreementOrganizations, generatedAt))
                 .toList();
         List<UUID> ids = lines.stream().map(ManagerWorkLine::interactionId).toList();
+        Map<UUID, List<String>> products = repository.findManagerWorkProducts(ids);
         return new ManagerWorkRows(
                 ManagerWorkReport.rows(
                         lines,
-                        repository.findManagerWorkProducts(ids),
+                        products,
                         repository.findManagerWorkComments(ids, request.from(), request.to()),
                         learning,
                         request.columns().contains(ReportColumn.AGREEMENT) || request.columns().contains(ReportColumn.AGREEMENT_STATUS)
                                 ? agreements : null,
                         generatedAt
                 ),
-                ManagerWorkReport.totals(lines, idleOrganizations(profile, request), generatedAt)
+                ManagerWorkReport.totals(lines, idleOrganizations(profile, request), generatedAt),
+                ManagerWorkReport.productTotals(lines, products, generatedAt),
+                ManagerWorkReport.organizationTotals(lines, generatedAt)
         );
+    }
+
+    // Без явного выбора отчёт «Работа менеджеров» показывает КАМ на конец периода, как до появления режимов «Контроля».
+    private static boolean managerAtPeriodEnd(ReportRequest request) {
+        return request.filters().managerAt() != ManagerAt.CURRENT;
+    }
+
+    private static boolean historicalManager(ReportRequest request, OffsetDateTime generatedAt) {
+        return managerAtPeriodEnd(request) && request.toAt() != null && request.toAt().isBefore(generatedAt);
     }
 
     // Итоги файла считают вузы без идущей работы так же, как экран «Контроля». С плиткой итоги описывают только
@@ -449,7 +492,7 @@ public class ReportService {
                 periodNote(request, generatedAt),
                 switch (request.kind()) {
                     case PORTFOLIO -> "Этап, статус взаимодействия и ответственный — текущие на момент формирования отчёта; дней на этапе —"
-                            + " полных суток от последнего входа в текущий этап до момента формирования";
+                            + " полных суток от последнего входа в текущий этап до момента формирования; " + EMPLOYEE_ACTION_NOTE;
                     case EVENTS -> "Ответственный — КАМ вуза на момент события; автор — пользователь, выполнивший действие;"
                             + (profile.role() == UserRole.LEADER || profile.role() == UserRole.MANAGEMENT
                             ? " назначение, смена и снятие КАМ — строки вуза без взаимодействия, ответственный в них — КАМ"
@@ -459,15 +502,21 @@ public class ReportService {
                             + "; сортировка: "
                             + request.sortBy().title(ReportKind.DEMAND).toLowerCase(Locale.ROOT) + " по убыванию";
                     case SNAPSHOT -> "Этап — по последнему переходу до конца выбранного дня, ответственный — КАМ вуза на эту"
-                            + " дату по истории назначений; ИТ-программа и ИТ-продукты — текущие";
+                            + " дату по истории назначений; ИТ-программа и ИТ-продукты — текущие; " + EMPLOYEE_ACTION_NOTE;
                     case DURATION -> DURATION_NOTE;
                     case AGREEMENTS -> AGREEMENTS_NOTE;
-                    case MANAGER_WORK -> MANAGER_WORK_NOTE.formatted(request.toAt() != null && request.toAt().isBefore(generatedAt)
-                            ? "ведущий вуз на конец периода по истории назначений"
-                            : "текущий ответственный за вуз (период не закончился или не задан)");
+                    case MANAGER_WORK -> request.filters().tile() == ManagerWorkTile.IDLE ? IDLE_NOTE
+                            : MANAGER_WORK_NOTE.formatted(historicalManager(request, generatedAt)
+                                    ? "ведущий вуз на конец периода по истории назначений («За период»)"
+                                    : managerAtPeriodEnd(request)
+                                    ? "текущий ответственный за вуз (период не закончился или не задан)"
+                                    : "текущий ответственный за вуз («Сейчас»)");
                 },
                 "Фильтры: " + filterDescription(profile, request.filters()) + "; архивные вузы не входят"
         ));
+        if (request.kind() == ReportKind.MANAGER_WORK && request.filters().tile() != ManagerWorkTile.IDLE) {
+            notes.add(notes.size() - 1, GROUP_TOTALS_NOTE);
+        }
         if (request.filters().tile() != null) {
             notes.add("Отбор плиткой «Контроля»: " + TILE_NOTES.get(request.filters().tile()).formatted(
                     Objects.requireNonNullElse(request.filters().minDaysOnStage(), ManagerWorkReport.DEFAULT_STUCK_DAYS)));
@@ -476,6 +525,10 @@ public class ReportService {
             notes.add(2, learningNote(profile, request));
             if (request.columns().contains(ReportColumn.MARKET_VACANCIES) || request.columns().contains(ReportColumn.MARKET_TREND)) {
                 notes.add(3, marketNote());
+            }
+            // Перед строкой «Фильтры», сразу после общего примечания отчёта.
+            if (request.columns().contains(ReportColumn.COMPLETION_SHARE) || request.columns().contains(ReportColumn.COMPLETION_BASIS)) {
+                notes.add(notes.size() - 1, COMPLETION_NOTE);
             }
         }
         return List.copyOf(notes);
@@ -503,7 +556,7 @@ public class ReportService {
                         + " завершения в CRM нет, поэтому незавершёнными считаются все)";
                 case CREATED -> "взаимодействия, созданные в периоде";
             };
-            case DURATION -> "прохождения этапов и циклы, завершённые в периоде; «на конец периода» — на "
+            case DURATION -> "прохождения этапов, закончившиеся в периоде, и входы в последний этап в периоде; «на конец периода» — на "
                     + ReportColumn.DATE_TIME.format(durationCutoff(request, generatedAt).atZoneSameInstant(ReportRequest.ZONE));
             case SNAPSHOT -> throw new IllegalStateException("Snapshot has no period");
             case MANAGER_WORK -> "взаимодействия, созданные до конца периода, которые сейчас активны или имели события в периоде";

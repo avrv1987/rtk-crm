@@ -33,6 +33,8 @@ public record ReportRequest(
             StatisticsGroupBy.MANAGER,
             StatisticsGroupBy.MONTH
     );
+    static final List<ReportColumn> IDLE_COLUMNS = List.of(
+            ReportColumn.MANAGER, ReportColumn.TEAM, ReportColumn.ORGANIZATION, ReportColumn.LAST_STAFF_ACTION);
     private static final Set<ReportColumn> PAYMENT_COLUMNS = EnumSet.of(ReportColumn.PAID_ORDERS, ReportColumn.PAID_STREAMS);
     private static final Set<ReportColumn> DEMAND_SORTS = EnumSet.of(
             ReportColumn.APPLICATIONS,
@@ -79,6 +81,11 @@ public record ReportRequest(
                     "filters.tile", "Отбор плиткой «Контроля» доступен только в отчёте «Работа менеджеров за период»"
             );
         }
+        if (kind != ReportKind.MANAGER_WORK && normalizedFilters.managerAt() != null) {
+            throw new InteractionValidationException(
+                    "filters.managerAt", "Выбор «текущий КАМ или КАМ на конец периода» доступен только в отчёте «Работа менеджеров за период»"
+            );
+        }
         boolean stuckTile = kind == ReportKind.MANAGER_WORK && normalizedFilters.tile() == ManagerWorkTile.STUCK;
         if (kind != ReportKind.PORTFOLIO && !stuckTile && normalizedFilters.minDaysOnStage() != null) {
             throw new InteractionValidationException(
@@ -108,7 +115,7 @@ public record ReportRequest(
                 to,
                 basis,
                 normalizedFilters,
-                groupBy == null ? normalizedColumns(payments) : List.of(),
+                groupBy != null ? List.of() : idleTile(normalizedFilters) ? IDLE_COLUMNS : normalizedColumns(payments),
                 format,
                 groupBy,
                 kind == ReportKind.DEMAND && (sortBy == null || !payments && PAYMENT_COLUMNS.contains(sortBy))
@@ -153,7 +160,7 @@ public record ReportRequest(
         }
         if (kind == ReportKind.DURATION) {
             throw new InteractionValidationException(
-                    "groupBy", "Для отчёта «Длительность этапов и цикла» диаграмма не строится: показатели уже сгруппированы"
+                    "groupBy", "Для отчёта «Длительность этапов и время до входа в последний этап» диаграмма не строится: показатели уже сгруппированы"
             );
         }
         if (kind == ReportKind.MANAGER_WORK) {
@@ -241,7 +248,18 @@ public record ReportRequest(
         }
     }
 
+    // «Без работы» — список вузов, а не взаимодействий: у него свои колонки, и строится он только там, где эта группа
+    // есть на экране «Контроля» — без периода и без отборов, которых у вуза без работы нет.
+    private boolean idleTile(ReportFilters normalizedFilters) {
+        return kind == ReportKind.MANAGER_WORK && normalizedFilters.tile() == ManagerWorkTile.IDLE;
+    }
+
     private void requireManagerWorkSelection(ReportFilters normalizedFilters) {
+        if (idleTile(normalizedFilters) && !ManagerWorkOrganization.counted(normalizedFilters, from, to)) {
+            throw new InteractionValidationException(
+                    "filters.tile", "«Без работы» выгружается без периода и без отборов по направлению, программе, продукту и этапу"
+            );
+        }
         if (!normalizedFilters.workStatuses().isEmpty() || !normalizedFilters.flags().isEmpty()
                 || !normalizedFilters.agreement().unrestricted()) {
             throw new InteractionValidationException(

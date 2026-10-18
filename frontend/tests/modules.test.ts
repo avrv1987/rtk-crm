@@ -5,7 +5,7 @@ import { errorCodes, tocItems, visibleBy } from '../src/features/help/helpConten
 import { getModules, sectionAvailable, setModules, withoutPaymentColumns } from '../src/shared/modules.ts'
 
 const off = { enrolment: false, partner: false }
-const on = { enrolment: true, partner: true }
+const on = { enrolment: true, partner: true, max: true, mail: true }
 
 test('модули по умолчанию выключены, setModules меняет значение', () => {
   assert.deepEqual(getModules(), off)
@@ -14,7 +14,7 @@ test('модули по умолчанию выключены, setModules мен
   setModules(off)
 })
 
-test('разделы «Зачисление» и «Кабинет вуза» скрыты при выключенных модулях, остальные доступны', () => {
+test('разделы «Зачисление» и «Сотрудничество с ИТ Школой РТК» скрыты при выключенных модулях, остальные доступны', () => {
   assert.equal(sectionAvailable('enrolment', off), false)
   assert.equal(sectionAvailable('partner', off), false)
   assert.equal(sectionAvailable('enrolment', on), true)
@@ -32,7 +32,7 @@ test('колонки оплат убираются из «Востребован
   assert.deepEqual(withoutPaymentColumns(columns, on), columns)
 })
 
-test('посадочная без модулей не упоминает роли «Оператор зачисления» и «Представитель вуза»', () => {
+test('посадочная без модулей не упоминает роли «Оператор зачисления» и «Координатор вуза»', () => {
   const titles = rolesFor(off).map((role) => role.title)
   assert.deepEqual(titles, [
     'Менеджер по работе с вузами (КАМ)', 'Руководитель команды', 'Руководство', 'Администратор платформы'
@@ -49,7 +49,7 @@ test('посадочная без модулей не упоминает рол�
 test('посадочная со включёнными модулями показывает обе роли и приглашение в кабинет', () => {
   const titles = rolesFor(on).map((role) => role.title)
   assert.ok(titles.includes('Оператор зачисления'))
-  assert.ok(titles.includes('Представитель вуза'))
+  assert.ok(titles.includes('Координатор вуза'))
   assert.ok(rolesFor(on)[0].duties.some((duty) => duty.includes('доступ в кабинет')))
   assert.ok(siteIntegrationText(on).includes('оплаты'))
 })
@@ -57,7 +57,7 @@ test('посадочная со включёнными модулями пока
 test('при одном включённом модуле показывается только его роль', () => {
   const titles = rolesFor({ enrolment: true, partner: false }).map((role) => role.title)
   assert.ok(titles.includes('Оператор зачисления'))
-  assert.ok(!titles.includes('Представитель вуза'))
+  assert.ok(!titles.includes('Координатор вуза'))
 })
 
 test('справка без модулей не содержит их разделов и кодов ошибок, код отказа входа остаётся', () => {

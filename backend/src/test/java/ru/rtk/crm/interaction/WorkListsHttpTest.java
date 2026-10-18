@@ -158,6 +158,7 @@ class WorkListsHttpTest {
                         null,
                         null,
                         false,
+                        null,
                         null
                 )),
                 eq(new InteractionQuery(1, 10, InteractionSort.NEXT_ACTION_AT_ASC))
@@ -173,12 +174,12 @@ class WorkListsHttpTest {
 
         verify(interactionService).list(
                 eq(PROFILE),
-                eq(new InteractionFilter(null, null, null, null, InteractionWorkStatus.ACTIVE, null, null, null, false, null)),
+                eq(new InteractionFilter(null, null, null, null, InteractionWorkStatus.ACTIVE, null, null, null, false, null, null)),
                 any()
         );
         verify(interactionService).list(
                 eq(PROFILE),
-                eq(new InteractionFilter(null, null, null, null, null, null, null, null, false, null)),
+                eq(new InteractionFilter(null, null, null, null, null, null, null, null, false, null, null)),
                 any()
         );
     }
@@ -192,7 +193,8 @@ class WorkListsHttpTest {
                         .with(oidcLogin())
                         .param("responsible", "UNASSIGNED")
                         .param("status", "ALL")
-                        .param("minDaysOnStage", "30"))
+                        .param("minDaysOnStage", "30")
+                        .param("noContactDays", "45"))
                 .andExpect(status().isOk());
         mockMvc.perform(get("/api/interactions")
                         .with(oidcLogin())
@@ -202,12 +204,12 @@ class WorkListsHttpTest {
 
         verify(interactionService).list(
                 eq(PROFILE),
-                eq(new InteractionFilter(null, null, null, null, null, null, null, null, true, 30)),
+                eq(new InteractionFilter(null, null, null, null, null, null, null, null, true, 30, 45)),
                 eq(new InteractionQuery(0, 25, InteractionSort.UPDATED_DESC))
         );
         verify(interactionService).list(
                 eq(PROFILE),
-                eq(new InteractionFilter(null, null, null, null, InteractionWorkStatus.COMPLETED, null, null, responsible, false, null)),
+                eq(new InteractionFilter(null, null, null, null, InteractionWorkStatus.COMPLETED, null, null, responsible, false, null, null)),
                 eq(new InteractionQuery(0, 25, InteractionSort.UPDATED_DESC))
         );
     }
@@ -311,7 +313,10 @@ class WorkListsHttpTest {
                 markedAt,
                 null,
                 null,
-                true
+                true,
+                null,
+                null,
+                null
         );
         InteractionIssueFilter filter = new InteractionIssueFilter(
                 InteractionIssueKind.RISK, InteractionRiskLevel.HIGH, responsibleId, organizationId, true, null

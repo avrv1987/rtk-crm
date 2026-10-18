@@ -59,7 +59,7 @@ public class LmsSignalService {
     public LmsSignals list(CrmProfile profile) {
         VisibilityScope scope = organizationRepository.visibilityScope(profile).orElseThrow(WorkAccessDeniedException::new);
         OffsetDateTime now = OffsetDateTime.now();
-        List<LmsSignal> active = signals(scope, null, today(now)).stream().filter(signal -> !signal.dismissed()).toList();
+        List<LmsSignal> active = signals(scope, null, now).stream().filter(signal -> !signal.dismissed()).toList();
         return new LmsSignals(now, active);
     }
 
@@ -67,7 +67,7 @@ public class LmsSignalService {
     public LmsSignals forInteraction(CrmProfile profile, UUID interactionId) {
         VisibilityScope scope = visibleScope(profile, interactionId);
         OffsetDateTime now = OffsetDateTime.now();
-        return new LmsSignals(now, signals(scope, interactionId, today(now)));
+        return new LmsSignals(now, signals(scope, interactionId, now));
     }
 
     @Transactional
@@ -79,12 +79,11 @@ public class LmsSignalService {
         VisibilityScope scope = visibleScope(profile, interactionId);
         ContactInteractionMutationAuthorization.requireCardEditor(profile);
         OffsetDateTime now = OffsetDateTime.now();
-        LocalDate today = today(now);
-        SignalSource source = activeSource(scope, interactionId, request.type(), request.mappingId(), today);
+        SignalSource source = activeSource(scope, interactionId, request.type(), request.mappingId(), now);
         // Скрытие привязано к версии данных потока: изменились данные — сигнал вернётся.
         repository.saveDismissal(interactionId, source.mappingId(), request.type(), source.dataVersion(request.type()),
                 profile.id(), now, false);
-        return new LmsSignals(now, signals(scope, interactionId, today));
+        return new LmsSignals(now, signals(scope, interactionId, now));
     }
 
     /**
@@ -100,7 +99,7 @@ public class LmsSignalService {
         VisibilityScope scope = visibleScope(profile, interactionId);
         ContactInteractionMutationAuthorization.requireCardEditor(profile);
         OffsetDateTime now = OffsetDateTime.now();
-        SignalSource source = activeSource(scope, interactionId, request.type(), request.mappingId(), today(now));
+        SignalSource source = activeSource(scope, interactionId, request.type(), request.mappingId(), now);
         String dataVersion = source.dataVersion(request.type());
         String key = LmsSignalRepository.dismissalKey(interactionId, source.mappingId(), request.type(), dataVersion);
         // Пока данные не изменились, сигнал уже записан: второй риск по нему дублировал бы запись в реестре.
@@ -134,10 +133,10 @@ public class LmsSignalService {
     // Скрыть и записать можно только действующий сигнал, найденный заново по текущим данным: сигнал мог перестать
     // действовать, а присланному клиентом верить нельзя.
     private SignalSource activeSource(VisibilityScope scope, UUID interactionId, LmsSignalType type, UUID mappingId,
-                                      LocalDate today) {
+                                      OffsetDateTime now) {
         return repository.findSources(scope, interactionId, properties.classesStageName()).stream()
                 .filter(candidate -> candidate.mappingId().equals(mappingId))
-                .filter(candidate -> types(candidate, today, properties).contains(type))
+                .filter(candidate -> types(candidate, now, properties).contains(type))
                 .findFirst()
                 .orElseThrow(() -> new InteractionValidationException(
                         "mappingId",
@@ -145,11 +144,11 @@ public class LmsSignalService {
                 ));
     }
 
-    private List<LmsSignal> signals(VisibilityScope scope, UUID interactionId, LocalDate today) {
+    private List<LmsSignal> signals(VisibilityScope scope, UUID interactionId, OffsetDateTime now) {
         Map<String, Boolean> dismissals = repository.findDismissals(scope, interactionId);
         List<LmsSignal> signals = new ArrayList<>();
         for (SignalSource source : repository.findSources(scope, interactionId, properties.classesStageName())) {
-            for (LmsSignalType type : types(source, today, properties)) {
+            for (LmsSignalType type : types(source, now, properties)) {
                 Boolean recordedAsRisk = dismissals.get(LmsSignalRepository.dismissalKey(
                         source.interactionId(), source.mappingId(), type, source.dataVersion(type)
                 ));
@@ -167,7 +166,14 @@ public class LmsSignalService {
                 && today.isBefore(source.runEndsOn());
     }
 
-    static List<LmsSignalType> types(SignalSource source, LocalDate today, LmsSignalProperties properties) {
+    // Активность меняется каждый день, поэтому по наблюдению старше порога устаревания (как у источников) сигналы о
+    // входах не выдаются: курс, который не читается, иначе неделями показывал бы старое «не заходят».
+    static boolean fresh(SignalSource source, OffsetDateTime now, LmsSignalProperties properties) {
+        return !source.observedAt().isBefore(now.minus(properties.staleAfter()));
+    }
+
+    static List<LmsSignalType> types(SignalSource source, OffsetDateTime now, LmsSignalProperties properties) {
+        LocalDate today = today(now);
         LocalDate observed = observedOn(source);
         boolean started = !observed.isBefore(source.runStartsOn());
         boolean running = running(source, today);
@@ -184,16 +190,21 @@ public class LmsSignalService {
             types.add(LmsSignalType.NO_STUDENTS);
         }
         // Доля сравнивается умножением, без деления: нет ошибок округления. Проверка в последние дни потока и после его
-        // окончания.
+        // окончания. Долю считаем только среди участий с известным статусом и только при достаточном покрытии: при малом
+        // покрытии вывод о низкой доле не обоснован, вместо него — «данных недостаточно, нужна проверка».
         if (started && source.completed() != null && source.participants() > 0
-                && !today.isBefore(source.runEndsOn().minusDays(properties.completionWindowDays()))
-                && source.completed() * 100L < (long) properties.lowCompletionPercent() * source.participants()) {
-            types.add(LmsSignalType.LOW_COMPLETION);
+                && !today.isBefore(source.runEndsOn().minusDays(properties.completionWindowDays()))) {
+            long known = known(source);
+            if (known * 100L < (long) properties.completionCoveragePercent() * source.participants()) {
+                types.add(LmsSignalType.COMPLETION_UNVERIFIED);
+            } else if (source.completed() * 100L < (long) properties.lowCompletionPercent() * known) {
+                types.add(LmsSignalType.LOW_COMPLETION);
+            }
         }
         Activity activity = source.activity();
         // Активность смотрится после льготного срока от начала потока: в первые дни входов ещё мало, сигнал был бы
         // ложным. Если Moodle скрыл вход (activity == null), сигналов по активности нет.
-        boolean watched = running && activity != null
+        boolean watched = running && activity != null && fresh(source, now, properties)
                 && ChronoUnit.DAYS.between(source.runStartsOn(), observed) >= properties.activityGraceDays();
         if (watched && source.participants() > 0) {
             types.addAll(activityTypes(activity, source.participants(), properties));
@@ -228,6 +239,7 @@ public class LmsSignalService {
             case STUDENTS_APPEARED -> "В LMS появились обучающиеся";
             case NO_STUDENTS -> "Поток идёт, обучающихся нет";
             case LOW_COMPLETION -> "Низкая доля завершивших";
+            case COMPLETION_UNVERIFIED -> "Данных о завершении недостаточно, нужна проверка";
             case LOW_ACTIVITY -> "Мало заходят в курс";
             case NOT_STARTED -> "Обучающиеся не начали";
             case DROPOUT -> "Обучающиеся перестали заходить";
@@ -252,10 +264,14 @@ public class LmsSignalService {
             case NO_STUDENTS -> "Поток " + run + " идёт " + days(runDays(source))
                     + " (порог " + days(properties.noStudentsAfterDays()) + "), а на " + DATE.format(observedOn(source))
                     + " обучающихся в LMS нет. Проверьте запись учащихся на курс.";
-            case LOW_COMPLETION -> "Поток " + run + ": завершили " + source.completed() + " из " + participants + " ("
-                    + percent(source.completed(), participants) + " %), порог "
-                    + properties.lowCompletionPercent() + " %. Поток закрыт или заканчивается в ближайшие "
-                    + days(properties.completionWindowDays()) + ".";
+            case LOW_COMPLETION -> "Поток " + run + ": завершили " + source.completed() + " из " + known(source)
+                    + " с известным статусом (" + percent(source.completed(), (int) known(source)) + " %), порог "
+                    + properties.lowCompletionPercent() + " %; статус известен у " + known(source) + " из " + participants
+                    + ". Поток закрыт или заканчивается в ближайшие " + days(properties.completionWindowDays()) + ".";
+            case COMPLETION_UNVERIFIED -> "Поток " + run + ": статус завершения известен только у " + known(source) + " из "
+                    + participants + " обучающихся (" + percent((int) known(source), participants) + " %), нужно не меньше "
+                    + properties.completionCoveragePercent() + " %. Долю завершивших по таким данным не оцениваем: проверьте"
+                    + " отслеживание завершения в курсе Moodle.";
             case LOW_ACTIVITY -> "Поток " + run + ": за 7 дней в курс заходили " + activity.active7d() + " из "
                     + participants + " обучающихся (" + percent(activity.active7d(), participants) + " %), порог "
                     + properties.lowActivityPercent() + " %. Уточните у вуза, как идут занятия.";
@@ -325,6 +341,10 @@ public class LmsSignalService {
         return source.observedAt().atZoneSameInstant(WorkProperties.ZONE).toLocalDate();
     }
 
+    private static long known(SignalSource source) {
+        return (long) source.completed() + (source.notCompleted() == null ? 0 : source.notCompleted());
+    }
+
     private static long runDays(SignalSource source) {
         return ChronoUnit.DAYS.between(source.runStartsOn(), observedOn(source));
     }
@@ -350,7 +370,7 @@ public class LmsSignalService {
         return value + " дней";
     }
 
-    private static LocalDate today(OffsetDateTime now) {
+    static LocalDate today(OffsetDateTime now) {
         return now.atZoneSameInstant(WorkProperties.ZONE).toLocalDate();
     }
 }

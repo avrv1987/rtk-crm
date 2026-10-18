@@ -5,15 +5,13 @@ import { LearningTrendPanel } from '../work/LearningTrendPanel'
 import { LmsSignalList } from '../work/LmsSignals'
 import type { FilterOption } from '../reports/ReportControls'
 import { ManagerDeputyForm } from './ManagerDeputyForm'
+import { controlMoreScope, trendDays, trendLine } from './controlModel'
 import { type AccessHandlers, formatDate, handledAccessError, todayIso } from '../work/workShared'
 
 type Panel = 'signals' | 'deputies' | 'trend' | null
 
 type Loaded<T> = { kind: 'loading' } | { kind: 'ready'; value: T } | { kind: 'failed' }
 
-const trendDays = 90
-
-const signed = (value: number) => (value > 0 ? `+${value}` : value < 0 ? `−${Math.abs(value)}` : '0')
 
 export type DeputyGroup = { owner: string; deputy: string; endsOn: string | null; names: string[] }
 
@@ -88,6 +86,7 @@ export const ControlMore = ({
 
   return (
     <section className="control-more" aria-label={management ? 'Ещё по всем командам' : 'Ещё по команде'}>
+      <p className="control-more__scope">{controlMoreScope(management)}</p>
       <ul className="control-more__line">
         <li>
           {signals.kind === 'ready' ? (
@@ -111,7 +110,7 @@ export const ControlMore = ({
         <li>
           {trend.kind === 'ready' ? (
             <button type="button" className="control-more__toggle" aria-expanded={panel === 'trend'} onClick={() => toggle('trend')}>
-              {`Обучающихся за ${trendDays} дней: ${trend.value.total.start} → ${trend.value.total.end} (${signed(trend.value.total.change)})`}
+              {trendLine(trend.value, trendDays)}
             </button>
           ) : <span>{trend.kind === 'loading' ? 'Тренд обучения: …' : 'Тренд обучения недоступен'}</span>}
           {' '}

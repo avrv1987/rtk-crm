@@ -8,5 +8,6 @@ public enum ManagerWorkTile {
     AGREEMENT,
     UNASSIGNED,
     STUCK,
-    LMS
+    LMS,
+    IDLE
 }

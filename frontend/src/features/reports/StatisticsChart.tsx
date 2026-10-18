@@ -32,7 +32,7 @@ export const kindTitles: Record<StatisticsResult['kind'], string> = {
   EVENTS: 'События взаимодействий за период',
   DEMAND: 'Востребованность программ',
   SNAPSHOT: 'Состояние портфеля на дату',
-  DURATION: 'Длительность этапов и цикла',
+  DURATION: 'Длительность этапов и время до входа в последний этап',
   AGREEMENTS: 'Реализация договоров с вузами',
   MANAGER_WORK: 'Работа менеджеров за период'
 }

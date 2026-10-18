@@ -27,7 +27,7 @@ public class LmsSignalRepository {
                    classes.name AS classes_stage_name, classes.stage_order AS classes_stage_order,
                    route.to_stage_id AS route_to_stage_id, route.comment_required AS route_comment_required,
                    s.mapping_id, m.version AS mapping_version, s.course_name, s.group_name, m.run_starts_on, m.run_ends_on,
-                   s.participants_count, s.completed_count, s.observed_at, s.changed_at, s.teachers_count,
+                   s.participants_count, s.completed_count, s.not_completed_count, s.observed_at, s.changed_at, s.teachers_count,
                    s.active_7d_count, s.active_30d_count, s.never_accessed_count, s.inactive_count,
                    s.teachers_active_7d_count, s.teachers_active_14d_count
             FROM interactions i
@@ -91,6 +91,7 @@ public class LmsSignalRepository {
                         resultSet.getObject("run_ends_on", LocalDate.class),
                         resultSet.getInt("participants_count"),
                         resultSet.getObject("completed_count", Integer.class),
+                        resultSet.getObject("not_completed_count", Integer.class),
                         resultSet.getObject("observed_at", OffsetDateTime.class),
                         resultSet.getObject("changed_at", OffsetDateTime.class),
                         resultSet.getInt("teachers_count"),
@@ -194,6 +195,7 @@ public class LmsSignalRepository {
             LocalDate runEndsOn,
             int participants,
             Integer completed,
+            Integer notCompleted,
             OffsetDateTime observedAt,
             OffsetDateTime changedAt,
             int teachers,

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -292,6 +293,28 @@ class LmsSignalServiceTest {
     }
 
     @Test
+    void activitySignalsAreNotGivenOnStaleObservationButNumericSignalsStay() {
+        LocalDate start = today.minusDays(30);
+        LocalDate end = today.plusDays(30);
+        Activity stalled = new Activity(0, 0, 6, 0, 0, 0);
+        OffsetDateTime noon = today.atTime(12, 0).atZone(WorkProperties.ZONE).toOffsetDateTime();
+
+        assertThat(LmsSignalService.types(activitySource(start, end, 6, 1, stalled, today.minusDays(1)), noon, PROPERTIES))
+                .as("observation 24 hours old is within 26 hours")
+                .contains(LmsSignalType.NOT_STARTED, LmsSignalType.TEACHER_INACTIVE);
+        assertThat(LmsSignalService.types(activitySource(start, end, 6, 1, stalled, today.minusDays(2)), noon, PROPERTIES))
+                .as("observation two days old: no activity signals")
+                .isEmpty();
+        assertThat(LmsSignalService.types(activitySource(start, end, 6, 1, stalled, today.minusDays(1)), noon,
+                new LmsSignalProperties("Занятия", 14, 50, 7, 7, 40, 50, 25, 14, Duration.ofHours(3), null)))
+                .as("threshold is configurable")
+                .isEmpty();
+        assertThat(LmsSignalService.types(source(2, 10, start, end, today.minusDays(2), 5, null), noon, PROPERTIES))
+                .as("numeric signal keeps working on the observation date")
+                .containsExactly(LmsSignalType.STUDENTS_APPEARED);
+    }
+
+    @Test
     void dailyActivityDoesNotBringBackHiddenSignalsAndActivitySignalsHideForTheWeek() {
         UUID work = insertWork(UNIVERSITY_A, "Работа А", 3);
         UUID mapping = insertRun(UNIVERSITY_A, today.minusDays(20), today.plusDays(30), 6, 3, today);
@@ -350,6 +373,25 @@ class LmsSignalServiceTest {
     }
 
     @Test
+    void staleObservationHidesActivityInSignalsAndInControl() {
+        UUID work = insertWork(UNIVERSITY_A, "На занятиях", 10);
+        UUID run = insertRun(UNIVERSITY_A, today.minusDays(20), today.plusDays(30), 3, null, today.minusDays(3));
+        setActivity(run, 1, new Activity(0, 2, 1, 0, 0, 0));
+
+        assertThat(service.list(kamA).items()).as("course not read for three days").isEmpty();
+        WorkLearning stale = workLearningService.byWork(kamA, List.of(work)).get(work);
+        assertThat(stale.active7d()).isNull();
+        assertThat(stale.signals()).isZero();
+        assertThat(stale.mismatch()).isNull();
+
+        jdbcTemplate.update("UPDATE learning_snapshots SET observed_at = ? WHERE mapping_id = ?", OffsetDateTime.now(), run);
+
+        assertThat(service.list(kamA).items()).extracting(LmsSignal::type)
+                .containsExactly(LmsSignalType.NO_ACTIVITY, LmsSignalType.TEACHER_INACTIVE);
+        assertThat(workLearningService.byWork(kamA, List.of(work)).get(work).mismatch()).contains("никто не заходил");
+    }
+
+    @Test
     void workLearningSummarisesRunsSignalsAndStageMismatchInsideTheScope() {
         UUID early = insertWork(UNIVERSITY_A, "Раньше занятий", 3);
         UUID classes = insertWork(UNIVERSITY_B, "На занятиях", 10);
@@ -382,6 +424,45 @@ class LmsSignalServiceTest {
         assertThat(workLearningService.byWork(partner, List.of(early, classes))).isEmpty();
     }
 
+    // Низкая доля завершивших — только при достаточном покрытии статусов (по умолчанию 70 %) и среди известных; при малом
+    // покрытии — отдельный сигнал «данных недостаточно, нужна проверка». Пример C=16, N=4, U=80.
+    @Test
+    void lowCompletionNeedsEnoughKnownStatusesOtherwiseItAsksForACheck() {
+        LocalDate start = today.minusDays(60);
+        LocalDate end = today.minusDays(1);
+
+        assertThat(rules(coverageSource(start, end, 100, 16, 4), today))
+                .as("16 of 20 known, data for 20 of 100: not enough to judge")
+                .containsExactly(LmsSignalType.COMPLETION_UNVERIFIED);
+        assertThat(rules(coverageSource(start, end, 100, 30, 40), today))
+                .as("exactly 70 % known is enough; 30 of 70 is below 50 %")
+                .containsExactly(LmsSignalType.LOW_COMPLETION);
+        assertThat(rules(coverageSource(start, end, 100, 40, 35), today))
+                .as("40 of 75 known is above the threshold even though it is 40 of all 100")
+                .isEmpty();
+        assertThat(rules(coverageSource(start, end, 100, 30, 39), today))
+                .as("69 % known is not enough")
+                .containsExactly(LmsSignalType.COMPLETION_UNVERIFIED);
+        assertThat(LmsSignalService.title(LmsSignalType.COMPLETION_UNVERIFIED))
+                .isEqualTo("Данных о завершении недостаточно, нужна проверка");
+        assertThat(LmsSignalType.COMPLETION_UNVERIFIED.activity()).isFalse();
+        LmsSignalProperties strict = new LmsSignalProperties("Занятия", 14, 50, 7, 7, 40, 50, 25, 14, null, 10);
+        assertThat(LmsSignalService.types(coverageSource(start, end, 100, 4, 16),
+                today.atTime(12, 0).atZone(WorkProperties.ZONE).toOffsetDateTime(), strict))
+                .as("the coverage threshold is configurable: 20 known of 100 is enough at 10 %")
+                .containsExactly(LmsSignalType.LOW_COMPLETION);
+    }
+
+    private static SignalSource coverageSource(LocalDate runStartsOn, LocalDate runEndsOn, int participants, int completed,
+                                               int notCompleted) {
+        OffsetDateTime observedAt = runEndsOn.minusDays(1).atTime(12, 0).atZone(WorkProperties.ZONE).toOffsetDateTime();
+        return new SignalSource(
+                UUID.randomUUID(), "Работа", UUID.randomUUID(), "Вуз", null, null, "Занятия", 10,
+                UUID.randomUUID(), "Занятия", 10, false, false, UUID.randomUUID(), 0, "Курс", null,
+                runStartsOn, runEndsOn, participants, completed, notCompleted, observedAt, observedAt, 0, null
+        );
+    }
+
     private SignalSource activitySource(LocalDate runStartsOn, LocalDate runEndsOn, int participants, int teachers,
                                         Activity activity) {
         return activitySource(runStartsOn, runEndsOn, participants, teachers, activity, today);
@@ -393,7 +474,7 @@ class LmsSignalServiceTest {
         return new SignalSource(
                 UUID.randomUUID(), "Работа", UUID.randomUUID(), "Вуз", null, null, "Занятия", 10,
                 UUID.randomUUID(), "Занятия", 10, false, false, UUID.randomUUID(), 0, "Курс", null,
-                runStartsOn, runEndsOn, participants, null, observedAt, observedAt, teachers, activity
+                runStartsOn, runEndsOn, participants, null, null, observedAt, observedAt, teachers, activity
         );
     }
 
@@ -419,7 +500,7 @@ class LmsSignalServiceTest {
         return new SignalSource(
                 UUID.randomUUID(), "Работа", UUID.randomUUID(), "Вуз", null, null, "Этап", currentStageOrder,
                 UUID.randomUUID(), "Занятия", classesStageOrder, false, false, UUID.randomUUID(), 0, "Курс", null,
-                runStartsOn, runEndsOn, participants, completed, observedAt, observedAt, 0, null
+                runStartsOn, runEndsOn, participants, completed, completed == null ? null : participants - completed, observedAt, observedAt, 0, null
         );
     }
 
@@ -444,9 +525,10 @@ class LmsSignalServiceTest {
                 mappingId, startsOn, endsOn);
         jdbcTemplate.update("""
                 INSERT INTO learning_snapshots (mapping_id, organization_id, program_id, course_name, group_name,
-                    participants_count, completed_count, observed_at, changed_at)
-                VALUES (?, ?, ?, 'Демо-курс', NULL, ?, ?, ?, ?)
-                """, mappingId, organizationId, PROGRAM, participants, completed, observedAt, observedAt);
+                    participants_count, completed_count, not_completed_count, observed_at, changed_at)
+                VALUES (?, ?, ?, 'Демо-курс', NULL, ?, ?, ?, ?, ?)
+                """, mappingId, organizationId, PROGRAM, participants, completed, completed == null ? null : participants - completed,
+                observedAt, observedAt);
         return mappingId;
     }
 
@@ -488,7 +570,7 @@ class LmsSignalServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_issues (
+                CREATE TABLE IF NOT EXISTS interaction_issues (last_comment VARCHAR(1000), last_comment_by UUID, last_comment_at TIMESTAMP WITH TIME ZONE,
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
                     description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
                     status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
@@ -527,7 +609,7 @@ class LmsSignalServiceTest {
                 CREATE TABLE IF NOT EXISTS learning_snapshots (
                     mapping_id UUID PRIMARY KEY, organization_id UUID NOT NULL, program_id UUID NOT NULL,
                     course_name VARCHAR(1333) NOT NULL, group_name VARCHAR(300), participants_count INTEGER NOT NULL,
-                    completed_count INTEGER, observed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    completed_count INTEGER, not_completed_count INTEGER, observed_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     changed_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     teachers_count INTEGER DEFAULT 0 NOT NULL, active_7d_count INTEGER, active_30d_count INTEGER, never_accessed_count INTEGER,
                     inactive_count INTEGER, teachers_active_7d_count INTEGER, teachers_active_14d_count INTEGER
@@ -545,7 +627,7 @@ class LmsSignalServiceTest {
     }
 
     private static List<LmsSignalType> rules(SignalSource source, LocalDate today) {
-        return LmsSignalService.types(source, today, PROPERTIES);
+        return LmsSignalService.types(source, today.atTime(12, 0).atZone(WorkProperties.ZONE).toOffsetDateTime(), PROPERTIES);
     }
 
     @TestConfiguration(proxyBeanMethods = false)

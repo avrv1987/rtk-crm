@@ -13,13 +13,20 @@ public record InteractionCommentRequest(
         @NotNull UUID stageId,
         @NotBlank @Size(max = 4_000) String text,
         @Size(max = 100) List<UUID> attachmentIds,
-        InteractionNextStep nextStep
+        InteractionNextStep nextStep,
+        InteractionContactMark contact
 ) {
     public InteractionCommentRequest(Integer version, UUID stageId, String text) {
-        this(version, stageId, text, List.of(), null);
+        this(version, stageId, text, List.of(), null, null);
     }
 
     public InteractionCommentRequest(Integer version, UUID stageId, String text, List<UUID> attachmentIds) {
-        this(version, stageId, text, attachmentIds, null);
+        this(version, stageId, text, attachmentIds, null, null);
+    }
+
+    public InteractionCommentRequest(
+            Integer version, UUID stageId, String text, List<UUID> attachmentIds, InteractionNextStep nextStep
+    ) {
+        this(version, stageId, text, attachmentIds, nextStep, null);
     }
 }

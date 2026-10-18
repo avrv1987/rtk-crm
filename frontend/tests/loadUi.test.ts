@@ -24,13 +24,13 @@ test('плитка без значения показывает «—», а не
   assert.doesNotMatch(source('features/work/KamDesk.tsx'), /signals \?\? 0/)
 })
 
-test('поиск слушателя: отдельное поле на каждый вид поиска, пояснение к «Передано»', () => {
+test('поиск слушателя: отдельное поле на каждый вид поиска, пояснение к «Принято LMS»', () => {
   const list = source('features/enrolment/EnrolmentStreamsList.tsx')
   for (const kind of ['EMAIL', 'PHONE', 'SNILS', 'LAST_NAME']) {
     assert.match(list, new RegExp(`value: '${kind}'`))
   }
   assert.doesNotMatch(list, /Вид поиска/)
-  assert.match(list, /«Передано» — оператор нажал «Отметить переданными»/)
+  assert.match(list, /«Принято LMS» — строка принята по протоколу LMS или отметке оператора/)
 })
 
 test('кабинет вуза: при ошибке скачивания совет обратиться к менеджеру, не обновлять страницу', () => {

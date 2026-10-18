@@ -23,10 +23,13 @@ public class EnrolmentRepository {
             """;
     private static final String ENROLMENT_SELECT = """
             SELECT e.id, e.learner_id, e.stream_id, s.course_name, s.stream_no, s.ends_on, e.source_record_id,
-                   r.external_id AS order_number, e.lms_export_id, e.lms_exported_at, e.lms_transferred_at
+                   r.external_id AS order_number, e.lms_export_id, e.lms_exported_at, e.lms_transferred_at,
+                   b.sent_at AS lms_sent_at, bi.result AS lms_result
             FROM learner_enrolments e
             JOIN enrolment_streams s ON s.id = e.stream_id
             LEFT JOIN source_records r ON r.id = e.source_record_id
+            LEFT JOIN enrolment_batches b ON b.id = e.lms_export_id
+            LEFT JOIN enrolment_batch_items bi ON bi.batch_id = e.lms_export_id AND bi.enrolment_id = e.id
             """;
     private static final String SUMMARY_SELECT = """
             SELECT s.id, s.course_name, s.stream_no, s.ends_on, s.version,
@@ -40,12 +43,17 @@ public class EnrolmentRepository {
                    ) AS program_name
             FROM enrolment_streams s
             """;
+    // Текущая партия зачисления — та, на которую указывает lms_export_id; её строка даёт состояние передачи в LMS.
     private static final String STREAM_ROW_SELECT = """
             SELECT e.id, e.learner_id, e.stream_id, r.external_id AS order_number, e.lms_export_id, e.lms_exported_at,
-                   e.lms_transferred_at, l.personal_data_status, l.missing_fields, l.email_hmac, l.phone_hmac, l.version
+                   e.lms_transferred_at, l.personal_data_status, l.missing_fields, l.email_hmac, l.phone_hmac, l.version,
+                   b.sent_at AS lms_sent_at, bi.result AS lms_result, bi.error AS lms_error, e.lms_synced_version,
+                   e.lms_reconcile_reason
             FROM learner_enrolments e
             JOIN learners l ON l.id = e.learner_id
             LEFT JOIN source_records r ON r.id = e.source_record_id
+            LEFT JOIN enrolment_batches b ON b.id = e.lms_export_id
+            LEFT JOIN enrolment_batch_items bi ON bi.batch_id = e.lms_export_id AND bi.enrolment_id = e.id
             """;
 
     private final JdbcClient jdbcClient;
@@ -129,14 +137,88 @@ public class EnrolmentRepository {
                 .single() > 0;
     }
 
-    void moveToStream(UUID enrolmentId, UUID streamId, OffsetDateTime now) {
+    // Перенос после выгрузки не обнуляет историю молча: строки прежних партий остаются, а зачисление получает
+    // причину сверки, пока оператор не исправит LMS и не отметит сверку.
+    void moveToStream(UUID enrolmentId, UUID streamId, OffsetDateTime now, String reconcileReason) {
         jdbcClient.sql("""
                 UPDATE learner_enrolments
-                SET stream_id = :streamId, lms_export_id = NULL, lms_exported_at = NULL, lms_transferred_at = NULL, updated_at = :now
+                SET stream_id = :streamId, lms_export_id = NULL, lms_exported_at = NULL, lms_transferred_at = NULL,
+                    lms_synced_version = NULL, lms_reconcile_reason = COALESCE(:reason, lms_reconcile_reason), updated_at = :now
                 WHERE id = :id
                 """)
                 .param("id", enrolmentId)
                 .param("streamId", streamId)
+                .param("reason", reconcileReason)
+                .param("now", now)
+                .update();
+    }
+
+    void markReconcile(UUID learnerId, UUID streamId, String reason, OffsetDateTime now) {
+        jdbcClient.sql("""
+                UPDATE learner_enrolments SET lms_reconcile_reason = :reason, updated_at = :now
+                WHERE learner_id = :learnerId AND stream_id = :streamId
+                """)
+                .param("learnerId", learnerId)
+                .param("streamId", streamId)
+                .param("reason", reason)
+                .param("now", now)
+                .update();
+    }
+
+    boolean clearReconcile(UUID enrolmentId, OffsetDateTime now) {
+        return jdbcClient.sql("""
+                UPDATE learner_enrolments SET lms_reconcile_reason = NULL, updated_at = :now
+                WHERE id = :id AND lms_reconcile_reason IS NOT NULL
+                """)
+                .param("id", enrolmentId)
+                .param("now", now)
+                .update() == 1;
+    }
+
+    // Перенос выполнен через API Moodle: зачисление на новый курс подтверждено сверкой, причина сверки снимается.
+    void markMovedInLms(UUID enrolmentId, int learnerVersion, OffsetDateTime now) {
+        jdbcClient.sql("""
+                UPDATE learner_enrolments
+                SET lms_exported_at = COALESCE(lms_exported_at, :now), lms_transferred_at = :now, lms_synced_version = :version,
+                    lms_reconcile_reason = NULL, updated_at = :now
+                WHERE id = :id
+                """)
+                .param("id", enrolmentId)
+                .param("version", learnerVersion)
+                .param("now", now)
+                .update();
+    }
+
+    boolean markSynced(UUID enrolmentId, int learnerVersion, OffsetDateTime now) {
+        return jdbcClient.sql("""
+                UPDATE learner_enrolments SET lms_synced_version = :version, updated_at = :now
+                WHERE id = :id AND lms_transferred_at IS NOT NULL
+                  AND (lms_synced_version IS NULL OR lms_synced_version < :version)
+                """)
+                .param("id", enrolmentId)
+                .param("version", learnerVersion)
+                .param("now", now)
+                .update() == 1;
+    }
+
+    // Принятая LMS строка делает зачисление переданным; версия анкеты, ушедшая в LMS, запоминается для сверки
+    // правок после передачи. Зачисление, перенесённое в другой поток, строка прежней партии не трогает.
+    void markAccepted(UUID enrolmentId, UUID batchId, UUID streamId, Integer learnerVersion, OffsetDateTime now) {
+        jdbcClient.sql("""
+                UPDATE learner_enrolments
+                SET lms_export_id = :batchId, lms_exported_at = COALESCE(lms_exported_at, :now),
+                    lms_transferred_at = COALESCE(lms_transferred_at, :now),
+                    lms_synced_version = CASE
+                        WHEN :learnerVersion IS NULL THEN lms_synced_version
+                        WHEN lms_synced_version IS NULL OR lms_synced_version < :learnerVersion THEN :learnerVersion
+                        ELSE lms_synced_version END,
+                    updated_at = :now
+                WHERE id = :id AND stream_id = :streamId
+                """)
+                .param("id", enrolmentId)
+                .param("batchId", batchId)
+                .param("streamId", streamId)
+                .param("learnerVersion", learnerVersion, java.sql.Types.INTEGER)
                 .param("now", now)
                 .update();
     }
@@ -172,6 +254,13 @@ public class EnrolmentRepository {
                 .list();
     }
 
+    Optional<StreamEnrolmentRow> findStreamRow(UUID enrolmentId) {
+        return jdbcClient.sql(STREAM_ROW_SELECT + " WHERE e.id = :id")
+                .param("id", enrolmentId)
+                .query(this::mapStreamRow)
+                .optional();
+    }
+
     List<StreamEnrolmentRow> findAllStreamRows() {
         return jdbcClient.sql(STREAM_ROW_SELECT + " ORDER BY e.id")
                 .query(this::mapStreamRow)
@@ -193,30 +282,6 @@ public class EnrolmentRepository {
                 .update();
     }
 
-    int markTransferred(UUID exportId, OffsetDateTime now) {
-        return jdbcClient.sql("""
-                UPDATE learner_enrolments
-                SET lms_transferred_at = :now, updated_at = :now
-                WHERE lms_export_id = :exportId AND lms_transferred_at IS NULL
-                """)
-                .param("exportId", exportId)
-                .param("now", now)
-                .update();
-    }
-
-    Optional<UUID> findExportStream(UUID exportId) {
-        return jdbcClient.sql("SELECT stream_id FROM learner_enrolments WHERE lms_export_id = :exportId ORDER BY id LIMIT 1")
-                .param("exportId", exportId)
-                .query(UUID.class)
-                .optional();
-    }
-
-    int countExport(UUID exportId) {
-        return jdbcClient.sql("SELECT COUNT(*) FROM learner_enrolments WHERE lms_export_id = :exportId")
-                .param("exportId", exportId)
-                .query(Integer.class)
-                .single();
-    }
 
     Map<UUID, LocalDate> findStreamEndDates() {
         return jdbcClient.sql(STREAM_SELECT + " WHERE ends_on IS NOT NULL")
@@ -266,8 +331,14 @@ public class EnrolmentRepository {
                 resultSet.getString("order_number"),
                 resultSet.getObject("lms_export_id", UUID.class),
                 resultSet.getObject("lms_exported_at", OffsetDateTime.class),
-                resultSet.getObject("lms_transferred_at", OffsetDateTime.class)
+                resultSet.getObject("lms_transferred_at", OffsetDateTime.class),
+                resultSet.getObject("lms_sent_at", OffsetDateTime.class),
+                result(resultSet.getString("lms_result"))
         );
+    }
+
+    private static BatchItemResult result(String value) {
+        return value == null ? null : BatchItemResult.valueOf(value);
     }
 
     private StreamEnrolmentRow mapStreamRow(ResultSet resultSet, int rowNumber) throws SQLException {
@@ -283,7 +354,12 @@ public class EnrolmentRepository {
                 LearnerRepository.missingFields(resultSet.getString("missing_fields")),
                 resultSet.getString("email_hmac"),
                 resultSet.getString("phone_hmac"),
-                resultSet.getInt("version")
+                resultSet.getInt("version"),
+                resultSet.getObject("lms_sent_at", OffsetDateTime.class),
+                result(resultSet.getString("lms_result")),
+                resultSet.getString("lms_error"),
+                (Integer) resultSet.getObject("lms_synced_version"),
+                resultSet.getString("lms_reconcile_reason")
         );
     }
 }

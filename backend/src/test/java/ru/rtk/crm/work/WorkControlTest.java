@@ -553,6 +553,38 @@ class WorkControlTest {
     }
 
     @Test
+    void leaderBellListsUniversitiesLeftWithoutKamAfterBlockUntilSomeoneIsAssigned() {
+        OffsetDateTime now = OffsetDateTime.now();
+        insertOrganization(UNIVERSITY_D, "Университет D", TEAM_A, null);
+        assignmentEvent(UNIVERSITY_C, KAM_C, null, "PROFILE_BLOCKED", now.minusHours(2));
+        assignmentEvent(UNIVERSITY_D, KAM_C, null, "PROFILE_BLOCKED", now.minusDays(40));
+        assignmentEvent(UNIVERSITY_B, KAM_B, null, "PROFILE_BLOCKED", now.minusHours(1));
+        jdbcTemplate.update("UPDATE organizations SET owner_manager_id = NULL WHERE id = ?", UNIVERSITY_B);
+
+        assertThat(workService.reminders(leaderA).unassignedAfterBlock()).singleElement().satisfies(row -> {
+            assertThat(row.organizationId()).isEqualTo(UNIVERSITY_C);
+            assertThat(row.previousOwnerName()).isEqualTo("КАМ В");
+        });
+        assertThat(workService.reminders(kamA).unassignedAfterBlock()).isEmpty();
+
+        // Назначение КАМ гасит сигнал: последним событием стало назначение.
+        assignmentEvent(UNIVERSITY_C, null, KAM_A, null, now.minusHours(1));
+        jdbcTemplate.update("UPDATE organizations SET owner_manager_id = ? WHERE id = ?", KAM_A, UNIVERSITY_C);
+        assertThat(workService.reminders(leaderA).unassignedAfterBlock()).isEmpty();
+    }
+
+    private void assignmentEvent(UUID organizationId, UUID previousOwner, UUID owner, String reason, OffsetDateTime at) {
+        jdbcTemplate.update("""
+                INSERT INTO organization_assignment_events (
+                    id, organization_id, command_id, previous_owner_manager_id, previous_owner_manager_display_name,
+                    owner_manager_id, new_owner_manager_display_name, actor_profile_id, actor_display_name, request_id,
+                    version, occurred_at, reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Администратор', 'test', 1, ?, ?)
+                """, UUID.randomUUID(), organizationId, UUID.randomUUID(), previousOwner,
+                previousOwner == null ? null : "КАМ В", owner, owner == null ? null : "КАМ А", LEADER_A, at, reason);
+    }
+
+    @Test
     void feedTotalsCountEveryGroupBeyondTheFirstHundredRows() {
         OffsetDateTime now = OffsetDateTime.now();
         OffsetDateTime laterToday = now.plusSeconds(Duration.between(now, InteractionDue.dayEnd(now)).toSeconds() / 2);
@@ -987,7 +1019,7 @@ class WorkControlTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_issues (
+                CREATE TABLE IF NOT EXISTS interaction_issues (last_comment VARCHAR(1000), last_comment_by UUID, last_comment_at TIMESTAMP WITH TIME ZONE,
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
                     description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
                     status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
@@ -1002,9 +1034,9 @@ class WorkControlTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (
+                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, type VARCHAR(32) NOT NULL, to_stage_id UUID,
-                    to_stage_name_snapshot VARCHAR(200), version INTEGER NOT NULL, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    to_stage_name_snapshot VARCHAR(200), version INTEGER NOT NULL, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL, work_status_after VARCHAR(16)
                 )
                 """,
                 "CREATE TABLE IF NOT EXISTS vendors (id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL)",
@@ -1032,7 +1064,7 @@ class WorkControlTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), 
+                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), applied_at TIMESTAMP WITH TIME ZONE, 
                     id UUID PRIMARY KEY, source VARCHAR(16) NOT NULL, external_id VARCHAR(200) NOT NULL
                 )
                 """,

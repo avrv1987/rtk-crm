@@ -4,19 +4,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oidcLogin;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -27,6 +33,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -44,17 +51,23 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.transaction.support.TransactionTemplate;
 import ru.rtk.crm.access.AccountSyncException;
+import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.KeycloakAccountClient;
 import ru.rtk.crm.access.KeycloakAccountConflictException;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.attachment.AttachmentScanOutcome;
+import ru.rtk.crm.attachment.AttachmentScanner;
 import ru.rtk.crm.catalog.CatalogArchivedEvent;
+import ru.rtk.crm.mail.MailNotifications;
 
 @SpringBootTest(properties = {
         "spring.flyway.enabled=false",
@@ -114,10 +127,22 @@ class PartnerCabinetHttpTest {
     @MockitoBean
     private KeycloakAccountClient keycloakAccountClient;
 
+    @MockitoBean
+    private AttachmentScanner attachmentScanner;
+
+    // Почта в этом классе подменена: проверяется, какие письма ставит «Запрос вузу». Как письмо попадает в очередь —
+    // MailNotificationsTest, работа без модуля почты — PartnerRequestMailOffTest.
+    @MockitoBean
+    private MailNotifications mailNotifications;
+
+    @Autowired
+    private PartnerRequestService partnerRequestService;
+
     @BeforeEach
     void setUp() throws IOException {
         createSchema();
         for (String table : new String[] {
+                "partner_material_receipts", "partner_request_responses", "partner_request_materials", "partner_requests",
                 "audit_events", "crm_profile_events", "contact_events", "agreement_activities", "agreement_status_events", "agreements", "attachments",
                 "product_agreements", "products", "interaction_stage_completions", "interaction_events", "interaction_issues", "interactions",
                 "interaction_stages", "programs", "command_idempotency_records", "crm_user_profiles", "contacts", "organizations",
@@ -143,6 +168,196 @@ class PartnerCabinetHttpTest {
         Path storage = Path.of(System.getProperty("java.io.tmpdir"), "rtk-crm-partner-cabinet-test");
         Files.createDirectories(storage);
         Files.writeString(storage.resolve(SHARED_STORAGE_KEY.toString()), "%PDF-1.4 план", StandardCharsets.UTF_8);
+        when(attachmentScanner.scan(any(), anyLong())).thenReturn(AttachmentScanOutcome.CLEAN);
+    }
+
+    // P-06, P-07: ответ с файлом после обрыва связи не дублируется, а непроверенный файл нельзя принять.
+    @Test
+    void kamAsksCoordinatorWhoAnswersOnceWithFileAndKamAcceptsOnlyCheckedFile() throws Exception {
+        JsonNode request = createRequest(KAM_A, COORDINATOR, List.of(SHARED_DOCUMENT));
+        String requestId = request.path("id").asText();
+        assertThat(request.path("status").asText()).isEqualTo("AWAITING_RESPONSE");
+        assertThat(request.path("materials").get(0).path("name").asText()).isEqualTo("План сотрудничества.pdf");
+
+        String cabinet = mockMvc.perform(get("/api/partner/cabinet").with(partnerLogin(PARTNER_A)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requests", hasSize(1)))
+                .andExpect(jsonPath("$.requests[0].action").value("Прислать список преподавателей курса"))
+                .andExpect(jsonPath("$.requests[0].workTitle").value("Внедрение платформы"))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(cabinet).doesNotContain("createdByName", "contactName", "внутренний комментарий");
+        mockMvc.perform(get("/api/partner/cabinet").with(partnerLogin(PARTNER_B)))
+                .andExpect(jsonPath("$.requests", hasSize(0)));
+
+        MockMultipartFile file = new MockMultipartFile("file", "Список.pdf", "application/pdf",
+                "%PDF-1.4 список".getBytes(StandardCharsets.UTF_8));
+        String first = respond(PARTNER_A, requestId, 0, "Список во вложении", file, "answer-1")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.receiptNumber").value(containsString("В-")))
+                .andExpect(jsonPath("$.fileState").value("CLEAN"))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        String repeated = respond(PARTNER_A, requestId, 0, "Список во вложении", file, "answer-1")
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(objectMapper.readTree(repeated).path("receiptNumber")).isEqualTo(objectMapper.readTree(first).path("receiptNumber"));
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM partner_request_responses", Integer.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM attachments WHERE original_name = 'Список.pdf'", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT partner_visible FROM attachments WHERE original_name = 'Список.pdf'",
+                Boolean.class)).isFalse();
+        respond(PARTNER_A, requestId, 1, "Ещё раз", null, "answer-2")
+                .andExpect(status().isConflict());
+
+        mockMvc.perform(get("/api/partner-requests/review").with(login(KAM_A)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].requestId").value(requestId))
+                .andExpect(jsonPath("$[0].status").value("RESPONDED"));
+
+        jdbcTemplate.update("UPDATE attachments SET status = 'QUARANTINE' WHERE original_name = 'Список.pdf'");
+        mockMvc.perform(get("/api/partner/cabinet").with(partnerLogin(PARTNER_A)))
+                .andExpect(jsonPath("$.requests[0].status").value("RESPONDED"))
+                .andExpect(jsonPath("$.requests[0].responses[0].fileState").value("CHECKING"));
+        review(KAM_A, requestId, 1, "ACCEPTED", null, "accept-early")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(containsString("проверяется")));
+        jdbcTemplate.update("UPDATE attachments SET status = 'CLEAN' WHERE original_name = 'Список.pdf'");
+        UUID stageBefore = jdbcTemplate.queryForObject("SELECT current_stage_id FROM interactions WHERE id = ?", UUID.class, WORK_A);
+        review(KAM_OTHER, requestId, 1, "ACCEPTED", null, "accept-other").andExpect(status().isNotFound());
+        review(MANAGEMENT, requestId, 1, "ACCEPTED", null, "accept-management").andExpect(status().isForbidden());
+        review(KAM_A, requestId, 1, "ACCEPTED", null, "accept")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACCEPTED"))
+                .andExpect(jsonPath("$.responses[0].decision").value("ACCEPTED"));
+        assertThat(jdbcTemplate.queryForObject("SELECT current_stage_id FROM interactions WHERE id = ?", UUID.class, WORK_A))
+                .isEqualTo(stageBefore);
+        mockMvc.perform(get("/api/partner-requests/review").with(login(KAM_A))).andExpect(jsonPath("$", hasSize(0)));
+        mockMvc.perform(get("/api/partner/cabinet").with(partnerLogin(PARTNER_A)))
+                .andExpect(jsonPath("$.requests[0].status").value("ACCEPTED"));
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM audit_events WHERE action = 'PARTNER_RESPONSE_SUBMITTED'",
+                Integer.class)).isEqualTo(1);
+    }
+
+    // P-08: возврат с причиной, новая версия ответа; вопрос вуза и уточнение школы.
+    @Test
+    void returnedAnswerShowsReasonAndCoordinatorSendsNewVersionAfterClarification() throws Exception {
+        String requestId = createRequest(KAM_A, COORDINATOR, List.of()).path("id").asText();
+        respond(PARTNER_A, requestId, 0, "Что именно нужно?", null, "question", "QUESTION")
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/partner-requests/{id}/clarify", requestId)
+                        .with(login(LEADER_A)).with(csrf()).header("Idempotency-Key", "clarify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":1,\"text\":\"Нужны ФИО и почта преподавателей\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("AWAITING_RESPONSE"));
+        respond(PARTNER_A, requestId, 2, "Иванов, Петров", null, "answer").andExpect(status().isCreated());
+        review(KAM_A, requestId, 3, "RETURNED", " ", "return-empty").andExpect(status().isBadRequest());
+        review(KAM_A, requestId, 3, "RETURNED", "Добавьте почту", "return").andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RETURNED"));
+        mockMvc.perform(get("/api/partner/cabinet").with(partnerLogin(PARTNER_A)))
+                .andExpect(jsonPath("$.requests[0].status").value("RETURNED"))
+                .andExpect(jsonPath("$.requests[0].returnReason").value("Добавьте почту"))
+                .andExpect(jsonPath("$.requests[0].clarification").value("Нужны ФИО и почта преподавателей"))
+                .andExpect(jsonPath("$.requests[0].responses", hasSize(2)));
+        respond(PARTNER_A, requestId, 4, "Иванов ivanov@example.test", null, "answer-2").andExpect(status().isCreated());
+        review(KAM_A, requestId, 5, "ACCEPTED", null, "accept").andExpect(status().isOk());
+        assertThat(jdbcTemplate.queryForList("SELECT decision FROM partner_request_responses WHERE kind = 'ANSWER' ORDER BY submitted_at",
+                String.class)).containsExactly("RETURNED", "ACCEPTED");
+    }
+
+    // Письма «Запроса вузу»: координатору о новом запросе и о возврате, КАМ вуза о каждом ответе; после отката — ничего.
+    @Test
+    void requestReturnAndReplyQueueLettersOnlyAfterCommit() throws Exception {
+        String requestId = createRequest(KAM_A, COORDINATOR, List.of()).path("id").asText();
+        verify(mailNotifications).partnerRequest(PARTNER_A, ORGANIZATION_A, "Университет А", UUID.fromString(requestId));
+        respond(PARTNER_A, requestId, 0, "Иванов, Петров", null, "mail-answer").andExpect(status().isCreated());
+        UUID answerId = jdbcTemplate.queryForObject("SELECT id FROM partner_request_responses WHERE request_id = ?", UUID.class,
+                UUID.fromString(requestId));
+        verify(mailNotifications).partnerReply(KAM_A, ORGANIZATION_A, "Университет А", answerId);
+        review(KAM_A, requestId, 1, "RETURNED", "Добавьте почту", "mail-return").andExpect(status().isOk());
+        verify(mailNotifications).partnerRequest(PARTNER_A, ORGANIZATION_A, "Университет А", answerId);
+
+        clearInvocations(mailNotifications);
+        transactionTemplate.executeWithoutResult(status -> {
+            partnerRequestService.create(new CrmProfile(KAM_A, UserRole.USER, TEAM_A, 0), WORK_A,
+                    new PartnerRequestModels.PartnerRequestCreate(COORDINATOR, "Откатится", "Ничего", null, List.of()),
+                    "mail-rollback", null);
+            status.setRollbackOnly();
+        });
+        verifyNoInteractions(mailNotifications);
+    }
+
+    // P-01, P-03: чужой запрос и закрытый доступ; запросы ведёт только КАМ вуза и руководитель его команды.
+    @Test
+    void requestsAreAddressedToOneCoordinatorAndClosedAccessStopsAnswers() throws Exception {
+        mockMvc.perform(post("/api/interactions/{id}/partner-requests", WORK_A)
+                        .with(login(KAM_A)).with(csrf()).header("Idempotency-Key", "no-access")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody(RECTOR, List.of())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.contactId").value(containsString("нет действующего доступа")));
+        mockMvc.perform(post("/api/interactions/{id}/partner-requests", WORK_A)
+                        .with(login(KAM_A)).with(csrf()).header("Idempotency-Key", "internal-material")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody(COORDINATOR, List.of(INTERNAL_DOCUMENT))))
+                .andExpect(status().isBadRequest());
+        for (UUID stranger : new UUID[] {KAM_OTHER, ADMIN}) {
+            mockMvc.perform(post("/api/interactions/{id}/partner-requests", WORK_A)
+                            .with(login(stranger)).with(csrf()).header("Idempotency-Key", "stranger-" + stranger)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(requestBody(COORDINATOR, List.of())))
+                    .andExpect(status().isNotFound());
+        }
+        mockMvc.perform(get("/api/interactions/{id}/partner-requests", WORK_A).with(login(LEADER_B)))
+                .andExpect(status().isNotFound());
+        String requestId = createRequest(LEADER_A, COORDINATOR, List.of()).path("id").asText();
+        mockMvc.perform(get("/api/interactions/{id}/partner-requests", WORK_A).with(login(MANAGEMENT)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)));
+        mockMvc.perform(get("/api/interactions/{id}/partner-requests", WORK_A).with(partnerLogin(PARTNER_A)))
+                .andExpect(status().isForbidden());
+
+        respond(PARTNER_B, requestId, 0, "Чужой ответ", null, "foreign").andExpect(status().isNotFound());
+        jdbcTemplate.update("UPDATE contacts SET inactive = TRUE WHERE id = ?", COORDINATOR);
+        respond(PARTNER_A, requestId, 0, "После закрытия", null, "closed").andExpect(status().isForbidden());
+        jdbcTemplate.update("UPDATE contacts SET inactive = FALSE WHERE id = ?", COORDINATOR);
+        mockMvc.perform(post("/api/partner-requests/{id}/cancel", requestId)
+                        .with(login(KAM_A)).with(csrf()).header("Idempotency-Key", "cancel")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":0}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELLED"));
+        respond(PARTNER_A, requestId, 1, "После отмены", null, "cancelled").andExpect(status().isConflict());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM partner_request_responses", Integer.class)).isZero();
+    }
+
+    // P-09: подтверждение относится к версии файла; новая версия приходит неподтверждённой.
+    @Test
+    void receiptConfirmsOneFileVersionAndNewVersionIsNotConfirmed() throws Exception {
+        String requestId = createRequest(KAM_A, COORDINATOR, List.of(SHARED_DOCUMENT)).path("id").asText();
+        mockMvc.perform(put("/api/partner/documents/{id}/receipt", SHARED_DOCUMENT).with(partnerLogin(PARTNER_A)).with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.receivedAt").isNotEmpty());
+        mockMvc.perform(put("/api/partner/documents/{id}/receipt", SHARED_DOCUMENT).with(partnerLogin(PARTNER_A)).with(csrf()))
+                .andExpect(status().isOk());
+        for (UUID hidden : new UUID[] {INTERNAL_DOCUMENT, QUARANTINED_DOCUMENT, FOREIGN_DOCUMENT}) {
+            mockMvc.perform(put("/api/partner/documents/{id}/receipt", hidden).with(partnerLogin(PARTNER_A)).with(csrf()))
+                    .andExpect(status().isNotFound());
+        }
+        UUID newer = UUID.randomUUID();
+        insertDocument(newer, WORK_A, "План сотрудничества.pdf", "CLEAN", true, UUID.randomUUID());
+        jdbcTemplate.update("UPDATE attachments SET revision = 2, replaces_id = ? WHERE id = ?", SHARED_DOCUMENT, newer);
+
+        String body = mockMvc.perform(get("/api/partner/cabinet").with(partnerLogin(PARTNER_A)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        JsonNode cabinet = objectMapper.readTree(body);
+        assertThat(findById(cabinet.path("documents"), SHARED_DOCUMENT).path("receivedAt").isNull()).isFalse();
+        assertThat(findById(cabinet.path("documents"), SHARED_DOCUMENT).path("replaced").asBoolean()).isTrue();
+        assertThat(findById(cabinet.path("documents"), newer).path("receivedAt").isNull()).isTrue();
+        assertThat(findById(cabinet.path("documents"), newer).path("revision").asInt()).isEqualTo(2);
+        mockMvc.perform(get("/api/interactions/{id}/partner-requests", WORK_A).with(login(KAM_A)))
+                .andExpect(jsonPath("$[0].id").value(requestId))
+                .andExpect(jsonPath("$[0].materials[0].receivedAt").isNotEmpty());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM partner_material_receipts", Integer.class)).isEqualTo(1);
     }
 
     @Test
@@ -385,8 +600,10 @@ class PartnerCabinetHttpTest {
         assertThat(jdbcTemplate.queryForList(
                 "SELECT previous_active, active, role FROM crm_profile_events WHERE profile_id = ? ORDER BY version", profileId))
                 .hasSize(3);
-        assertThat(jdbcTemplate.queryForList("SELECT action FROM audit_events ORDER BY occurred_at", String.class))
-                .containsExactly("ACCOUNT_CREATED", "ACCOUNT_DISABLED", "ACCOUNT_ENABLED");
+        // Три записи журнала создаются в одну миллисекунду, порядок по времени у них не определён; порядок действий
+        // проверяют версии профиля выше.
+        assertThat(jdbcTemplate.queryForList("SELECT action FROM audit_events", String.class))
+                .containsExactlyInAnyOrder("ACCOUNT_CREATED", "ACCOUNT_DISABLED", "ACCOUNT_ENABLED");
         String journal = String.join(" ", jdbcTemplate.queryForList(
                 "SELECT COALESCE(details, '') FROM audit_events", String.class));
         assertThat(journal).contains("временный пароль выдан").doesNotContain(password, secondPassword);
@@ -469,6 +686,55 @@ class PartnerCabinetHttpTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].active").value(false))
                 .andExpect(content().string(not(containsString("temporaryPassword"))));
+    }
+
+    private JsonNode createRequest(UUID actor, UUID contact, List<UUID> materials) throws Exception {
+        String body = mockMvc.perform(post("/api/interactions/{id}/partner-requests", WORK_A)
+                        .with(login(actor)).with(csrf()).header("Idempotency-Key", "create-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody(contact, materials)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        return objectMapper.readTree(body);
+    }
+
+    private String requestBody(UUID contact, List<UUID> materials) throws Exception {
+        return objectMapper.writeValueAsString(Map.of(
+                "contactId", contact,
+                "action", "Прислать список преподавателей курса",
+                "expectedResult", "Таблица: ФИО, почта",
+                "materialIds", materials
+        ));
+    }
+
+    private ResultActions respond(UUID partner, String requestId, int version, String message, MockMultipartFile file, String key)
+            throws Exception {
+        return respond(partner, requestId, version, message, file, key, "ANSWER");
+    }
+
+    private ResultActions respond(UUID partner, String requestId, int version, String message, MockMultipartFile file, String key,
+                                  String kind) throws Exception {
+        var builder = multipart("/api/partner/requests/{id}/responses", requestId);
+        if (file != null) {
+            builder.file(file);
+        }
+        return mockMvc.perform(builder
+                .param("kind", kind)
+                .param("version", Integer.toString(version))
+                .param("message", message)
+                .header("Idempotency-Key", key)
+                .with(partnerLogin(partner)).with(csrf()));
+    }
+
+    private ResultActions review(UUID actor, String requestId, int version, String decision, String reason, String key) throws Exception {
+        Map<String, Object> body = new HashMap<>(Map.of("version", version, "decision", decision));
+        if (reason != null) {
+            body.put("reason", reason);
+        }
+        return mockMvc.perform(post("/api/partner-requests/{id}/review", requestId)
+                .with(login(actor)).with(csrf()).header("Idempotency-Key", key)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(body)));
     }
 
     private JsonNode findById(JsonNode items, UUID id) {
@@ -684,7 +950,7 @@ class PartnerCabinetHttpTest {
                 "CREATE TABLE IF NOT EXISTS programs (id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL)",
                 "CREATE TABLE IF NOT EXISTS products (id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL)",
                 """
-                CREATE TABLE IF NOT EXISTS interaction_issues (
+                CREATE TABLE IF NOT EXISTS interaction_issues (last_comment VARCHAR(1000), last_comment_by UUID, last_comment_at TIMESTAMP WITH TIME ZONE,
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
                     description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
                     status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
@@ -705,7 +971,7 @@ class PartnerCabinetHttpTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (
+                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, type VARCHAR(32) NOT NULL, from_stage_id UUID,
                     occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
@@ -727,8 +993,36 @@ class PartnerCabinetHttpTest {
                     original_name VARCHAR(255) NOT NULL, media_type VARCHAR(160) NOT NULL, size_bytes BIGINT NOT NULL,
                     storage_key UUID NOT NULL, checksum CHAR(64), status VARCHAR(32) NOT NULL, kind VARCHAR(32) NOT NULL,
                     revision INTEGER DEFAULT 1 NOT NULL, replaces_id UUID, created_by UUID, version INTEGER DEFAULT 0 NOT NULL,
-                    partner_visible BOOLEAN DEFAULT FALSE NOT NULL, deleted_at TIMESTAMP WITH TIME ZONE,
-                    created_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    partner_visible BOOLEAN DEFAULT FALSE NOT NULL, deleted_at TIMESTAMP WITH TIME ZONE, deleted_by UUID,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS partner_requests (
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, organization_id UUID NOT NULL, contact_id UUID NOT NULL,
+                    action VARCHAR(300) NOT NULL, expected_result VARCHAR(1000) NOT NULL, due_on DATE,
+                    status VARCHAR(24) DEFAULT 'AWAITING_RESPONSE' NOT NULL, return_reason VARCHAR(1000), clarification VARCHAR(2000),
+                    cancel_reason VARCHAR(1000), version INTEGER DEFAULT 0 NOT NULL, created_by UUID NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    CONSTRAINT partner_requests_return_reason_check CHECK (status <> 'RETURNED' OR return_reason IS NOT NULL)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS partner_request_materials (
+                    request_id UUID NOT NULL, attachment_id UUID NOT NULL, PRIMARY KEY (request_id, attachment_id)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS partner_request_responses (
+                    id UUID PRIMARY KEY, request_id UUID NOT NULL, receipt_number VARCHAR(16) NOT NULL UNIQUE, kind VARCHAR(16) NOT NULL,
+                    message VARCHAR(4000), attachment_id UUID, submitted_by UUID NOT NULL, submitted_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    decision VARCHAR(16), decision_reason VARCHAR(1000), decided_by UUID, decided_at TIMESTAMP WITH TIME ZONE
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS partner_material_receipts (
+                    attachment_id UUID NOT NULL, profile_id UUID NOT NULL, confirmed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    PRIMARY KEY (attachment_id, profile_id)
                 )
                 """,
                 """

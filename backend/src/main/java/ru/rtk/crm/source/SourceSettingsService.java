@@ -16,6 +16,7 @@ import java.util.stream.Collectors;
 
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.support.CronExpression;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.audit.AuditAction;
@@ -47,6 +48,7 @@ public class SourceSettingsService {
     private final SiteApiClient siteApiClient;
     private final CrmClient crmClient;
     private final ApplicationEventPublisher events;
+    private final MoodleWriteProperties moodleWrite;
 
     public SourceSettingsService(
             SourceProperties properties,
@@ -56,7 +58,8 @@ public class SourceSettingsService {
             MoodleClient moodleClient,
             SiteApiClient siteApiClient,
             CrmClient crmClient,
-            ApplicationEventPublisher events
+            ApplicationEventPublisher events,
+            @Nullable MoodleWriteProperties moodleWrite
     ) {
         this.properties = properties;
         this.repository = repository;
@@ -66,6 +69,21 @@ public class SourceSettingsService {
         this.siteApiClient = siteApiClient;
         this.crmClient = crmClient;
         this.events = events;
+        this.moodleWrite = moodleWrite;
+    }
+
+    // Запись в Moodle: адрес тот же, что у чтения (экран или окружение), токен — отдельный MOODLE_WRITE_TOKEN из
+    // окружения, флаг MOODLE_WRITE_ENABLED. Без флага, токена или адреса запись недоступна, файловая передача остаётся.
+    public Optional<MoodleWriteTarget> moodleWrite() {
+        if (moodleWrite == null || !moodleWrite.enabled() || blankToNull(moodleWrite.token()) == null) {
+            return Optional.empty();
+        }
+        SourceProperties.Moodle moodle = moodle();
+        if (blankToNull(moodle.baseUrl()) == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new MoodleWriteTarget(moodle.baseUrl(), moodleWrite.token().strip(), moodleWrite.studentRoleId(),
+                moodle.connectTimeout(), moodle.readTimeout(), moodle.maxResponseSize()));
     }
 
     SourceProperties.Moodle moodle() {
@@ -486,6 +504,21 @@ public class SourceSettingsService {
 
     static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.strip();
+    }
+
+    // Секреты подключаемых модулей (токен и секрет вебхука бота MAX) хранит сам модуль в своих таблицах, но шифрует
+    // их тот же ключ APP_SOURCES_SETTINGS_KEY: шифр не выходит из пакета, а приставка «module:» в контексте не даёт
+    // подставить на место секрета модуля зашифрованный токен источника и наоборот.
+    public boolean moduleSecretsAvailable() {
+        return cipher.available();
+    }
+
+    public String encryptModuleSecret(String context, String value) {
+        return cipher.encrypt(value, "module:" + context);
+    }
+
+    public Optional<String> decryptModuleSecret(String context, String stored) {
+        return stored == null ? Optional.empty() : cipher.decrypt(stored, "module:" + context);
     }
 
     private record Candidate(

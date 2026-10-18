@@ -1,6 +1,12 @@
 export type Modules = {
   enrolment: boolean
   partner: boolean
+  /** Модуль MAX; без поля (старый сервер) считается выключенным. */
+  max?: boolean
+  /** Модуль MCP (ИИ-агенты); без поля считается выключенным. */
+  mcp?: boolean
+  /** Модуль почты; без поля (старый сервер) считается выключенным. */
+  mail?: boolean
 }
 
 let current: Modules = { enrolment: false, partner: false }

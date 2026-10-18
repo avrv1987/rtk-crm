@@ -23,6 +23,19 @@ export const issueStatusLabels: Record<IssueStatusFilter, string> = {
   ALL: 'Все'
 }
 
+// Подпись под вузом в реестре, когда карточка вуза сотруднику закрыта. «Ведёт коллега» — только если у вуза
+// действительно есть КАМ, иначе подпись спорила бы с колонкой «КАМ вуза: Требует назначения».
+export const closedOrganizationHint = (issue: Pick<InteractionIssue, 'ownerManagerName'>) => (
+  issue.ownerManagerName === null
+    ? 'у вуза нет КАМ, карточка вам недоступна'
+    : 'вуз ведёт коллега, карточка вам недоступна'
+)
+
+// Ответственный может прокомментировать и закрыть запись прямо в реестре, даже если вуз ему не открыт.
+export const canRespond = (issue: Pick<InteractionIssue, 'responsibleId' | 'status'>, profile: { id: string; role: string }) => (
+  issue.status === 'OPEN' && issue.responsibleId === profile.id && (profile.role === 'USER' || profile.role === 'LEADER')
+)
+
 export type IssueBadge = {
   key: 'problem' | 'risk'
   tone: 'overdue' | 'missing'

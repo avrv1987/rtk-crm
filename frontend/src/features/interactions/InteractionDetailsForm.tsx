@@ -11,7 +11,7 @@ import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { changedDraft, conflictKeys, keepDraftValues, mergedValues, parseBasedDraft, takeCurrentValues } from './draftBase'
 import { DraftConflictNotice } from './DraftConflictNotice'
 import { recordOf, textOf, useFormDraft } from './formDraft'
-import { useUnsavedDraft } from './unsavedDrafts'
+import { forgetUnsavedDraft, useUnsavedDraft } from './unsavedDrafts'
 import { isoFromMoscowInput, moscowInputValue } from './moscowTime'
 import { commandFailureMessage, contactRoleLabels, formatDateTime, handledAccessError } from './workMarks'
 import './workCard.css'
@@ -160,6 +160,7 @@ export const InteractionDetailsForm = ({
       commandKey.current = null
       setDraft(null)
       setState({ kind: 'idle' })
+      forgetUnsavedDraft(`card:${interaction.id}:details`)
       onChanged(updated)
     } catch (error) {
       if (!handledAccessError(error, onSessionExpired, onProfileUnavailable)) {

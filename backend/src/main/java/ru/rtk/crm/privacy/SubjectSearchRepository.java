@@ -102,6 +102,13 @@ public class SubjectSearchRepository {
                 FROM interactions i
                 JOIN organizations o ON o.id = i.organization_id
                 """));
+        for (String column : List.of("ap.note_text", "ap.next_action")) {
+            mentions.addAll(findMentions(terms, MentionPlace.AGENT_PLAN, column, "ap.created_at", """
+                    FROM agent_change_plans ap
+                    JOIN interactions i ON i.id = ap.interaction_id
+                    JOIN organizations o ON o.id = i.organization_id
+                    """));
+        }
         return mentions.stream()
                 .sorted(Comparator.comparing(SubjectMention::occurredAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .limit(LIMIT + 1L)
@@ -150,7 +157,10 @@ public class SubjectSearchRepository {
                         resultSet.getLong("size_bytes"),
                         resultSet.getObject("created_at", OffsetDateTime.class)
                 ))
-                .list();
+                .list()
+                .stream()
+                .filter(attachment -> terms.matchesAttachmentName(attachment.fileName()))
+                .toList();
     }
 
     private List<SubjectSourceRecord> findSourceRecords(SubjectTerms terms) {

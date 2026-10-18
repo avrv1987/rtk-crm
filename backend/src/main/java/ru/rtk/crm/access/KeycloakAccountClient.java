@@ -8,6 +8,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -49,6 +51,18 @@ public class KeycloakAccountClient {
     private static final Outcome CONTACT_READ = new Outcome(
             "Keycloak недоступен; контакты сотрудника не получены",
             "; контакты сотрудника не получены"
+    );
+    private static final Outcome LOCKOUT_READ = new Outcome(
+            "Keycloak недоступен; неудачные входы не получены",
+            "; неудачные входы не получены"
+    );
+    private static final Outcome LOCKOUT_RELEASE = new Outcome(
+            "Keycloak недоступен; блокировка входа не снята, повторите позже",
+            "; блокировка входа не снята"
+    );
+    private static final Outcome EVENTS_READ = new Outcome(
+            "Keycloak недоступен; события входа не получены",
+            "; события входа не получены"
     );
     private static final String UPDATE_PASSWORD = "UPDATE_PASSWORD";
     private static final String PRIVILEGED_ROLE = "crm-privileged";
@@ -214,6 +228,72 @@ public class KeycloakAccountClient {
             }
         }
         return removed;
+    }
+
+    // Защита от подбора пароля (brute force detection) хранит счётчик неудачных входов и временную блокировку
+    // отдельно от признака enabled: учётная запись остаётся включённой, и в CRM сотрудник выглядит «Активен».
+    public LoginLockout loginLockout(String userId) {
+        requireConfiguration(LOCKOUT_READ);
+        HttpResponse<String> response = send(HttpRequest.newBuilder(uri(attackDetectionPath(userId)))
+                .header("Authorization", "Bearer " + accessToken(LOCKOUT_READ))
+                .GET(), LOCKOUT_READ);
+        if (response.statusCode() == 404) {
+            return new LoginLockout(0, false, null);
+        }
+        requireSuccess(response, "чтение блокировки входа", LOCKOUT_READ);
+        try {
+            JsonNode status = objectMapper.readTree(response.body());
+            long lastFailure = status.path("lastFailure").asLong(0);
+            return new LoginLockout(
+                    status.path("numFailures").asInt(0),
+                    status.path("disabled").asBoolean(false),
+                    lastFailure > 0 ? Instant.ofEpochMilli(lastFailure) : null
+            );
+        } catch (IOException exception) {
+            throw new AccountSyncException("Keycloak вернул ответ не в формате JSON" + LOCKOUT_READ.rejectedSuffix(), exception);
+        }
+    }
+
+    public void releaseLoginLockout(String userId) {
+        requireConfiguration(LOCKOUT_RELEASE);
+        HttpResponse<String> response = send(HttpRequest.newBuilder(uri(attackDetectionPath(userId)))
+                .header("Authorization", "Bearer " + accessToken(LOCKOUT_RELEASE))
+                .DELETE(), LOCKOUT_RELEASE);
+        if (response.statusCode() != 404) {
+            requireSuccess(response, "снятие блокировки входа", LOCKOUT_RELEASE);
+        }
+    }
+
+    // События LOGIN_ERROR есть, только если в realm включено сохранение событий (bootstrap включает его из
+    // rtk-crm-realm.json), а сервисному клиенту назначена роль view-events. Keycloak отдаёт события от новых к старым.
+    public List<LoginError> loginErrors(LocalDate from, int first, int max) {
+        requireConfiguration(EVENTS_READ);
+        String path = "/admin/realms/" + encode(properties.realm()) + "/events?type=LOGIN_ERROR&dateFrom=" + from
+                + "&first=" + first + "&max=" + max;
+        List<LoginError> errors = new ArrayList<>();
+        for (JsonNode event : readArray(accessToken(EVENTS_READ), path, "чтение событий входа", EVENTS_READ)) {
+            String userId = blankToNull(event.path("userId").asText(null));
+            long time = event.path("time").asLong(0);
+            if (userId == null || time <= 0) {
+                continue;
+            }
+            String id = blankToNull(event.path("id").asText(null));
+            errors.add(new LoginError(
+                    id != null ? id : time + "-" + userId,
+                    Instant.ofEpochMilli(time),
+                    userId,
+                    blankToNull(event.path("details").path("username").asText(null)),
+                    blankToNull(event.path("ipAddress").asText(null)),
+                    blankToNull(event.path("error").asText(null))
+            ));
+        }
+        return errors;
+    }
+
+    public record LoginLockout(int failures, boolean locked, Instant lastFailureAt) {
+    }
+
+    public record LoginError(String id, Instant occurredAt, String userId, String username, String address, String error) {
     }
 
     public void setCrmRole(String userId, UserRole role) {
@@ -451,6 +531,10 @@ public class KeycloakAccountClient {
 
     private String usersPath() {
         return "/admin/realms/" + encode(properties.realm()) + "/users";
+    }
+
+    private String attackDetectionPath(String userId) {
+        return "/admin/realms/" + encode(properties.realm()) + "/attack-detection/brute-force/users/" + encode(userId);
     }
 
     private String userPath(String userId) {

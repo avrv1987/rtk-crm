@@ -63,6 +63,20 @@ const OneTimePassword = ({ credentials, created }: { credentials: AccountCredent
       setCopied('failed')
     }
   }
+  if (password === null && credentials.invitationSentTo) {
+    return (
+      <div className="employee-account__password" role="status">
+        <p>
+          <strong>{created ? 'Сотрудник заведён.' : 'Новый пароль выдан.'}</strong>{' '}
+          Ссылка на временный пароль отправлена на {credentials.invitationSentTo}. Пароль увидит только сотрудник,
+          ссылка одноразовая и действует 72 часа.
+        </p>
+        <dl>
+          <div><dt>Логин</dt><dd><code>{credentials.login}</code></dd></div>
+        </dl>
+      </div>
+    )
+  }
   if (password === null) {
     return (
       <p role="status">
@@ -196,7 +210,10 @@ export const EmployeeAccountDialog = ({
         <>
           <OneTimePassword credentials={result.credentials} created={action.kind === 'create'} />
           <div className="confirm-dialog__actions">
-            <button type="button" onClick={close}>Я передал пароль, закрыть</button>
+            {/* При приглашении пароль на экран не выходит, передавать нечего. */}
+            <button type="button" onClick={close}>
+              {result.credentials.temporaryPassword === null && result.credentials.invitationSentTo ? 'Готово' : 'Я передал пароль, закрыть'}
+            </button>
           </div>
         </>
       )
@@ -218,8 +235,9 @@ export const EmployeeAccountDialog = ({
       return (
         <form className="admin-profile-form employee-account__form" onSubmit={(event) => void run(event)}>
           <p className="admin-profile-form__hint">
-            CRM создаст учётную запись Keycloak и активный профиль, выдаст временный пароль — он будет показан один раз.
-            Писем система не отправляет.
+            {getModules().mail
+              ? 'CRM создаст учётную запись Keycloak и активный профиль и отправит на почту сотрудника одноразовую ссылку на временный пароль; ссылка действует 72 часа. На экране пароль не показывается.'
+              : 'CRM создаст учётную запись Keycloak и активный профиль, выдаст временный пароль — он будет показан один раз. Писем система не отправляет.'}
           </p>
           <label>
             ФИО *
@@ -283,7 +301,7 @@ export const EmployeeAccountDialog = ({
             </select>
           </label>
           <p className="admin-profile-form__hint">
-            {getModules().partner && 'Представителю вуза доступ открывают в карточке вуза, во вкладке «Контакты». '}
+            {getModules().partner && 'Координатору вуза доступ открывают в карточке вуза, во вкладке «Контакты». '}
             {getModules().enrolment && 'Флаг «Оператор зачисления» ставят после заведения кнопкой «Изменить».'}
           </p>
           {renderError()}
@@ -339,7 +357,9 @@ export const EmployeeAccountDialog = ({
       <form className="employee-account__form" onSubmit={(event) => void run(event)}>
         <p>
           {action.kind === 'reset'
-            ? `Сотрудник «${name}» получит новый временный пароль, прежний перестанет действовать. Пароль будет показан один раз; при входе Keycloak попросит задать свой. Действующие сеансы не завершаются — при подозрении на утечку завершите и их.`
+            ? `Сотрудник «${name}» получит новый временный пароль, прежний перестанет действовать. ${getModules().mail
+              ? 'Ссылка на пароль уйдёт на почту сотрудника; если почты в учётной записи нет, пароль будет показан один раз.'
+              : 'Пароль будет показан один раз.'} При входе Keycloak попросит задать свой. Действующие сеансы не завершаются — при подозрении на утечку завершите и их.`
             : `Все сеансы «${name}» в Keycloak и CRM будут завершены: на следующем действии сотруднику придётся войти заново. Учётная запись остаётся включённой — чтобы закрыть доступ совсем, снимите «Доступ к CRM открыт».`}
         </p>
         {renderError()}

@@ -1245,11 +1245,11 @@ sections.personalData = async () => {
   const exportPdf = await api(admin, 'POST', '/api/admin/personal-data/export?format=PDF', { body: { email } , binary: true })
   const found = search.contacts.find((item) => item.id === contact.id)
   const rectified = requireStatus(await api(admin, 'PATCH', '/api/admin/personal-data/contacts/' + contact.id, { body: { version: found.version, name: found.name, position: 'Методист', email, phone: found.phone } }), 200, 'Rectification failed')
-  const restricted = requireStatus(await api(admin, 'POST', '/api/admin/personal-data/contacts/' + contact.id + '/restriction', { body: { version: rectified.version, restricted: true } }), 200, 'Restriction failed')
+  const restricted = requireStatus(await api(admin, 'POST', '/api/admin/personal-data/contacts/' + contact.id + '/restriction', { body: { version: rectified.version, restricted: true, reason: 'SUBJECT_REQUEST' } }), 200, 'Restriction failed')
   const restrictedLink = await api(kamA, 'POST', '/api/interactions', { body: { organizationId: organization.id, title: 'W4 ограничен ' + nonce, contactIds: [contact.id] } })
-  const lifted = requireStatus(await api(admin, 'POST', '/api/admin/personal-data/contacts/' + contact.id + '/restriction', { body: { version: restricted.version, restricted: false } }), 200, 'Restriction lift failed')
+  const lifted = requireStatus(await api(admin, 'POST', '/api/admin/personal-data/contacts/' + contact.id + '/restriction', { body: { version: restricted.version, restricted: false, reason: 'SUBJECT_REQUEST' } }), 200, 'Restriction lift failed')
   const kamSearch = await api(kamA, 'POST', '/api/admin/personal-data/search', { body: { email } })
-  const anonymized = requireStatus(await api(admin, 'POST', '/api/admin/personal-data/anonymization', { body: { subject: { name: 'Субъектов Сергей ' + nonce, email, phone: null }, contactIds: [contact.id], profileIds: [], attachmentIds: [] } }), 200, 'Anonymization failed')
+  const anonymized = requireStatus(await api(admin, 'POST', '/api/admin/personal-data/anonymization', { body: { subject: { name: 'Субъектов Сергей ' + nonce, email, phone: null }, contactIds: [contact.id], profileIds: [], attachmentIds: [], reason: 'SUBJECT_REQUEST' } }), 200, 'Anonymization failed')
   const contactsAfter = requireStatus(await api(kamA, 'GET', '/api/organizations/' + organization.id + '/contacts'), 200, 'Contacts failed')
   const after = contactsAfter.find((item) => item.id === contact.id)
   const history = await eventsOf(kamA, work.id)
@@ -1421,6 +1421,9 @@ sections.reminders = async () => {
     'Без следующего шага': await totalOf('due=NO_NEXT_STEP'),
     ['Лицензии истекают до ' + digest.licenseExpiresBy + ' года']: await totalOf('licenseExpiresBy=' + digest.licenseExpiresBy + '&status=ALL')
   }
+  // Переход на тот же адрес с # не перезагружает документ, и плитки остались бы от прежнего рендера, тогда как
+  // другие разделы создали взаимодействия через API. Пустая страница между ними даёт свежую загрузку.
+  await call('Page.navigate', { url: 'about:blank' }, kamA.sessionId)
   await call('Page.navigate', { url: origin + '/#/work' }, kamA.sessionId)
   await kamA.waitFor(() => kamA.evaluate("document.querySelectorAll('.work .stat-tile').length >= 5 && Boolean(document.querySelector('.reminder-center__open'))"), 'KAM desk tiles are not shown')
   const shown = await kamA.evaluate("Object.fromEntries([...document.querySelectorAll('.work .stat-tile')].map((tile) => [tile.querySelector('.stat-tile__label').textContent, Number(tile.querySelector('.stat-tile__value').textContent)]))")
@@ -1464,12 +1467,12 @@ sections.screens = async () => {
   const organization = await testOrganization()
   const work = ctx.documentsInteraction ?? await createInteraction(kamA, organization.id, 'W4 экран ' + nonce)
   const result = {
-    kamCard: await screenTexts(kamA, '/#/organizations/' + organization.id + '/' + work.id, ['Следующий шаг', 'Комментарий…', 'Документ…', 'Весь маршрут', 'Приостановить или завершить…', 'Проблемы и риски…', 'Чего ждём от вуза или РТК…', 'Отметить этап выполненным…', 'Программа и продукты…', 'Начать новый цикл…', 'История', 'Документы', 'Договор и лицензии', 'Обучение', 'Контакты'], 'KAM card lacks wave 4 blocks'),
+    kamCard: await screenTexts(kamA, '/#/organizations/' + organization.id + '/' + work.id, ['Следующий шаг', 'Комментарий…', 'Документ…', 'Весь маршрут', 'Приостановить или завершить…', 'Проблемы и риски…', 'Чего ждём от вуза или РТК…', 'Отметить этап выполненным (без перехода)…', 'Программа и продукты…', 'Начать новый цикл…', 'История', 'Документы', 'Договор и лицензии', 'Обучение', 'Контакты'], 'KAM card lacks wave 4 blocks'),
     kamOrganization: await screenTexts(kamA, '/#/organizations/' + organization.id, ['просрочено шагов', 'Взаимодействия', 'Контакты', 'Договоры и документы', 'История', 'Новое взаимодействие'], 'KAM organization card lacks tabs'),
     leaderWork: await screenTexts(leader, '/#/control', ['Вузов без КАМ', 'На этапе дольше', 'Требует назначения', 'Заместители', 'Сигналы LMS'], 'Leader control lacks indicators'),
     kamDesk: await screenTexts(kamA, '/#/work', ['Задачи по срокам', 'На этой неделе', 'Без следующего шага', 'Лицензии истекают', 'Фильтры', 'Все мои взаимодействия'], 'KAM desk lacks blocks'),
     leaderOrganization: await screenTexts(leader, '/#/organizations/' + organization.id, ['Назначить или сменить ответственного…', 'Заместитель на время отсутствия…', 'просрочено шагов', 'История'], 'Leader organization card lacks assignment blocks'),
-    reports: await screenTexts(leader, '/#/reports', ['Все отчёты', 'Сохранённые', 'Выгрузки', 'Портфель взаимодействий', 'Статистика и диаграммы', 'Разбор КАМ', 'Подтверждения по договорам'], 'Reports lack the catalog'),
+    reports: await screenTexts(leader, '/#/reports?tab=catalog', ['Все отчёты', 'Сохранённые', 'Выгрузки', 'Портфель взаимодействий', 'Статистика и диаграммы', 'Разбор КАМ', 'Подтверждения по договорам'], 'Reports lack the catalog'),
     reportBuilder: await screenTexts(leader, '/#/reports/portfolio', ['Эта неделя', 'Свой диапазон', 'Фильтры', 'Показать', 'Выгрузить', 'XLSX', 'PDF', 'Сохранить отчёт', 'Колонки и порядок', 'Таблица', 'Диаграмма'], 'Report builder lacks blocks'),
     adminProfiles: await screenTexts(admin, '/#/admin/employees', ['Сотрудники', 'Новый сотрудник'], 'Admin employees screen lacks wave 4 blocks'),
     adminOrganizations: await screenTexts(admin, '/#/admin/organizations', ['Организации', 'Добавить организацию'], 'Admin organizations screen lacks wave 4 blocks'),

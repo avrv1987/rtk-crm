@@ -71,11 +71,6 @@ export const accessSummary = (profile: CrmProfile, update: CrmProfileUpdate, tea
   if (update.active !== undefined) {
     lines.push(update.active ? 'Доступ к CRM откроется' : 'Доступ к CRM будет закрыт')
   }
-  const nextRole = update.role ?? profile.role
-  const nextActive = update.active ?? profile.active
-  if (profile.role === 'USER' && (update.teamId !== undefined || nextRole !== 'USER' || !nextActive)) {
-    lines.push('Вузы, закреплённые за этим КАМ, получат статус «Требует назначения».')
-  }
   if (update.role === 'MANAGEMENT') {
     lines.push('Роль «Руководство»: просмотр карточек и отчётов всех команд без права изменений; команда не требуется.')
   }

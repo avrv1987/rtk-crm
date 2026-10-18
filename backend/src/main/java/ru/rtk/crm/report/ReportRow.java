@@ -47,7 +47,8 @@ public record ReportRow(
         Long paidStreams,
         Long completedBase,
         ManagerWork managerWork,
-        MarketDemand market
+        MarketDemand market,
+        Long runsWithoutData
 ) {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
 
@@ -90,7 +91,7 @@ public record ReportRow(
         this(interactionId, interactionTitle, organizationId, organizationName, directionId, directionName, programId, programName,
                 products, stageName, managerId, managerName, createdAt, lastEventAt, daysOnStage, nextAction, nextActionAt, eventAt,
                 eventType, fromStageName, comment, authorName, applications, participants, parallelRuns, marks, agreements,
-                duration, completed, agreement, paidOrders, paidStreams, completedBase, managerWork, null);
+                duration, completed, agreement, paidOrders, paidStreams, completedBase, managerWork, null, null);
     }
 
     public ReportRow(
@@ -131,7 +132,7 @@ public record ReportRow(
         this(interactionId, interactionTitle, organizationId, organizationName, directionId, directionName, programId, programName,
                 products, stageName, managerId, managerName, createdAt, lastEventAt, daysOnStage, nextAction, nextActionAt, eventAt,
                 eventType, fromStageName, comment, authorName, applications, participants, parallelRuns, marks, agreements,
-                duration, completed, agreement, paidOrders, paidStreams, completedBase, null, null);
+                duration, completed, agreement, paidOrders, paidStreams, completedBase, null, null, null);
     }
 
 
@@ -141,6 +142,17 @@ public record ReportRow(
 
     public Long completionPercent() {
         return percentOf(completed, completedBase);
+    }
+
+    // То же основание, что в «Динамике обучения»; потоки без наблюдения называются числом. Пусто — у программы не было
+    // потоков в периоде.
+    public String completionBasis() {
+        boolean withoutData = runsWithoutData != null && runsWithoutData > 0;
+        if (participants == null && !withoutData) {
+            return null;
+        }
+        String basis = LearningDynamicsService.completionBasis(completed, completedBase, participants);
+        return withoutData && participants != null ? basis + "; потоков без данных: " + runsWithoutData : basis;
     }
 
     public Object marketVacancies() {
@@ -156,7 +168,8 @@ public record ReportRow(
                 interactionId, interactionTitle, organizationId, organizationName, directionId, directionName, programId,
                 programName, products, stageName, managerId, managerName, createdAt, lastEventAt, daysOnStage, nextAction,
                 nextActionAt, eventAt, eventType, fromStageName, comment, authorName, applications, participants, parallelRuns,
-                marks, agreements, duration, completed, agreement, paidOrders, paidStreams, completedBase, managerWork, marketDemand
+                marks, agreements, duration, completed, agreement, paidOrders, paidStreams, completedBase, managerWork, marketDemand,
+                runsWithoutData
         );
     }
 
@@ -325,7 +338,8 @@ public record ReportRow(
                 paidStreams,
                 completedBase,
                 managerWork,
-                market
+                market,
+                runsWithoutData
         );
     }
 

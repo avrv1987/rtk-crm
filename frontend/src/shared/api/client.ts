@@ -78,11 +78,16 @@ export type InteractionNextStep = components['schemas']['InteractionNextStep']
 export type InteractionMarks = components['schemas']['InteractionMarks']
 export type InteractionStatusChange = components['schemas']['InteractionStatusChange']
 export type InteractionFlagsUpdate = components['schemas']['InteractionFlagsUpdate']
+export type AgentPlan = components['schemas']['AgentPlan']
 export type InteractionIssue = components['schemas']['InteractionIssue']
 export type InteractionIssueList = components['schemas']['InteractionIssueList']
 export type InteractionIssuePage = components['schemas']['InteractionIssuePage']
 export type InteractionIssueRequest = components['schemas']['InteractionIssueRequest']
 export type InteractionIssueResolution = components['schemas']['InteractionIssueResolution']
+export type InteractionIssueNote = components['schemas']['InteractionIssueNote']
+export type InteractionContactMark = components['schemas']['InteractionContactMark']
+export type WorkNews = components['schemas']['WorkNews']
+export type WorkNewsItem = components['schemas']['WorkNewsItem']
 export type IssueListParams = NonNullable<operations['listIssues']['parameters']['query']>
 export type InteractionListParams = NonNullable<operations['listInteractions']['parameters']['query']>
 export type InteractionDue = NonNullable<InteractionListParams['due']>
@@ -119,6 +124,7 @@ export type WorkControlQuery = {
   from: string
   to: string
   change: ManagerWorkChange | ''
+  mode: 'NOW' | 'PERIOD'
 }
 export type LearningTrendItem = components['schemas']['LearningTrendItem']
 export type LearningDynamics = components['schemas']['LearningDynamics']
@@ -194,6 +200,9 @@ export type CrmProfileUpdate = components['schemas']['CrmProfileUpdate']
 export type NewEmployee = components['schemas']['NewEmployee']
 export type AccountCredentials = components['schemas']['AccountCredentials']
 export type CrmProfileEvent = components['schemas']['CrmProfileEvent']
+export type CrmProfileOrganizations = components['schemas']['CrmProfileOrganizations']
+export type LoginLockoutStatus = components['schemas']['LoginLockoutStatus']
+export type BackupStatus = components['schemas']['BackupStatus']
 export type Team = components['schemas']['Team']
 export type TeamCreate = components['schemas']['TeamCreate']
 export type TeamUpdate = components['schemas']['TeamUpdate']
@@ -338,6 +347,7 @@ export type ContactRectification = components['schemas']['ContactRectification']
 export type ContactRestriction = components['schemas']['ContactRestriction']
 export type AnonymizationRequest = components['schemas']['AnonymizationRequest']
 export type AnonymizationResult = components['schemas']['AnonymizationResult']
+export type PersonalDataReason = components['schemas']['PersonalDataReason']
 export type RetentionPolicy = components['schemas']['RetentionPolicy']
 export type RetentionRun = components['schemas']['RetentionRun']
 export type VendorContact = components['schemas']['VendorContact']
@@ -435,6 +445,24 @@ const fileNameFromContentDisposition = (value: string | null): string => {
   const match = value?.match(/filename\*=UTF-8''([^;]+)/)
   return match ? decodeURIComponent(match[1]) : 'roster.xlsx'
 }
+
+// Модуль MAX: привязка аккаунта в сессии CRM и экран администратора.
+export type MaxLinkStatus = components['schemas']['MaxLinkStatus']
+export type MaxLinkStart = components['schemas']['MaxLinkStart']
+export type MaxPreferences = components['schemas']['MaxPreferences']
+export type MaxSettings = components['schemas']['MaxSettings']
+export type MaxSettingsUpdate = components['schemas']['MaxSettingsUpdate']
+export type MaxCheck = components['schemas']['MaxCheck']
+export type MaxAdminLink = components['schemas']['MaxAdminLink']
+export type MailPreferences = components['schemas']['MailPreferences']
+export type MailTopic = components['schemas']['MailTopic']
+export type MailSettings = components['schemas']['MailSettings']
+export type MailSettingsUpdate = components['schemas']['MailSettingsUpdate']
+export type MailCheck = components['schemas']['MailCheck']
+export type MailJournalRow = components['schemas']['MailJournalRow']
+export type MailJournalPage = components['schemas']['MailJournalPage']
+export type MailLetter = components['schemas']['MailLetter']
+export type MailInvitationRedeemed = components['schemas']['MailInvitationRedeemed']
 
 export class ApiClient {
   private csrf: CsrfToken | null = null
@@ -588,6 +616,9 @@ export class ApiClient {
     if (query.minDaysOnStage !== undefined) {
       searchParams.set('minDaysOnStage', query.minDaysOnStage.toString())
     }
+    if (query.noContactDays !== undefined) {
+      searchParams.set('noContactDays', query.noContactDays.toString())
+    }
     if (query.page !== undefined) {
       searchParams.set('page', query.page.toString())
     }
@@ -739,7 +770,7 @@ export class ApiClient {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/json',
+        Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/csv, application/json',
         [this.csrf!.headerName]: this.csrf!.token
       },
       body: JSON.stringify(payload)
@@ -859,6 +890,22 @@ export class ApiClient {
       payload,
       idempotencyKey
     )
+  }
+
+  async commentIssueAsResponsible(issueId: InteractionIssue['id'], payload: InteractionIssueNote, idempotencyKey: string): Promise<InteractionIssue> {
+    return this.command<InteractionIssue>(`/api/issues/${encodeURIComponent(issueId)}/comments`, payload, idempotencyKey)
+  }
+
+  async resolveIssueAsResponsible(issueId: InteractionIssue['id'], payload: InteractionIssueNote, idempotencyKey: string): Promise<InteractionIssue> {
+    return this.command<InteractionIssue>(`/api/issues/${encodeURIComponent(issueId)}/resolution`, payload, idempotencyKey)
+  }
+
+  async getWorkNews(days?: number): Promise<WorkNews> {
+    return this.request<WorkNews>(`/api/work/news${days === undefined ? '' : `?days=${days}`}`)
+  }
+
+  async markWorkNewsViewed(eventId: WorkNewsItem['eventId']): Promise<void> {
+    return this.send<void>(`/api/work/news/${encodeURIComponent(eventId)}/viewed`, 'PUT')
   }
 
   async listIssues(query: IssueListParams): Promise<InteractionIssuePage> {
@@ -1039,6 +1086,34 @@ export class ApiClient {
     return this.command<CrmProfile>(`/api/admin/crm-profiles/${encodeURIComponent(id)}/account-email`, { email }, idempotencyKey, 'PUT')
   }
 
+  async listCrmProfileOrganizations(id: CrmProfile['id']): Promise<CrmProfileOrganizations> {
+    return this.request<CrmProfileOrganizations>(`/api/admin/crm-profiles/${encodeURIComponent(id)}/organizations`)
+  }
+
+  async getCrmProfileLoginLockout(id: CrmProfile['id']): Promise<LoginLockoutStatus> {
+    return this.request<LoginLockoutStatus>(`/api/admin/crm-profiles/${encodeURIComponent(id)}/login-lockout`)
+  }
+
+  async releaseCrmProfileLoginLockout(id: CrmProfile['id']): Promise<LoginLockoutStatus> {
+    return this.post<LoginLockoutStatus>(`/api/admin/crm-profiles/${encodeURIComponent(id)}/login-lockout-release`)
+  }
+
+  async getBackupStatus(): Promise<BackupStatus> {
+    return this.request<BackupStatus>('/api/admin/backup-status')
+  }
+
+  async getAgentPlan(id: AgentPlan['id']): Promise<AgentPlan> {
+    return this.request<AgentPlan>(`/api/agent-plans/${encodeURIComponent(id)}`)
+  }
+
+  async applyAgentPlan(id: AgentPlan['id']): Promise<AgentPlan> {
+    return this.post<AgentPlan>(`/api/agent-plans/${encodeURIComponent(id)}/apply`)
+  }
+
+  async rejectAgentPlan(id: AgentPlan['id']): Promise<AgentPlan> {
+    return this.post<AgentPlan>(`/api/agent-plans/${encodeURIComponent(id)}/reject`)
+  }
+
   async requestProfileActivation(): Promise<ActivationRequest> {
     return this.post<ActivationRequest>('/api/me/activation-request')
   }
@@ -1113,6 +1188,10 @@ export class ApiClient {
 
   async anonymizePersonalData(payload: AnonymizationRequest, idempotencyKey: string): Promise<AnonymizationResult> {
     return this.command<AnonymizationResult>('/api/admin/personal-data/anonymization', payload, idempotencyKey)
+  }
+
+  async previewPersonalDataAnonymization(payload: AnonymizationRequest): Promise<AnonymizationResult> {
+    return this.post<AnonymizationResult>('/api/admin/personal-data/anonymization/preview', payload)
   }
 
   async getRetentionPolicy(): Promise<RetentionPolicy> {
@@ -1494,7 +1573,7 @@ export class ApiClient {
       stage: query.stage
     }
     Object.entries(lists).forEach(([key, values]) => values.forEach((value) => params.append(key, value)))
-    Object.entries({ from: query.from, to: query.to, change: query.change }).forEach(([key, value]) => {
+    Object.entries({ from: query.from, to: query.to, change: query.change, mode: query.mode === 'PERIOD' ? 'PERIOD' : '' }).forEach(([key, value]) => {
       if (value !== '') {
         params.set(key, value)
       }
@@ -1796,6 +1875,121 @@ export class ApiClient {
     }
     const suffix = searchParams.size === 0 ? '' : `?${searchParams.toString()}`
     return this.request<PageWorkflowTemplate>(`${path}${suffix}`)
+  }
+
+  // Модуль MAX
+  async getMaxLink(): Promise<MaxLinkStatus> {
+    return this.request<MaxLinkStatus>('/api/max/link')
+  }
+
+  async startMaxLink(): Promise<MaxLinkStart> {
+    return this.post<MaxLinkStart>('/api/max/link')
+  }
+
+  async confirmMaxLink(): Promise<MaxLinkStatus> {
+    return this.post<MaxLinkStatus>('/api/max/link/confirm')
+  }
+
+  async rejectMaxLink(): Promise<MaxLinkStatus> {
+    return this.post<MaxLinkStatus>('/api/max/link/reject')
+  }
+
+  async deleteMaxLink(): Promise<MaxLinkStatus> {
+    return this.send<MaxLinkStatus>('/api/max/link', 'DELETE')
+  }
+
+  async saveMaxPreferences(preferences: MaxPreferences): Promise<MaxLinkStatus> {
+    return this.send<MaxLinkStatus>('/api/max/link/preferences', 'PUT', preferences)
+  }
+
+  async getMaxSettings(): Promise<MaxSettings> {
+    return this.request<MaxSettings>('/api/max/admin/settings')
+  }
+
+  async updateMaxSettings(payload: MaxSettingsUpdate): Promise<MaxSettings> {
+    return this.send<MaxSettings>('/api/max/admin/settings', 'PUT', payload)
+  }
+
+  async checkMax(): Promise<MaxCheck> {
+    return this.post<MaxCheck>('/api/max/admin/check')
+  }
+
+  async subscribeMax(): Promise<MaxSettings> {
+    return this.post<MaxSettings>('/api/max/admin/subscription')
+  }
+
+  async requeueMax(): Promise<{ requeued: number }> {
+    return this.post<{ requeued: number }>('/api/max/admin/outbox/requeue')
+  }
+
+  async listMaxLinks(): Promise<MaxAdminLink[]> {
+    return this.request<MaxAdminLink[]>('/api/max/admin/links')
+  }
+
+  async deleteMaxLinkByAdmin(profileId: string): Promise<void> {
+    return this.send<void>(`/api/max/admin/links/${encodeURIComponent(profileId)}`, 'DELETE')
+  }
+
+  // Модуль почты
+  async getMailPreferences(): Promise<MailPreferences> {
+    return this.request<MailPreferences>('/api/mail/preferences')
+  }
+
+  async saveMailPreferences(disabledTopics: MailTopic[]): Promise<MailPreferences> {
+    return this.send<MailPreferences>('/api/mail/preferences', 'PUT', { disabledTopics })
+  }
+
+  async getMailSettings(): Promise<MailSettings> {
+    return this.request<MailSettings>('/api/mail/admin/settings')
+  }
+
+  async updateMailSettings(payload: MailSettingsUpdate): Promise<MailSettings> {
+    return this.send<MailSettings>('/api/mail/admin/settings', 'PUT', payload)
+  }
+
+  async checkMail(): Promise<MailCheck> {
+    return this.post<MailCheck>('/api/mail/admin/check')
+  }
+
+  async sendMailTest(): Promise<MailJournalRow> {
+    return this.post<MailJournalRow>('/api/mail/admin/test')
+  }
+
+  async listMailOutbox(status: MailJournalRow['status'] | '', page: number, size = 20): Promise<MailJournalPage> {
+    const params = new URLSearchParams({ page: String(page), size: String(size) })
+    if (status !== '') {
+      params.set('status', status)
+    }
+    return this.request<MailJournalPage>(`/api/mail/admin/outbox?${params.toString()}`)
+  }
+
+  async getMailLetter(id: string): Promise<MailLetter> {
+    return this.request<MailLetter>(`/api/mail/admin/outbox/${encodeURIComponent(id)}`)
+  }
+
+  async retryMailLetter(id: string): Promise<MailJournalRow> {
+    return this.post<MailJournalRow>(`/api/mail/admin/outbox/${encodeURIComponent(id)}/retry`)
+  }
+
+  async cancelMailLetter(id: string): Promise<MailJournalRow> {
+    return this.post<MailJournalRow>(`/api/mail/admin/outbox/${encodeURIComponent(id)}/cancel`)
+  }
+
+  async requeueMail(): Promise<{ requeued: number }> {
+    return this.post<{ requeued: number }>('/api/mail/admin/outbox/requeue')
+  }
+
+  async sendSubjectReportByMail(email: string, query: SubjectQuery): Promise<MailJournalRow> {
+    return this.post<MailJournalRow>('/api/mail/admin/subject-report', { email, query })
+  }
+
+  /** Открытие приглашения из письма: без входа и CSRF, токен — в теле запроса. */
+  async redeemMailInvitation(token: string): Promise<MailInvitationRedeemed> {
+    return this.request<MailInvitationRedeemed>('/api/mail/invitations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    })
   }
 
   private async post<T>(path: string, payload?: object): Promise<T> {

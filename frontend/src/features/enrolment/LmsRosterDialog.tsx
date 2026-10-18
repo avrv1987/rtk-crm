@@ -15,6 +15,7 @@ type LmsRosterDialogProps = {
 
 export const LmsRosterDialog = ({ streamId, roster, exports, onExported, onAccessError, onClose }: LmsRosterDialogProps) => {
   const [mode, setMode] = useState<LmsRosterRequest['mode']>('PENDING')
+  const [format, setFormat] = useState<'XLSX_TEMPLATE' | 'MOODLE_CSV'>('XLSX_TEMPLATE')
   const [incomplete, setIncomplete] = useState<LmsRosterRequest['incomplete'] | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -38,7 +39,7 @@ export const LmsRosterDialog = ({ streamId, roster, exports, onExported, onAcces
     setBusy(true)
     setError(null)
     try {
-      const result = await apiClient.exportLmsRoster(streamId, { mode, incomplete: effectiveIncomplete })
+      const result = await apiClient.exportLmsRoster(streamId, { mode, incomplete: effectiveIncomplete, format })
       saveFile(result.blob, result.fileName)
       setJustExported(result.exportId)
       onExported()
@@ -67,6 +68,22 @@ export const LmsRosterDialog = ({ streamId, roster, exports, onExported, onAcces
           Все слушатели потока
         </label>
       </fieldset>
+
+      <fieldset className="enrolment__roster-mode">
+        <legend>Формат файла</legend>
+        <label>
+          <input type="radio" name="lms-roster-format" checked={format === 'XLSX_TEMPLATE'} onChange={() => setFormat('XLSX_TEMPLATE')} />
+          XLSX по шаблону организатора
+        </label>
+        <label>
+          <input type="radio" name="lms-roster-format" checked={format === 'MOODLE_CSV'} onChange={() => setFormat('MOODLE_CSV')} />
+          CSV Moodle «Загрузка пользователей» (логин, имя, фамилия, почта, телефон)
+        </label>
+      </fieldset>
+      <p className="enrolment__hint">
+        Формат нужно проверить на реальном приёмнике LMS. Сформированный файл — это ещё не передача: после загрузки в LMS
+        отметьте партию переданной и внесите результат по строкам.
+      </p>
 
       {scope.rows === 0 ? (
         <p>
@@ -121,7 +138,7 @@ export const LmsRosterDialog = ({ streamId, roster, exports, onExported, onAcces
       )}
 
       {matchingExport !== null && (
-        <p role="status">Файл сформирован: выгрузка от {formatDateTime(matchingExport.exportedAt)}, строк {matchingExport.rows}.</p>
+        <p role="status">Файл сформирован: партия от {formatDateTime(matchingExport.exportedAt)}, строк {matchingExport.rows}. Это ещё не передача в LMS.</p>
       )}
 
       <div className="enrolment__dialog-actions">

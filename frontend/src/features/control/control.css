@@ -139,6 +139,11 @@
   font-weight: 700;
 }
 
+.control-totals__selected {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
 .control-table {
   width: 100%;
   border-collapse: collapse;
@@ -552,6 +557,12 @@
   padding-top: var(--space-3);
 }
 
+.control-more__scope {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
 .control-more__line {
   display: flex;
   flex-wrap: wrap;
@@ -588,18 +599,52 @@
   font-size: var(--font-size-md);
 }
 
+.control-tiles {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.control-tiles__caption {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
 @media (max-width: 640px) {
-  .control .stat-tiles,
   .work .stat-tiles {
     flex-wrap: nowrap;
     overflow-x: auto;
     padding-bottom: var(--space-1);
   }
 
-  .control .stat-tile,
   .work .stat-tile {
     flex: 0 0 auto;
     max-width: 11rem;
+  }
+
+  /* Телефон: все плитки «Контроля» видны сразу сеткой, без ленты вбок. Нижняя граница — половина ширины за вычетом
+     зазора: на 320 две колонки по 8rem с зазором не помещаются, а одна колонка прячет плитки за первый экран. */
+  .control .stat-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(8rem, calc((100% - var(--space-1)) / 2)), 1fr));
+    gap: var(--space-1);
+  }
+
+  .control .stat-tile {
+    min-width: 0;
+    min-height: 44px;
+    padding: var(--space-1) var(--space-2);
+  }
+
+  .control .stat-tile__value {
+    font-size: var(--font-size-lg);
+  }
+
+  .control .stat-tile__label {
+    min-width: 0;
+    font-size: var(--font-size-sm);
+    overflow-wrap: anywhere;
   }
 
   .control-toolbar .action-menu {
@@ -623,4 +668,34 @@
 .control-idle__note {
   margin: 0;
   padding: 0 var(--space-4) var(--space-2);
+}
+
+.overview__title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+
+.overview__table td > .status {
+  display: inline-block;
+  margin-left: var(--space-1);
+}
+
+.overview__table tbody th {
+  border-top: 1px solid var(--color-border);
+  font-weight: 700;
+}
+
+.control-agreements .control-manager__name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+}
+
+@media (max-width: 720px) {
+  .overview__table tbody th {
+    display: block;
+    padding: var(--space-1) var(--space-4);
+  }
 }

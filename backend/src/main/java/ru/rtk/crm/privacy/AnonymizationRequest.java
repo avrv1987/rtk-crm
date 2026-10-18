@@ -8,6 +8,8 @@ public record AnonymizationRequest(
         List<UUID> contactIds,
         List<UUID> profileIds,
         List<UUID> attachmentIds,
-        List<UUID> learnerIds
+        List<UUID> learnerIds,
+        PersonalDataReason reason,
+        String comment
 ) {
 }

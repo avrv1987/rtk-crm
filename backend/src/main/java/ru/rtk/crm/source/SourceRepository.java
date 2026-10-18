@@ -4,6 +4,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -91,7 +92,9 @@ public class SourceRepository {
     void insertRun(UUID id, SourceCode source, UUID startedBy, SyncTrigger trigger, UUID organizationId, OffsetDateTime now) {
         OffsetDateTime last = jdbcClient.sql("SELECT MAX(created_at) FROM sync_runs WHERE source = :source")
                 .param("source", source.name()).query(OffsetDateTime.class).optional().orElse(null);
-        OffsetDateTime createdAt = last != null && !now.isAfter(last) ? last.plusNanos(1_000) : now;
+        // Сравнивается записываемое значение: база хранит микросекунды (см. AgreementRepository.insertStatusEvent).
+        OffsetDateTime candidate = now.truncatedTo(ChronoUnit.MICROS);
+        OffsetDateTime createdAt = last != null && !candidate.isAfter(last) ? last.plus(1, ChronoUnit.MICROS) : candidate;
         jdbcClient.sql("""
                 INSERT INTO sync_runs (id, source, status, started_by, run_trigger, organization_id, created_at)
                 VALUES (:id, :source, 'PENDING', :startedBy, :trigger, :organizationId, :createdAt)
@@ -409,11 +412,13 @@ public class SourceRepository {
                 INSERT INTO source_records (
                     id, source, record_type, external_id, external_updated_at, submitted_at, external_status, payload,
                     status, error, organization_id, program_id, applications_count, interaction_id, sync_run_id,
-                    stream_no, payload_hash, created_at, updated_at
+                    stream_no, payload_hash, created_at, updated_at, applied_at
                 ) VALUES (
                     :id, :source, :recordType, :externalId, :externalUpdatedAt, :submittedAt, :externalStatus, :payload,
                     :status, :error, :organizationId, :programId, :applicationsCount, :interactionId, :runId,
-                    :streamNo, :payloadHash, :now, :now
+                    :streamNo, :payloadHash, :now, :now,
+                    CASE WHEN :status = 'APPLIED' THEN CAST(:now AS TIMESTAMP WITH TIME ZONE)
+                         ELSE CAST(NULL AS TIMESTAMP WITH TIME ZONE) END
                 )
                 """)
                 .param("id", id)
@@ -437,7 +442,8 @@ public class SourceRepository {
     // ошибку (или впервые её сохранил): по нему журнал отличает новые записи на разбор от тех, что каждый плановый
     // запуск снова находит в той же очереди. Поэтому запуск закрепляется за записью, только когда она переходит в
     // NEEDS_MAPPING или FAILED из другого состояния; переприменение без запуска (runId = null) прежний запуск
-    // сохраняет. sync_run_id стоит первым, чтобы условие читало прежний статус в любой СУБД.
+    // сохраняет. sync_run_id стоит первым, чтобы условие читало прежний статус в любой СУБД. applied_at — время первого
+    // применения: по нему уходит «Заявка с сайта», и обновления уже применённой заявки его не сдвигают.
     void updateRecord(UUID id, RecordVersion item, ApplyResult result, UUID runId, OffsetDateTime now) {
         jdbcClient.sql("""
                 UPDATE source_records
@@ -448,7 +454,9 @@ public class SourceRepository {
                     external_status = :externalStatus,
                     payload = :payload, status = :status, error = :error, organization_id = :organizationId,
                     program_id = :programId, applications_count = :applicationsCount, interaction_id = :interactionId,
-                    stream_no = :streamNo, payload_hash = :payloadHash, updated_at = :now
+                    stream_no = :streamNo, payload_hash = :payloadHash, updated_at = :now,
+                    applied_at = CASE WHEN applied_at IS NULL AND :status = 'APPLIED' THEN CAST(:now AS TIMESTAMP WITH TIME ZONE)
+                                      ELSE applied_at END
                 WHERE id = :id
                 """)
                 .param("id", id)

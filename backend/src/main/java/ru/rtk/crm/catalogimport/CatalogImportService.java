@@ -41,6 +41,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.audit.AuditAction;
+import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.attachment.AttachmentContentValidator;
 import ru.rtk.crm.attachment.AttachmentScanOutcome;
 import ru.rtk.crm.attachment.AttachmentScanner;
@@ -94,6 +96,7 @@ public class CatalogImportService {
     private final CatalogChangeEventRepository catalogChangeEventRepository;
     private final VendorContactImport vendorContactImport;
     private final ObjectMapper objectMapper;
+    private final AuditJournalRepository auditJournalRepository;
 
     public CatalogImportService(
             CatalogImportRepository repository,
@@ -105,9 +108,11 @@ public class CatalogImportService {
             OrganizationAssignmentRepository organizationAssignmentRepository,
             InteractionService interactionService,
             CatalogChangeEventRepository catalogChangeEventRepository,
-            VendorContactImport vendorContactImport
+            VendorContactImport vendorContactImport,
+            AuditJournalRepository auditJournalRepository
     ) {
         this.repository = repository;
+        this.auditJournalRepository = auditJournalRepository;
         this.catalogChangeEventRepository = catalogChangeEventRepository;
         this.vendorContactImport = vendorContactImport;
         this.organizationAssignmentRepository = organizationAssignmentRepository;
@@ -291,6 +296,11 @@ public class CatalogImportService {
             repository.markRowsApplied(stored.id(), selectedRows.stream().map(CatalogImportStoredRow::id).toList());
             UUID jobId = UUID.randomUUID();
             repository.insertApplyJob(jobId, stored.id(), profile.id(), now);
+            // Построчные изменения уже есть в журнале справочников; здесь итог запуска: какой импорт и сколько применено.
+            auditJournalRepository.record(
+                    AuditAction.CATALOG_IMPORT_APPLIED, profile.id(), "CATALOG_IMPORT", stored.id(), importTitle(stored.profile()),
+                    "строк применено: " + selectedRows.size() + "; договоров в архив: " + archivedLinks.size(), null
+            );
             CatalogImportApplyResponse response = new CatalogImportApplyResponse(jobId, stored.id());
             commandIdempotencyRepository.complete(commandId, write(response));
             return response;
@@ -299,6 +309,14 @@ public class CatalogImportService {
         } catch (DataIntegrityViolationException exception) {
             throw InteractionConflictException.catalogImportVersion(stored.version());
         }
+    }
+
+    private static String importTitle(CatalogImportProfile profile) {
+        return switch (profile) {
+            case AGREEMENT -> "Импорт реестра соглашений";
+            case DIRECTION_PROGRAM -> "Импорт направлений и программ";
+            case VENDOR_CONTACTS -> "Импорт вендоров и контактов";
+        };
     }
 
     private AgreementCatalogs agreementCatalogs(CatalogImportMapping mapping) {

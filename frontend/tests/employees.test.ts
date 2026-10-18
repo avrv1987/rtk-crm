@@ -14,6 +14,8 @@ import {
 } from '../src/features/admin/employeeFilters.ts'
 import { filterTeams, teamArchivable } from '../src/features/admin/teamList.ts'
 import { organizationMenuActions } from '../src/features/admin/organizationList.ts'
+import { lockoutText, transferSummary, unassignsOrganizations } from '../src/features/admin/employeeFilters.ts'
+import { backupText } from '../src/features/admin/backupStatus.ts'
 
 const profile = (patch: Record<string, unknown> = {}) => ({
   id: 'p1',
@@ -110,4 +112,32 @@ test('«⋯» организации: правка не для архивных 
   assert.deepEqual(organizationMenuActions({ status: 'PENDING', type: 'SCHOOL' }), ['edit', 'APPROVE', 'REJECT', 'ARCHIVE', 'transfer'])
   assert.deepEqual(organizationMenuActions({ status: 'ARCHIVED', type: 'COLLEGE' }), ['RESTORE', 'transfer'])
   assert.deepEqual(organizationMenuActions({ status: 'ACTIVE', type: 'OPEN_ENROLLMENT' }), ['ARCHIVE', 'transfer'])
+})
+
+test('вузы КАМ снимаются при блокировке, смене роли или команды, и окно предлагает передать их', () => {
+  const kam = { role: 'USER' as const, active: true }
+  assert.equal(unassignsOrganizations(kam, { version: 1, active: false }), true)
+  assert.equal(unassignsOrganizations(kam, { version: 1, teamId: 't2' }), true)
+  assert.equal(unassignsOrganizations(kam, { version: 1, role: 'MANAGEMENT' }), true)
+  assert.equal(unassignsOrganizations(kam, { version: 1, role: 'LEADER' }), false)
+  assert.equal(unassignsOrganizations(kam, { version: 1, displayName: 'Новое имя' }), false)
+  assert.equal(unassignsOrganizations({ role: 'LEADER', active: true }, { version: 1, active: false }), true)
+  assert.equal(unassignsOrganizations({ role: 'ADMIN', active: true }, { version: 1, active: false }), false)
+  assert.match(transferSummary(3, null), /\(3\) останутся без КАМ: руководитель команды увидит их в колокольчике/)
+  assert.match(transferSummary(3, 'Вера Менеджер'), /перейдут к КАМ «Вера Менеджер»/)
+  assert.equal(transferSummary(0, null), 'За сотрудником нет вузов.')
+})
+
+test('блок «Вход в систему» различает блокировку, неудачные попытки и отсутствие связи с Keycloak', () => {
+  assert.match(lockoutText({ available: true, failures: 16, locked: true, lastFailureAt: null }), /временно заблокирован.*подряд: 16/)
+  assert.match(lockoutText({ available: true, failures: 3, locked: false, lastFailureAt: '2026-10-18T07:15:00Z' }), /подряд: 3, последняя — 18 окт\. 2026 г\., 10:15 МСК/)
+  assert.equal(lockoutText({ available: true, failures: 0, locked: false, lastFailureAt: null }), 'Неудачных попыток входа нет, вход не заблокирован.')
+  assert.match(lockoutText({ available: false, failures: 0, locked: false, lastFailureAt: null }), /не настроена/)
+})
+
+test('«Обзор» показывает время последней копии и предупреждает о старой или пропавшей отметке', () => {
+  const now = Date.parse('2026-10-18T12:00:00Z')
+  assert.deepEqual(backupText({ lastBackupAt: '2026-10-18T00:30:00Z' }, now), { text: 'Последняя копия: 18 окт. 2026 г., 03:30 МСК.', stale: false })
+  assert.equal(backupText({ lastBackupAt: '2026-10-15T00:30:00Z' }, now).stale, true)
+  assert.equal(backupText({ lastBackupAt: null }, now).stale, true)
 })

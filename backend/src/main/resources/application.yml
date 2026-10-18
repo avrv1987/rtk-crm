@@ -51,6 +51,11 @@ app:
       enabled: ${MODULE_ENROLMENT_ENABLED:true}
     partner:
       enabled: ${MODULE_PARTNER_ENABLED:true}
+    max:
+      enabled: ${MAX_ENABLED:false}
+    # Модуль почты (docs/mail.md): без флага письма не ставятся и не уходят, /api/mail/* отвечает 404.
+    mail:
+      enabled: ${MAIL_ENABLED:false}
   attachments:
     storage-root: ${APP_ATTACHMENTS_STORAGE_ROOT:/var/lib/rtk-crm/files}
     scanner-host: ${APP_ATTACHMENTS_SCANNER_HOST:localhost}
@@ -109,6 +114,10 @@ app:
       read-timeout: 20s
       max-pages: 100
       max-page-size: 5MB
+  moodle-write:
+    enabled: ${MOODLE_WRITE_ENABLED:false}
+    token: ${MOODLE_WRITE_TOKEN:}
+    student-role-id: ${MOODLE_STUDENT_ROLE_ID:5}
   labor-market:
     base-url: ${APP_LABOR_MARKET_BASE_URL:}
     token: ${APP_LABOR_MARKET_TOKEN:}
@@ -123,6 +132,7 @@ app:
     inactive-contacts: ${APP_RETENTION_INACTIVE_CONTACTS:1095d}
     dismissed-profiles: ${APP_RETENTION_DISMISSED_PROFILES:365d}
     audit-events: ${APP_RETENTION_AUDIT_EVENTS:1095d}
+    agent-plans: ${APP_RETENTION_AGENT_PLANS:30d}
     learner-profiles: ${APP_RETENTION_LEARNER_PROFILES:P3Y}
   account-sync:
     base-url: ${APP_OIDC_INTERNAL_BASE_URL:}
@@ -146,19 +156,71 @@ app:
     classes-stage-name: Занятия
     no-students-after-days: 14
     low-completion-percent: 50
+    completion-coverage-percent: 70
     completion-window-days: 7
     activity-grace-days: 7
     low-activity-percent: 40
     not-started-percent: 50
     dropout-percent: 25
     inactive-after-days: 14
+    stale-after: ${app.sources.stale-after}
   enrolment:
     active-key-version: ${APP_ENROLMENT_ACTIVE_KEY_VERSION:}
     keys:
       v1: ${APP_ENROLMENT_KEYS_V1:}
     fingerprint-key: ${APP_ENROLMENT_FINGERPRINT_KEY:}
+  # MCP для ИИ-агентов (docs/mcp.md). Выключен по умолчанию: без флага /mcp не регистрируется и отвечает 404.
+  mcp:
+    enabled: ${MCP_ENABLED:false}
+    audience: crm-mcp
+    allowed-origins: ${MCP_ALLOWED_ORIGINS:}
+    calls-per-minute: ${MCP_CALLS_PER_MINUTE:60}
+    list-limit: 25
+    event-limit: 10
+    history-days: 90
+    # Запись — только планом: агент готовит, сотрудник подтверждает на экране CRM. Scope записи клиент просит отдельно.
+    write-scope: crm-mcp.write
+    plan-ttl: 20m
+    plan-pending-limit: 5
+    plan-daily-limit: 30
   oidc:
     issuer-uri: ${APP_OIDC_ISSUER_URI:}
     public-base-url: ${APP_OIDC_PUBLIC_BASE_URL:}
     internal-base-url: ${APP_OIDC_INTERNAL_BASE_URL:}
     client-secret: ${APP_OIDC_CLIENT_SECRET:}
+  max:
+    api-base-url: https://platform-api2.max.ru
+    public-base-url: ${MAX_PUBLIC_BASE_URL:${app.oidc.public-base-url:}}
+    bot-token: ${MAX_BOT_TOKEN:}
+    trust-dir: ${MAX_TRUST_DIR:/etc/rtk-crm/max}
+    connect-timeout: 5s
+    read-timeout: 10s
+    link-code-ttl: 10m
+    init-data-max-age: 1h
+    session-idle: 30m
+    session-lifetime: 4h
+    message-ttl: 24h
+    quiet-before-hour: 9
+    quiet-after-hour: 20
+    jobs-enabled: true
+    inbox-delay: PT5S
+    sender-delay: PT10S
+    collector-delay: PT5M
+    watch-delay: PT1H
+    digest-cron: ${MAX_DIGEST_CRON:0 0 9 * * MON-FRI}
+    retention-cron: ${MAX_RETENTION_CRON:0 45 3 * * *}
+    inbox-retention: 7d
+    outbox-retention: 30d
+  # Почта: сервер, режим и отправитель задаются в «Администрировании → Почта»; здесь — адрес CRM для ссылок и расписание.
+  mail:
+    public-base-url: ${MAIL_PUBLIC_BASE_URL:${app.oidc.public-base-url:}}
+    jobs-enabled: true
+    message-ttl: 48h
+    invitation-ttl: 72h
+    retention: 30d
+    connect-timeout: 10s
+    sender-delay: PT30S
+    collector-delay: PT5M
+    digest-cron: ${MAIL_DIGEST_CRON:0 0 9 * * MON-FRI}
+    weekly-cron: ${MAIL_WEEKLY_CRON:0 5 9 * * MON}
+    retention-cron: ${MAIL_RETENTION_CRON:0 50 3 * * *}

@@ -177,6 +177,13 @@
   margin: 0;
 }
 
+.pd-preview {
+  margin: 0;
+  padding-left: var(--space-4);
+  display: grid;
+  gap: var(--space-1);
+}
+
 /* Сроки хранения */
 
 .retention-table th:first-child {

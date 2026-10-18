@@ -225,6 +225,123 @@ function Set-CrmRole([string]$Username, [string]$Role) {
     Invoke-Keycloak @('add-roles', '-r', 'rtk-crm', '--uusername', $Username, '--rolename', "crm-$($Role.ToLowerInvariant())") | Out-Null
 }
 
+# MCP для ИИ-агентов (docs/mcp.md). Клиентский scope crm-mcp кладёт в access token aud=crm-mcp и роли CRM; публичный
+# клиент crm-mcp-client входит по PKCE с экраном согласия, без offline_access. Регистрации клиентов «на лету» (DCR) нет:
+# адреса возврата клиентов перечисляются в MCP_REDIRECT_URIS. При MCP_ENABLED=false уже заведённый клиент отключается,
+# а realm не пересоздаётся ни в каком случае.
+function Get-KeycloakScopeId([string]$Name) {
+    return @(Invoke-Keycloak @('get', 'client-scopes', '-r', 'rtk-crm') | ConvertFrom-Json | Where-Object { $_.name -ceq $Name } |
+        ForEach-Object { $_.id })
+}
+
+function Set-KeycloakScopeMapper([string]$ScopeId, [string]$Name, [string]$Mapper, [hashtable]$Config) {
+    $definition = [ordered]@{ name = $Name; protocol = 'openid-connect'; protocolMapper = $Mapper; config = $Config }
+    $path = "client-scopes/$ScopeId/protocol-mappers/models"
+    $existing = @(Invoke-Keycloak @('get', $path, '-r', 'rtk-crm') | ConvertFrom-Json | Where-Object { $_.name -ceq $Name })
+    if ($existing.Count -eq 0) {
+        $definition | ConvertTo-Json -Compress -Depth 5 |
+            & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh create $path -r rtk-crm -f -
+    }
+    else {
+        $definition['id'] = $existing[0].id
+        $definition | ConvertTo-Json -Compress -Depth 5 |
+            & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh update "$path/$($existing[0].id)" -r rtk-crm -f -
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot configure the Keycloak mapper $Name"
+    }
+}
+
+function Set-McpClient {
+    $client = @(Invoke-Keycloak @('get', 'clients', '-r', 'rtk-crm', '-q', 'clientId=crm-mcp-client') | ConvertFrom-Json)
+    if ($client.Count -gt 1) {
+        throw 'MCP client is not unique'
+    }
+    if ($values['MCP_ENABLED'] -ne 'true') {
+        if ($client.Count -eq 1) {
+            Invoke-Keycloak @('update', "clients/$($client[0].id)", '-r', 'rtk-crm', '-s', 'enabled=false') | Out-Null
+        }
+        return
+    }
+    $scope = Get-KeycloakScopeId 'crm-mcp'
+    if ($scope.Count -eq 0) {
+        $scope = @(New-KeycloakResource 'client-scopes' @{
+            name = 'crm-mcp'
+            protocol = 'openid-connect'
+            attributes = @{
+                'include.in.token.scope' = 'true'
+                'display.on.consent.screen' = 'true'
+                'consent.screen.text' = 'Доступ ИИ-агента к CRM от вашего имени, только чтение'
+            }
+        })
+    }
+    if ($scope.Count -ne 1) {
+        throw 'MCP client scope is not unique'
+    }
+    Set-KeycloakScopeMapper $scope[0] 'crm-mcp audience' 'oidc-audience-mapper' @{
+        'included.custom.audience' = 'crm-mcp'; 'access.token.claim' = 'true'; 'id.token.claim' = 'false'
+        'introspection.token.claim' = 'true'
+    }
+    Set-KeycloakScopeMapper $scope[0] 'crm realm roles' 'oidc-usermodel-realm-role-mapper' @{
+        'claim.name' = 'realm_access.roles'; multivalued = 'true'; 'jsonType.label' = 'String'; 'id.token.claim' = 'false'
+        'access.token.claim' = 'true'; 'userinfo.token.claim' = 'false'; 'introspection.token.claim' = 'true'
+    }
+    $definition = @{
+        clientId = 'crm-mcp-client'
+        name = 'MCP: ИИ-агенты'
+        enabled = $true
+        protocol = 'openid-connect'
+        publicClient = $true
+        standardFlowEnabled = $true
+        implicitFlowEnabled = $false
+        directAccessGrantsEnabled = $false
+        serviceAccountsEnabled = $false
+        consentRequired = $true
+        redirectUris = @($values['MCP_REDIRECT_URIS'] -split ',' | Where-Object { $_ -ne '' })
+        webOrigins = @('+')
+        attributes = @{
+            'pkce.code.challenge.method' = 'S256'
+            'access.token.lifespan' = '300'
+            'oauth2.device.authorization.grant.enabled' = 'false'
+        }
+    }
+    if ($client.Count -eq 0) {
+        $client = @(@{ id = (New-KeycloakResource 'clients' $definition) })
+    }
+    $definition | ConvertTo-Json -Compress -Depth 5 |
+        & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh update "clients/$($client[0].id)" -r rtk-crm -f -
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Cannot update the MCP client'
+    }
+    Invoke-Keycloak @('update', "clients/$($client[0].id)/default-client-scopes/$($scope[0])", '-r', 'rtk-crm') | Out-Null
+    # Scope записи — необязательный: клиент получает его, только если явно запросил, а сотрудник согласился. Он даёт
+    # лишь подготовку плана; записывает план сам сотрудник на экране CRM. Без него у клиента остаётся чтение.
+    $writeScope = Get-KeycloakScopeId 'crm-mcp.write'
+    if ($writeScope.Count -eq 0) {
+        $writeScope = @(New-KeycloakResource 'client-scopes' @{
+            name = 'crm-mcp.write'
+            protocol = 'openid-connect'
+            attributes = @{
+                'include.in.token.scope' = 'true'
+                'display.on.consent.screen' = 'true'
+                'consent.screen.text' = 'Подготовка записей ИИ-агентом; записываете вы сами на экране CRM'
+            }
+        })
+    }
+    if ($writeScope.Count -ne 1) {
+        throw 'MCP write scope is not unique'
+    }
+    Invoke-Keycloak @('update', "clients/$($client[0].id)/optional-client-scopes/$($writeScope[0])", '-r', 'rtk-crm') | Out-Null
+    $offline = Get-KeycloakScopeId 'offline_access'
+    if ($offline.Count -eq 1) {
+        $optional = @(Invoke-Keycloak @('get', "clients/$($client[0].id)/optional-client-scopes", '-r', 'rtk-crm') | ConvertFrom-Json |
+            ForEach-Object { $_.id })
+        if ($optional -contains $offline[0]) {
+            Invoke-Keycloak @('delete', "clients/$($client[0].id)/optional-client-scopes/$($offline[0])", '-r', 'rtk-crm') | Out-Null
+        }
+    }
+}
+
 function Ensure-CrmAdministrator {
     $username = $values['CRM_ADMIN_USERNAME']
     $existing = Get-KeycloakUsers $username
@@ -283,16 +400,16 @@ function Invoke-MoodleDemo {
         Remove-Item Env:MOODLE_JURY_PASSWORD
     }
     if ($LASTEXITCODE -ne 0) {
-        $setupOutput | Where-Object { $_ -notmatch '^TOKEN=' } | ForEach-Object { [Console]::Error.WriteLine($_) }
+        $setupOutput | Where-Object { $_ -notmatch 'TOKEN=' } | ForEach-Object { [Console]::Error.WriteLine($_) }
         throw 'Moodle demo setup script failed'
     }
     $reported = @{}
     foreach ($line in $setupOutput) {
-        if ($line -match '^(COURSE_IDS|TOKEN|DEMO_JAVA_COURSE|DEMO_DATA_GROUP|DEMO_TEACH_COURSE|DEMO_WEB_COURSE|DEMO_EMPTY_COURSE)=(.+)$') {
+        if ($line -match '^(COURSE_IDS|TOKEN|WRITE_TOKEN|STUDENT_ROLE_ID|DEMO_JAVA_COURSE|DEMO_DATA_GROUP|DEMO_TEACH_COURSE|DEMO_WEB_COURSE|DEMO_EMPTY_COURSE)=(.+)$') {
             $reported[$matches[1]] = $matches[2].Trim()
         }
     }
-    foreach ($key in @('COURSE_IDS', 'TOKEN', 'DEMO_JAVA_COURSE', 'DEMO_DATA_GROUP', 'DEMO_TEACH_COURSE', 'DEMO_WEB_COURSE', 'DEMO_EMPTY_COURSE')) {
+    foreach ($key in @('COURSE_IDS', 'TOKEN', 'WRITE_TOKEN', 'STUDENT_ROLE_ID', 'DEMO_JAVA_COURSE', 'DEMO_DATA_GROUP', 'DEMO_TEACH_COURSE', 'DEMO_WEB_COURSE', 'DEMO_EMPTY_COURSE')) {
         if ([string]::IsNullOrWhiteSpace($reported[$key])) {
             throw 'Moodle demo setup did not report course ids, demo mapping keys and token'
         }
@@ -305,6 +422,9 @@ function Invoke-MoodleDemo {
     $values['MOODLE_DEMO_TEACH_COURSE'] = $reported['DEMO_TEACH_COURSE']
     $values['MOODLE_DEMO_WEB_COURSE'] = $reported['DEMO_WEB_COURSE']
     $values['MOODLE_DEMO_EMPTY_COURSE'] = $reported['DEMO_EMPTY_COURSE']
+    $values['MOODLE_WRITE_ENABLED'] = 'true'
+    $values['MOODLE_WRITE_TOKEN'] = $reported['WRITE_TOKEN']
+    $values['MOODLE_STUDENT_ROLE_ID'] = $reported['STUDENT_ROLE_ID']
 }
 
 function ConvertTo-YamlLiteral([string]$Value) {
@@ -341,6 +461,8 @@ $defaults = [ordered]@{
     SOURCES_SYNC_CRON = '0 0 * * * *'
     ENROLMENT_ACTIVE_KEY_VERSION = 'v1'
     MFA_REQUIRED_FOR_PRIVILEGED = 'false'
+    MCP_ENABLED = 'false'
+    MCP_REDIRECT_URIS = 'http://127.0.0.1:8976/callback,http://localhost:6274/oauth/callback,http://localhost:6274/oauth/callback/debug'
 }
 $secrets = @(
     'POSTGRES_SUPERUSER_PASSWORD',
@@ -402,7 +524,7 @@ if ($values['DEMO_LMS'] -cne 'true' -and $values['DEMO_LMS'] -cne 'false') {
 if ($values['MFA_REQUIRED_FOR_PRIVILEGED'] -cne 'true' -and $values['MFA_REQUIRED_FOR_PRIVILEGED'] -cne 'false') {
     throw 'MFA_REQUIRED_FOR_PRIVILEGED must be true or false'
 }
-foreach ($key in @('MODULE_ENROLMENT_ENABLED', 'MODULE_PARTNER_ENABLED')) {
+foreach ($key in @('MODULE_ENROLMENT_ENABLED', 'MODULE_PARTNER_ENABLED', 'MCP_ENABLED')) {
     if ($values[$key] -cne 'true' -and $values[$key] -cne 'false') {
         throw "$key must be true or false"
     }
@@ -527,8 +649,10 @@ try {
         'add-roles', '-r', 'rtk-crm',
         '--uusername', 'service-account-crm-account-sync',
         '--cclientid', 'realm-management',
-        '--rolename', 'manage-users'
+        '--rolename', 'manage-users',
+        '--rolename', 'view-events'
     ) | Out-Null
+    Set-McpClient
     $issuer = "$($values['PUBLIC_ORIGIN'])/idp/realms/rtk-crm"
     $identityFile = Join-Path $projectRoot '.demo-identities.yml'
     $subjects = @{}
@@ -686,7 +810,11 @@ try {
             "        owner-key: 'kam-h'",
             "      - name: 'Институт без ответственного (демо)'",
             "        type: UNIVERSITY",
-            "        team-key: 'team-c'"
+            "        team-key: 'team-c'",
+            "      - name: 'Технологический университет (демо)'",
+            "        type: UNIVERSITY",
+            "        team-key: 'team-a'",
+            "        owner-key: 'kam-a'"
         )
         if ($values['MOODLE_BASE_URL'] -eq $moodleDemoUrl -and
             -not [string]::IsNullOrWhiteSpace($values['MOODLE_DEMO_JAVA_COURSE']) -and

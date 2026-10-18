@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Organization, WorkControlIdleOrganization } from '../../shared/api/client'
+import { formatMoscowDateTime } from '../../shared/format/datetime'
 import { CardDialog } from '../interactions/cardUi'
 import { OrganizationAssignmentPanel } from '../organizations/OrganizationAssignmentPanel'
 import type { MatrixOpenState } from './ControlMatrix'
@@ -23,12 +24,16 @@ export const IdleOrganizations = ({ organizations, byTeams, open }: {
         <span className="control-manager__name">Без работы</span>
         <span className="control-totals"><span className="control-totals__overdue">вузов {organizations.length}</span></span>
       </summary>
-      <p className="control-muted control-idle__note">За вузом закреплён КАМ, но идущего взаимодействия нет.</p>
+      <p className="control-muted control-idle__note">
+        За вузом закреплён КАМ, но идущего взаимодействия нет. Последнее действие — последняя запись сотрудника по
+        взаимодействиям вуза, без автоматических данных источников.
+      </p>
       <ul className="control-unassigned">
         {shown.map((organization) => (
           <li key={organization.id}>
             <a href={`#/organizations/${organization.id}`}>{organization.name}</a>
-            <span className="control-muted">{`КАМ: ${organization.managerName}${byTeams ? ` · ${organization.teamName}` : ''}`}</span>
+            <span className="control-muted">{`КАМ: ${organization.managerName}${byTeams ? ` · ${organization.teamName}` : ''} · последнее действие: ${
+              organization.lastActionAt ? formatMoscowDateTime(organization.lastActionAt) : 'не зафиксировано'}`}</span>
           </li>
         ))}
       </ul>

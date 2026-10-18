@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import ru.rtk.crm.interaction.InteractionDue;
 import ru.rtk.crm.interaction.InteractionMarks;
+import ru.rtk.crm.interaction.InteractionWorkStatus;
 
 public record ManagerWorkLine(
         UUID interactionId,
@@ -30,14 +31,17 @@ public record ManagerWorkLine(
         boolean created,
         boolean completed
 ) {
+    // Правило срока общее с «Моей работой» (InteractionDue): завершённой работе следующий шаг не нужен — она «В порядке»,
+    // приостановленная оценивается по дате возврата и в «Без шага» не попадает.
     public ManagerWorkDue due(OffsetDateTime now) {
-        if (InteractionDue.OVERDUE.matches(nextAction, nextActionAt, now)) {
+        InteractionWorkStatus status = marks == null ? InteractionWorkStatus.ACTIVE : marks.status();
+        if (InteractionDue.OVERDUE.matches(status, nextAction, nextActionAt, now)) {
             return ManagerWorkDue.OVERDUE;
         }
-        if (InteractionDue.NO_NEXT_STEP.matches(nextAction, nextActionAt, now)) {
+        if (InteractionDue.NO_NEXT_STEP.matches(status, nextAction, nextActionAt, now)) {
             return ManagerWorkDue.NO_NEXT_STEP;
         }
-        return InteractionDue.THIS_WEEK.matches(nextAction, nextActionAt, now) ? ManagerWorkDue.THIS_WEEK : ManagerWorkDue.IN_ORDER;
+        return InteractionDue.THIS_WEEK.matches(status, nextAction, nextActionAt, now) ? ManagerWorkDue.THIS_WEEK : ManagerWorkDue.IN_ORDER;
     }
 
     public boolean withIssues() {

@@ -57,6 +57,7 @@ import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.report.ReportProperties;
 import ru.rtk.crm.report.ReportStorage;
 import ru.rtk.crm.module.ModuleProperties;
+import ru.rtk.crm.enrolment.EnrolmentBatchTestSchema;
 
 @JdbcTest(properties = {
         "spring.flyway.enabled=false",
@@ -88,6 +89,9 @@ class PersonalDataServiceTest {
     private static final UUID RECENTLY_BLOCKED = UUID.fromString("71000000-0000-0000-0000-000000000005");
     private static final UUID UNIVERSITY = UUID.fromString("72000000-0000-0000-0000-000000000001");
     private static final UUID IDLE_UNIVERSITY = UUID.fromString("72000000-0000-0000-0000-000000000002");
+    private static final UUID NORTH_UNIVERSITY = UUID.fromString("72000000-0000-0000-0000-000000000003");
+    private static final UUID OTHER_TEAM = UUID.fromString("70000000-0000-0000-0000-000000000002");
+    private static final UUID NORTH_INTERACTION = UUID.fromString("74000000-0000-0000-0000-000000000002");
     private static final UUID SUBJECT = UUID.fromString("73000000-0000-0000-0000-000000000001");
     private static final UUID COLLEAGUE = UUID.fromString("73000000-0000-0000-0000-000000000002");
     private static final UUID IDLE_CONTACT = UUID.fromString("73000000-0000-0000-0000-000000000003");
@@ -144,7 +148,7 @@ class PersonalDataServiceTest {
     void setUp() throws IOException {
         createSchema();
         for (String table : List.of(
-                "learner_enrolments", "learners", "enrolment_streams",
+                "agent_change_plans", "learner_enrolments", "learners", "enrolment_streams",
                 "audit_events", "crm_profile_events", "organization_assignment_events", "organization_team_events",
                 "report_jobs", "catalog_import_rows", "source_records", "attachments", "interaction_contacts",
                 "interaction_events", "interactions", "contacts", "command_idempotency_records", "organizations",
@@ -171,7 +175,7 @@ class PersonalDataServiceTest {
         event(MENTION, "Созвонились с UAT Субъект Тестовый, ждём программу");
         event(PHONE_MENTION, "Телефон 8 (000) 000 00 99 уточнён");
         event(NEUTRAL_EVENT, "Без упоминаний");
-        attachment(SUBJECT_FILE, "uat-subject-Testovyy.pdf", subjectFileKey);
+        attachment(SUBJECT_FILE, "uat_subekt_testovyy.pdf", subjectFileKey);
         attachment(PROGRAM_FILE, "program.pdf", programFileKey);
         jdbcTemplate.update("""
                 INSERT INTO source_records (id, source, record_type, external_id, status, organization_id, submitted_at, payload)
@@ -179,9 +183,9 @@ class PersonalDataServiceTest {
                 """, SITE_RECORD, UNIVERSITY, NOW,
                 "{\"representative\":{\"name\":\"UAT Субъект Тестовый\",\"email\":\"uat.subject@example.test\"}}");
         jdbcTemplate.update("INSERT INTO catalog_import_rows (id, plan_json) VALUES (?, ?)",
-                UUID.randomUUID(), "{\"contactName\":\"UAT Субъект Тестовый\"}");
-        report(OLD_REPORT, oldReportKey, NOW.minusDays(10));
-        report(FRESH_REPORT, freshReportKey, NOW.minusHours(1));
+                UUID.randomUUID(), "{\"target\":{\"organizationId\":\"" + UNIVERSITY + "\"},\"contactName\":\"UAT Субъект Тестовый\"}");
+        report(OLD_REPORT, oldReportKey, NOW.minusDays(10), LEADER, "LEADER", TEAM, "EVENTS");
+        report(FRESH_REPORT, freshReportKey, NOW.minusHours(1), KAM, "USER", TEAM, "PORTFOLIO");
     }
 
     @Test
@@ -251,61 +255,74 @@ class PersonalDataServiceTest {
                 .isInstanceOf(PrivacyException.class);
 
         SubjectContact restricted = personalDataService.restrict(
-                administrator, SUBJECT, new ContactRestriction(1, true), "restrict-1", "rq-8"
+                administrator, SUBJECT, new ContactRestriction(1, true, PersonalDataReason.SUBJECT_REQUEST, null), "restrict-1", "rq-8"
         );
         assertThat(restricted.status()).isEqualTo(PersonalDataStatus.RESTRICTED);
+        assertThat(jdbcTemplate.queryForObject("SELECT details FROM audit_events WHERE action = 'CONTACT_RESTRICTED'", String.class))
+                .isEqualTo("основание: обращение субъекта ПДн");
         assertThat(contactRepository.findIdsByOrganizationId(UNIVERSITY, List.of(SUBJECT, COLLEAGUE))).containsExactly(COLLEAGUE);
         assertThat(contactRepository.findByOrganizationId(UNIVERSITY))
                 .filteredOn(contact -> contact.id().equals(SUBJECT))
                 .extracting(contact -> contact.personalDataStatus())
                 .containsExactly(PersonalDataStatus.RESTRICTED);
         assertThatThrownBy(() -> personalDataService.restrict(
-                administrator, SUBJECT, new ContactRestriction(2, true), "restrict-2", "rq-9"
+                administrator, SUBJECT, new ContactRestriction(2, true, PersonalDataReason.SUBJECT_REQUEST, null), "restrict-2", "rq-9"
         )).isInstanceOf(InteractionValidationException.class);
         assertThatThrownBy(() -> personalDataService.restrict(
-                leader, SUBJECT, new ContactRestriction(2, false), "restrict-leader", "rq-10"
+                leader, SUBJECT, new ContactRestriction(2, false, PersonalDataReason.SUBJECT_REQUEST, null), "restrict-leader", "rq-10"
         )).isInstanceOf(AdminCrmProfileAccessDeniedException.class);
 
         personalDataService.anonymize(
-                administrator, new AnonymizationRequest(null, List.of(SUBJECT), List.of(), List.of(), List.of()), "anonymize-rectified", "rq-10a"
+                administrator, request(null, List.of(SUBJECT), List.of(), List.of(), List.of()), "anonymize-rectified", "rq-10a"
         );
         assertThat(jdbcTemplate.queryForList("SELECT details FROM audit_events WHERE action = 'CONTACT_RECTIFIED'", String.class))
                 .containsExactly("изменены поля: должность, телефон");
     }
 
     @Test
-    void anonymizationReplacesWholeWordsAndLeavesIdentifiersInsideStoredJson() throws IOException {
+    void anonymizationReplacesOnlyFullNameAndIdentifiersAndLeavesIdsInsideStoredJson() throws IOException {
+        UUID anna = UUID.fromString("73000000-0000-0000-0000-000000000010");
         UUID shortName = UUID.randomUUID();
         UUID commandId = UUID.randomUUID();
+        UUID foreignCommand = UUID.randomUUID();
         String storedId = "00000000-0000-1234-5678-000000000000";
-        event(shortName, "Жанна и Анна обсудили план, Анна перезвонит по 1234-5678");
+        contact(anna, UNIVERSITY, "Анна Сидорова", null, "1234-5678", NOW);
+        event(shortName, "Жанна и Анна Сидорова обсудили план, Анна перезвонит по 1234-5678");
         jdbcTemplate.update("""
                 INSERT INTO command_idempotency_records (
                     id, actor_profile_id, operation, idempotency_key, request_fingerprint, result_json, created_at
-                ) VALUES (?, ?, 'CREATE_INTERACTION', 'stored-command', ?, ?, ?)
+                ) VALUES (?, ?, 'CREATE_INTERACTION', 'stored-command', ?, ?, ?),
+                         (?, ?, 'CREATE_INTERACTION', 'foreign-command', ?, ?, ?)
                 """, commandId, KAM, "0".repeat(64),
-                "{\"id\":\"" + storedId + "\",\"version\":12345678,\"title\":\"Встреча с Анна, тел. 1234-5678\"}", NOW);
+                "{\"id\":\"" + storedId + "\",\"organizationId\":\"" + UNIVERSITY
+                        + "\",\"version\":12345678,\"title\":\"Встреча с Анна Сидорова, тел. 1234-5678\"}", NOW,
+                foreignCommand, KAM, "1".repeat(64),
+                "{\"organizationId\":\"" + IDLE_UNIVERSITY + "\",\"title\":\"Встреча с Анна Сидорова\"}", NOW);
 
         personalDataService.anonymize(
                 administrator,
-                new AnonymizationRequest(new SubjectQuery("Анна", null, "1234-5678", null, null), List.of(), List.of(), List.of(), List.of()),
+                request(new SubjectQuery("Анна", null, null, null, null), List.of(anna), List.of(), List.of(), List.of()),
                 "anonymize-short-name",
                 "rq-short"
         );
 
-        assertThat(comment(shortName)).isEqualTo("Жанна и Контакт обезличен обсудили план, Контакт обезличен перезвонит по Контакт обезличен");
+        // Отдельное «Анна» — не ФИО: остаётся, как и «Жанна».
+        assertThat(comment(shortName)).isEqualTo("Жанна и Контакт обезличен обсудили план, Анна перезвонит по Контакт обезличен");
         var stored = objectMapper.readTree(jdbcTemplate.queryForObject(
                 "SELECT result_json FROM command_idempotency_records WHERE id = ?", String.class, commandId
         ));
         assertThat(stored.path("id").asText()).isEqualTo(storedId);
         assertThat(stored.path("version").asInt()).isEqualTo(12345678);
         assertThat(stored.path("title").asText()).isEqualTo("Встреча с Контакт обезличен, тел. Контакт обезличен");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT result_json FROM command_idempotency_records WHERE id = ?", String.class, foreignCommand
+        )).contains("Встреча с Анна Сидорова");
         assertThat(comment(MENTION)).isEqualTo("Созвонились с UAT Субъект Тестовый, ждём программу");
     }
 
     @Test
     void anonymizationReplacesSubjectEverywhereDeletesChosenFilesAndKeepsHistory() throws IOException {
-        AnonymizationRequest request = new AnonymizationRequest(
+        AnonymizationRequest request = request(
                 new SubjectQuery(SUBJECT_NAME, null, "+7 000 000-00-99", "Testovyy", null),
                 List.of(SUBJECT),
                 List.of(),
@@ -319,6 +336,7 @@ class PersonalDataServiceTest {
         assertThat(result.attachmentsDeleted()).isEqualTo(1);
         assertThat(result.sourceRecords()).isEqualTo(1);
         assertThat(result.reportFilesDeleted()).isEqualTo(2);
+        assertThat(result.attachmentsRenamed()).isZero();
         assertThat(jdbcTemplate.queryForMap("SELECT name, email, phone, personal_data_status, external_key FROM contacts WHERE id = ?", SUBJECT))
                 .containsEntry("NAME", "Контакт обезличен")
                 .containsEntry("EMAIL", null)
@@ -340,16 +358,26 @@ class PersonalDataServiceTest {
         assertThat(jdbcTemplate.queryForObject("SELECT plan_json FROM catalog_import_rows", String.class)).doesNotContain("Тестовый");
         assertThat(jdbcTemplate.queryForList("SELECT error_code FROM report_jobs", String.class))
                 .containsOnly("REPORT_RESULT_EXPIRED");
+        assertThat(jdbcTemplate.queryForList("SELECT error_message FROM report_jobs", String.class))
+                .allSatisfy(message -> assertThat(message).contains("сформирован до обезличивания"));
         assertThat(Files.exists(reportProperties.storageRoot().resolve(oldReportKey.toString()))).isFalse();
-        assertThat(jdbcTemplate.queryForObject("SELECT details FROM audit_events WHERE action = 'SUBJECT_ANONYMIZED'", String.class))
-                .contains("контактов: 1").doesNotContain("Тестовый");
+        assertThat(jdbcTemplate.queryForMap(
+                "SELECT object_type, object_id, object_name, details FROM audit_events WHERE action = 'SUBJECT_ANONYMIZED'"
+        ))
+                .containsEntry("OBJECT_TYPE", "CONTACT")
+                .containsEntry("OBJECT_ID", SUBJECT)
+                .containsEntry("OBJECT_NAME", "Контакт 73000000, вуз «Университет А»")
+                .hasEntrySatisfying("DETAILS", details -> assertThat((String) details)
+                        .startsWith("основание: обращение субъекта ПДн; изменено: контактов: 1")
+                        .contains("удалено вложений: 1").contains("удалено файлов отчётов: 2")
+                        .doesNotContain("Тестовый"));
 
         SubjectSearchResult after = personalDataService.search(administrator, new SubjectQuery(SUBJECT_NAME, null, null, null, null), "rq-12");
         assertThat(after.contacts()).isEmpty();
         assertThat(after.mentions()).isEmpty();
         assertThat(personalDataService.anonymize(administrator, request, "anonymize-1", "rq-11")).isEqualTo(result);
         assertThatThrownBy(() -> personalDataService.anonymize(
-                administrator, new AnonymizationRequest(null, List.of(COLLEAGUE), List.of(), List.of(), List.of()), "anonymize-1", "rq-13"
+                administrator, request(null, List.of(COLLEAGUE), List.of(), List.of(), List.of()), "anonymize-1", "rq-13"
         )).isInstanceOfSatisfying(InteractionConflictException.class, exception ->
                 assertThat(exception.code()).isEqualTo("IDEMPOTENCY_CONFLICT"));
         assertThatThrownBy(() -> personalDataService.rectify(
@@ -380,12 +408,12 @@ class PersonalDataServiceTest {
         event(UUID.randomUUID(), "Передал дела, Пётр Уволенный");
 
         assertThatThrownBy(() -> personalDataService.anonymize(
-                administrator, new AnonymizationRequest(null, List.of(), List.of(KAM), List.of(), List.of()), "anonymize-active", "rq-15"
+                administrator, request(null, List.of(), List.of(KAM), List.of(), List.of()), "anonymize-active", "rq-15"
         )).isInstanceOfSatisfying(PrivacyException.class, exception ->
                 assertThat(exception.code()).isEqualTo("PROFILE_ACTIVE"));
 
         AnonymizationResult result = personalDataService.anonymize(
-                administrator, new AnonymizationRequest(null, List.of(), List.of(DISMISSED), List.of(), List.of()), "anonymize-petr", "rq-16"
+                administrator, request(null, List.of(), List.of(DISMISSED), List.of(), List.of()), "anonymize-petr", "rq-16"
         );
 
         assertThat(result.profiles()).isEqualTo(1);
@@ -465,29 +493,29 @@ class PersonalDataServiceTest {
         )).containsExactly("формат JSON", "формат PDF");
 
         SubjectLearner restricted = personalDataService.restrictLearner(
-                administrator, learner, new ContactRestriction(0, true), "restrict-learner", "rq-l7"
+                administrator, learner, new ContactRestriction(0, true, PersonalDataReason.SUBJECT_REQUEST, null), "restrict-learner", "rq-l7"
         );
         assertThat(restricted.status()).isEqualTo(PersonalDataStatus.RESTRICTED);
         assertThat(restricted.version()).isEqualTo(1);
         assertThat(personalDataService.restrictLearner(
-                administrator, learner, new ContactRestriction(0, true), "restrict-learner", "rq-l7"
+                administrator, learner, new ContactRestriction(0, true, PersonalDataReason.SUBJECT_REQUEST, null), "restrict-learner", "rq-l7"
         )).isEqualTo(restricted);
         assertThatThrownBy(() -> personalDataService.restrictLearner(
-                administrator, learner, new ContactRestriction(0, false), "restrict-learner-stale", "rq-l8"
+                administrator, learner, new ContactRestriction(0, false, PersonalDataReason.SUBJECT_REQUEST, null), "restrict-learner-stale", "rq-l8"
         )).isInstanceOfSatisfying(PrivacyException.class, exception -> {
             assertThat(exception.code()).isEqualTo("VERSION_CONFLICT");
             assertThat(exception.currentVersion()).isEqualTo(1);
         });
         assertThatThrownBy(() -> personalDataService.restrictLearner(
-                leader, learner, new ContactRestriction(1, false), "restrict-learner-leader", "rq-l9"
+                leader, learner, new ContactRestriction(1, false, PersonalDataReason.SUBJECT_REQUEST, null), "restrict-learner-leader", "rq-l9"
         )).isInstanceOf(AdminCrmProfileAccessDeniedException.class);
         assertThatThrownBy(() -> personalDataService.restrictLearner(
-                administrator, UUID.randomUUID(), new ContactRestriction(0, true), "restrict-learner-missing", "rq-l10"
+                administrator, UUID.randomUUID(), new ContactRestriction(0, true, PersonalDataReason.SUBJECT_REQUEST, null), "restrict-learner-missing", "rq-l10"
         )).isInstanceOfSatisfying(PrivacyException.class, exception -> assertThat(exception.code()).isEqualTo("NOT_FOUND"));
 
         AnonymizationResult anonymized = personalDataService.anonymize(
                 administrator,
-                new AnonymizationRequest(null, List.of(), List.of(), List.of(), List.of(learner)),
+                request(null, List.of(), List.of(), List.of(), List.of(learner)),
                 "anonymize-learner",
                 "rq-l11"
         );
@@ -502,7 +530,7 @@ class PersonalDataServiceTest {
         assertThat(personalDataService.search(administrator, new SubjectQuery(null, null, null, null, "11223344595"), "rq-l12")
                 .learners()).isEmpty();
         assertThatThrownBy(() -> personalDataService.restrictLearner(
-                administrator, learner, new ContactRestriction(2, false), "restrict-learner-anonymized", "rq-l13"
+                administrator, learner, new ContactRestriction(2, false, PersonalDataReason.SUBJECT_REQUEST, null), "restrict-learner-anonymized", "rq-l13"
         )).isInstanceOfSatisfying(PrivacyException.class, exception ->
                 assertThat(exception.code()).isEqualTo("PERSONAL_DATA_ANONYMIZED"));
         assertThat(jdbcTemplate.queryForList("""
@@ -525,7 +553,7 @@ class PersonalDataServiceTest {
                 SELECT action || '|' || actor_display_name || '|' || object_name || '|' || details || '|' || request_id
                 FROM audit_events ORDER BY request_id
                 """, String.class)).containsExactly(
-                "ATTACHMENT_DOWNLOADED|КАМ А|uat-subject-Testovyy.pdf|вуз «Университет А», карточка «Демо: внедрение»|rq-file",
+                "ATTACHMENT_DOWNLOADED|КАМ А|uat_subekt_testovyy.pdf|вуз «Университет А», карточка «Демо: внедрение»|rq-file",
                 "REPORT_DOWNLOADED|КАМ А|События.xlsx|формат XLSX, строк: 3|rq-report"
         );
     }
@@ -573,7 +601,8 @@ class PersonalDataServiceTest {
         assertThat(jdbcTemplate.queryForMap("SELECT actor_display_name, details FROM audit_events WHERE action = 'RETENTION_APPLIED'"))
                 .containsEntry("ACTOR_DISPLAY_NAME", "Система")
                 .containsEntry("DETAILS", "удалено файлов отчётов: 1, обезличено контактов: 1, обезличено профилей: 1, "
-                        + "обезличено анкет слушателей: 1, удалено записей журнала: 1");
+                        + "обезличено анкет слушателей: 1, удалено записей журнала: 1, "
+                        + "истекло планов ИИ-агента: 0, удалено планов ИИ-агента: 0");
         assertThat(jdbcTemplate.queryForMap("SELECT personal_data_status, fields FROM learners WHERE id = ?", expiredLearner))
                 .containsEntry("PERSONAL_DATA_STATUS", "ANONYMIZED")
                 .containsEntry("FIELDS", null);
@@ -587,6 +616,220 @@ class PersonalDataServiceTest {
         assertThat(RetentionService.term(Period.ofDays(0))).isEqualTo("0 дн.");
         assertThat(retentionService.policy(administrator).lastRun()).isNotNull();
         assertThat(retentionService.policy(administrator).reportFilesDays()).isEqualTo(7);
+    }
+
+    @Test
+    void agentPlanTextsAreFoundAndAnonymizedLikeInteractionComments() {
+        UUID plan = agentPlan("APPLIED", "Договорились с UAT Субъект Тестовый о встрече", "Написать uat.subject@example.test",
+                NOW.minusHours(2), NOW.minusHours(1));
+
+        SubjectSearchResult found = personalDataService.search(
+                administrator, new SubjectQuery(SUBJECT_NAME, SUBJECT_EMAIL, null, null, null), "rq-plan-1"
+        );
+        assertThat(found.mentions()).filteredOn(mention -> mention.place() == MentionPlace.AGENT_PLAN)
+                .extracting(SubjectMention::text)
+                .containsExactlyInAnyOrder("Договорились с UAT Субъект Тестовый о встрече", "Написать uat.subject@example.test");
+
+        AnonymizationResult result = personalDataService.anonymize(administrator, request(
+                new SubjectQuery(SUBJECT_NAME, SUBJECT_EMAIL, null, null, null), List.of(SUBJECT), List.of(), List.of(), List.of()
+        ), "anonymize-plan", "rq-plan-2");
+
+        assertThat(jdbcTemplate.queryForMap("SELECT note_text, next_action FROM agent_change_plans WHERE id = ?", plan))
+                .containsEntry("NOTE_TEXT", "Договорились с Контакт обезличен о встрече")
+                .containsEntry("NEXT_ACTION", "Написать Контакт обезличен");
+        // Два текста плана считаются упоминаниями, как комментарий и шаг события.
+        assertThat(result.mentions()).isGreaterThanOrEqualTo(2);
+        assertThat(personalDataService.search(administrator, new SubjectQuery(SUBJECT_NAME, null, null, null, null), "rq-plan-3")
+                .mentions()).isEmpty();
+    }
+
+    @Test
+    void retentionExpiresForgottenPlansAndDeletesDecidedPlansAfterTheirTerm() {
+        UUID forgotten = agentPlan("PENDING", "Позвонить", "Отправить программу", NOW.minusHours(1), null);
+        UUID waiting = agentPlan("PENDING", "Позвонить", "Отправить программу", NOW.minusMinutes(5), null);
+        UUID oldApplied = agentPlan("APPLIED", "Позвонить", "Отправить программу", NOW.minusDays(40), NOW.minusDays(31));
+        UUID oldRejected = agentPlan("REJECTED", "Позвонить", "Отправить программу", NOW.minusDays(40), NOW.minusDays(31));
+        UUID oldExpired = agentPlan("EXPIRED", "Позвонить", "Отправить программу", NOW.minusDays(40), NOW.minusDays(31));
+        UUID oldStale = agentPlan("STALE", "Позвонить", "Отправить программу", NOW.minusDays(40), NOW.minusDays(31));
+        UUID oldFailed = agentPlan("FAILED", "Позвонить", "Отправить программу", NOW.minusDays(40), NOW.minusDays(31));
+        UUID recentRejected = agentPlan("REJECTED", "Позвонить", "Отправить программу", NOW.minusDays(29), NOW.minusDays(29));
+
+        RetentionRun run = retentionService.run(administrator, "rq-plans");
+
+        assertThat(run.agentPlansExpired()).isEqualTo(1);
+        assertThat(run.agentPlansDeleted()).isEqualTo(5);
+        assertThat(jdbcTemplate.queryForList("SELECT id FROM agent_change_plans", UUID.class))
+                .containsExactlyInAnyOrder(forgotten, waiting, recentRejected);
+        assertThat(jdbcTemplate.queryForMap("SELECT state, decided_at, decided_by FROM agent_change_plans WHERE id = ?", forgotten))
+                .containsEntry("STATE", "EXPIRED")
+                .containsEntry("DECIDED_BY", null)
+                .extractingByKey("DECIDED_AT").isNotNull();
+        assertThat(jdbcTemplate.queryForObject("SELECT state FROM agent_change_plans WHERE id = ?", String.class, waiting))
+                .isEqualTo("PENDING");
+        assertThat(jdbcTemplate.queryForList("SELECT object_name FROM audit_events WHERE action = 'AGENT_PLAN_EXPIRED'", String.class))
+                .containsExactly("план " + forgotten);
+        assertThat(jdbcTemplate.queryForObject("SELECT details FROM audit_events WHERE action = 'RETENTION_APPLIED'", String.class))
+                .endsWith("истекло планов ИИ-агента: 1, удалено планов ИИ-агента: 5");
+        assertThat(retentionService.policy(administrator).agentPlansDays()).isEqualTo(30);
+        assertThat(retentionService.run(administrator, "rq-plans-again").agentPlansExpired()).isZero();
+    }
+
+    // Д-1: обезличивание «Иванов Аудит» переименовало чужой «Audit-KAM2-…» по слову «Аудит» в транслитерации.
+    @Test
+    void anonymizingIvanovAuditLeavesForeignAuditFileAndSeparateWordsUntouched() throws IOException {
+        UUID ivanov = UUID.fromString("73000000-0000-0000-0000-000000000020");
+        UUID ownFile = UUID.randomUUID();
+        UUID sameUniversityAuditFile = UUID.randomUUID();
+        UUID foreignAuditFile = UUID.randomUUID();
+        UUID wordsEvent = UUID.randomUUID();
+        UUID namesakeEvent = UUID.randomUUID();
+        organization(NORTH_UNIVERSITY, "Аудит-КАМ2-Университет Северный");
+        jdbcTemplate.update("""
+                INSERT INTO interactions (id, organization_id, title, next_action, version, created_at, updated_at)
+                VALUES (?, ?, 'Аудит: встреча', CAST(NULL AS VARCHAR(500)), 0, ?, ?)
+                """, NORTH_INTERACTION, NORTH_UNIVERSITY, NOW, NOW);
+        contact(ivanov, UNIVERSITY, "Иванов Аудит", "ivanov.audit@example.test", null, NOW);
+        jdbcTemplate.update("INSERT INTO interaction_contacts (interaction_id, organization_id, contact_id) VALUES (?, ?, ?)",
+                INTERACTION, UNIVERSITY, ivanov);
+        attachment(ownFile, "Ivanov_Audit_pasport.pdf", UUID.randomUUID());
+        attachment(sameUniversityAuditFile, "Audit-plan.pdf", UUID.randomUUID());
+        attachment(foreignAuditFile, NORTH_INTERACTION, "Audit-KAM2-protokol-vstrechi.pdf", UUID.randomUUID());
+        event(wordsEvent, "Аудит прошёл, Иванов доволен");
+        jdbcTemplate.update("""
+                INSERT INTO interaction_events (id, interaction_id, comment, next_action, actor_profile_id, occurred_at)
+                VALUES (?, ?, 'Созвонились с Иванов Аудит из Северного', CAST(NULL AS VARCHAR(500)), ?, ?)
+                """, namesakeEvent, NORTH_INTERACTION, KAM, NOW);
+
+        assertThat(personalDataService.search(
+                administrator, new SubjectQuery("Иванов Аудит", null, null, null, null), "rq-audit-1"
+        ).attachments()).extracting(SubjectAttachment::id).containsExactly(ownFile);
+        assertThat(personalDataService.search(
+                administrator, new SubjectQuery("Аудит-адм-Контакт", null, null, null, null), "rq-audit-2"
+        ).attachments()).isEmpty();
+
+        // Строка поиска и одиночное «другое написание» в замену не попадают.
+        AnonymizationRequest request = request(
+                new SubjectQuery("Аудит", null, null, "Audit", null), List.of(ivanov), List.of(), List.of(), List.of()
+        );
+        AnonymizationResult preview = personalDataService.previewAnonymization(administrator, request);
+        assertThat(fileName(ownFile)).isEqualTo("Ivanov_Audit_pasport.pdf");
+        assertThat(status(ivanov)).isEqualTo("ACTIVE");
+
+        AnonymizationResult result = personalDataService.anonymize(administrator, request, "anonymize-audit", "rq-audit-3");
+
+        assertThat(result).isEqualTo(preview);
+        assertThat(result.contacts()).isEqualTo(1);
+        assertThat(result.attachmentsRenamed()).isEqualTo(1);
+        assertThat(fileName(ownFile)).isEqualTo("Контакт обезличен_pasport.pdf");
+        assertThat(fileName(sameUniversityAuditFile)).isEqualTo("Audit-plan.pdf");
+        assertThat(fileName(foreignAuditFile)).isEqualTo("Audit-KAM2-protokol-vstrechi.pdf");
+        assertThat(comment(wordsEvent)).isEqualTo("Аудит прошёл, Иванов доволен");
+        assertThat(comment(namesakeEvent)).isEqualTo("Созвонились с Иванов Аудит из Северного");
+        assertThat(comment(MENTION)).isEqualTo("Созвонились с UAT Субъект Тестовый, ждём программу");
+    }
+
+    // Д-1: обезличивание одного контакта удалило 81 готовый отчёт всех пользователей.
+    @Test
+    void anonymizationDeletesOnlyReportsOfThoseWhoSawTheSubjectAndKeepsOtherUsersReports() throws IOException {
+        UUID previousTeam = UUID.fromString("70000000-0000-0000-0000-000000000003");
+        UUID managementReport = UUID.randomUUID();
+        UUID previousTeamReport = UUID.randomUUID();
+        UUID otherTeamReport = UUID.randomUUID();
+        UUID demandReport = UUID.randomUUID();
+        UUID adminReport = UUID.randomUUID();
+        UUID otherTeamKey = UUID.randomUUID();
+        UUID demandKey = UUID.randomUUID();
+        UUID adminKey = UUID.randomUUID();
+        UUID managementKey = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO organization_team_events (id, organization_id, previous_team_id, team_id, actor_profile_id, actor_display_name)
+                VALUES (?, ?, ?, ?, ?, 'Администратор')
+                """, UUID.randomUUID(), UNIVERSITY, previousTeam, TEAM, ADMIN);
+        report(managementReport, managementKey, NOW.minusHours(2), UUID.randomUUID(), "MANAGEMENT", null, "EVENTS");
+        report(previousTeamReport, UUID.randomUUID(), NOW.minusHours(2), UUID.randomUUID(), "LEADER", previousTeam, "MANAGER_WORK");
+        report(otherTeamReport, otherTeamKey, NOW.minusHours(2), UUID.randomUUID(), "LEADER", OTHER_TEAM, "PORTFOLIO");
+        report(demandReport, demandKey, NOW.minusHours(2), LEADER, "LEADER", TEAM, "DEMAND");
+        report(adminReport, adminKey, NOW.minusHours(2), ADMIN, "ADMIN", null, "PORTFOLIO");
+
+        AnonymizationResult result = personalDataService.anonymize(
+                administrator, request(null, List.of(SUBJECT), List.of(), List.of(), List.of()), "anonymize-reports", "rq-reports"
+        );
+
+        assertThat(result.reportFilesDeleted()).isEqualTo(4);
+        assertThat(jdbcTemplate.queryForList("SELECT id FROM report_jobs WHERE error_code = 'REPORT_RESULT_EXPIRED'", UUID.class))
+                .containsExactlyInAnyOrder(OLD_REPORT, FRESH_REPORT, managementReport, previousTeamReport);
+        assertThat(jdbcTemplate.queryForList("SELECT id FROM report_jobs WHERE result_storage_key IS NOT NULL", UUID.class))
+                .containsExactlyInAnyOrder(otherTeamReport, demandReport, adminReport);
+        for (UUID kept : List.of(otherTeamKey, demandKey, adminKey)) {
+            assertThat(Files.exists(reportProperties.storageRoot().resolve(kept.toString()))).isTrue();
+        }
+        assertThat(Files.exists(reportProperties.storageRoot().resolve(managementKey.toString()))).isFalse();
+    }
+
+    // Д-6: «Ограничить обработку» и «Обезличить» без основания не выполняются; основание и комментарий — в журнале.
+    @Test
+    void restrictionAndAnonymizationRequireReasonAndExportRequiresExactIdentifiers() {
+        assertThatThrownBy(() -> personalDataService.restrict(
+                administrator, SUBJECT, new ContactRestriction(0, true, null, null), "restrict-no-reason", "rq-reason-1"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("reason"));
+        assertThatThrownBy(() -> personalDataService.restrict(
+                administrator, SUBJECT, new ContactRestriction(0, true, PersonalDataReason.OTHER, " "), "restrict-other", "rq-reason-2"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("comment"));
+        assertThatThrownBy(() -> personalDataService.anonymize(
+                administrator, new AnonymizationRequest(null, List.of(SUBJECT), List.of(), List.of(), List.of(), null, null),
+                "anonymize-no-reason", "rq-reason-3"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("reason"));
+        assertThatThrownBy(() -> personalDataService.anonymize(
+                administrator, request(new SubjectQuery(SUBJECT_NAME, null, null, null, null), List.of(), List.of(), List.of(), List.of()),
+                "anonymize-nothing-selected", "rq-reason-4"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("contactIds"));
+        assertThat(status(SUBJECT)).isEqualTo("ACTIVE");
+        assertThat(comment(MENTION)).isEqualTo("Созвонились с UAT Субъект Тестовый, ждём программу");
+
+        personalDataService.restrict(
+                administrator, SUBJECT, new ContactRestriction(0, true, PersonalDataReason.OTHER, "обращение №12 от 18.10"),
+                "restrict-with-reason", "rq-reason-5"
+        );
+        assertThat(jdbcTemplate.queryForObject("SELECT details FROM audit_events WHERE action = 'CONTACT_RESTRICTED'", String.class))
+                .isEqualTo("основание: другое; комментарий: обращение №12 от 18.10");
+
+        assertThatThrownBy(() -> personalDataService.export(
+                administrator, new SubjectQuery("Тестовый", null, null, null, null), SubjectExportFormat.JSON, "rq-reason-6"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("name"));
+        assertThatThrownBy(() -> personalDataService.export(
+                administrator, new SubjectQuery(null, "example.test", null, null, null), SubjectExportFormat.JSON, "rq-reason-7"
+        )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                assertThat(exception.field()).isEqualTo("email"));
+    }
+
+    // Срок подтверждения — 20 минут от создания; у решённого плана decided_at задан, у ожидающего нет.
+    private UUID agentPlan(String state, String note, String nextAction, OffsetDateTime createdAt, OffsetDateTime decidedAt) {
+        UUID id = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO agent_change_plans (
+                    id, requester_profile_id, client_id, interaction_id, stage_id, expected_version, note_text, next_action,
+                    next_action_at, state, created_at, expires_at, decided_by, decided_at
+                ) VALUES (?, ?, 'mcp-client', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, id, KAM, INTERACTION, UUID.randomUUID(), note, nextAction, NOW.plusDays(3), state, createdAt,
+                createdAt.plusMinutes(20), decidedAt == null || "EXPIRED".equals(state) ? null : KAM, decidedAt);
+        return id;
+    }
+
+    private static AnonymizationRequest request(
+            SubjectQuery subject,
+            List<UUID> contactIds,
+            List<UUID> profileIds,
+            List<UUID> attachmentIds,
+            List<UUID> learnerIds
+    ) {
+        return new AnonymizationRequest(
+                subject, contactIds, profileIds, attachmentIds, learnerIds, PersonalDataReason.SUBJECT_REQUEST, null
+        );
     }
 
     private UUID stream(String course, LocalDate endsOn) {
@@ -677,19 +920,28 @@ class PersonalDataServiceTest {
     }
 
     private void attachment(UUID id, String name, UUID storageKey) throws IOException {
+        attachment(id, INTERACTION, name, storageKey);
+    }
+
+    private void attachment(UUID id, UUID interactionId, String name, UUID storageKey) throws IOException {
         Files.writeString(attachmentProperties.storageRoot().resolve(storageKey.toString()), "content");
         jdbcTemplate.update("""
                 INSERT INTO attachments (id, interaction_id, original_name, size_bytes, storage_key, status, created_at)
                 VALUES (?, ?, ?, 7, ?, 'CLEAN', ?)
-                """, id, INTERACTION, name, storageKey, NOW);
+                """, id, interactionId, name, storageKey, NOW);
     }
 
-    private void report(UUID id, UUID storageKey, OffsetDateTime finishedAt) throws IOException {
+    private void report(UUID id, UUID storageKey, OffsetDateTime finishedAt, UUID owner, String role, UUID team, String kind)
+            throws IOException {
         Files.writeString(reportProperties.storageRoot().resolve(storageKey.toString()), "report");
         jdbcTemplate.update("""
-                INSERT INTO report_jobs (id, status, result_storage_key, finished_at)
-                VALUES (?, 'SUCCEEDED', ?, ?)
-                """, id, storageKey, finishedAt);
+                INSERT INTO report_jobs (id, owner_profile_id, owner_role, owner_team_id, kind, status, result_storage_key, finished_at)
+                VALUES (?, ?, ?, ?, ?, 'SUCCEEDED', ?, ?)
+                """, id, owner, role, team, kind, storageKey, finishedAt);
+    }
+
+    private String fileName(UUID attachmentId) {
+        return jdbcTemplate.queryForObject("SELECT original_name FROM attachments WHERE id = ?", String.class, attachmentId);
     }
 
     private void createSchema() {
@@ -722,7 +974,7 @@ class PersonalDataServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_issues (
+                CREATE TABLE IF NOT EXISTS interaction_issues (last_comment VARCHAR(1000), last_comment_by UUID, last_comment_at TIMESTAMP WITH TIME ZONE,
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, kind VARCHAR(16) NOT NULL,
                     description VARCHAR(1000) NOT NULL, risk_level VARCHAR(16), responsible_profile_id UUID NOT NULL, due_on DATE,
                     status VARCHAR(16) DEFAULT 'OPEN' NOT NULL, resolution VARCHAR(1000), created_by UUID NOT NULL,
@@ -742,7 +994,7 @@ class PersonalDataServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (
+                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, comment TEXT, next_action VARCHAR(500),
                     actor_profile_id UUID NOT NULL, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
@@ -755,7 +1007,7 @@ class PersonalDataServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), 
+                CREATE TABLE IF NOT EXISTS source_records (stream_no INTEGER, payload_hash CHAR(64), applied_at TIMESTAMP WITH TIME ZONE, 
                     id UUID PRIMARY KEY, source VARCHAR(16) NOT NULL, record_type VARCHAR(64) NOT NULL,
                     external_id VARCHAR(200) NOT NULL, status VARCHAR(16) NOT NULL, organization_id UUID,
                     submitted_at TIMESTAMP WITH TIME ZONE NOT NULL, payload TEXT NOT NULL
@@ -780,7 +1032,8 @@ class PersonalDataServiceTest {
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS report_jobs (
-                    id UUID PRIMARY KEY, status VARCHAR(16) NOT NULL, result_storage_key UUID, error_code VARCHAR(64),
+                    id UUID PRIMARY KEY, owner_profile_id UUID NOT NULL, owner_role VARCHAR(16) NOT NULL, owner_team_id UUID,
+                    kind VARCHAR(16) NOT NULL, status VARCHAR(16) NOT NULL, result_storage_key UUID, error_code VARCHAR(64),
                     error_message VARCHAR(500), finished_at TIMESTAMP WITH TIME ZONE, format VARCHAR(8), row_count INTEGER,
                     result_file_name VARCHAR(255)
                 )
@@ -819,15 +1072,28 @@ class PersonalDataServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS learner_enrolments (
+                CREATE TABLE IF NOT EXISTS learner_enrolments (lms_synced_version INTEGER, lms_reconcile_reason VARCHAR(500),
                     id UUID PRIMARY KEY, learner_id UUID NOT NULL, stream_id UUID NOT NULL, source_record_id UUID NOT NULL,
                     lms_export_id UUID, lms_exported_at TIMESTAMP WITH TIME ZONE, lms_transferred_at TIMESTAMP WITH TIME ZONE,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
+                EnrolmentBatchTestSchema.BATCHES,
+                EnrolmentBatchTestSchema.ITEMS,
+                """
+                CREATE TABLE IF NOT EXISTS agent_change_plans (
+                    id UUID PRIMARY KEY, requester_profile_id UUID NOT NULL, client_id VARCHAR(200), interaction_id UUID NOT NULL,
+                    stage_id UUID NOT NULL, expected_version INTEGER NOT NULL, note_text VARCHAR(4000) NOT NULL,
+                    next_action VARCHAR(500) NOT NULL, next_action_at TIMESTAMP WITH TIME ZONE NOT NULL, state VARCHAR(16) NOT NULL,
+                    error_code VARCHAR(64), created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    expires_at TIMESTAMP WITH TIME ZONE NOT NULL, decided_by UUID, decided_at TIMESTAMP WITH TIME ZONE,
+                    command_id UUID
+                )
+                """,
                 """
                 CREATE TABLE IF NOT EXISTS organization_team_events (
-                    id UUID PRIMARY KEY, actor_profile_id UUID NOT NULL, actor_display_name VARCHAR(200) NOT NULL
+                    id UUID PRIMARY KEY, organization_id UUID, previous_team_id UUID, team_id UUID,
+                    previous_owner_manager_id UUID, actor_profile_id UUID NOT NULL, actor_display_name VARCHAR(200) NOT NULL
                 )
                 """
         )) {
@@ -863,7 +1129,8 @@ class PersonalDataServiceTest {
         @Bean
         RetentionProperties retentionProperties() {
             return new RetentionProperties(
-                    "-", Duration.ofDays(7), Duration.ofDays(1095), Duration.ofDays(365), Duration.ofDays(1095), Period.ofYears(3)
+                    "-", Duration.ofDays(7), Duration.ofDays(1095), Duration.ofDays(365), Duration.ofDays(1095),
+                    Duration.ofDays(30), Period.ofYears(3)
             );
         }
 

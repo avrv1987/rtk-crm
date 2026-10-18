@@ -2627,6 +2627,29 @@ button.segmented__option[aria-pressed="true"] {
   background: var(--color-danger-surface);
 }
 
+/* Отметка резервной копии на «Обзоре», вход в систему и передача вузов в карточке сотрудника */
+.admin-overview__warning {
+  color: var(--color-warning);
+}
+
+.employee-login,
+.employee-transfer {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.employee-login h3,
+.employee-login p,
+.employee-transfer p,
+.employee-transfer ul {
+  margin: 0;
+}
+
+.employee-login button {
+  justify-self: start;
+}
+
 @media (max-width: 640px) {
   .app-shell--tabbar {
     padding-bottom: var(--space-14);

@@ -31,6 +31,6 @@ test('у руководителя ровно два подраздела, у а�
   assert.deepEqual(adminSectionsFor('LEADER').map((section) => section.slug), ['workflow-templates', 'pending-source-records'])
   assert.deepEqual(adminSectionsFor('ADMIN').map((section) => section.slug), [
     'overview', 'employees', 'teams', 'organizations', 'catalogs', 'catalog-import', 'workflow-templates',
-    'sources', 'journal', 'personal-data', 'retention'
+    'sources', 'mail', 'journal', 'personal-data', 'retention'
   ])
 })

@@ -38,6 +38,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import ru.rtk.crm.catalog.OrganizationAssignmentRepository;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.module.ModuleProperties;
+import ru.rtk.crm.work.LearningTrend;
 import ru.rtk.crm.work.LearningTrendService;
 import ru.rtk.crm.work.WorkControlModels.Control;
 import ru.rtk.crm.work.WorkControlService;
@@ -147,11 +148,13 @@ class AnalyticsFixesTest {
         var scope = organizationRepository.visibilityScope(LEADER_A_PROFILE).orElseThrow();
         assertThat(workRepository.countOrganizationsByTeam(scope, TODAY).stream()
                 .filter(team -> team.teamId().equals(TEAM_A)).findFirst().orElseThrow().participants()).isEqualTo(allStreams);
-        assertThat(trendService.trend(LEADER_A_PROFILE, 30).total().end()).isEqualTo(onToday);
+        LearningTrend.Item trend = trendService.trend(LEADER_A_PROFILE, 30).total();
+        assertThat(trend.end() + trend.endWithoutBase()).isEqualTo(onToday);
 
         jdbcTemplate.update("UPDATE organizations SET status = 'ARCHIVED' WHERE id = ?", ORGANIZATION_A);
         assertThat(participants(request(ReportKind.DEMAND, null, null))).isZero();
-        assertThat(trendService.trend(LEADER_A_PROFILE, 30).total().end()).isZero();
+        LearningTrend.Item archived = trendService.trend(LEADER_A_PROFILE, 30).total();
+        assertThat(archived.end() + archived.endWithoutBase()).isZero();
         assertThat(workRepository.countOrganizationsByTeam(scope, TODAY).stream()
                 .filter(team -> team.teamId().equals(TEAM_A)).findFirst().orElseThrow().participants()).isZero();
     }
@@ -165,7 +168,7 @@ class AnalyticsFixesTest {
 
         String today = TODAY.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy"));
         assertThat(preview.columns()).extracting(ReportColumnView::title)
-                .contains("Обучающиеся в потоках периода (Moodle, на " + today + ")", "Параллельные потоки (Moodle, на " + today + ")");
+                .contains("Обучающиеся в потоках периода (Moodle, участия — не уникальные люди, на " + today + ")", "Параллельные потоки (Moodle, на " + today + ")");
         assertThat(preview.notes()).anyMatch(note -> note.startsWith("Данные Moodle на " + today)
                 && note.contains("период ещё не закончился"));
         assertThat(reportService.document(LEADER_A_PROFILE, request(ReportKind.DEMAND, SEPTEMBER_FIRST, future)).rows())
@@ -282,6 +285,41 @@ class AnalyticsFixesTest {
 
         assertThat(comments).contains("05.09.2026: Назначена встреча").doesNotContain("Заявка с сайта")
                 .doesNotContain("ivanov@example.test").doesNotContain("+7 900");
+    }
+
+    @Test
+    void lastEmployeeActionIgnoresAutomaticSourceRecords() {
+        OffsetDateTime employeeAction = jdbcTemplate.queryForObject(
+                "SELECT MAX(occurred_at) FROM interaction_events WHERE interaction_id = ?", OffsetDateTime.class, INTERACTION_TWO_PRODUCTS);
+        OffsetDateTime sourceAt = OffsetDateTime.now(ReportRequest.ZONE).minusMinutes(1);
+        assertThat(sourceAt).isAfter(employeeAction);
+        UUID command = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO command_idempotency_records (id, actor_profile_id, operation, idempotency_key, request_fingerprint)
+                VALUES (?, ?, 'APPLY_SOURCE_RECORD', 'source-moodle', ?)
+                """, command, LEADER_A, "0".repeat(64));
+        ReportTestData.event(jdbcTemplate, INTERACTION_TWO_PRODUCTS, "COMMENTED", "Встреча", null,
+                "Данные LMS: обучающихся 12", LEADER_A, sourceAt);
+        jdbcTemplate.update("UPDATE interaction_events SET command_id = ? WHERE comment LIKE 'Данные LMS%' OR interaction_id = ?",
+                command, INTERACTION_WITHOUT_LINKS);
+        ReportRequest portfolio = new ReportRequest(ReportKind.PORTFOLIO, null, null, null, ReportFilters.none(),
+                List.of(ReportColumn.INTERACTION, ReportColumn.LAST_EVENT_AT), ReportFormat.XLSX, null, null);
+        ReportRequest snapshot = new ReportRequest(ReportKind.SNAPSHOT, null, null, null, ReportFilters.none(),
+                List.of(ReportColumn.INTERACTION, ReportColumn.LAST_EVENT_AT), ReportFormat.XLSX, null, null);
+
+        for (ReportRequest request : List.of(portfolio, snapshot)) {
+            ReportPreview preview = reportService.preview(LEADER_A_PROFILE, request, 0, 50);
+            assertThat(preview.columns()).filteredOn(column -> column.id() == ReportColumn.LAST_EVENT_AT).singleElement()
+                    .satisfies(column -> assertThat(column.title()).startsWith("Последнее действие сотрудника"))
+                    .satisfies(column -> assertThat(column.emptyText()).isEqualTo("не зафиксировано"));
+            assertThat(preview.items()).filteredOn(item -> "Договор на курс Java".equals(item.get("INTERACTION")))
+                    .singleElement().satisfies(item -> assertThat(((OffsetDateTime) item.get("LAST_EVENT_AT")).toInstant())
+                            .isEqualTo(employeeAction.toInstant()));
+            assertThat(preview.items()).filteredOn(item -> item.get("INTERACTION") != null
+                            && !"Договор на курс Java".equals(item.get("INTERACTION")) && item.get("LAST_EVENT_AT") == null)
+                    .isNotEmpty();
+            assertThat(preview.notes()).anyMatch(note -> note.contains("без автоматических записей источников"));
+        }
     }
 
     @Test

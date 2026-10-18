@@ -6,11 +6,13 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +38,7 @@ import ru.rtk.crm.interaction.CommandFingerprint;
 import ru.rtk.crm.interaction.CommandIdempotencyRepository;
 import ru.rtk.crm.interaction.CommandOperation;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.mail.MailInvitationService;
 import ru.rtk.crm.partner.PartnerAccessRepository.ManagedOrganization;
 import ru.rtk.crm.partner.PartnerAccessRepository.PartnerContact;
 import ru.rtk.crm.partner.PartnerAccessRepository.PartnerProfile;
@@ -56,6 +59,7 @@ public class PartnerAccessService {
     private final KeycloakAccountClient keycloakAccountClient;
     private final AuditJournalRepository auditJournalRepository;
     private final ObjectMapper objectMapper;
+    private final ObjectProvider<MailInvitationService> mailInvitations;
     private final SecureRandom random = new SecureRandom();
 
     public PartnerAccessService(
@@ -65,7 +69,8 @@ public class PartnerAccessService {
             CommandIdempotencyRepository commandIdempotencyRepository,
             KeycloakAccountClient keycloakAccountClient,
             AuditJournalRepository auditJournalRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ObjectProvider<MailInvitationService> mailInvitations
     ) {
         this.partnerAccessRepository = partnerAccessRepository;
         this.organizationRepository = organizationRepository;
@@ -74,6 +79,16 @@ public class PartnerAccessService {
         this.keycloakAccountClient = keycloakAccountClient;
         this.auditJournalRepository = auditJournalRepository;
         this.objectMapper = objectMapper;
+        this.mailInvitations = mailInvitations;
+    }
+
+    // При включённом модуле почты координатор получает письмо со ссылкой и видит временный пароль сам; без почты в
+    // контакте или без модуля пароль показывается менеджеру, как раньше.
+    private Optional<String> invite(UUID actorId, UUID profileId, String login, String email, boolean newAccount, String requestId) {
+        MailInvitationService invitations = mailInvitations.getIfAvailable();
+        return invitations == null || email == null
+                ? Optional.empty()
+                : invitations.invite(actorId, profileId, login, email, newAccount, requestId);
     }
 
     @Transactional(readOnly = true)
@@ -106,10 +121,11 @@ public class PartnerAccessService {
         UUID profileId;
         String login;
         String subject;
+        Optional<String> invitationSentTo;
+        String email = contact.email() == null || contact.email().isBlank() ? null : contact.email().strip().toLowerCase(Locale.ROOT);
         if (existing == null) {
             String issuer = adminCrmProfileRepository.findIssuer(actor.id())
                     .orElseThrow(() -> new IllegalStateException("Actor profile is unavailable for partner access"));
-            String email = contact.email() == null || contact.email().isBlank() ? null : contact.email().strip().toLowerCase(Locale.ROOT);
             login = email == null ? "vuz-" + HexFormat.of().formatHex(randomBytes(4)) : email;
             subject = keycloakAccountClient.createPartnerUser(
                     login, email, limit(contact.name()), limit(organization.name()), password
@@ -117,9 +133,12 @@ public class PartnerAccessService {
             profileId = UUID.randomUUID();
             partnerAccessRepository.insert(profileId, issuer, subject, contact.name(), login, organizationId, contact.id(), now);
             recordProfileEvent(actor.id(), profileId, contact.name(), false, true, requestId, now);
+            invitationSentTo = invite(actor.id(), profileId, login, email, true, requestId);
             auditJournalRepository.record(
                     AuditAction.ACCOUNT_CREATED, actor.id(), "PROFILE", profileId, contact.name(),
-                    details(organization, contact) + "; логин " + login + "; временный пароль выдан", requestId
+                    details(organization, contact) + "; логин " + login
+                            + (invitationSentTo.isPresent() ? "; приглашение отправлено на почту" : "; временный пароль выдан"),
+                    requestId
             );
         } else {
             profileId = existing.id();
@@ -128,14 +147,18 @@ public class PartnerAccessService {
             partnerAccessRepository.changeActive(profileId, true, now);
             partnerAccessRepository.markIdpEnabled(profileId, true);
             recordProfileEvent(actor.id(), profileId, existing.displayName(), false, true, requestId, now);
+            login = partnerAccessRepository.findAccess(profileId).login();
+            invitationSentTo = invite(actor.id(), profileId, login, email, true, requestId);
             auditJournalRepository.record(
                     AuditAction.ACCOUNT_ENABLED, actor.id(), "PROFILE", profileId, existing.displayName(),
-                    details(organization, contact) + "; временный пароль выдан заново", requestId
+                    details(organization, contact)
+                            + (invitationSentTo.isPresent() ? "; приглашение отправлено на почту заново" : "; временный пароль выдан заново"),
+                    requestId
             );
-            login = partnerAccessRepository.findAccess(profileId).login();
         }
         assignPartnerRole(actor.id(), profileId, subject, contact.name(), requestId, now);
-        return new PartnerAccessGranted(partnerAccessRepository.findAccess(profileId), login, password);
+        return new PartnerAccessGranted(partnerAccessRepository.findAccess(profileId), login,
+                invitationSentTo.isPresent() ? null : password, invitationSentTo.orElse(null));
     }
 
     @Transactional

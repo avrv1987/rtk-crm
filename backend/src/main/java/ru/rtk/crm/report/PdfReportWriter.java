@@ -29,9 +29,27 @@ public class PdfReportWriter {
                 layout.paragraph(ExcelReportWriter.TOTALS_SHEET, PdfLayout.NOTE_SIZE);
                 layout.table(ManagerWorkTotal.TITLES, ManagerWorkTotal.WIDTHS);
                 for (ManagerWorkTotal total : document.groupTotals()) {
-                    layout.row(total.values().stream().map(value -> value == null ? "" : value.toString()).toList());
+                    layout.row(texts(total.values()));
                 }
             }
+            groupSection(layout, ExcelReportWriter.PRODUCT_TOTALS_SHEET, "Продукт", document.productTotals());
+            groupSection(layout, ExcelReportWriter.ORGANIZATION_TOTALS_SHEET, "Вуз", document.organizationTotals());
         });
+    }
+
+    private static void groupSection(PdfLayout layout, String title, String first, List<ManagerWorkGroupTotal> totals) throws IOException {
+        if (totals.isEmpty()) {
+            return;
+        }
+        layout.gap(PdfLayout.NOTE_SIZE);
+        layout.paragraph(title, PdfLayout.NOTE_SIZE);
+        layout.table(ManagerWorkGroupTotal.titles(first), ManagerWorkGroupTotal.widths());
+        for (ManagerWorkGroupTotal total : totals) {
+            layout.row(texts(total.values()));
+        }
+    }
+
+    private static List<String> texts(List<Object> values) {
+        return values.stream().map(value -> value == null ? "" : value.toString()).toList();
     }
 }

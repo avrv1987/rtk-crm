@@ -23,9 +23,11 @@ import { saveFile } from '../admin/saveFile'
 import { matchingPreset, periodPresets } from '../reports/reportPeriods'
 import { WorkList } from '../work/WorkList'
 import { AssignDialog, IdleOrganizations } from './ControlIdle'
-import { ControlMatrix, UnassignedOrganizations, type MatrixOpenState } from './ControlMatrix'
+import { ControlNoContact } from './ControlNoContact'
+import { AgreementsInProgress, ControlMatrix, UnassignedOrganizations, type MatrixOpenState } from './ControlMatrix'
 import { ControlMore } from './ControlMore'
 import {
+  activeControlFilterCount,
   changeOptions,
   controlFiltersFromQuery,
   controlListHref,
@@ -40,13 +42,18 @@ import {
   filterControl,
   hasPeriod,
   hottestTeamId,
+  isPeriodMode,
   managerUnassigned,
+  modeOptions,
+  type ControlMode,
   panelFilterCount,
   skippedNotice,
   stuckDayOptions,
+  teamControl,
   tileCounts,
   tileShownCount,
   toExportRequest,
+  unassignedInRows,
   type ControlFilters
 } from './controlModel'
 import { loadControlOptions, type ControlOptions } from './controlOptions'
@@ -117,7 +124,29 @@ const periodText = (from: string, to: string) => (
   `${from === '' ? 'с начала' : `с ${formatCalendarDate(from)}`} ${to === '' ? 'по сегодня' : `по ${formatCalendarDate(to)}`}`
 )
 
+// Подпись правила владельца рядом с итогами: по ней видно, чей КАМ в строках и в выгрузке.
+const managerBasis = (mode: ControlMode, to: string, today: string) => (
+  mode === 'PERIOD' && to !== '' && to < today ? `КАМ на ${formatCalendarDate(to)}` : 'КАМ текущий'
+)
+
 const isListQuery = (query: string) => new URLSearchParams(query).get('view') === 'list'
+
+const compactQuery = '(max-width: 640px)'
+
+// Телефон: группы свёрнуты, «горящие» сверху. Ширина отслеживается, чтобы поворот экрана менял вид без перезагрузки.
+const useCompact = () => {
+  const [compact, setCompact] = useState(() => typeof window !== 'undefined' && window.matchMedia?.(compactQuery).matches === true)
+  useEffect(() => {
+    const query = window.matchMedia?.(compactQuery)
+    if (query === undefined) {
+      return
+    }
+    const onChange = () => setCompact(query.matches)
+    query.addEventListener('change', onChange)
+    return () => query.removeEventListener('change', onChange)
+  }, [])
+  return compact
+}
 
 export const ControlScreen = (props: ControlScreenProps) => (
   isListQuery(props.initialQuery) ? <ControlList {...props} /> : <ControlBoard {...props} />
@@ -165,6 +194,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
   const requestVersion = useRef(0)
   const mounted = useRef(true)
   const management = role === 'MANAGEMENT'
+  const compact = useCompact()
 
   const handleAccessError = useCallback((error: unknown) => {
     if (error instanceof ApiError && error.code === 'UNAUTHENTICATED') {
@@ -278,7 +308,24 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
 
   const update = (patch: Partial<ControlFilters>) => setFilters((current) => ({ ...current, ...patch }))
 
-  const setPeriod = (from: string, to: string) => update({ from, to, change: from === '' && to === '' ? '' : filters.change })
+  // Без периода режим «Сейчас»: снятие периода возвращает текущего КАМ.
+  const setPeriod = (from: string, to: string) => update({
+    from,
+    to,
+    change: from === '' && to === '' ? '' : filters.change,
+    mode: from === '' && to === '' ? 'NOW' : filters.mode
+  })
+
+  // «За период» без выбранного периода берёт прошлый месяц: КАМ на конец периода требует законченного периода.
+  const chooseMode = (mode: ControlMode) => {
+    if (mode === 'PERIOD' && !hasPeriod(filters)) {
+      const previous = periodPresets(todayInMoscow()).find((item) => item.id === 'PREVIOUS_MONTH')
+      setCustomPeriod(true)
+      update({ mode, from: previous?.from ?? '', to: previous?.to ?? '' })
+      return
+    }
+    update({ mode })
+  }
 
   const choosePeriod = (choice: PeriodChoice) => {
     setCustomPeriod(choice === 'CUSTOM')
@@ -311,7 +358,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
 
   const resetAll = () => {
     setFilters(emptyControlFilters)
-    setView((current) => ({ ...current, tile: null }))
+    setView((current) => ({ ...current, tile: null, team: null }))
     setCustomPeriod(false)
   }
 
@@ -353,14 +400,22 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
 
   const options = optionsState.kind === 'ready' ? optionsState.options : null
   const withPeriod = hasPeriod(filters)
-  const control = dataState.kind === 'ready' ? dataState.control : null
+  const loaded = dataState.kind === 'ready' ? dataState.control : null
+  const control = loaded === null ? null : teamControl(loaded, view.team)
+  const teamName = view.team === undefined || view.team === null ? null
+    : loaded?.teams.find((team) => team.teamId === view.team)?.teamName ?? 'команда не найдена'
+  const periodMode = isPeriodMode(filters)
   const counts = control === null ? null : tileCounts(control, view.stuckDays)
   const shown = control === null ? null : filterControl(control, view.tile, view.stuckDays)
   const inTile = shown === null ? null : tileShownCount(shown, view.tile)
   const today = todayInMoscow()
   const choice = customPeriod ? 'CUSTOM' : periodChoice(filters.from, filters.to, today)
-  const unassignedOrganizations = options?.organizationList.filter((item) => item.requiresAssignment && item.status !== 'ARCHIVED') ?? []
+  const unassignedOrganizations = options?.organizationList.filter((item) => (
+    item.requiresAssignment && item.status !== 'ARCHIVED' && (teamName === null || item.teamId === view.team)
+  )) ?? []
+  // Список вузов без КАМ — сегодняшний; с периодом его нет: плитка тогда считает по строкам периода.
   const showUnassigned = unassignedOrganizations.length > 0 && (view.tile === null || view.tile === 'UNASSIGNED') && filters.managerId.length === 0
+    && !withPeriod
   const assignHref = role === 'LEADER' ? '#/organizations?requiresAssignment=true' : null
   const onAssign = role === 'LEADER' && profileId !== undefined ? setAssigning : undefined
   const idleOrganizations = control?.idleOrganizations ?? null
@@ -368,7 +423,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
   const selectedTile: TileKey | null = view.tile ?? (filters.change === '' ? null : filters.change)
 
   const open: MatrixOpenState = {
-    isOpen: (key, fallback) => overrides[key] ?? bulk ?? (view.tile !== null ? true : fallback),
+    isOpen: (key, fallback) => overrides[key] ?? bulk ?? (view.tile !== null ? true : compact ? false : fallback),
     onToggle: (key, value) => setOverrides((current) => (open.isOpen(key, !value) === value ? current : { ...current, [key]: value }))
   }
   const setAll = (value: boolean) => {
@@ -376,24 +431,32 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
     setBulk(value)
   }
 
-  const tiles: StatTile<TileKey>[] = counts === null ? [] : [
+  // С периодом «Вузов без КАМ» считается по строкам периода (КАМ — по режиму), без периода — по всем вузам команды.
+  const unassignedTile: StatTile<TileKey> | null = counts === null || control === null ? null : {
+    key: 'UNASSIGNED',
+    label: periodMode ? `${tileLabels.UNASSIGNED} на ${formatCalendarDate(filters.to)}` : tileLabels.UNASSIGNED,
+    value: withPeriod ? unassignedInRows(control) : teamName !== null ? unassignedOrganizations.length : unassignedCount ?? unassignedOrganizations.length,
+    tone: 'danger'
+  }
+  const stateTiles: StatTile<TileKey>[] = counts === null ? [] : [
     { key: 'OVERDUE', label: tileLabels.OVERDUE, value: counts.OVERDUE, tone: 'danger' },
     { key: 'THIS_WEEK', label: tileLabels.THIS_WEEK, value: counts.THIS_WEEK, tone: 'warning' },
     { key: 'NO_NEXT_STEP', label: tileLabels.NO_NEXT_STEP, value: counts.NO_NEXT_STEP, tone: 'warning' },
     { key: 'ISSUES', label: tileLabels.ISSUES, value: counts.ISSUES, tone: 'danger' },
     { key: 'AGREEMENT', label: tileLabels.AGREEMENT, value: counts.AGREEMENT, tone: 'warning' },
-    { key: 'UNASSIGNED', label: tileLabels.UNASSIGNED, value: unassignedCount ?? unassignedOrganizations.length, tone: 'danger' },
+    ...(unassignedTile !== null && !periodMode ? [unassignedTile] : []),
     { key: 'STUCK', label: `${tileLabels.STUCK} ${view.stuckDays} дн.`, value: counts.STUCK, tone: 'warning' },
     { key: 'LMS', label: tileLabels.LMS, value: counts.LMS, tone: 'warning' },
     ...(control?.idleOrganizations !== null && control?.idleOrganizations !== undefined
       ? [{ key: 'IDLE' as const, label: tileLabels.IDLE, value: counts.IDLE, tone: 'danger' as const }]
-      : []),
-    ...(withPeriod && control !== null ? [
-      { key: 'MOVED' as const, label: 'Перешли на другой этап', value: control.total.moved },
-      { key: 'NEW' as const, label: 'Новые взаимодействия', value: control.total.created },
-      { key: 'COMPLETED' as const, label: 'Завершённые', value: control.total.completed }
-    ] : [])
+      : [])
   ]
+  const changeTiles: StatTile<TileKey>[] = withPeriod && control !== null ? [
+    { key: 'MOVED', label: 'Перешли на другой этап', value: control.total.moved },
+    { key: 'NEW', label: 'Новые взаимодействия', value: control.total.created },
+    { key: 'COMPLETED', label: 'Завершённые', value: control.total.completed },
+    ...(unassignedTile !== null && periodMode ? [unassignedTile] : [])
+  ] : []
 
   const chips: ActiveChip[] = []
   const listChips = (key: 'productId' | 'programId' | 'directionId' | 'organizationId' | 'managerId' | 'stage', label: string, optionList: { id: string; label: string }[]) => {
@@ -413,6 +476,9 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
   if (withPeriod) {
     chips.push({ key: 'period', label: `Период ${periodText(filters.from, filters.to)}`, onRemove: () => choosePeriod('ALL') })
   }
+  if (teamName !== null) {
+    chips.push({ key: 'team', label: `Команда: ${teamName}`, onRemove: () => setView((current) => ({ ...current, team: null })) })
+  }
   if (view.tile !== null) {
     chips.push({
       key: 'tile',
@@ -424,10 +490,13 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
     chips.push({ key: 'change', label: changeOptions.find((option) => option.id === filters.change)?.label ?? '', onRemove: () => update({ change: '' }) })
   }
 
+  // Отбора по команде у выгрузки нет: файл с другими командами выдавал бы себя за то, что на экране.
   const menu: ActionMenuItem[] = [
-    { label: exporting ? 'Готовим файл…' : `${terms.export} XLSX`, onSelect: () => void exportFile('XLSX') },
-    { label: `${terms.export} PDF`, onSelect: () => void exportFile('PDF') },
-    { label: 'Все форматы — в отчёте', href: controlReportHref(filters, view) },
+    ...(teamName === null ? [
+      { label: exporting ? 'Готовим файл…' : `${terms.export} XLSX`, onSelect: () => void exportFile('XLSX') },
+      { label: `${terms.export} PDF`, onSelect: () => void exportFile('PDF') },
+      { label: 'Все форматы — в отчёте', href: controlReportHref(filters, view) }
+    ] : [{ label: 'Выгрузка — без отбора команды', onSelect: () => setView((current) => ({ ...current, team: null })) }]),
     { label: 'Показать списком', href: controlListHref(filters, view), separated: true },
     { label: 'Развернуть всех', onSelect: () => setAll(true) },
     { label: 'Свернуть всех', onSelect: () => setAll(false) }
@@ -437,13 +506,21 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
     <section className="control" aria-label="Контроль">
       <div className="control-toolbar">
         <HintButton label="Что на этом экране">
-          Кто, с каким вузом и на каком этапе. Плитка отбирает строки, второе нажатие снимает отбор. Число в строке
-          менеджера отбирает его взаимодействия. «С сигналами LMS» — взаимодействия с сигналами LMS или несверенным этапом.
-          «Без работы» — вузы, за которыми закреплён КАМ, но идущего взаимодействия нет; эта группа видна без периода и
-          без отборов по продукту, программе, направлению и этапу. Период показывает изменения: кто перешёл на другой
-          этап, какие взаимодействия новые и какие завершены (даты включительно, МСК). Выгрузка XLSX и PDF — по фильтрам
-          и выбранной плитке, с итогами по менеджерам, командам и всего.
+          Кто, с каким вузом и на каком этапе. «Сейчас» — текущий КАМ вуза; «За период» — КАМ на конец выбранного
+          периода, как в отчёте «Работа менеджеров»; отбор по менеджеру, выгрузка и отчёт идут по тому же правилу.
+          Плитка отбирает строки, второе нажатие снимает отбор. Число в строке менеджера отбирает его взаимодействия.
+          «Договор на согласовании» считает договоры вузов на согласовании, корректировке и подписании, как реестр
+          договоров, даже не привязанные к взаимодействию; плитка показывает эти договоры и взаимодействия их вузов.
+          В режиме «За период» плитки изменений и «Вузов без КАМ на дату» считаются по строкам периода, остальные
+          плитки — состояние этих строк сейчас.
+          «С сигналами LMS» — взаимодействия с сигналами LMS или несверенным этапом. «Без работы» — вузы, за которыми
+          закреплён КАМ, но идущего взаимодействия нет; эта группа видна без периода и без отборов по продукту,
+          программе, направлению и этапу, её выгрузка — список вузов с датой последнего действия сотрудника. Период
+          показывает изменения: кто перешёл на другой этап, какие взаимодействия новые и какие завершены — завершённым
+          считается взаимодействие, переведённое в статус «Завершено» в периоде (даты включительно, МСК). Сроки
+          считаются только у идущих взаимодействий, у приостановленных — по дате возврата.
         </HintButton>
+        <Segmented label="Режим" options={modeOptions} value={filters.mode} onChange={chooseMode} />
         <Segmented label="Период" options={periodOptions} value={choice} onChange={choosePeriod} />
         <FilterButton count={panelFilterCount(filters)} onClick={() => setPanelOpen(true)} />
         <ActionMenu label={terms.moreActions} items={menu} />
@@ -458,14 +535,27 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
       <FilterChips chips={chips} onReset={resetAll} />
       {control !== null && (
         <p className="control-status">
-          <span>{`${withCount(control.total.organizations, 'вуз', 'вуза', 'вузов')} · ${withCount(control.total.works, 'взаимодействие', 'взаимодействия', 'взаимодействий')}${
-            inTile === null ? '' : ` · в плитке: ${view.tile === 'IDLE' ? withCount(inTile, 'вуз', 'вуза', 'вузов') : withCount(inTile, 'взаимодействие', 'взаимодействия', 'взаимодействий')}`
-          } · данные на ${formatMoscowDateTime(control.calculatedAt)}`}</span>
+          <span>{`${inTile === null ? '' : 'всего: '}${withCount(control.total.organizations, 'вуз', 'вуза', 'вузов')} · ${withCount(control.total.works, 'взаимодействие', 'взаимодействия', 'взаимодействий')}${
+            inTile === null ? '' : ` · по отбору: ${view.tile === 'IDLE' ? withCount(inTile, 'вуз', 'вуза', 'вузов') : withCount(inTile, 'взаимодействие', 'взаимодействия', 'взаимодействий')}`
+          } · ${managerBasis(filters.mode, filters.to, today)} · данные на ${formatMoscowDateTime(control.calculatedAt)}`}</span>
           <button type="button" className="button--secondary" onClick={() => void load(filters)}>{terms.refresh}</button>
         </p>
       )}
 
-      {tiles.length > 0 && <StatTiles label="Отбор по показателям" tiles={tiles} selected={selectedTile} onSelect={selectTile} />}
+      {changeTiles.length > 0 && (
+        <div className="control-tiles">
+          <p className="control-tiles__caption">{periodMode ? 'За период, КАМ на конец периода' : 'Изменения за период'}</p>
+          <StatTiles label="Изменения за период" tiles={changeTiles} selected={selectedTile} onSelect={selectTile} />
+        </div>
+      )}
+      {stateTiles.length > 0 && (
+        <div className="control-tiles">
+          {changeTiles.length > 0 && (
+            <p className="control-tiles__caption">{periodMode ? 'Сейчас — состояние взаимодействий периода' : 'Сейчас'}</p>
+          )}
+          <StatTiles label="Отбор по показателям" tiles={stateTiles} selected={selectedTile} onSelect={selectTile} />
+        </div>
+      )}
 
       <FilterPanel open={panelOpen} onClose={() => setPanelOpen(false)} onReset={resetAll}>
         {optionsState.kind === 'loading' && <p className="control-muted" role="status">Загружаем списки…</p>}
@@ -525,24 +615,28 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
           {showUnassigned && view.tile !== 'IDLE' && (
             <UnassignedOrganizations
               organizations={unassignedOrganizations}
-              count={unassignedCount ?? unassignedOrganizations.length}
+              count={teamName !== null ? unassignedOrganizations.length : unassignedCount ?? unassignedOrganizations.length}
               assignHref={assignHref}
               open={open}
               onAssign={onAssign}
             />
           )}
           {showIdle && <IdleOrganizations organizations={idleOrganizations} byTeams={control.byTeams} open={open} />}
+          {view.tile === 'AGREEMENT' && <AgreementsInProgress rows={control.agreements ?? []} byTeams={control.byTeams} />}
           {view.tile === 'IDLE' && !showIdle && <p className="control-empty">Вузов без работы нет.</p>}
           {view.tile === 'IDLE' ? null : view.tile === 'UNASSIGNED' && shown.teams.length === 0
             ? <p className="control-empty">Взаимодействий у вузов без КАМ нет.</p>
             : (
               <ControlMatrix
                 control={shown}
+                full={view.tile === null ? undefined : control}
+                filtered={view.tile !== null || activeControlFilterCount(filters) > 0}
                 withPeriod={withPeriod}
                 stuckDays={view.stuckDays}
                 summary={summary}
                 hotTeamId={hottestTeamId(control)}
                 open={open}
+                compact={compact}
                 onPick={pickManager}
                 assignHref={showUnassigned ? null : assignHref}
                 onAssign={onAssign}
@@ -551,6 +645,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
         </div>
       )}
 
+      <ControlNoContact refreshKey={refreshSignal} onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
       <ControlMore
         management={management}
         organizations={options?.organizationList ?? null}

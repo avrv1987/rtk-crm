@@ -55,6 +55,9 @@ public class AgreementApproval {
 
     // Круг — номер прохода «На согласовании» по истории статусов; сторона — по текущему статусу. Дни на стороне — с
     // последней смены статуса, общий срок — с даты отправки (если её нет — с первого входа в «На согласовании»).
+    // Исключение — первый круг у вуза: введённая дата отправки и есть начало этого круга (решение владельца 18.10), иначе
+    // договор, внесённый задним числом, получил бы порог «6 недель у вуза» позже на всё время до внесения. Для следующих
+    // кругов даты отправки нет — они считаются от смены статуса.
     // history — переходы договора по времени. Для договоров не на согласовании возвращается null.
     public Approval state(AgreementStatus status, OffsetDateTime statusChangedAt, LocalDate sentOn, List<StatusEntry> history,
                           LocalDate today) {
@@ -72,12 +75,12 @@ public class AgreementApproval {
             case SCHOOL -> schoolDays;
             case SIGNING -> null;
         };
-        LocalDate sideSince = date(statusChangedAt);
+        LocalDate sideSince = side == ApprovalSide.UNIVERSITY && round == 1 && sentOn != null ? sentOn : date(statusChangedAt);
         LocalDate since = sentOn != null ? sentOn : history.stream()
                 .filter(entry -> entry.toStatus() == AgreementStatus.REVIEW)
                 .map(entry -> date(entry.occurredAt()))
                 .findFirst()
-                .orElse(sideSince);
+                .orElse(date(statusChangedAt));
         long sideDays = countedDays(sideSince, today);
         long totalDays = countedDays(since, today);
         ApprovalColor color = totalDays >= totalRedDays ? ApprovalColor.RED
