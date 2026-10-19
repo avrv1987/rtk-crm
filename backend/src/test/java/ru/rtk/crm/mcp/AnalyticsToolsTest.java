@@ -174,8 +174,12 @@ class AnalyticsToolsTest {
     @Test
     void bundledPassportsAreTheSameAsTheDocument() throws Exception {
         String bundled = Files.readString(Path.of("src/main/resources", AnalyticsTools.PASSPORTS_RESOURCE), StandardCharsets.UTF_8);
-        String document = Files.readString(Path.of("..", "docs", "metrics.md"), StandardCharsets.UTF_8);
-        assertThat(bundled.replace("\r\n", "\n")).isEqualTo(document.replace("\r\n", "\n"));
+        // В публичном репозитории внутренних docs нет: сверка с документом только там, где он есть.
+        Path documentPath = Path.of("..", "docs", "metrics.md");
+        if (Files.exists(documentPath)) {
+            String document = Files.readString(documentPath, StandardCharsets.UTF_8);
+            assertThat(bundled.replace("\r\n", "\n")).isEqualTo(document.replace("\r\n", "\n"));
+        }
         for (int number = 1; number <= 14; number++) {
             assertThat(AnalyticsTools.passport(bundled, "М%02d".formatted(number))).as("М%02d", number).isNotNull();
         }

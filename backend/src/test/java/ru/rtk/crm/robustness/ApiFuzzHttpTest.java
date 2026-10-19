@@ -79,9 +79,10 @@ import ru.rtk.crm.attachment.AttachmentScanner;
         "app.max.jobs-enabled=false",
         "app.enrolment.active-key-version=v1",
         "app.enrolment.keys.v1=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-        "app.enrolment.fingerprint-key=ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=",
-        "logging.level.root=OFF"
+        "app.enrolment.fingerprint-key=ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA="
 })
+// Журнал не глушится свойством logging.level: LoggingSystem общий для JVM, и на CI тесты журнала,
+// идущие после этого класса, теряли свои записи.
 @AutoConfigureMockMvc(print = MockMvcPrint.NONE)
 @ActiveProfiles("oidc")
 class ApiFuzzHttpTest {
