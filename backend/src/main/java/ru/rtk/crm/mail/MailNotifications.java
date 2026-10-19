@@ -198,9 +198,16 @@ public class MailNotifications {
                 organizationId, templates.partnerRequest(organizationName));
     }
 
-    public boolean partnerReply(UUID managerProfileId, UUID organizationId, String organizationName, UUID replyId) {
+    // responseId — возвращённый ответ: каждый возврат одного запроса даёт своё письмо.
+    public boolean partnerReturned(UUID partnerProfileId, UUID organizationId, String organizationName, UUID responseId) {
+        return outbox.toProfile("partner-returned:" + responseId + ":" + partnerProfileId, MailKind.PARTNER_RETURNED,
+                partnerProfileId, organizationId, templates.partnerReturned(organizationName));
+    }
+
+    public boolean partnerReply(UUID managerProfileId, UUID organizationId, UUID interactionId, String organizationName,
+                                UUID replyId) {
         return outbox.toProfile("partner-reply:" + replyId + ":" + managerProfileId, MailKind.PARTNER_REPLY, managerProfileId,
-                organizationId, templates.partnerReply(organizationName, organizationId));
+                organizationId, templates.partnerReply(organizationName, organizationId, interactionId));
     }
 
     private static int count(boolean queued) {

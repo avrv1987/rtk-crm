@@ -106,8 +106,10 @@ public class LmsSignalService {
         if (Boolean.TRUE.equals(repository.findDismissals(scope, interactionId).get(key))) {
             throw new InteractionValidationException("type", "Этот сигнал уже записан в реестр проблем и рисков");
         }
-        LmsSignal signal = signal(source, request.type(), false, false);
-        String description = "Сигнал LMS «" + signal.title() + "»: " + signal.message();
+        LmsSignal signal = signal(source, request.type(), false, false, now);
+        // Пометка устаревания уходит и в текст риска: по записи в реестре должно быть видно, что данные были старыми.
+        String description = "Сигнал LMS «" + signal.title() + "»" + (signal.stale() ? " (данные устарели)" : "") + ": "
+                + signal.message();
         Interaction interaction = issueService.create(profile, interactionId, new InteractionIssueRequest(
                 request.version(),
                 InteractionIssueKind.RISK,
@@ -152,7 +154,7 @@ public class LmsSignalService {
                 Boolean recordedAsRisk = dismissals.get(LmsSignalRepository.dismissalKey(
                         source.interactionId(), source.mappingId(), type, source.dataVersion(type)
                 ));
-                signals.add(signal(source, type, recordedAsRisk != null, Boolean.TRUE.equals(recordedAsRisk)));
+                signals.add(signal(source, type, recordedAsRisk != null, Boolean.TRUE.equals(recordedAsRisk), now));
             }
         }
         return signals;
@@ -250,7 +252,7 @@ public class LmsSignalService {
 
     // Сообщение строится из данных потока на момент наблюдения; пороги в тексте берутся из настроек, чтобы менеджер
     // видел, почему сигнал сработал.
-    private LmsSignal signal(SignalSource source, LmsSignalType type, boolean dismissed, boolean recordedAsRisk) {
+    private LmsSignal signal(SignalSource source, LmsSignalType type, boolean dismissed, boolean recordedAsRisk, OffsetDateTime now) {
         String run = "«" + source.courseName() + (source.groupName() == null ? "" : ", группа «" + source.groupName() + "»")
                 + "» (" + period(source) + ")";
         int participants = source.participants();
@@ -321,6 +323,9 @@ public class LmsSignalService {
                 participants,
                 source.completed(),
                 source.observedAt(),
+                // Сигналы по числам (обучающиеся, завершение) по старым данным не гасятся, но помечаются тем же
+                // порогом, что и сигналы по входам: КАМ видит, что решение принимает по устаревшим данным.
+                !fresh(source, now, properties),
                 action,
                 actionHint,
                 dismissed,

@@ -391,6 +391,28 @@ class LmsSignalServiceTest {
         assertThat(workLearningService.byWork(kamA, List.of(work)).get(work).mismatch()).contains("никто не заходил");
     }
 
+    // Сигналы по числам по старым данным остаются, но несут признак «данные устарели» — и в списке, и в тексте риска.
+    @Test
+    void numericSignalOnStaleObservationIsMarkedStale() {
+        UUID work = insertWork(UNIVERSITY_A, "Раньше занятий", 3);
+        UUID run = insertRun(UNIVERSITY_A, today.minusDays(20), today.plusDays(30), 6, null, today.minusDays(3));
+
+        assertThat(service.list(kamA).items()).singleElement().satisfies(signal -> {
+            assertThat(signal.type()).isEqualTo(LmsSignalType.STUDENTS_APPEARED);
+            assertThat(signal.stale()).isTrue();
+        });
+        when(issueService.create(eq(kamA), eq(work), any(), eq("stale-risk"))).thenReturn(mock(Interaction.class));
+        service.recordRisk(kamA, work, new LmsSignalRiskRequest(1, LmsSignalType.STUDENTS_APPEARED, run), "stale-risk");
+        ArgumentCaptor<InteractionIssueRequest> issue = ArgumentCaptor.forClass(InteractionIssueRequest.class);
+        verify(issueService).create(eq(kamA), eq(work), issue.capture(), eq("stale-risk"));
+        assertThat(issue.getValue().description()).startsWith("Сигнал LMS «В LMS появились обучающиеся» (данные устарели): ");
+
+        jdbcTemplate.update("DELETE FROM lms_signal_dismissals");
+        jdbcTemplate.update("UPDATE learning_snapshots SET observed_at = ? WHERE mapping_id = ?", OffsetDateTime.now(), run);
+        assertThat(service.forInteraction(kamA, work).items()).singleElement()
+                .satisfies(signal -> assertThat(signal.stale()).isFalse());
+    }
+
     @Test
     void workLearningSummarisesRunsSignalsAndStageMismatchInsideTheScope() {
         UUID early = insertWork(UNIVERSITY_A, "Раньше занятий", 3);

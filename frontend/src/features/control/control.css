@@ -644,7 +644,8 @@
   .control .stat-tile__label {
     min-width: 0;
     font-size: var(--font-size-sm);
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
+    hyphens: auto;
   }
 
   .control-toolbar .action-menu {

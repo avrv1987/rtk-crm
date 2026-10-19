@@ -98,10 +98,20 @@ public class MailTemplates {
                 "Открыть кабинет вуза", "#/partner", false);
     }
 
-    Letter partnerReply(String organization, UUID organizationId) {
+    // Причину возврата пишет КАМ, в ней бывают ФИО и контакты: в письме только факт, причина — в кабинете вуза.
+    Letter partnerReturned(String organization) {
+        return letter("Ответ возвращён на доработку: «" + organization + "»",
+                List.of("ИТ Школа РТК вернула ответ по «" + organization + "» на доработку.",
+                        "Причина возврата и запрос — в кабинете вуза."),
+                "Открыть кабинет вуза", "#/partner", false);
+    }
+
+    // Ссылка ведёт в карточку взаимодействия: там вкладка «Запросы вузу» с ответом, который КАМ принимает или возвращает.
+    Letter partnerReply(String organization, UUID organizationId, UUID interactionId) {
         return letter("Координатор ответил: «" + organization + "»",
-                List.of("Координатор вуза «" + organization + "» ответил на запрос."),
-                "Открыть в CRM", organizationHash(organizationId), true);
+                List.of("Координатор вуза «" + organization + "» ответил на запрос.",
+                        "Ответ — в карточке взаимодействия, во вкладке «Запросы вузу»."),
+                "Открыть в CRM", organizationHash(organizationId) + "/" + interactionId, true);
     }
 
     Letter siteRequest(String organization, UUID organizationId) {

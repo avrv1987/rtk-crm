@@ -297,6 +297,7 @@ function Set-McpClient {
         directAccessGrantsEnabled = $false
         serviceAccountsEnabled = $false
         consentRequired = $true
+        fullScopeAllowed = $false
         redirectUris = @($values['MCP_REDIRECT_URIS'] -split ',' | Where-Object { $_ -ne '' })
         webOrigins = @('+')
         attributes = @{
@@ -314,6 +315,15 @@ function Set-McpClient {
         throw 'Cannot update the MCP client'
     }
     Invoke-Keycloak @('update', "clients/$($client[0].id)/default-client-scopes/$($scope[0])", '-r', 'rtk-crm') | Out-Null
+    # В токен агента — только роли CRM: fullScopeAllowed выключен, роли crm-* привязаны к scope crm-mcp.
+    foreach ($role in @('crm-user', 'crm-leader', 'crm-admin', 'crm-management', 'crm-partner')) {
+        $roleJson = (Invoke-Keycloak @('get', "roles/$role", '-r', 'rtk-crm')) -join "`n"
+        "[$roleJson]" | & docker compose --env-file $envFilePath exec -T keycloak /opt/keycloak/bin/kcadm.sh create `
+            "client-scopes/$($scope[0])/scope-mappings/realm" -r rtk-crm -f -
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Cannot map CRM roles to the MCP scope'
+        }
+    }
     # Scope записи — необязательный: клиент получает его, только если явно запросил, а сотрудник согласился. Он даёт
     # лишь подготовку плана; записывает план сам сотрудник на экране CRM. Без него у клиента остаётся чтение.
     $writeScope = Get-KeycloakScopeId 'crm-mcp.write'

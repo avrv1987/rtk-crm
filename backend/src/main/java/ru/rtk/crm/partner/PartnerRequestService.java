@@ -170,7 +170,7 @@ public class PartnerRequestService {
         materials.forEach(material -> repository.insertMaterial(id, material));
         auditJournalRepository.record(AuditAction.PARTNER_REQUEST_CREATED, actor.id(), OBJECT_TYPE, id, organization.name(),
                 "запрос вузу; материалов: " + materials.size(), requestId);
-        notifyCoordinator(organizationId, request.contactId(), id);
+        notifyCoordinator(organizationId, request.contactId(), id, false);
         PartnerRequestView view = view(id);
         complete(reservation, view);
         return view;
@@ -225,8 +225,7 @@ public class PartnerRequestService {
                 (next == PartnerRequestStatus.ACCEPTED ? "принят" : "возвращён на доработку") + "; квитанция " + answer.receiptNumber(),
                 auditRequestId);
         if (next == PartnerRequestStatus.RETURNED) {
-            // Ключ письма — ответ, а не запрос: каждый возврат одного запроса даёт своё письмо.
-            notifyCoordinator(current.organizationId(), current.contactId(), answer.id());
+            notifyCoordinator(current.organizationId(), current.contactId(), answer.id(), true);
         }
         PartnerRequestView view = view(requestId);
         complete(reservation, view);
@@ -397,9 +396,11 @@ public class PartnerRequestService {
                         + (attachment == null ? "" : "; файл проверен: " + attachment.status().name().toLowerCase(Locale.ROOT)),
                 auditRequestId);
         UUID organizationId = request.organizationId();
+        UUID interactionId = request.interactionId();
         afterCommit(mail -> repository.findMailTarget(organizationId, scope.contactId())
                 .filter(target -> target.ownerManagerId() != null)
-                .ifPresent(target -> mail.partnerReply(target.ownerManagerId(), organizationId, target.organizationName(), responseId)));
+                .ifPresent(target -> mail.partnerReply(target.ownerManagerId(), organizationId, interactionId,
+                        target.organizationName(), responseId)));
         PartnerReceipt result = new PartnerReceipt(receipt, responseKind, text, attachment == null ? null : attachment.originalName(),
                 attachment == null ? null : PartnerRequestModels.fileState(attachment.status()), now, null, null);
         complete(reservation, result);
@@ -420,10 +421,16 @@ public class PartnerRequestService {
         return new PartnerMaterialReceipt(attachmentId, repository.findReceipt(attachmentId, partner.id()).orElseThrow());
     }
 
-    private void notifyCoordinator(UUID organizationId, UUID contactId, UUID eventId) {
+    private void notifyCoordinator(UUID organizationId, UUID contactId, UUID eventId, boolean returned) {
         afterCommit(mail -> repository.findMailTarget(organizationId, contactId)
                 .filter(target -> target.coordinatorProfileId() != null)
-                .ifPresent(target -> mail.partnerRequest(target.coordinatorProfileId(), organizationId, target.organizationName(), eventId)));
+                .ifPresent(target -> {
+                    if (returned) {
+                        mail.partnerReturned(target.coordinatorProfileId(), organizationId, target.organizationName(), eventId);
+                    } else {
+                        mail.partnerRequest(target.coordinatorProfileId(), organizationId, target.organizationName(), eventId);
+                    }
+                }));
     }
 
     // Письмо ставится только после коммита: откат не должен оставить письмо о несуществующем запросе. Очередь пишется

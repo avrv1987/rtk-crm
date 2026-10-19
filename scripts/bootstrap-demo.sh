@@ -379,6 +379,8 @@ kcadm add-roles -r rtk-crm --uusername service-account-crm-account-sync --cclien
 # клиент crm-mcp-client входит по PKCE с экраном согласия, без offline_access. Регистрации клиентов «на лету» (DCR) нет:
 # адреса возврата клиентов перечисляются в MCP_REDIRECT_URIS. При MCP_ENABLED=false уже заведённый клиент отключается,
 # а realm не пересоздаётся ни в каком случае.
+# fullScopeAllowed=false, а роли crm-* привязаны к scope crm-mcp: в токен агента попадают только роли CRM
+# (без них /mcp отвечает 403 всем), а не все роли пользователя с лишней аудиторией account.
 ensure_scope_mapper() {
     local mapper_id definition
     definition=$(printf '{"name":"%s","protocol":"openid-connect",%s' "$2" "${3#\{}")
@@ -417,7 +419,7 @@ configure_mcp() {
     for uri in "${uris[@]}"; do
         [[ -z $uri ]] || redirect_uris+=("$(json_string "$uri")")
     done
-    definition=$(printf '{"clientId":"crm-mcp-client","name":"MCP: ИИ-агенты","enabled":true,"protocol":"openid-connect","publicClient":true,"standardFlowEnabled":true,"implicitFlowEnabled":false,"directAccessGrantsEnabled":false,"serviceAccountsEnabled":false,"consentRequired":true,"redirectUris":[%s],"webOrigins":["+"],"attributes":{"pkce.code.challenge.method":"S256","access.token.lifespan":"300","oauth2.device.authorization.grant.enabled":"false"}}' \
+    definition=$(printf '{"clientId":"crm-mcp-client","name":"MCP: ИИ-агенты","enabled":true,"protocol":"openid-connect","publicClient":true,"standardFlowEnabled":true,"implicitFlowEnabled":false,"directAccessGrantsEnabled":false,"serviceAccountsEnabled":false,"consentRequired":true,"fullScopeAllowed":false,"redirectUris":[%s],"webOrigins":["+"],"attributes":{"pkce.code.challenge.method":"S256","access.token.lifespan":"300","oauth2.device.authorization.grant.enabled":"false"}}' \
         "$(join_by , "${redirect_uris[@]}")")
     if [[ -z $client_id ]]; then
         client_id=$(printf '%s' "$definition" | kcadm create clients -r rtk-crm -f - -i)
@@ -425,6 +427,10 @@ configure_mcp() {
     client_id=$(single_id 'MCP client' "$client_id")
     printf '%s' "$definition" | kcadm update "clients/$client_id" -r rtk-crm -f -
     kcadm update "clients/$client_id/default-client-scopes/$scope_id" -r rtk-crm
+    for role in "${crm_roles[@]}"; do
+        printf '[%s]' "$(kcadm get "roles/$role" -r rtk-crm)" \
+            | kcadm create "client-scopes/$scope_id/scope-mappings/realm" -r rtk-crm -f -
+    done
     # Scope записи — необязательный: клиент получает его, только если явно запросил, а сотрудник согласился. Он даёт
     # лишь подготовку плана; записывает план сам сотрудник на экране CRM. Без него у клиента остаётся чтение.
     write_scope_id=$(scope_id_by_name crm-mcp.write)

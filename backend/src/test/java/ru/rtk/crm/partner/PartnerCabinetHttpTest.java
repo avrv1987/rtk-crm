@@ -272,9 +272,11 @@ class PartnerCabinetHttpTest {
         respond(PARTNER_A, requestId, 0, "Иванов, Петров", null, "mail-answer").andExpect(status().isCreated());
         UUID answerId = jdbcTemplate.queryForObject("SELECT id FROM partner_request_responses WHERE request_id = ?", UUID.class,
                 UUID.fromString(requestId));
-        verify(mailNotifications).partnerReply(KAM_A, ORGANIZATION_A, "Университет А", answerId);
+        verify(mailNotifications).partnerReply(KAM_A, ORGANIZATION_A, WORK_A, "Университет А", answerId);
         review(KAM_A, requestId, 1, "RETURNED", "Добавьте почту", "mail-return").andExpect(status().isOk());
-        verify(mailNotifications).partnerRequest(PARTNER_A, ORGANIZATION_A, "Университет А", answerId);
+        // Возврат — своё письмо, а не повтор «нового запроса».
+        verify(mailNotifications).partnerReturned(PARTNER_A, ORGANIZATION_A, "Университет А", answerId);
+        verify(mailNotifications, never()).partnerRequest(PARTNER_A, ORGANIZATION_A, "Университет А", answerId);
 
         clearInvocations(mailNotifications);
         transactionTemplate.executeWithoutResult(status -> {

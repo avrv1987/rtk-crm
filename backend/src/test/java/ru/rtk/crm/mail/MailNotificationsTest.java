@@ -226,8 +226,24 @@ class MailNotificationsTest {
         UUID request = UUID.randomUUID();
         assertThat(notifications.partnerRequest(MailHttpTest.PARTNER, ORGANIZATION, "Колледж связи", request)).isTrue();
         assertThat(notifications.partnerRequest(MailHttpTest.PARTNER, ORGANIZATION, "Колледж связи", request)).isFalse();
-        assertThat(notifications.partnerReply(KAM, ORGANIZATION, "Колледж связи", UUID.randomUUID())).isTrue();
+        UUID interaction = UUID.randomUUID();
+        assertThat(notifications.partnerReply(KAM, ORGANIZATION, interaction, "Колледж связи", UUID.randomUUID())).isTrue();
         assertThat(subjects(KAM)).containsExactly("Координатор ответил: «Колледж связи»");
+        assertThat(text(KAM, "PARTNER_REPLY")).contains("#/organizations/" + ORGANIZATION + "/" + interaction)
+                .contains("«Запросы вузу»");
+    }
+
+    // Возврат ответа — отдельный вид письма со своей темой; каждый возврат (новый ответ) — своё письмо.
+    @Test
+    void returnedAnswerLetterSaysReturnedAndCarriesNoDetails() {
+        UUID answer = UUID.randomUUID();
+        assertThat(notifications.partnerReturned(MailHttpTest.PARTNER, ORGANIZATION, "Колледж связи", answer)).isTrue();
+        assertThat(notifications.partnerReturned(MailHttpTest.PARTNER, ORGANIZATION, "Колледж связи", answer)).isFalse();
+        assertThat(notifications.partnerReturned(MailHttpTest.PARTNER, ORGANIZATION, "Колледж связи", UUID.randomUUID())).isTrue();
+        assertThat(subjects(MailHttpTest.PARTNER)).containsOnly("Ответ возвращён на доработку: «Колледж связи»").hasSize(2);
+        assertThat(jdbcTemplate.queryForList("SELECT body_text FROM mail_outbox WHERE kind = 'PARTNER_RETURNED'", String.class))
+                .allSatisfy(body -> assertThat(body).contains("вернула ответ по «Колледж связи» на доработку")
+                        .contains("#/partner").doesNotContain("Новый запрос").doesNotContain("Настроить уведомления"));
     }
 
     @Test

@@ -48,6 +48,7 @@ public final class LmsSignalModels {
             int participants,
             Integer completed,
             OffsetDateTime observedAt,
+            boolean stale,
             LmsSignalAction action,
             String actionHint,
             boolean dismissed,

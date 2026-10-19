@@ -16,6 +16,7 @@ public enum MailKind {
     ISSUE_ASSIGNED("Назначен ответственным за риск или проблему", MailTopic.ISSUES, null, true),
     ISSUE_RESOLVED("Решение по риску или проблеме", MailTopic.ISSUES, null, true),
     PARTNER_REQUEST("Запрос вузу", null, EnumSet.of(UserRole.PARTNER), true),
+    PARTNER_RETURNED("Ответ возвращён на доработку", null, EnumSet.of(UserRole.PARTNER), true),
     PARTNER_REPLY("Ответ координатора вуза", MailTopic.PARTNER_REPLIES, null, true),
     SITE_REQUEST("Новая заявка с сайта", MailTopic.SITE_REQUEST, null, true),
     ORGANIZATIONS_UNASSIGNED("Вузы остались без КАМ", MailTopic.UNASSIGNED, null, false),

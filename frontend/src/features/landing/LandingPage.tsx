@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { appVersion } from '../../shared/appVersion'
 import { getModules, type Modules } from '../../shared/modules'
 import { landingLinks } from './landingLinks'
-import { audienceNote, rolesFor, rolesLead, siteIntegrationText } from './landingModules'
+import { audienceNote, moodleIntegrationText, rolesFor, rolesLead, siteIntegrationText } from './landingModules'
 import './landing.css'
 
 type StageState = 'done' | 'skipped' | 'current' | 'ahead'
@@ -66,7 +67,7 @@ const routeSteps: [string, string][] = [
 const features: Feature[] = [
   {
     title: 'Отчёты',
-    text: 'Больше десяти отчётов: портфель взаимодействий, события за период, состояние на дату, длительность этапов, востребованность программ, реализация договоров, договоры за период, план подписаний и продлений, динамика обучения и другие. Колонки и их порядок настраиваются, перед выгрузкой доступен предпросмотр, настройки отчёта можно сохранить.',
+    text: 'Первая вкладка «Задачи» — четыре задачи: «Что требует внимания», «Что сделано за период», «Что происходит с обучением», «Исполнение договоров». За каждой стоит готовый отчёт с пояснением, как он считается. Полный каталог, больше десяти отчётов, — на вкладке «Все отчёты»: работа менеджеров, портфель взаимодействий, события за период, длительность этапов, востребованность программ, договоры, динамика обучения и другие. Колонки и их порядок настраиваются, перед выгрузкой доступен предпросмотр, настройки отчёта можно сохранить.',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" aria-hidden="true">
         <rect x="4" y="3" width="16" height="18" rx="2" />
@@ -101,7 +102,7 @@ const features: Feature[] = [
   },
   {
     title: 'Данные об обучении',
-    text: 'По каждому потоку из Moodle видно, сколько человек записано, учится и завершило обучение. КАМ получает сигнал, когда обучение расходится с этапом работы. Для записи преподавателей вуза формируется файл «Загрузка пользователей».',
+    text: 'По каждому потоку из Moodle видно, сколько человек записано, учится и завершило обучение. Доля завершивших считается среди тех, чей статус известен, и подписана покрытием: при малом покрытии система пишет «данных недостаточно», а не ноль. Устаревшие данные помечены, сигналы активности выдаются только по свежим. КАМ получает сигнал, когда обучение расходится с этапом работы. Для записи преподавателей вуза формируется файл «Загрузка пользователей».',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M12 4v16M7 20h10M5 7h14" />
@@ -109,12 +110,24 @@ const features: Feature[] = [
         <path d="M19 7l-3 6a3 3 0 0 0 6 0z" />
       </svg>
     )
+  },
+  {
+    title: 'Уведомления',
+    text: 'В CRM — колокольчик в шапке: просроченные шаги, истекающие договоры, лицензии и циклы повышения квалификации. Уведомления и утренняя сводка приходят также в MAX и на почту — это подключаемые модули. В сообщения не попадают тексты шагов и комментариев.',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z" />
+        <path d="M10 21h4" />
+      </svg>
+    )
   }
 ]
 
 const integrations = (modules: Modules): [string, string][] => [
-  ['Moodle', 'CRM читает данные об обучении через веб-сервис Moodle только на чтение. По потокам хранятся числа, без персональных данных учащихся. На стенде подключён демонстрационный Moodle 4.5.'],
+  ['Moodle', moodleIntegrationText(modules)],
   ['Сайт ИТ Школы', siteIntegrationText(modules)],
+  ['MAX', 'Подключаемый модуль: бот присылает уведомления и утреннюю сводку, мини-приложение открывает работу КАМ и руководителя внутри MAX. Сотрудник привязывает бота одноразовым кодом и подтверждает привязку в CRM.'],
+  ['Почта', 'Подключаемый модуль: уведомления, сводки и приглашения сотрудников ссылкой. Режим по умолчанию — «заглушка»: письма собираются в журнал и наружу не уходят. Для отправки администратор задаёт SMTP-сервер в разделе «Почта».'],
   ['Каталоги из Excel', 'Вузы, направления, программы, продукты и ответственные загружаются из XLS и XLSX по шаблону из десяти полей ТЗ.']
 ]
 
@@ -326,7 +339,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
         <section id="lp-features" className="landing-section">
           <div className="landing-container">
             <p className="eyebrow">Возможности</p>
-            <h2>Отчёты, диаграммы и данные об обучении</h2>
+            <h2>Отчёты, диаграммы, данные об обучении и уведомления</h2>
             <div className="landing-features">
               {features.map((feature) => (
                 <div key={feature.title} className="landing-card landing-feature">
@@ -374,7 +387,7 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
               <div className="landing-check__intro">
                 <p className="eyebrow">Для жюри и экспертов</p>
                 <h2>Материалы для проверки</h2>
-                <p className="landing-check__lead">Система работает на сервере с синтетическими данными. Ссылки собраны по разделу 10 технического задания.</p>
+                <p className="landing-check__lead">Система работает на сервере с синтетическими данными, версия {appVersion}. Ссылки собраны по разделу 10 технического задания.</p>
                 <h3>Где что на странице</h3>
                 <dl className="landing-check__map">
                   {criteriaMap.map(([criterion, href, section]) => (

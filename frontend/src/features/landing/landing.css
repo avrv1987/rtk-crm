@@ -501,6 +501,11 @@ html:has(.landing) {
   margin-top: var(--space-10);
 }
 
+/* Нечётная последняя карточка занимает строку целиком, чтобы в сетке не было пустой ячейки. */
+.landing-feature:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
 .landing-feature {
   display: flex;
   flex-direction: column;
@@ -556,7 +561,7 @@ html:has(.landing) {
 
 .landing-integrations {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-6);
   margin-top: var(--space-8);
 }

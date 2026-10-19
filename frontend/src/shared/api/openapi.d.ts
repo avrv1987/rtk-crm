@@ -7166,6 +7166,8 @@ export interface components {
             completed?: number | null;
             /** Format: date-time */
             observedAt: string;
+            /** @description Наблюдение старше SOURCES_STALE_AFTER — «данные устарели». Сигналы активности по таким данным не выдаются, остальные выдаются с этим признаком */
+            stale: boolean;
             /** @description Переход к этапу «Занятия», разрешённый маршрутом из текущего этапа; выполняется только существующим API перехода */
             action?: components["schemas"]["LmsSignalAction"] | null;
             /** @description Почему кнопки перехода нет */
@@ -9241,7 +9243,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            kind: "INVITATION" | "DIGEST" | "ASSIGNMENT" | "AGREEMENT_CORRECTION" | "AGREEMENT_EXPIRY" | "ISSUE_ASSIGNED" | "ISSUE_RESOLVED" | "PARTNER_REQUEST" | "PARTNER_REPLY" | "SITE_REQUEST" | "ORGANIZATIONS_UNASSIGNED" | "WEEKLY_SUMMARY" | "ADMIN_SOURCE_FAILURE" | "ADMIN_PENDING_ACTIVATION" | "ADMIN_DAILY" | "TEST" | "SUBJECT_REPORT";
+            kind: "INVITATION" | "DIGEST" | "ASSIGNMENT" | "AGREEMENT_CORRECTION" | "AGREEMENT_EXPIRY" | "ISSUE_ASSIGNED" | "ISSUE_RESOLVED" | "PARTNER_REQUEST" | "PARTNER_RETURNED" | "PARTNER_REPLY" | "SITE_REQUEST" | "ORGANIZATIONS_UNASSIGNED" | "WEEKLY_SUMMARY" | "ADMIN_SOURCE_FAILURE" | "ADMIN_PENDING_ACTIVATION" | "ADMIN_DAILY" | "TEST" | "SUBJECT_REPORT";
             kindTitle: string;
             /** @description Маска адреса; у ещё не отправленного письма сотруднику — null (адрес берётся из Keycloak при отправке) */
             recipient?: string | null;

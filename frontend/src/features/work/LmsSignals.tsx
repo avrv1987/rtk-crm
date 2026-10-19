@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { apiClient, createIdempotencyKey, type Interaction, type LmsSignal } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { type AccessHandlers, commandErrorText, formatDateTime, handledAccessError, requestIdOf } from './workShared'
+import '../sources/sources.css'
 import './lmsSignals.css'
 
 export const lmsSignalsSectionId = 'desk-lms-signals'
@@ -36,6 +37,7 @@ export const LmsSignalItem = ({
     <p className="lms-signal__message">{signal.message}</p>
     <span className="lms-signal__observed">
       Данные LMS на {formatDateTime(signal.observedAt)}
+      {signal.stale && <> <span className="source-badge">данные устарели</span></>}
       {isActivitySignal(signal) && ' · вход в курс — признак присутствия, а не учёбы'}
     </span>
     {children}

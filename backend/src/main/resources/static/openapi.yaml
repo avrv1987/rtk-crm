@@ -14361,7 +14361,7 @@ components:
     LmsSignal:
       type: object
       required: [id, type, title, message, interactionId, interactionTitle, organizationId, organizationName, currentStageName,
-        mappingId, courseName, runStartsOn, runEndsOn, participants, observedAt, dismissed, recordedAsRisk]
+        mappingId, courseName, runStartsOn, runEndsOn, participants, observedAt, stale, dismissed, recordedAsRisk]
       properties:
         id:
           type: string
@@ -14425,6 +14425,9 @@ components:
         observedAt:
           type: string
           format: date-time
+        stale:
+          type: boolean
+          description: Наблюдение старше SOURCES_STALE_AFTER — «данные устарели». Сигналы активности по таким данным не выдаются, остальные выдаются с этим признаком
         action:
           oneOf:
             - $ref: '#/components/schemas/LmsSignalAction'
@@ -18448,7 +18451,7 @@ components:
           format: uuid
         kind:
           type: string
-          enum: [INVITATION, DIGEST, ASSIGNMENT, AGREEMENT_CORRECTION, AGREEMENT_EXPIRY, ISSUE_ASSIGNED, ISSUE_RESOLVED, PARTNER_REQUEST, PARTNER_REPLY, SITE_REQUEST, ORGANIZATIONS_UNASSIGNED, WEEKLY_SUMMARY, ADMIN_SOURCE_FAILURE, ADMIN_PENDING_ACTIVATION, ADMIN_DAILY, TEST, SUBJECT_REPORT]
+          enum: [INVITATION, DIGEST, ASSIGNMENT, AGREEMENT_CORRECTION, AGREEMENT_EXPIRY, ISSUE_ASSIGNED, ISSUE_RESOLVED, PARTNER_REQUEST, PARTNER_RETURNED, PARTNER_REPLY, SITE_REQUEST, ORGANIZATIONS_UNASSIGNED, WEEKLY_SUMMARY, ADMIN_SOURCE_FAILURE, ADMIN_PENDING_ACTIVATION, ADMIN_DAILY, TEST, SUBJECT_REPORT]
         kindTitle:
           type: string
         recipient:

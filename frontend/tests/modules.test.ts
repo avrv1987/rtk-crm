@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { audienceNote, rolesFor, rolesLead, siteIntegrationText } from '../src/features/landing/landingModules.ts'
+import { audienceNote, moodleIntegrationText, rolesFor, rolesLead, siteIntegrationText } from '../src/features/landing/landingModules.ts'
 import { errorCodes, tocItems, visibleBy } from '../src/features/help/helpContent.ts'
 import { getModules, sectionAvailable, setModules, withoutPaymentColumns } from '../src/shared/modules.ts'
 
@@ -39,7 +39,7 @@ test('посадочная без модулей не упоминает рол�
   ])
   const text = [
     ...rolesFor(off).flatMap((role) => [role.title, role.benefit, ...role.duties]),
-    audienceNote(off), rolesLead(off), siteIntegrationText(off)
+    audienceNote(off), rolesLead(off), siteIntegrationText(off), moodleIntegrationText(off)
   ].join(' ').toLowerCase()
   for (const word of ['представител', 'кабинет', 'оплат', 'слушател', 'анкет', 'зачислен']) {
     assert.ok(!text.includes(word), `в тексте посадочной осталось «${word}»`)
@@ -52,6 +52,17 @@ test('посадочная со включёнными модулями пока
   assert.ok(titles.includes('Координатор вуза'))
   assert.ok(rolesFor(on)[0].duties.some((duty) => duty.includes('доступ в кабинет')))
   assert.ok(siteIntegrationText(on).includes('оплаты'))
+})
+
+test('посадочная: Moodle-запись описана только с модулем «Слушатели», вуз везде представляет координатор', () => {
+  assert.ok(moodleIntegrationText(off).includes('читает данные об обучении'))
+  assert.ok(!moodleIntegrationText(off).includes('Запись'))
+  const write = moodleIntegrationText(on)
+  assert.ok(write.includes('только с логином (почтой), фамилией и именем'))
+  assert.ok(!write.includes('только на чтение'))
+  const text = [...rolesFor(on).flatMap((role) => role.duties), audienceNote(on), rolesLead(on)].join(' ')
+  assert.ok(!text.includes('представител'))
+  assert.ok(rolesLead(on).includes('координатору вуза'))
 })
 
 test('при одном включённом модуле показывается только его роль', () => {
