@@ -71,11 +71,10 @@ public class LearningDynamicsService {
             List<UUID> programIds
     ) {
         LocalDate today = LocalDate.now(ReportRequest.ZONE);
-        LocalDate end = to == null ? today : to;
+        // «Этот месяц», «Этот год» и другие готовые периоды кончаются в будущем: строим по сегодняшний день, как
+        // остальные отчёты (ReportRequest.runsAsOf), а не отказываем — наблюдений Moodle в будущем не бывает.
+        LocalDate end = to == null || to.isAfter(today) ? today : to;
         LocalDate start = from == null ? YearMonth.from(end).minusMonths(11).atDay(1) : from;
-        if (end.isAfter(today)) {
-            throw new InteractionValidationException("to", "Конец периода не может быть позже сегодняшней даты");
-        }
         if (start.isAfter(end)) {
             throw new InteractionValidationException("to", "Дата окончания периода раньше даты начала");
         }
@@ -119,10 +118,17 @@ public class LearningDynamicsService {
                 String seriesKey = (by == SeriesBy.PROGRAM ? run.programId() : run.organizationId()).toString();
                 series.computeIfAbsent(seriesKey, key -> new SeriesTotals(key,
                         by == SeriesBy.PROGRAM ? run.programName() : run.organizationName(), size))
-                        .add(index, observation);
+                        .add(index, observation, run.runStartsOn());
                 totals[index].add(observation);
             }
         }
+        // До первого потока в данных ноль читался бы как «никто не учился», а реестра плановых потоков нет:
+        // такие месяцы — «нет данных».
+        LocalDate firstRun = runs.stream().map(Run::runStartsOn).min(Comparator.naturalOrder()).orElse(null);
+        for (int index = 0; index < size; index++) {
+            totals[index].beforeData = firstRun == null || months.get(index).asOf().isBefore(firstRun);
+        }
+        series.values().forEach(item -> item.markBeforeData(months));
         OffsetDateTime generatedAt = OffsetDateTime.now();
         return new LearningDynamics(
                 generatedAt,
@@ -241,7 +247,8 @@ public class LearningDynamicsService {
                         + " (у последнего месяца — на конец дня окончания периода)",
                 "Обучающиеся и завершившие — участия (не уникальные люди). Доля завершивших — среди участий с известным"
                         + " статусом; основание показывает, у скольких участий статус известен. Поток без наблюдения — «нет"
-                        + " данных», а не ноль, он считается в «Потоках без данных»; обучение преподавателей не учитывается",
+                        + " данных», а не ноль, он считается в «Потоках без данных»; месяцы раньше первого потока — тоже «нет данных»;"
+                        + " обучение преподавателей не учитывается",
                 "Фильтры: " + (filters.isEmpty() ? "не заданы" : String.join("; ", filters)) + "; архивные вузы не входят"
         );
     }
@@ -286,6 +293,7 @@ public class LearningDynamicsService {
         private long completed;
         private long notCompleted;
         private boolean tracked;
+        private boolean beforeData;
 
         void add(Observation observation) {
             if (observation == null) {
@@ -305,9 +313,9 @@ public class LearningDynamicsService {
             return participants;
         }
 
-        // Ноль — потоков в месяце не было; null — потоки были, но ни у одного нет наблюдения.
+        // Ноль — потоков в месяце не было; null — потоки были, но ни у одного нет наблюдения, или месяц раньше первого потока.
         Long participants() {
-            return runs == 0 && runsWithoutData > 0 ? null : participants;
+            return runs == 0 && (runsWithoutData > 0 || beforeData) ? null : participants;
         }
 
         Long completed() {
@@ -348,6 +356,7 @@ public class LearningDynamicsService {
         private final String key;
         private final String label;
         private final Counts[] counts;
+        private LocalDate firstRun;
 
         private SeriesTotals(String key, String label, int size) {
             this.key = key;
@@ -356,8 +365,15 @@ public class LearningDynamicsService {
             Arrays.setAll(counts, index -> new Counts());
         }
 
-        private void add(int index, Observation observation) {
+        private void add(int index, Observation observation, LocalDate runStartsOn) {
             counts[index].add(observation);
+            firstRun = firstRun == null || runStartsOn.isBefore(firstRun) ? runStartsOn : firstRun;
+        }
+
+        private void markBeforeData(List<LearningDynamics.Month> months) {
+            for (int index = 0; index < counts.length; index++) {
+                counts[index].beforeData = months.get(index).asOf().isBefore(firstRun);
+            }
         }
 
         private LearningDynamics.Series view() {

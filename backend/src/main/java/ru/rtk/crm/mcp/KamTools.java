@@ -41,6 +41,7 @@ import ru.rtk.crm.interaction.InteractionDue;
 import ru.rtk.crm.interaction.InteractionEvent;
 import ru.rtk.crm.interaction.InteractionIssue;
 import ru.rtk.crm.interaction.InteractionIssueFilter;
+import ru.rtk.crm.interaction.InteractionIssueList;
 import ru.rtk.crm.interaction.InteractionIssuePage;
 import ru.rtk.crm.interaction.InteractionIssueService;
 import ru.rtk.crm.interaction.InteractionIssueStatus;
@@ -143,7 +144,7 @@ class KamTools {
                         "Подготовка к встрече в вузе: карточка, все взаимодействия, контакты (телефон и почта "
                                 + "замаскированы), договоры, история за 90 дней.",
                         schema(Map.of("organizationId", uuidProperty("Вуз")), "organizationId"),
-                        McpTools.KAM_AND_MANAGEMENT, this::organizationBrief)
+                        McpTools.KAM_AND_MANAGEMENT, this::organizationBrief, McpTools.READ_ONLY, false)
         );
     }
 
@@ -204,7 +205,8 @@ class KamTools {
         List<AgreementSummary> agreements = agreementService.workAgreements(profile, interactionId).agreements();
         Map<UUID, Approval> approvals = approvals(profile, organization.id());
         WorkLearning learning = lmsWorkLearningService.byWork(profile, List.of(interactionId)).get(interactionId);
-        List<Issue> issues = interactionIssueService.list(profile, interactionId).items().stream()
+        InteractionIssueList issueList = interactionIssueService.list(profile, interactionId);
+        List<Issue> issues = issueList.items().stream()
                 .filter(issue -> issue.status() == InteractionIssueStatus.OPEN)
                 .map(issue -> issue(issue, LocalDate.now(WorkProperties.ZONE)))
                 .toList();
@@ -221,6 +223,8 @@ class KamTools {
         data.put("stagePosition", position);
         data.put("stageTotal", stages.size());
         data.put("nextStages", interaction.allowedTransitions().stream().map(InteractionTransitionOption::stageName).toList());
+        data.put("nextStageOptions", interaction.allowedTransitions());
+        data.put("eligibleResponsibles", issueList.responsibleOptions());
         data.put("nextAction", UserText.of(interaction.nextAction()));
         data.put("nextActionAt", interaction.nextActionAt());
         data.put("lastContactAt", interaction.lastContactAt());
@@ -232,11 +236,16 @@ class KamTools {
         return new Result(data, 1 + issues.size() + agreements.size() + recent.returned(), List.of(
                 "learning = null — по взаимодействию нет потоков LMS; это не «ноль обучающихся».",
                 "approval.color считает CRM по порогам согласования договора (NORMAL, YELLOW, RED).",
-                "recentEvents — последние события, новые первыми.",
+                "recentEvents — последние события, новые первыми; eventId годится для evidenceEventIds.",
+                "nextStageOptions — этапы, куда маршрут разрешает перейти; eligibleResponsibles — кого можно назначить "
+                        + "ответственным за проблему или риск.",
                 NO_RECORD));
     }
 
-    private Result organizationBrief(CrmProfile profile, Args args) {
+    private Result organizationBrief(McpCaller caller, Args args) {
+        CrmProfile profile = caller.profile();
+        // Режим ПДн задают операторы для клиента (azp): при none имена и контакты людей вуза агенту не отдаются вовсе.
+        boolean hidePeople = properties.hidesPersonalData(caller.clientId());
         UUID organizationId = args.requiredUuid("organizationId");
         Organization organization = organizationRepository.findVisibleById(profile, organizationId)
                 .orElseThrow(OrganizationNotFoundException::new);
@@ -245,7 +254,7 @@ class KamTools {
         InteractionPage works = interactionService.find(profile, organizationId, null, null, null, "ALL", null, limit);
         List<ContactInfo> contacts = contactService.list(profile, organizationId).stream()
                 .filter(contact -> contact.personalDataStatus() == null || contact.personalDataStatus() == PersonalDataStatus.ACTIVE)
-                .map(KamTools::contact)
+                .map(contact -> contact(contact, hidePeople))
                 .toList();
         Map<UUID, Approval> approvals = approvals(profile, organizationId);
         List<AgreementInfo> agreements = agreementService.list(profile, organizationId).stream()
@@ -275,7 +284,9 @@ class KamTools {
         data.put("historyDays", properties.historyDays());
         data.put("history", historyPage);
         return new Result(data, 1 + workPage.returned() + contactPage.returned() + agreements.size() + historyPage.returned(),
-                List.of("Телефоны и почты замаскированы; полные данные — в карточке вуза в CRM.",
+                List.of(hidePeople
+                                ? "Для этого клиента имена, телефоны и почты контактов скрыты; полные данные — в карточке вуза в CRM."
+                                : "Телефоны и почты замаскированы; полные данные — в карточке вуза в CRM.",
                         "Контакты с ограниченной или обезличенной обработкой ПДн не показываются.",
                         "history — события за последние " + properties.historyDays() + " дней, новые первыми.",
                         NO_RECORD));
@@ -355,13 +366,14 @@ class KamTools {
                 agreement.sentOn(), approval);
     }
 
-    private static ContactInfo contact(Contact contact) {
-        return new ContactInfo(contact.name(), contact.position(), contact.role() == null ? null : contact.role().name(),
-                contact.primary(), contact.inactive(), McpTools.maskEmail(contact.email()), McpTools.maskPhone(contact.phone()));
+    private static ContactInfo contact(Contact contact, boolean hidePeople) {
+        return new ContactInfo(hidePeople ? null : contact.name(), contact.position(), contact.role() == null ? null : contact.role().name(),
+                contact.primary(), contact.inactive(), hidePeople ? null : McpTools.maskEmail(contact.email()),
+                hidePeople ? null : McpTools.maskPhone(contact.phone()));
     }
 
     private static Event event(InteractionEvent event) {
-        return new Event(event.occurredAt(), event.type() == null ? null : event.type().name(), event.actorDisplayName(),
+        return new Event(event.id(), event.occurredAt(), event.type() == null ? null : event.type().name(), event.actorDisplayName(),
                 event.stageNameSnapshot(), event.fromStageNameSnapshot(), event.toStageNameSnapshot(), UserText.of(event.comment()),
                 event.nextStep() == null ? null : UserText.of(event.nextStep().nextAction()),
                 event.nextStep() == null ? null : event.nextStep().nextActionAt());
@@ -397,7 +409,7 @@ class KamTools {
                        String phone) {
     }
 
-    record Event(OffsetDateTime occurredAt, String type, String actor, String stage, String fromStage, String toStage,
+    record Event(UUID eventId, OffsetDateTime occurredAt, String type, String actor, String stage, String fromStage, String toStage,
                  UserText comment, UserText nextAction, OffsetDateTime nextActionAt) {
     }
 

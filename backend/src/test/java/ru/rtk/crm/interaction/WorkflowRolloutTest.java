@@ -43,12 +43,15 @@ class WorkflowRolloutTest {
         assertThat(plan.transitions()).hasSize(3);
         assertThat(plan.changes()).containsExactly(
                 "текущий этап «Проверка» → «Согласование»",
-                "добавлен этап «Подписание»"
+                "добавлен этап «Подписание»",
+                "добавлен переход «Согласование» → «Подписание»",
+                "добавлен переход «Подписание» → «Финиш»",
+                "убран переход «Согласование» → «Финиш»"
         );
     }
 
     @Test
-    void removedCurrentStageGoesToTheNextKeptStageOrToTheManualChoiceAndIsMerged() {
+    void removedCurrentStageGoesToThePreviousKeptStageOrToTheManualChoiceAndIsMerged() {
         List<WorkflowRollout.RouteStage> work = snapshot(source);
         WorkflowRoute target = route(List.of(stage(start, "Старт", 0), stage(finish, "Финиш", 1)));
 
@@ -57,10 +60,17 @@ class WorkflowRolloutTest {
                 work, transitions(work), work.get(1).id(), source, target, Map.of(check, start)
         );
 
-        assertThat(automatic.currentStageId()).isEqualTo(work.get(2).id());
+        // Удалённый текущий этап по умолчанию уходит назад, а не вперёд на финальный этап, откуда переходов нет.
+        assertThat(automatic.currentStageId()).isEqualTo(work.get(0).id());
         assertThat(automatic.currentStageRemoved()).isTrue();
-        assertThat(automatic.merged()).containsExactly(Map.entry(work.get(1).id(), work.get(2).id()));
-        assertThat(automatic.changes()).containsExactly("текущий этап «Проверка» → «Финиш»");
+        assertThat(automatic.landsOnFinal()).isFalse();
+        assertThat(automatic.merged()).containsExactly(Map.entry(work.get(1).id(), work.get(0).id()));
+        assertThat(automatic.changes()).containsExactly("текущий этап «Проверка» → «Старт»");
+        WorkflowRollout.Plan toFinal = WorkflowRollout.plan(
+                work, transitions(work), work.get(1).id(), source, target, Map.of(check, finish)
+        );
+        assertThat(toFinal.landsOnFinal()).isTrue();
+        assertThat(toFinal.changes()).contains("карточка окажется на финальном этапе «Финиш»");
         assertThat(manual.currentStageId()).isEqualTo(work.get(0).id());
         assertThat(manual.merged()).containsExactly(Map.entry(work.get(1).id(), work.get(0).id()));
         assertThat(WorkflowRollout.map(WorkflowRollout.asRoute(source), target, Map.of()))
@@ -105,6 +115,59 @@ class WorkflowRolloutTest {
         assertThat(WorkflowRollout.edited(added, transitions(snapshot(source)), source)).isTrue();
         assertThat(WorkflowRollout.plan(work, transitions(work), work.get(0).id(), source, source, Map.of()).changes())
                 .contains("этап «Проверка у ректора» переименован в «Проверка»");
+    }
+
+    @Test
+    void previewShowsRemovedTransitionsFlagsARouteWithoutExitAndCarriesStageProperties() {
+        List<WorkflowRollout.RouteStage> work = snapshot(source);
+        // Версия-«ловушка»: из «Проверки» можно только назад, к «Финишу» переход пропал.
+        WorkflowRoute trap = new WorkflowRoute(List.of(
+                new WorkflowTemplateStage(start, "Старт", 0, false),
+                new WorkflowTemplateStage(check, "Проверка", 1, false, true, StageLmsRole.CLASSES, List.of("ACT")),
+                stage(finish, "Финиш", 2)
+        ), List.of(
+                new WorkflowTemplateTransition(start, check, false),
+                new WorkflowTemplateTransition(check, start, true)
+        ));
+
+        WorkflowRollout.Plan plan = WorkflowRollout.plan(work, transitions(work), work.get(1).id(), source, trap, Map.of());
+
+        assertThat(plan.changes()).contains(
+                "добавлен переход «Проверка» → «Старт»",
+                "убран переход «Проверка» → «Финиш»",
+                "с этапа «Проверка» нельзя дойти до финального этапа"
+        );
+        assertThat(plan.noExit()).isTrue();
+        assertThat(plan.stages().get(1).asStage())
+                .satisfies(stage -> {
+                    assertThat(stage.requiresAgreement()).isTrue();
+                    assertThat(stage.lmsRole()).isEqualTo(StageLmsRole.CLASSES);
+                    assertThat(stage.documentKinds()).containsExactly("ACT");
+                });
+        assertThat(WorkflowRollout.plan(work, transitions(work), work.get(1).id(), source, source, Map.of()).noExit()).isFalse();
+    }
+
+    // Н-РТ-4 (2.5): переходы удалённого или объединённого этапа не называются «убранными» после подстановки — у
+    // карточки не было ни «Старт» → «Финиш», ни «Финиш» → «Работа».
+    @Test
+    void previewDoesNotNameTransitionsTheWorkNeverHad() {
+        UUID work4 = UUID.randomUUID();
+        WorkflowRoute linear = route(List.of(stage(start, "Старт", 0), stage(check, "Проверка", 1), stage(work4, "Работа", 2),
+                stage(finish, "Финиш", 3)));
+        List<WorkflowTemplateTransition> withSkip = new ArrayList<>(linear.transitions());
+        withSkip.add(new WorkflowTemplateTransition(check, finish, true));
+        WorkflowRoute four = new WorkflowRoute(linear.stages(), withSkip);
+        List<WorkflowRollout.RouteStage> work = snapshot(four);
+        List<InteractionStageTransition> edges = new ArrayList<>(transitions(work));
+        edges.add(new InteractionStageTransition(work.get(1).id(), work.get(3).id(), true));
+        WorkflowRoute without = route(List.of(stage(start, "Старт", 0), stage(work4, "Работа", 1), stage(finish, "Финиш", 2)));
+
+        WorkflowRollout.Plan automatic = WorkflowRollout.plan(work, edges, work.get(1).id(), four, without, Map.of());
+        WorkflowRollout.Plan toFinal = WorkflowRollout.plan(work, edges, work.get(1).id(), four, without, Map.of(check, finish));
+
+        assertThat(automatic.changes()).containsExactly("текущий этап «Проверка» → «Старт»");
+        assertThat(toFinal.changes()).noneMatch(change -> change.startsWith("убран переход"));
+        assertThat(toFinal.changes()).contains("карточка окажется на финальном этапе «Финиш»");
     }
 
     private static WorkflowTemplateStage stage(UUID id, String name, int order) {

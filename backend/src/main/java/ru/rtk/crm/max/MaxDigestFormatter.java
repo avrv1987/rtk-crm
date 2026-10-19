@@ -80,6 +80,11 @@ public final class MaxDigestFormatter {
                 + (days == 0 ? " (сегодня)." : " (через " + days + " дн.).");
     }
 
+    static String agentPlan(String organizationName) {
+        return "ИИ-агент подготовил план по вузу «" + organizationName + "». Данные CRM не изменены: проверьте план и "
+                + "нажмите «Записать» или «Отклонить».";
+    }
+
     static String siteRequest(String organizationName) {
         return "Новая заявка с сайта: «" + organizationName + "». Разберите её в CRM.";
     }

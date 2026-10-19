@@ -77,6 +77,11 @@ type RestrictTarget =
 type RestrictState = { target: RestrictTarget; draft: ReasonDraft; saving: boolean; error?: unknown; idempotencyKey: string }
 
 const emptyDraft: QueryDraft = { name: '', email: '', phone: '', snils: '', otherSpellings: '' }
+
+// Те же правила, что SubjectTerms.fullName на сервере: заменяется ФИО не меньше чем из двух слов по две буквы (Н-14).
+export const singleWordSpellings = (value: string) => value.split(/[,;\n]/)
+  .map((part) => part.trim())
+  .filter((part) => part !== '' && part.split(/[^\p{L}\p{N}]+/u).filter((word) => word.length >= 2).length < 2)
 const emptySelection: Selection = { contactIds: [], profileIds: [], attachmentIds: [], learnerIds: [] }
 const emptyReason: ReasonDraft = { reason: '', comment: '' }
 
@@ -105,7 +110,8 @@ const previewLines = (preview: AnonymizationResult) => [
   ['Записи источников', preview.sourceRecords],
   ['Служебные записи: журнал, снимки команд и импорта', preview.technicalRecords],
   ['Файлы вложений — будут удалены', preview.attachmentsDeleted],
-  ['Готовые отчёты — будут удалены', preview.reportFilesDeleted]
+  ['Готовые отчёты, где найден субъект, — будут удалены', preview.reportFilesDeleted],
+  ['Готовые отчёты, которые не удалось проверить, — будут помечены «требует пересоздания»', preview.reportFilesMarked]
 ] as const
 
 const statusLabels: Record<SubjectContact['status'], string> = {
@@ -757,7 +763,7 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
           <Group id="subject-learners-title" title="Анкеты слушателей" count={result.learners.length} open={isOpen('learners')}>
             <p className="admin-form__hint">
               Значения анкеты на экране не показываются, они входят в выгрузку сведений. Уточнить данные по обращению
-              субъекта может оператор зачисления в анкете слушателя.
+              субъекта может менеджер учебного процесса в анкете слушателя.
             </p>
             {renderLearners(result.learners)}
           </Group>
@@ -914,6 +920,12 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
                 placeholder="Например, И. Петрова, Petrova"
                 onChange={(event) => setDraft({ ...draft, otherSpellings: event.target.value })}
               />
+              {singleWordSpellings(draft.otherSpellings).length > 0 && (
+                <span className="interaction-field-hint" role="note">
+                  Одно слово ({singleWordSpellings(draft.otherSpellings).join(', ')}) найдётся при поиске, но при обезличивании
+                  заменено не будет: заменяются только ФИО из двух слов и больше.
+                </span>
+              )}
             </label>
           </div>
         </details>
@@ -1001,7 +1013,7 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
                 ? 'Обработка данных возобновится.'
                 : restriction.target.kind === 'contact'
                   ? 'Контакт останется в истории, но его нельзя будет связать с новыми взаимодействиями.'
-                  : 'Анкета останется в статистике, но оператор зачисления не сможет её открыть или изменить.'}
+                  : 'Анкета останется в статистике, но менеджер учебного процесса не сможет её открыть или изменить.'}
             </p>
             <ReasonFields
               draft={restriction.draft}
@@ -1030,7 +1042,7 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
             {' '}{outcome.mentions}, переименовано файлов: {outcome.attachmentsRenamed}, записей источников:
             {' '}{outcome.sourceRecords}, служебных записей:
             {' '}{outcome.technicalRecords}; удалено файлов: {outcome.attachmentsDeleted}, файлов отчётов:
-            {' '}{outcome.reportFilesDeleted}.
+            {' '}{outcome.reportFilesDeleted}; помечено «требует пересоздания»: {outcome.reportFilesMarked}.
           </>
         )}
         onClose={() => setOutcome(null)}

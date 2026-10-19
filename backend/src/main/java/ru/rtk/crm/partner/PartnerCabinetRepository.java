@@ -9,7 +9,6 @@ import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
-import ru.rtk.crm.attachment.AttachmentKind;
 import ru.rtk.crm.catalog.OrganizationType;
 import ru.rtk.crm.interaction.InteractionWorkStatus;
 import ru.rtk.crm.partner.PartnerModels.PartnerDocument;
@@ -137,7 +136,8 @@ public class PartnerCabinetRepository {
 
     public List<PartnerDocument> findDocuments(UUID organizationId) {
         return jdbcClient.sql("""
-                SELECT a.id, a.interaction_id, i.title, a.original_name, a.kind, a.media_type, a.size_bytes, a.status, a.created_at,
+                SELECT a.id, a.interaction_id, i.title, a.original_name, a.kind,
+                       (SELECT dk.name FROM document_kinds dk WHERE dk.code = a.kind) AS kind_name, a.media_type, a.size_bytes, a.status, a.created_at,
                        a.revision, EXISTS (
                            SELECT 1 FROM attachments newer
                            WHERE newer.replaces_id = a.id AND newer.deleted_at IS NULL AND newer.status <> 'REJECTED'
@@ -152,7 +152,8 @@ public class PartnerCabinetRepository {
                         resultSet.getObject("interaction_id", UUID.class),
                         resultSet.getString("title"),
                         resultSet.getString("original_name"),
-                        AttachmentKind.valueOf(resultSet.getString("kind")),
+                        resultSet.getString("kind"),
+                        resultSet.getString("kind_name"),
                         resultSet.getString("media_type"),
                         resultSet.getLong("size_bytes"),
                         "CLEAN".equals(resultSet.getString("status")),

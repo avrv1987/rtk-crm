@@ -1,4 +1,4 @@
-import { type FormEvent, useRef, useState } from 'react'
+import { type FormEvent, useEffect, useRef, useState } from 'react'
 import {
   ApiError,
   apiClient,
@@ -12,6 +12,7 @@ import { changedDraft, conflictKeys, keepDraftValues, mergedValues, parseBasedDr
 import { DraftConflictNotice } from './DraftConflictNotice'
 import { recordOf, textOf, useFormDraft } from './formDraft'
 import { forgetUnsavedDraft, useUnsavedDraft } from './unsavedDrafts'
+import { interactionKindsApi, type InteractionKind } from './interactionKinds'
 import { isoFromMoscowInput, moscowInputValue } from './moscowTime'
 import { commandFailureMessage, contactRoleLabels, formatDateTime, handledAccessError } from './workMarks'
 import './workCard.css'
@@ -29,6 +30,7 @@ type InteractionDetailsFormProps = {
 
 type DetailsValues = {
   title: string
+  kindId: string
   lastContactAt: string
   contactIds: string[]
 }
@@ -44,12 +46,14 @@ const toIsoDateTime = isoFromMoscowInput
 
 const fieldLabels: Record<keyof DetailsValues, string> = {
   title: 'Название',
+  kindId: 'Вид взаимодействия',
   lastContactAt: 'Дата последнего контакта',
   contactIds: 'Связанные контакты'
 }
 
 const fromInteraction = (interaction: Interaction): DetailsValues => ({
   title: interaction.title,
+  kindId: interaction.kind?.id ?? '',
   lastContactAt: toDateTimeLocal(interaction.lastContactAt),
   contactIds: [...interaction.contactIds].sort()
 })
@@ -61,6 +65,7 @@ const parseValues = (value: unknown): DetailsValues | null => {
   }
   return {
     title: textOf(record.title),
+    kindId: textOf(record.kindId),
     lastContactAt: textOf(record.lastContactAt),
     contactIds: Array.isArray(record.contactIds)
       ? record.contactIds.filter((id): id is string => typeof id === 'string').sort()
@@ -87,12 +92,23 @@ export const InteractionDetailsForm = ({
   const [draft, setDraft] = useFormDraft(profileId, `card:${interaction.id}:details`, parseDraft)
   const [state, setState] = useState<CommandState>({ kind: 'idle' })
   const commandKey = useRef<string | null>(null)
+  const [kinds, setKinds] = useState<InteractionKind[]>([])
+  useEffect(() => {
+    let active = true
+    interactionKindsApi.available().then((loaded) => active && setKinds(loaded)).catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
   const current = fromInteraction(interaction)
   const values = mergedValues(draft, current)
   const conflicts = conflictKeys(draft, current)
   const payload: InteractionPlanUpdate = { version: interaction.version }
   if (values.title.trim() !== interaction.title) {
     payload.title = values.title.trim()
+  }
+  if (values.kindId !== current.kindId && values.kindId !== '') {
+    payload.kindId = values.kindId
   }
   if (values.lastContactAt !== current.lastContactAt) {
     payload.lastContactAt = toIsoDateTime(values.lastContactAt)
@@ -108,6 +124,11 @@ export const InteractionDetailsForm = ({
   const shownValue = (field: keyof DetailsValues, source: DetailsValues) => {
     if (field === 'title') {
       return source.title.trim() || 'не указано'
+    }
+    if (field === 'kindId') {
+      return source.kindId === interaction.kind?.id
+        ? interaction.kind.name
+        : kinds.find((kind) => kind.id === source.kindId)?.name ?? 'не указан'
     }
     if (field === 'lastContactAt') {
       return source.lastContactAt === '' ? 'не указана' : formatDateTime(source.lastContactAt)
@@ -189,7 +210,24 @@ export const InteractionDetailsForm = ({
         <input value={values.title} maxLength={200} required onChange={(event) => change({ title: event.target.value })} />
       </label>
       <label>
+        Вид взаимодействия
+        <select value={values.kindId} onChange={(event) => change({ kindId: event.target.value })}>
+          {interaction.kind && !kinds.some((kind) => kind.id === interaction.kind?.id) && (
+            <option value={interaction.kind.id}>{interaction.kind.name}</option>
+          )}
+          {kinds.map((kind) => <option key={kind.id} value={kind.id}>{kind.name}</option>)}
+        </select>
+        {values.kindId !== current.kindId && (
+          <small>
+            Маршрут карточки не изменится: мастер версий переводит карточку только на новую версию её же шаблона. Чтобы работать по
+            маршруту другого вида, начните новый цикл с этим видом.
+          </small>
+
+        )}
+      </label>
+      <label>
         Дата последнего контакта (МСК)
+
         <input type="datetime-local" value={values.lastContactAt} onChange={(event) => change({ lastContactAt: event.target.value })} />
       </label>
       <fieldset className="interaction-contact-picker">

@@ -13,8 +13,7 @@ import { CameraInput } from '../../shared/ui/CameraInput'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import {
   attachmentAccept,
-  attachmentKindLabels,
-  attachmentKinds,
+  attachmentKindLabel,
   canPreview,
   commandMessage,
   deleteAttachment,
@@ -25,6 +24,8 @@ import {
   type AccessHandlers,
   type AttachmentKind
 } from './documentsApi'
+import { selectableDocumentKinds } from './stageProperties'
+import { useDocumentKinds } from './useDocumentKinds'
 import './documents.css'
 
 type AttachmentExtrasProps = AccessHandlers & {
@@ -71,6 +72,11 @@ export const AttachmentExtras = ({
     : interaction.attachments.find((item) => item.id === attachment.replacesId)
   const canDelete = canEdit && (attachment.createdBy === profileId || role === 'LEADER')
   const busy = state.kind === 'saving'
+  const documentKinds = useDocumentKinds()
+  // Пока справочник не загрузился, в списке остаётся текущий вид документа, чтобы выбор не сбросился.
+  const kindOptions = documentKinds.length === 0
+    ? [{ code: attachment.kind, name: attachmentKindLabel(attachment), archived: false }]
+    : selectableDocumentKinds(documentKinds, attachment.kind)
 
   const open = (next: Panel) => {
     commandKey.current = null
@@ -158,7 +164,7 @@ export const AttachmentExtras = ({
   return (
     <div className="document-extras">
       <p className="document-extras__revision">
-        {attachmentKindLabels[attachment.kind]}
+        {attachmentKindLabel(attachment)}
         {' · '}Версия {attachment.revision}
         {previous !== undefined && <span> · заменяет версию {previous.revision}</span>}
         {previous === undefined && attachment.replacesId !== null && <span> · прежняя версия удалена</span>}
@@ -188,7 +194,7 @@ export const AttachmentExtras = ({
                 setPanel('none')
               }}
             >
-              {attachmentKinds.map((kind) => <option key={kind} value={kind}>{attachmentKindLabels[kind]}</option>)}
+              {kindOptions.map((kind) => <option key={kind.code} value={kind.code}>{kind.name}</option>)}
             </select>
           </label>
           <span className="interaction-field-hint">

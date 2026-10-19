@@ -18,6 +18,10 @@ spring:
       max-request-size: 21MB
 server:
   forward-headers-strategy: framework
+  tomcat:
+    # Заголовок части multipart по умолчанию 512 байт: длинное кириллическое имя файла (около 250 символов) не помещалось,
+    # и Tomcat отвечал 413 «файл слишком большой» на файл в сотню байт. Имя ограничено 255 символами при проверке файла.
+    max-part-header-size: 8KB
   servlet:
     session:
       timeout: ${APP_SESSION_IDLE_TIMEOUT:30m}
@@ -46,6 +50,11 @@ logging:
 app:
   session:
     absolute-timeout: ${APP_SESSION_ABSOLUTE_TIMEOUT:12h}
+  # Ограничение частоты /api/** (ApiRateLimitFilter): запросов в минуту на вошедшего пользователя и на адрес
+  # для запросов без входа; 0 выключает. Запас под нагрузочный тест — в технической документации.
+  api-rate-limit:
+    per-minute: ${API_RATE_LIMIT_PER_MINUTE:1800}
+    anonymous-per-minute: ${API_RATE_LIMIT_ANONYMOUS_PER_MINUTE:600}
   modules:
     enrolment:
       enabled: ${MODULE_ENROLMENT_ENABLED:true}
@@ -70,7 +79,6 @@ app:
     signing-stage-rule: ${APP_AGREEMENTS_SIGNING_STAGE_RULE:true}
     exchange-stage-names: Обмен документами
     correction-stage-names: Корректировка документов
-    signing-stage-names: Подписание
     approval:
       university-first-round-days: ${APP_AGREEMENTS_APPROVAL_UNIVERSITY_FIRST_ROUND_DAYS:42}
       university-next-round-days: ${APP_AGREEMENTS_APPROVAL_UNIVERSITY_NEXT_ROUND_DAYS:21}
@@ -144,16 +152,13 @@ app:
     stuck-days: 30
     upcoming-days: 7
     license-years-ahead: 1
-    training-stage-names: Обучение преподавателей,Повышение квалификации
     training-cycle-years: 3
     training-notice-days: 90
     reminder-list-limit: 50
-    qualification-stage-name: Повышение квалификации
     qualification-after-months: 12
     agreement-notice-days: 90
     deputy-expiry-delay: PT5M
   lms-signals:
-    classes-stage-name: Занятия
     no-students-after-days: 14
     low-completion-percent: 50
     completion-coverage-percent: 70
@@ -183,6 +188,9 @@ app:
     plan-ttl: 20m
     plan-pending-limit: 5
     plan-daily-limit: 30
+    # Режим ПДн по клиенту MCP (azp токена): masked — по умолчанию, none — имена и контакты людей вуза скрыты.
+    # Пример: clients.<azp>.pd-mode: none. Режим выбирают операторы при регистрации клиента.
+    clients: {}
   oidc:
     issuer-uri: ${APP_OIDC_ISSUER_URI:}
     public-base-url: ${APP_OIDC_PUBLIC_BASE_URL:}

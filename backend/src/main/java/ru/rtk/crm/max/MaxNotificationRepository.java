@@ -119,6 +119,27 @@ public class MaxNotificationRepository {
                 .list();
     }
 
+    // План ИИ-агента ждёт подтверждения — тому, для кого он подготовлен; решённые и истёкшие не уведомляются.
+    public List<AgentPlanEvent> agentPlans(OffsetDateTime since, OffsetDateTime now) {
+        return jdbcClient.sql("""
+                SELECT ap.id AS plan_id, i.organization_id, o.name AS organization_name, l.profile_id, l.max_user_id, ap.expires_at
+                FROM agent_change_plans ap
+                JOIN interactions i ON i.id = ap.interaction_id
+                JOIN organizations o ON o.id = i.organization_id
+                JOIN max_links l ON l.profile_id = ap.requester_profile_id AND l.status = 'ACTIVE'
+                """ + CHANNEL_PROFILE + """
+                WHERE ap.created_at > :since AND ap.state = 'PENDING' AND ap.expires_at > :now
+                """)
+                .param("since", since)
+                .param("now", now)
+                .query(AgentPlanEvent.class)
+                .list();
+    }
+
+    public record AgentPlanEvent(UUID planId, UUID organizationId, String organizationName, UUID profileId, long maxUserId,
+                                 OffsetDateTime expiresAt) {
+    }
+
     public record Event(
             UUID eventId,
             UUID organizationId,

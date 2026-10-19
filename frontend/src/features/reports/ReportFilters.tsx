@@ -27,6 +27,7 @@ export type FilterOptions = {
   directions: FilterOption[]
   programs: FilterOption[]
   products: FilterOption[]
+  kinds: FilterOption[]
   managers: FilterOption[]
   stages: FilterOption[]
   vendors: FilterOption[]
@@ -139,6 +140,14 @@ export const ReportFilterFields = ({ role, selection, options, update }: FieldsP
           onChange={(productIds) => update({ productIds })}
           includeNone={selection.includeNoProduct}
           onIncludeNoneChange={(includeNoProduct) => update({ includeNoProduct })}
+        />
+      )}
+      {visible.kinds && options.kinds.length > 0 && (
+        <MultiSelectGroup
+          label="Виды взаимодействия"
+          options={options.kinds}
+          selected={selection.kindIds}
+          onChange={(kindIds) => update({ kindIds })}
         />
       )}
       <MultiSelectGroup
@@ -299,6 +308,12 @@ export const activeFilterChips = (
         onRemove: () => update({ productIds: selection.productIds.filter((item) => item !== id) })
       }))
     ] : []),
+    ...(visible.kinds ? selection.kindIds.map((id) => ({
+      key: `kind-${id}`,
+      text: `Вид: ${labelOf(options.kinds, id)}`,
+      onRemove: () => update({ kindIds: selection.kindIds.filter((item) => item !== id) })
+    })) : []),
+
     ...(selection.includeNoManager ? [{ key: 'man-none', text: 'Ответственный: не указан', onRemove: () => update({ includeNoManager: false }) }] : []),
     ...selection.managerIds.map((id) => ({
       key: `man-${id}`,

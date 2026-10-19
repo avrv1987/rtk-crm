@@ -4,7 +4,8 @@ public enum CatalogKind {
     DIRECTIONS("directions", null, null, CatalogEntityType.DIRECTION, "ИТ-направление"),
     PROGRAMS("programs", "direction_id", "directions", CatalogEntityType.PROGRAM, "ИТ-программа"),
     VENDORS("vendors", null, null, CatalogEntityType.VENDOR, "Вендор"),
-    PRODUCTS("products", "vendor_id", "vendors", CatalogEntityType.PRODUCT, "ИТ-продукт");
+    PRODUCTS("products", "vendor_id", "vendors", CatalogEntityType.PRODUCT, "ИТ-продукт"),
+    DOCUMENT_KINDS("document_kinds", null, null, CatalogEntityType.DOCUMENT_KIND, "Вид документа");
 
     private final String table;
     private final String parentColumn;

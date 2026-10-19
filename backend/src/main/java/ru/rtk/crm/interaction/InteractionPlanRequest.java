@@ -19,6 +19,7 @@ public final class InteractionPlanRequest {
     private Optional<OffsetDateTime> lastContactAt;
     private Optional<List<UUID>> contactIds;
     private Optional<Boolean> nextStepPartnerVisible;
+    private Optional<UUID> kindId;
 
     public InteractionPlanRequest(
             Integer version,
@@ -74,6 +75,16 @@ public final class InteractionPlanRequest {
     public Optional<Boolean> nextStepPartnerVisible() {
         return nextStepPartnerVisible;
     }
+
+    public Optional<UUID> kindId() {
+        return kindId;
+    }
+
+    @JsonSetter("kindId")
+    public void setKindId(UUID kindId) {
+        this.kindId = Optional.ofNullable(kindId);
+    }
+
 
     @JsonSetter("nextStepPartnerVisible")
     public void setNextStepPartnerVisible(Boolean nextStepPartnerVisible) {

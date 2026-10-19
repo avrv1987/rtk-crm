@@ -166,6 +166,14 @@ public record ReportRequest(
         if (kind == ReportKind.MANAGER_WORK) {
             throw new InteractionValidationException("groupBy", "Для отчёта «Работа менеджеров за период» диаграмма не строится");
         }
+        if (groupBy == StatisticsGroupBy.MILESTONE && kind != ReportKind.PORTFOLIO && kind != ReportKind.SNAPSHOT) {
+            throw new InteractionValidationException(
+                    "groupBy", "Группировка по вехам строится для портфеля взаимодействий и состояния портфеля на дату"
+            );
+        }
+        if (seriesBy == StatisticsGroupBy.MILESTONE) {
+            throw new InteractionValidationException("seriesBy", "Линии по вехам не строятся: выберите группировку по вехам");
+        }
         if (groupBy == StatisticsGroupBy.MONTH && basis != null && basis != PeriodBasis.CREATED) {
             throw new InteractionValidationException(
                     "groupBy",
@@ -204,6 +212,11 @@ public record ReportRequest(
                     "filters.stages", "Фильтр по этапам недоступен для отчёта «Востребованность программ»"
             );
         }
+        if (!normalizedFilters.kindIds().isEmpty()) {
+            throw new InteractionValidationException(
+                    "filters.kindIds", "Фильтр по виду взаимодействия недоступен для отчёта «Востребованность программ»"
+            );
+        }
         if (!normalizedFilters.workStatuses().isEmpty()) {
             throw new InteractionValidationException(
                     "filters.workStatuses", "Фильтр по состоянию взаимодействия недоступен для отчёта «Востребованность программ»"
@@ -236,8 +249,9 @@ public record ReportRequest(
         if (!normalizedFilters.directionIds().isEmpty() || normalizedFilters.includeNoDirection()
                 || !normalizedFilters.programIds().isEmpty() || normalizedFilters.includeNoProgram()
                 || !normalizedFilters.productIds().isEmpty() || normalizedFilters.includeNoProduct()
-                || !normalizedFilters.stages().isEmpty()
+                || !normalizedFilters.stages().isEmpty() || !normalizedFilters.kindIds().isEmpty()
                 || !normalizedFilters.workStatuses().isEmpty() || !normalizedFilters.flags().isEmpty()
+
                 || !normalizedFilters.agreement().unrestricted()) {
             throw new InteractionValidationException(
                     "filters", "Отчёт «Реализация договоров» отбирается по вузам, типу организации, ответственным и периоду"

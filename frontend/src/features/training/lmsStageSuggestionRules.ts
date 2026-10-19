@@ -1,28 +1,19 @@
 import type { Interaction, InteractionStage, LearningSnapshot, TeacherTraining } from '../../shared/api/client'
 
-// Правила LMS находят этапы маршрута по названию: смыслового поля у этапа нет.
-export const CLASSES_STAGE = 'Занятия'
-export const TEACHER_TRAINING_STAGE = 'Обучение преподавателей'
+// Сигналы и подсказки LMS находят этапы по роли этапа (lmsRole), заданной в шаблоне: переименование этапа их не
+// ломает. По названию ищется только «Актуализация программы» — у неё роли нет (в списке ролей владельца её нет).
 export const PROGRAM_UPDATE_STAGE = 'Актуализация программы'
-export const QUALIFICATION_STAGE = 'Повышение квалификации'
 
-/** Этапы, которые LMS закрывает фактом обучения преподавателей. Порядок не важен — ищем оба. */
-const LMS_STAGE_NAMES = [TEACHER_TRAINING_STAGE, QUALIFICATION_STAGE]
+/** Роли этапов, которые LMS закрывает фактом обучения преподавателей. Порядок не важен — ищем обе. */
+const TRAINING_ROLES: ReadonlyArray<InteractionStage['lmsRole']> = ['TEACHER_TRAINING', 'QUALIFICATION']
 
-// ponytail: «Занятия», этапы обучения и повышения квалификации на сервере задаются настройками app.lms-signals и
-// app.work; здесь их значения по умолчанию. Если настройки поменяют, список нужно поправить вместе с ними.
 const LMS_STAGE_DEPENDENCIES: Record<string, string> = {
-  [CLASSES_STAGE]: 'сигнал «В LMS появились обучающиеся» с переходом к занятиям и сверка этапа с LMS в «Контроле»'
-    + ' и отчёте «Работа менеджеров»',
-  [TEACHER_TRAINING_STAGE]: 'подсказка «Отметить этап выполненным по данным LMS» и напоминание о новом цикле обучения',
-  [PROGRAM_UPDATE_STAGE]: 'подсказка «Перейти к этапу «Актуализация программы»» после курса преподавателей',
-  [QUALIFICATION_STAGE]: 'подсказка «Отметить этап выполненным по данным LMS», кнопка «Запустить новый цикл»'
-    + ' и напоминания о повышении квалификации и новом цикле обучения'
+  [PROGRAM_UPDATE_STAGE]: 'подсказка «Перейти к этапу «Актуализация программы»» после курса преподавателей'
 }
 
 /**
- * Предупреждение редактора шаблонов: какие этапы из правил LMS пропадут после сохранения (переименованы или удалены)
- * и что перестанет работать. Сохранение не блокируется — маршрут решает тот, кто его настраивает.
+ * Предупреждение редактора шаблонов: этап «Актуализация программы» ищется по названию, и при переименовании или
+ * удалении подсказка перестанет работать. Сохранение не блокируется — маршрут решает тот, кто его настраивает.
  */
 export const lmsStageWarning = (before: string[], after: string[]): string | null => {
   const kept = new Set(after.map((name) => name.trim()))
@@ -31,7 +22,7 @@ export const lmsStageWarning = (before: string[], after: string[]): string | nul
   if (lost.length === 0) {
     return null
   }
-  return 'Подсказки и сигналы LMS ищут этапы по названию. После сохранения перестанут работать: '
+  return 'Подсказка после курса преподавателей ищет этап по названию. После сохранения перестанет работать: '
     + lost.map((name) => `этап «${name}» — ${LMS_STAGE_DEPENDENCIES[name]}`).join('; ')
     + '. Чтобы они работали, оставьте прежнее название.'
 }
@@ -108,10 +99,10 @@ export const findLmsStageSuggestion = (
   if (withCompletion.length === 0) {
     return null
   }
-  // Этапы ищутся по названию, а не по идентификатору: маршрут настраивается, у разных шаблонов идентификаторы разные.
+  // Этапы ищутся по роли для LMS, а не по названию или идентификатору: маршруты разные, роль задана в шаблоне.
   // Берётся ближайший не пройденный.
   const pendingStage = interaction.stages
-    .filter((stage) => LMS_STAGE_NAMES.includes(stage.name) && !stageAlreadyDone(interaction, stage))
+    .filter((stage) => TRAINING_ROLES.includes(stage.lmsRole) && !stageAlreadyDone(interaction, stage))
     .sort((a, b) => a.order - b.order)[0]
   if (pendingStage === undefined) {
     return null
@@ -123,7 +114,7 @@ export const findLmsStageSuggestion = (
   // Дата по умолчанию: для повышения квалификации — последний день потока, если он прошёл, иначе начало потока; не
   // позже сегодня, чтобы не отметить обучение в будущем.
   const defaultTrainedOn = minDate(
-    pendingStage.name === QUALIFICATION_STAGE && lastDay !== null && lastDay <= today ? lastDay : runStart,
+    pendingStage.lmsRole === 'QUALIFICATION' && lastDay !== null && lastDay <= today ? lastDay : runStart,
     today
   )
   return {
@@ -131,7 +122,7 @@ export const findLmsStageSuggestion = (
     isCurrentStage: pendingStage.id === interaction.currentStageId,
     snapshot,
     // Повышение квалификации повторяется: после него в карточке предлагается запустить новый цикл.
-    offerCycle: pendingStage.name === QUALIFICATION_STAGE,
+    offerCycle: pendingStage.lmsRole === 'QUALIFICATION',
     defaultTrainedOn,
     partial: (snapshot.completed ?? 0) < snapshot.participants
   }
@@ -161,7 +152,7 @@ export const findProgramUpdateSuggestion = (
   if (withCompletion.length === 0) {
     return null
   }
-  const training = interaction.stages.find((stage) => stage.name === TEACHER_TRAINING_STAGE)
+  const training = interaction.stages.find((stage) => stage.lmsRole === 'TEACHER_TRAINING')
   if (training !== undefined && !stageAlreadyDone(interaction, training)) {
     return null
   }

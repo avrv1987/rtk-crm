@@ -32,7 +32,7 @@ test('колонки оплат убираются из «Востребован
   assert.deepEqual(withoutPaymentColumns(columns, on), columns)
 })
 
-test('посадочная без модулей не упоминает роли «Оператор зачисления» и «Координатор вуза»', () => {
+test('посадочная без модулей не упоминает роли «Менеджер учебного процесса» и «Координатор вуза»', () => {
   const titles = rolesFor(off).map((role) => role.title)
   assert.deepEqual(titles, [
     'Менеджер по работе с вузами (КАМ)', 'Руководитель команды', 'Руководство', 'Администратор платформы'
@@ -48,7 +48,7 @@ test('посадочная без модулей не упоминает рол�
 
 test('посадочная со включёнными модулями показывает обе роли и приглашение в кабинет', () => {
   const titles = rolesFor(on).map((role) => role.title)
-  assert.ok(titles.includes('Оператор зачисления'))
+  assert.ok(titles.includes('Менеджер учебного процесса'))
   assert.ok(titles.includes('Координатор вуза'))
   assert.ok(rolesFor(on)[0].duties.some((duty) => duty.includes('доступ в кабинет')))
   assert.ok(siteIntegrationText(on).includes('оплаты'))
@@ -67,7 +67,7 @@ test('посадочная: Moodle-запись описана только с �
 
 test('при одном включённом модуле показывается только его роль', () => {
   const titles = rolesFor({ enrolment: true, partner: false }).map((role) => role.title)
-  assert.ok(titles.includes('Оператор зачисления'))
+  assert.ok(titles.includes('Менеджер учебного процесса'))
   assert.ok(!titles.includes('Координатор вуза'))
 })
 

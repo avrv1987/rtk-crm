@@ -77,7 +77,7 @@ class MaxNotificationsTest {
     @BeforeEach
     void setUp() {
         new ResourceDatabasePopulator(new ClassPathResource("ru/rtk/crm/max/notification-schema.sql")).execute(jdbcTemplate.getDataSource());
-        for (String table : List.of("max_outbox", "max_links", "organization_assignment_events", "agreement_status_events", "agreements",
+        for (String table : List.of("agent_change_plans", "interactions", "max_outbox", "max_links", "organization_assignment_events", "agreement_status_events", "agreements",
                 "source_records", "organizations", "crm_user_profiles")) {
             jdbcTemplate.update("DELETE FROM " + table);
         }
@@ -115,6 +115,25 @@ class MaxNotificationsTest {
         assertThat(notifications.collectEvents()).isZero();
         assertThat(texts("ASSIGNMENT")).containsExactly("Вам назначен вуз «Колледж связи».");
         assertThat(jdbcTemplate.queryForObject("SELECT organization_id FROM max_outbox", UUID.class)).isEqualTo(ORGANIZATION);
+    }
+
+    // План ИИ-агента — тому, для кого он подготовлен, с прямой ссылкой на экран плана; решённый план не уведомляется.
+    @Test
+    void pendingAgentPlanNotifiesItsOwnerWithALinkToThePlan() {
+        UUID interaction = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO interactions (id, organization_id) VALUES (?, ?)", interaction, ORGANIZATION);
+        OffsetDateTime now = OffsetDateTime.now();
+        UUID plan = UUID.randomUUID();
+        String insert = "INSERT INTO agent_change_plans (id, requester_profile_id, interaction_id, state, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)";
+        jdbcTemplate.update(insert, plan, KAM, interaction, "PENDING", now, now.plusMinutes(20));
+        jdbcTemplate.update(insert, UUID.randomUUID(), KAM, interaction, "REJECTED", now, now.plusMinutes(20));
+        jdbcTemplate.update(insert, UUID.randomUUID(), UNLINKED_KAM, interaction, "PENDING", now, now.plusMinutes(20));
+
+        assertThat(notifications.collectEvents()).isEqualTo(1);
+        assertThat(notifications.collectEvents()).isZero();
+        assertThat(texts("AGENT_PLAN")).singleElement().asString().contains("«Колледж связи»", "Данные CRM не изменены");
+        assertThat(jdbcTemplate.queryForObject("SELECT body FROM max_outbox WHERE kind = 'AGENT_PLAN'", String.class))
+                .contains("#/agent-plans/" + plan);
     }
 
     @Test

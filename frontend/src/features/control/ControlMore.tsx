@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { apiClient, type LearningTrend, type LmsSignal, type Organization, type SigningPlan } from '../../shared/api/client'
+import { apiClient, type LearningCoverage, type LearningTrend, type LmsSignal, type Organization, type PortfolioChange, type SigningPlan } from '../../shared/api/client'
 import { currentPeriod, periodTitle, stateCounts } from '../reports/signingPlan'
 import { LearningTrendPanel } from '../work/LearningTrendPanel'
 import { LmsSignalList } from '../work/LmsSignals'
 import type { FilterOption } from '../reports/ReportControls'
 import { ManagerDeputyForm } from './ManagerDeputyForm'
 import { controlMoreScope, trendDays, trendLine } from './controlModel'
+import { comparisonPeriods, coverageText, portfolioText } from './overviewModel'
 import { type AccessHandlers, formatDate, handledAccessError, todayIso } from '../work/workShared'
 
 type Panel = 'signals' | 'deputies' | 'trend' | null
@@ -73,6 +74,11 @@ export const ControlMore = ({
   const [panel, setPanel] = useState<Panel>(null)
   const signals = useLoaded<LmsSignal[]>(() => apiClient.listLmsSignals().then((result) => result.items), handlers, refreshKey)
   const trend = useLoaded<LearningTrend>(() => apiClient.getLearningTrend(trendDays), handlers, refreshKey)
+  const portfolio = useLoaded<PortfolioChange>(() => {
+    const window = comparisonPeriods(todayIso(), trendDays).current
+    return apiClient.getPortfolioChange(window.from, window.to)
+  }, handlers, refreshKey)
+  const coverage = useLoaded<LearningCoverage>(() => apiClient.getLearningCoverage(), handlers, refreshKey)
   const plan = useLoaded<SigningPlan | null>(
     () => (management ? apiClient.getSigningPlan(currentPeriod(todayIso())) : Promise.resolve(null)),
     handlers,
@@ -115,6 +121,16 @@ export const ControlMore = ({
           ) : <span>{trend.kind === 'loading' ? 'Тренд обучения: …' : 'Тренд обучения недоступен'}</span>}
           {' '}
           <a href="#/reports/learning-dynamics">Динамика обучения</a>
+        </li>
+        <li>
+          {portfolio.kind === 'ready'
+            ? <span>{`Активные взаимодействия за ${trendDays} дней: ${portfolioText(portfolio.value.total)}`}</span>
+            : <span>{portfolio.kind === 'loading' ? 'Состав активных: …' : 'Состав активных недоступен'}</span>}
+        </li>
+        <li>
+          {coverage.kind === 'ready'
+            ? <span>{coverageText(coverage.value)}</span>
+            : <span>{coverage.kind === 'loading' ? 'Данные обучения: …' : 'Покрытие данных обучения недоступно'}</span>}
         </li>
         {management && (
           <li>

@@ -118,7 +118,7 @@ public class DemoSourcesBootstrap implements ApplicationRunner {
     }
 
     // Без оплат экраны «Зачисления» (поток, анкета) на демо-стенде пусты. Оплаты идут тем же путём, что файл
-    // оператора зачисления, и только если демо-оплат ещё нет: повтор bootstrap не добавляет запусков.
+    // менеджера учебного процесса, и только если демо-оплат ещё нет: повтор bootstrap не добавляет запусков.
     void uploadDemoPaidOrders() {
         if (!modules.enrolmentEnabled() || repository.findRecord(SourceCode.WEBSITE, SiteRecord.PAID_ORDER, DEMO_ORDER_NUMBER).isPresent()) {
             return;
@@ -134,7 +134,7 @@ public class DemoSourcesBootstrap implements ApplicationRunner {
         }
         try {
             PaidOrderUpload upload = sourceSyncService.uploadPaidOrders(operatorId.get(),
-                    paidOrderParser.parse(new ByteArrayInputStream(DEMO_PAID_ORDERS.getBytes(StandardCharsets.UTF_8))));
+                    paidOrderParser.parse(new ByteArrayInputStream(DEMO_PAID_ORDERS.getBytes(StandardCharsets.UTF_8))), true);
             LOGGER.info("Demo paid orders: created {}, needs mapping {}", upload.created(), upload.needsMapping());
         } catch (SourceException exception) {
             // Идёт плановая синхронизация сайта: демо-оплаты загрузит следующий запуск bootstrap.

@@ -110,7 +110,8 @@ final class WorkflowRollout {
                 added.add("добавлен этап «" + stage.name() + "»");
             }
             stageIds.put(stage.id(), id);
-            stages.add(new RouteStage(id, stage.name(), order, stage.optional(), stage.id()));
+            stages.add(new RouteStage(id, stage.name(), order, stage.optional(), stage.id(),
+                    stage.requiresAgreement(), stage.lmsRole(), stage.documentKinds()));
         }
         List<InteractionStageTransition> transitions = target.transitions().stream()
                 .map(transition -> new InteractionStageTransition(
@@ -144,6 +145,46 @@ final class WorkflowRollout {
             }
         }
         changes.addAll(added);
+        // Переходы сравниваются по названиям этапов назначения: убранный переход к финалу так же важен, как удалённый
+        // этап, и без этой строки откат к «ловушке» выглядел бы как «изменений нет».
+        Map<UUID, String> targetName = new HashMap<>();
+        mapped.forEach(item -> targetName.put(item.stage().id(), item.target().name()));
+        // «Убран» говорится только о переходах между сохранившимися этапами. Переход удалённого или объединённого этапа
+        // после подстановки выглядел бы переходом, которого у карточки не было (Б → Г при Б → А — «убран А → Г»,
+        // Н-РТ-4); об этих этапах уже сказано строкой «удалён этап» или «объединён».
+        Set<UUID> kept = new java.util.HashSet<>();
+        mapped.stream().filter(item -> carriers.get(item.target().id()) == item).forEach(item -> kept.add(item.stage().id()));
+        Set<String> keptBefore = new java.util.LinkedHashSet<>();
+        Map<UUID, String> newName = new HashMap<>();
+        targetStages.forEach(stage -> newName.put(stageIds.get(stage.id()), stage.name()));
+        Set<String> before = new java.util.LinkedHashSet<>();
+        for (InteractionStageTransition transition : workTransitions) {
+            String from = targetName.get(transition.fromStageId());
+            String to = targetName.get(transition.toStageId());
+            if (from != null && to != null && !from.equals(to)) {
+                before.add("«" + from + "» → «" + to + "»");
+                if (kept.contains(transition.fromStageId()) && kept.contains(transition.toStageId())) {
+                    keptBefore.add("«" + from + "» → «" + to + "»");
+                }
+            }
+        }
+        Set<String> after = new java.util.LinkedHashSet<>();
+        transitions.forEach(transition -> after.add(
+                "«" + newName.get(transition.fromStageId()) + "» → «" + newName.get(transition.toStageId()) + "»"));
+        after.stream().filter(edge -> !before.contains(edge)).forEach(edge -> changes.add("добавлен переход " + edge));
+        keptBefore.stream().filter(edge -> !after.contains(edge)).forEach(edge -> changes.add("убран переход " + edge));
+        UUID targetCurrent = stageIds.get(current.target().id());
+        List<InteractionStage> targetRoute = stages.stream().map(RouteStage::asStage).toList();
+        boolean noExit = WorkflowGraph.stagesWithoutPathToFinal(targetRoute, transitions).stream()
+                .anyMatch(stage -> stage.id().equals(targetCurrent));
+        if (noExit) {
+            changes.add("с этапа «" + current.target().name() + "» нельзя дойти до финального этапа");
+        }
+        boolean moved = !currentKept || current.match() == WorkflowStageMatch.REMOVED || current.match() == WorkflowStageMatch.MANUAL;
+        boolean landsOnFinal = moved && current.target().id().equals(targetStages.getLast().id());
+        if (landsOnFinal) {
+            changes.add("карточка окажется на финальном этапе «" + current.target().name() + "»");
+        }
         // Если этапы в карточке правили вручную, перевод на версию их заменит; без явного подтверждения
         // руководителя применение такой работы отклоняется (replaceLocalChanges).
         boolean edited = edited(work, workTransitions, source);
@@ -154,12 +195,13 @@ final class WorkflowRollout {
                 List.copyOf(stages),
                 transitions,
                 merged,
-                stageIds.get(current.target().id()),
+                targetCurrent,
                 current.target().name(),
-                !currentKept || current.match() == WorkflowStageMatch.REMOVED
-                        || current.match() == WorkflowStageMatch.MANUAL,
+                moved,
                 edited,
-                List.copyOf(changes)
+                List.copyOf(changes),
+                noExit,
+                landsOnFinal
         );
     }
 
@@ -190,21 +232,23 @@ final class WorkflowRollout {
 
     static List<RouteStage> asRoute(WorkflowRoute route) {
         return ordered(route).stream()
-                .map(stage -> new RouteStage(stage.id(), stage.name(), stage.order(), stage.optional(), stage.id()))
+                .map(stage -> new RouteStage(stage.id(), stage.name(), stage.order(), stage.optional(), stage.id(),
+                        stage.requiresAgreement(), stage.lmsRole(), stage.documentKinds()))
                 .toList();
     }
 
-    // Для удалённого этапа берётся ближайший сохранившийся ниже по маршруту, затем выше, и лишь потом первый
-    // этап шаблона: работа не должна «откатываться» назад без необходимости.
+    // Для удалённого этапа берётся ближайший сохранившийся выше по маршруту, затем ниже, и лишь потом первый этап
+    // шаблона. Сначала назад: перенос вперёд молча засчитывал бы непройденные этапы, вплоть до финального, откуда
+    // переходов нет. Другой этап руководитель выбирает в мастере явно (overrides).
     private static WorkflowTemplateStage fallback(List<Mapped> primary, int index, WorkflowTemplateStage first) {
-        for (int next = index + 1; next < primary.size(); next++) {
-            if (primary.get(next) != null) {
-                return primary.get(next).target();
-            }
-        }
         for (int previous = index - 1; previous >= 0; previous--) {
             if (primary.get(previous) != null) {
                 return primary.get(previous).target();
+            }
+        }
+        for (int next = index + 1; next < primary.size(); next++) {
+            if (primary.get(next) != null) {
+                return primary.get(next).target();
             }
         }
         return first;
@@ -214,9 +258,24 @@ final class WorkflowRollout {
         return route.stages().stream().sorted(Comparator.comparingInt(WorkflowTemplateStage::order)).toList();
     }
 
-    record RouteStage(UUID id, String name, int order, boolean optional, UUID templateStageId) {
+    // Свойства этапа (договор, роль LMS, документы) в плане берутся из этапа версии: перевод на версию переносит их в
+    // карточку так же, как название и обязательность.
+    record RouteStage(
+            UUID id,
+            String name,
+            int order,
+            boolean optional,
+            UUID templateStageId,
+            boolean requiresAgreement,
+            StageLmsRole lmsRole,
+            List<String> documentKinds
+    ) {
+        RouteStage(UUID id, String name, int order, boolean optional, UUID templateStageId) {
+            this(id, name, order, optional, templateStageId, false, null, List.of());
+        }
+
         InteractionStage asStage() {
-            return new InteractionStage(id, name, order, optional);
+            return new InteractionStage(id, name, order, optional, requiresAgreement, lmsRole, documentKinds);
         }
     }
 
@@ -231,7 +290,9 @@ final class WorkflowRollout {
             String currentStageName,
             boolean currentStageRemoved,
             boolean edited,
-            List<String> changes
+            List<String> changes,
+            boolean noExit,
+            boolean landsOnFinal
     ) {
     }
 }

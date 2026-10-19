@@ -128,7 +128,9 @@ public class WorkflowRolloutService {
                     plan.currentStageName(),
                     plan.currentStageRemoved(),
                     plan.edited(),
-                    String.join("; ", plan.changes())
+                    String.join("; ", plan.changes()),
+                    plan.noExit(),
+                    plan.landsOnFinal()
             ));
         }
         List<WorkflowRolloutPreview.Source> sourceItems = new ArrayList<>();
@@ -226,7 +228,7 @@ public class WorkflowRolloutService {
                     || state.workflowVersion() == targetVersion) {
                 throw new InteractionValidationException(
                         "works",
-                        "Взаимодействие «" + row.title() + "» не идёт по другой версии этого шаблона или уже завершена"
+                        "Взаимодействие «" + row.title() + "» не идёт по другой версии этого шаблона или уже завершено"
                 );
             }
             int sourceVersion = state.workflowVersion();

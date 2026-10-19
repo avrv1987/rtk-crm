@@ -26,9 +26,14 @@ enum Gender {
         return title;
     }
 
+    // Кроме «М»/«Ж» принимаются обычные написания из файлов вузов: «Мужской», «жен.», «F» и т. п. (Н-9, 2.5).
     static Optional<Gender> fromTitle(String value) {
-        String key = value.strip();
-        return Arrays.stream(values()).filter(gender -> gender.title.equalsIgnoreCase(key)).findFirst();
+        String key = value.strip().toLowerCase(java.util.Locale.ROOT).replace(".", "");
+        return switch (key) {
+            case "м", "муж", "мужской", "m", "male" -> Optional.of(MALE);
+            case "ж", "жен", "женский", "f", "female" -> Optional.of(FEMALE);
+            default -> Optional.empty();
+        };
     }
 }
 
@@ -544,10 +549,20 @@ record QuestionnaireImport(
         int updated,
         int unchanged,
         int errors,
-        int conflicts
+        int conflicts,
+        boolean alreadyApplied
 ) {
+    QuestionnaireImport(boolean applied, String fingerprint, List<String> ignoredHeaders, List<QuestionnaireRow> rows, int updated,
+                        int unchanged, int errors, int conflicts) {
+        this(applied, fingerprint, ignoredHeaders, rows, updated, unchanged, errors, conflicts, false);
+    }
+
+    QuestionnaireImport asAlreadyApplied() {
+        return new QuestionnaireImport(applied, fingerprint, ignoredHeaders, rows, updated, unchanged, errors, conflicts, true);
+    }
+
     QuestionnaireImport withoutNames() {
         return new QuestionnaireImport(applied, fingerprint, ignoredHeaders,
-                rows.stream().map(QuestionnaireRow::withoutNames).toList(), updated, unchanged, errors, conflicts);
+                rows.stream().map(QuestionnaireRow::withoutNames).toList(), updated, unchanged, errors, conflicts, alreadyApplied);
     }
 }

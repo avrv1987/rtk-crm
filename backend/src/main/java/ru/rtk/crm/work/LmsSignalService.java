@@ -136,7 +136,7 @@ public class LmsSignalService {
     // действовать, а присланному клиентом верить нельзя.
     private SignalSource activeSource(VisibilityScope scope, UUID interactionId, LmsSignalType type, UUID mappingId,
                                       OffsetDateTime now) {
-        return repository.findSources(scope, interactionId, properties.classesStageName()).stream()
+        return repository.findSources(scope, interactionId).stream()
                 .filter(candidate -> candidate.mappingId().equals(mappingId))
                 .filter(candidate -> types(candidate, now, properties).contains(type))
                 .findFirst()
@@ -149,7 +149,7 @@ public class LmsSignalService {
     private List<LmsSignal> signals(VisibilityScope scope, UUID interactionId, OffsetDateTime now) {
         Map<String, Boolean> dismissals = repository.findDismissals(scope, interactionId);
         List<LmsSignal> signals = new ArrayList<>();
-        for (SignalSource source : repository.findSources(scope, interactionId, properties.classesStageName())) {
+        for (SignalSource source : repository.findSources(scope, interactionId)) {
             for (LmsSignalType type : types(source, now, properties)) {
                 Boolean recordedAsRisk = dismissals.get(LmsSignalRepository.dismissalKey(
                         source.interactionId(), source.mappingId(), type, source.dataVersion(type)

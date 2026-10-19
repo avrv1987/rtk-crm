@@ -5,6 +5,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -30,6 +31,7 @@ import ru.rtk.crm.report.ManagerWorkLine;
 import ru.rtk.crm.report.ManagerWorkOrganization;
 import ru.rtk.crm.report.ReportFilters;
 import ru.rtk.crm.report.ReportRepository;
+import ru.rtk.crm.report.ReportRepository.ProductRef;
 import ru.rtk.crm.work.LmsSignalModels.WorkLearning;
 import ru.rtk.crm.work.WorkControlModels.Control;
 import ru.rtk.crm.work.WorkControlModels.ManagerBlock;
@@ -81,7 +83,7 @@ public class WorkControlService {
         // периода режим всегда «Сейчас». Область видимости остаётся текущей.
         boolean managerAtPeriodEnd = filters.managerAt() == ManagerAt.PERIOD_END && to != null;
         List<ManagerWorkLine> lines = reportRepository.findManagerWork(profile, filters, from, to, now, managerAtPeriodEnd);
-        Map<UUID, List<String>> products = reportRepository.findManagerWorkProducts(
+        Map<UUID, List<ProductRef>> products = reportRepository.findManagerWorkProductRefs(
                 lines.stream().map(ManagerWorkLine::interactionId).toList()
         );
         Map<UUID, WorkAgreementStatus> agreements = agreementRepository.findWorkStatuses(
@@ -121,8 +123,12 @@ public class WorkControlService {
         List<ManagerWorkOrganization> idleOrganizations = withoutWork == null
                 ? null
                 : without.stream().filter(organization -> organization.managerId() != null).toList();
+        // Маршруты строк нужны матрице «программа × этап»: столбцы — этапы шаблона по порядку, включая пустые.
+        Set<UUID> routeIds = new LinkedHashSet<>();
+        lines.forEach(line -> routeIds.add(line.routeId()));
         return new Control(now, from, to, !leader, teams, totals(lines, without, now), idleOrganizations,
-                agreementsInProgress(profile, filters, from, to, lines, without, now));
+                agreementsInProgress(profile, filters, from, to, lines, without, now),
+                reportRepository.findStageRoutes(profile, routeIds));
     }
 
     // Плитка «Договор на согласовании» считает договоры по правилу реестра (статусы, область), а не только привязанные к
@@ -161,7 +167,7 @@ public class WorkControlService {
             UUID teamId,
             List<ManagerWorkLine> teamLines,
             List<ManagerWorkOrganization> teamWithout,
-            Map<UUID, List<String>> products,
+            Map<UUID, List<ProductRef>> products,
             Map<UUID, WorkAgreementStatus> agreements,
             Map<UUID, WorkLearning> learning,
             OffsetDateTime now,
@@ -201,7 +207,7 @@ public class WorkControlService {
     private ManagerBlock manager(
             List<ManagerWorkLine> managerLines,
             List<ManagerWorkOrganization> idle,
-            Map<UUID, List<String>> products,
+            Map<UUID, List<ProductRef>> products,
             Map<UUID, WorkAgreementStatus> agreements,
             Map<UUID, WorkLearning> learning,
             OffsetDateTime now
@@ -218,7 +224,7 @@ public class WorkControlService {
         );
     }
 
-    private static WorkItem item(ManagerWorkLine line, List<String> products, WorkAgreementStatus agreement,
+    private static WorkItem item(ManagerWorkLine line, List<ProductRef> products, WorkAgreementStatus agreement,
                                  WorkLearning learning, OffsetDateTime now) {
         InteractionMarks marks = line.marks();
         String issues = marks == null
@@ -231,7 +237,7 @@ public class WorkControlService {
                 line.title(),
                 line.directionName(),
                 line.programName(),
-                products,
+                products.stream().map(ProductRef::name).toList(),
                 line.stageName(),
                 line.stagePosition(),
                 line.stageTotal(),
@@ -252,7 +258,13 @@ public class WorkControlService {
                 agreement == null ? null : agreement.validUntil(),
                 learning,
                 agreement == null ? null : agreement.approval(),
-                agreement != null && agreement.stageUnderApproval()
+                agreement != null && agreement.stageUnderApproval(),
+                line.programId(),
+                products.stream().map(ProductRef::id).toList(),
+                line.kindId(),
+                line.routeId(),
+                line.stageAtEnd() == null ? line.stageName() : line.stageAtEnd(),
+                line.missingDocuments()
         );
     }
 

@@ -7,6 +7,9 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -15,6 +18,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -29,6 +33,7 @@ import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
 import ru.rtk.crm.interaction.InteractionMarks;
 import ru.rtk.crm.interaction.InteractionRepository;
+import ru.rtk.crm.interaction.StageLmsRole;
 import ru.rtk.crm.interaction.InteractionIssueRepository;
 import ru.rtk.crm.interaction.ProductAgreementRules;
 
@@ -410,6 +415,19 @@ public class ReportRepository {
             StatisticsGroupBy seriesBy,
             OffsetDateTime now
     ) {
+        return countGroups(profile, request, groupBy, seriesBy, now, false);
+    }
+
+    // stagesByRoute: при нескольких маршрутах в выборке этап группируется вместе со своим шаблоном — одноимённые этапы
+    // разных маршрутов не сливаются в один столбец.
+    public List<GroupCount> countGroups(
+            CrmProfile profile,
+            ReportRequest request,
+            StatisticsGroupBy groupBy,
+            StatisticsGroupBy seriesBy,
+            OffsetDateTime now,
+            boolean stagesByRoute
+    ) {
         Optional<VisibilityScope> scope = organizationRepository.visibilityScope(profile);
         if (scope.isEmpty()) {
             return List.of();
@@ -423,7 +441,8 @@ public class ReportRepository {
         }
         Selection selection = selection(scope.get(), request, now);
         boolean products = groupBy == StatisticsGroupBy.PRODUCT || seriesBy == StatisticsGroupBy.PRODUCT;
-        String rows = groupSelect(groupColumns(kind, groupBy), seriesBy == null ? null : groupColumns(kind, seriesBy),
+        GroupColumns group = stagesByRoute && groupBy == StatisticsGroupBy.STAGE ? routeStageColumns(kind) : groupColumns(kind, groupBy);
+        String rows = groupSelect(group, seriesBy == null ? null : groupColumns(kind, seriesBy),
                 kind == ReportKind.EVENTS ? "e.id" : "i.id")
                 + switch (kind) {
                     case EVENTS -> EVENTS_FROM;
@@ -431,6 +450,7 @@ public class ReportRepository {
                     default -> PORTFOLIO_FROM;
                 }
                 + (products ? PRODUCT_JOIN : "")
+                + (groupBy == StatisticsGroupBy.MILESTONE ? milestoneJoin(kind == ReportKind.SNAPSHOT) : "")
                 + selection.sql();
         Map<String, Object> parameters = selection.parameters();
         if (kind == ReportKind.EVENTS) {
@@ -452,7 +472,9 @@ public class ReportRepository {
                         SELECT i.id AS interaction_id, i.created_at, t.id AS team_id, t.name AS team_name,
                                p.id AS program_id, p.name AS program_name,
                                e.stage_name_snapshot AS stage_name, e.occurred_at, st.stage_order,
-                               CASE WHEN st.stage_order = fin.final_order THEN 1 ELSE 0 END AS final_stage
+                               CASE WHEN st.stage_order = fin.final_order THEN 1 ELSE 0 END AS final_stage,
+                               i.workflow_template_id,
+                               (SELECT rt.name FROM workflow_templates rt WHERE rt.id = i.workflow_template_id) AS template_name
                         """ + DURATION_FROM
                         + " JOIN (SELECT fs.interaction_id, MAX(fs.stage_order) AS final_order FROM interaction_stages fs"
                         + " JOIN interactions fi ON fi.id = fs.interaction_id"
@@ -473,7 +495,9 @@ public class ReportRepository {
                         resultSet.getString("stage_name"),
                         resultSet.getObject("occurred_at", OffsetDateTime.class),
                         resultSet.getObject("stage_order", Integer.class),
-                        resultSet.getInt("final_stage") == 1
+                        resultSet.getInt("final_stage") == 1,
+                        resultSet.getObject("workflow_template_id", UUID.class),
+                        resultSet.getString("template_name")
                 ))
                 .list();
     }
@@ -528,6 +552,7 @@ public class ReportRepository {
         organizationFilters(conditions, parameters, filters);
         dimension(conditions, parameters, "d.id", "directionIds", filters.directionIds(), filters.includeNoDirection());
         dimension(conditions, parameters, "i.program_id", "programIds", filters.programIds(), filters.includeNoProgram());
+        dimension(conditions, parameters, "i.interaction_kind_id", "kindIds", filters.kindIds(), false);
         dimension(conditions, parameters, "(" + managerId + ")", "managerIds", filters.managerIds(), filters.includeNoManager());
         products(conditions, parameters, filters);
         if (!filters.stages().isEmpty()) {
@@ -546,7 +571,8 @@ public class ReportRepository {
                                 + " (SELECT mp.display_name FROM crm_user_profiles mp WHERE mp.id = " + managerId + ") AS manager_name,"
                         : " " + managerId + " AS manager_id,"
                                 + " CASE WHEN " + unassigned + " THEN NULL ELSE m.display_name END AS manager_name,")
-                + " d.name AS direction_name, p.name AS program_name, s.name AS stage_name,"
+                + " d.name AS direction_name, p.id AS program_id, p.name AS program_name, s.name AS stage_name,"
+                + " i.interaction_kind_id AS kind_id, i.workflow_template_id AS route_id,"
                 + " (SELECT COUNT(*) FROM interaction_stages ps WHERE ps.interaction_id = i.id AND ps.stage_order <= s.stage_order)"
                 + " AS stage_position,"
                 + " (SELECT COUNT(*) FROM interaction_stages ps WHERE ps.interaction_id = i.id) AS stage_total,"
@@ -555,6 +581,8 @@ public class ReportRepository {
                 + " (SELECT COUNT(*) FROM interaction_events te WHERE te.interaction_id = i.id AND te.type = 'TRANSITIONED'"
                 + " AND " + inPeriod("te.occurred_at", fromAt, toAt) + ") AS transitions,"
                 + " CASE WHEN " + inPeriod("i.created_at", fromAt, toAt) + " THEN 1 ELSE 0 END AS new_in_period,"
+                // «Нет документов» — по текущему этапу и на сейчас, в том числе в режиме «За период».
+                + " CASE WHEN " + InteractionRepository.missingDocumentsCondition("i") + " THEN 1 ELSE 0 END AS missing_documents,"
                 + " CASE WHEN " + completedInPeriod + " THEN 1 ELSE 0 END AS completed_in_period "
                 + MANAGER_WORK_FROM + " WHERE " + String.join(" AND ", conditions) + ") w"
                 + (filters.change() == null ? "" : switch (filters.change()) {
@@ -589,7 +617,11 @@ public class ReportRepository {
                             InteractionIssueRepository.mapMarks(resultSet),
                             resultSet.getLong("transitions"),
                             resultSet.getInt("new_in_period") == 1,
-                            resultSet.getInt("completed_in_period") == 1
+                            resultSet.getInt("completed_in_period") == 1,
+                            resultSet.getObject("program_id", UUID.class),
+                            resultSet.getObject("kind_id", UUID.class),
+                            resultSet.getObject("route_id", UUID.class),
+                            resultSet.getInt("missing_documents") == 1
                     );
                 })
                 .list();
@@ -628,21 +660,30 @@ public class ReportRepository {
 
     public Map<UUID, List<String>> findManagerWorkProducts(List<UUID> interactionIds) {
         Map<UUID, List<String>> products = new HashMap<>();
+        findManagerWorkProductRefs(interactionIds).forEach((id, refs) -> products.put(id, refs.stream().map(ProductRef::name).toList()));
+        return products;
+    }
+
+    public Map<UUID, List<ProductRef>> findManagerWorkProductRefs(List<UUID> interactionIds) {
+        Map<UUID, List<ProductRef>> products = new HashMap<>();
         for (int start = 0; start < interactionIds.size(); start += PRODUCT_BATCH_SIZE) {
             jdbcClient.sql("""
-                    SELECT DISTINCT pa.interaction_id, pr.name
+                    SELECT DISTINCT pa.interaction_id, pr.id, pr.name
                     FROM product_agreements pa
                     JOIN products pr ON pr.id = pa.product_id
                     WHERE pa.interaction_id IN (:interactionIds) AND pa.archived_at IS NULL
-                    ORDER BY pr.name
+                    ORDER BY pr.name, pr.id
                     """)
                     .param("interactionIds", interactionIds.subList(start, Math.min(start + PRODUCT_BATCH_SIZE, interactionIds.size())))
                     .query((ResultSet resultSet) -> {
                         products.computeIfAbsent(resultSet.getObject("interaction_id", UUID.class), id -> new ArrayList<>())
-                                .add(resultSet.getString("name"));
+                                .add(new ProductRef(resultSet.getObject("id", UUID.class), resultSet.getString("name")));
                     });
         }
         return products;
+    }
+
+    public record ProductRef(UUID id, String name) {
     }
 
     public Map<UUID, List<String>> findManagerWorkComments(List<UUID> interactionIds, LocalDate from, LocalDate to) {
@@ -759,15 +800,122 @@ public class ReportRepository {
             case PRODUCT -> new GroupColumns("pr.id", "pr.name");
             case MANAGER -> new GroupColumns(managerColumn(kind), "m.display_name");
             case MONTH -> month(kind == ReportKind.EVENTS ? "e.occurred_at" : "i.created_at");
+            case KIND -> new GroupColumns("i.interaction_kind_id",
+                    "(SELECT gk.name FROM interaction_kinds gk WHERE gk.id = i.interaction_kind_id)");
+            case MILESTONE -> new GroupColumns("mr.lms_role", "CASE mr.lms_role"
+                    + Arrays.stream(StageLmsRole.values()).map(role -> " WHEN '" + role.name() + "' THEN '" + role.title() + "'")
+                            .collect(Collectors.joining()) + " END");
         };
     }
 
+    // Веха (М08 в docs/metrics.md) — смысловая отметка, одинаковая для разных маршрутов: взаимодействие вошло в этап с
+    // ролью LMS (событие создания или перехода в этап) или этот этап отмечен выполненным. Одно взаимодействие может
+    // достичь нескольких вех, поэтому строки соединения не взаимоисключающие (как у ИТ-продуктов); без вех — NULL,
+    // то есть «Не указано». Для состояния на дату учитываются только события и отметки до границы.
+    private static String milestoneJoin(boolean snapshot) {
+        String eventCut = snapshot ? " AND me.occurred_at < :asOfAt" : "";
+        String markCut = snapshot ? " AND mce.occurred_at < :asOfAt" : "";
+        return " LEFT JOIN (SELECT DISTINCT ms.interaction_id, ms.lms_role FROM interaction_stages ms"
+                + " WHERE ms.lms_role IS NOT NULL AND (EXISTS (SELECT 1 FROM interaction_events me"
+                + " WHERE me.interaction_id = ms.interaction_id AND me.stage_id = ms.id AND me.type IN ('CREATED', 'TRANSITIONED')"
+                + eventCut + ") OR EXISTS (SELECT 1 FROM interaction_stage_completions mc"
+                + " JOIN interaction_events mce ON mce.id = mc.event_id"
+                + " WHERE mc.interaction_id = ms.interaction_id AND mc.stage_id = ms.id" + markCut + "))) mr"
+                + " ON mr.interaction_id = i.id";
+    }
+
+    private static GroupColumns routeStageColumns(ReportKind kind) {
+        String stage = stageColumn(kind);
+        return new GroupColumns(
+                "CASE WHEN " + stage + " IS NULL THEN NULL ELSE CONCAT(COALESCE(CAST(i.workflow_template_id AS VARCHAR(36)), '"
+                        + StageRoute.NO_TEMPLATE + "'), '|', " + stage + ") END",
+                "CASE WHEN " + stage + " IS NULL THEN NULL ELSE CONCAT(COALESCE((SELECT rt.name FROM workflow_templates rt"
+                        + " WHERE rt.id = i.workflow_template_id), 'Без шаблона'), ': ', " + stage + ") END"
+        );
+    }
+
+    // Маршруты работ выборки для диаграммы по этапам. Порядок этапов — по шаблону самих работ: сначала этапы шаблона
+    // (в том числе без работ, чтобы звенья маршрута были видны нулём), затем этапы работ вне шаблона по их наименьшему
+    // номеру в карточках. Маршруты идут по названию шаблона.
+    public List<StageRoute> findStageRoutes(CrmProfile profile, ReportRequest request, OffsetDateTime now) {
+        Optional<VisibilityScope> scope = organizationRepository.visibilityScope(profile);
+        if (scope.isEmpty() || request.kind() == ReportKind.DEMAND) {
+            return List.of();
+        }
+        Selection selection = selection(scope.get(), request, now);
+        String from = switch (request.kind()) {
+            case EVENTS -> EVENTS_FROM;
+            case SNAPSHOT -> SNAPSHOT_FROM;
+            default -> PORTFOLIO_FROM;
+        };
+        List<UUID> templateIds = new ArrayList<>();
+        jdbcClient.sql("SELECT DISTINCT i.workflow_template_id " + from + selection.sql())
+                .params(selection.parameters())
+                .query((ResultSet resultSet) -> {
+                    templateIds.add(resultSet.getObject(1, UUID.class));
+                });
+        return stageRoutes(scope.get(), templateIds);
+    }
+
+    // Маршруты строк «Контроля» для матрицы «программа × этап»: тот же порядок этапов, что у диаграммы портфеля.
+    public List<StageRoute> findStageRoutes(CrmProfile profile, Collection<UUID> templateIds) {
+        return organizationRepository.visibilityScope(profile)
+                .map(scope -> stageRoutes(scope, templateIds))
+                .orElse(List.of());
+    }
+
+    private List<StageRoute> stageRoutes(VisibilityScope scope, Collection<UUID> templateIds) {
+        List<StageRoute> routes = new ArrayList<>();
+        for (UUID templateId : templateIds) {
+            String templateName = templateId == null ? null : jdbcClient.sql("SELECT name FROM workflow_templates WHERE id = :id")
+                    .param("id", templateId)
+                    .query(String.class)
+                    .optional()
+                    .orElse(null);
+            // Работы без связи с шаблоном (до версий маршрута) упорядочиваются по общему шаблону по умолчанию, как раньше.
+            List<String> stages = new ArrayList<>(templateId == null
+                    ? jdbcClient.sql("""
+                            SELECT ts.name FROM workflow_template_stages ts
+                            JOIN workflow_templates t ON t.id = ts.template_id AND t.default_template = TRUE
+                            ORDER BY ts.stage_order, ts.name
+                            """).query(String.class).list()
+                    : jdbcClient.sql(
+                                    "SELECT name FROM workflow_template_stages WHERE template_id = :templateId ORDER BY stage_order, name")
+                            .param("templateId", templateId)
+                            .query(String.class)
+                            .list());
+
+            String sameRoute = templateId == null ? "i.workflow_template_id IS NULL" : "i.workflow_template_id = :templateId";
+            JdbcClient.StatementSpec own = jdbcClient.sql("""
+                    SELECT st.name
+                    FROM interaction_stages st
+                    JOIN interactions i ON i.id = st.interaction_id
+                    WHERE i.organization_id IN (%s) AND %s
+                    GROUP BY st.name
+                    ORDER BY MIN(st.stage_order), st.name
+                    """.formatted(scope.currentOrganizations(), sameRoute))
+                    .params(scope.parameters());
+            if (templateId != null) {
+                own = own.param("templateId", templateId);
+            }
+            // Этапы прежних версий шаблона идут после текущих и помечаются: иначе матрица показывала их номером после
+            // финального, будто маршрут продолжается (Н-РТ-3).
+            List<String> former = own.query(String.class).list().stream().filter(name -> !stages.contains(name)).toList();
+            stages.addAll(former);
+            routes.add(new StageRoute(templateId, templateName, List.copyOf(stages), former));
+        }
+        routes.sort(Comparator.comparing(
+                (StageRoute route) -> route.templateName() == null ? "" : route.templateName(), String.CASE_INSENSITIVE_ORDER));
+        return routes;
+    }
+
     private static GroupColumns assignmentGroupColumns(StatisticsGroupBy groupBy) {
+
         return switch (groupBy) {
             case ORGANIZATION -> new GroupColumns("o.id", "o.name");
             case MANAGER -> new GroupColumns("ae.owner_manager_id", "m.display_name");
             case MONTH -> month("ae.occurred_at");
-            case STAGE, DIRECTION, PROGRAM, PRODUCT -> new GroupColumns("NULL", "NULL");
+            case STAGE, DIRECTION, PROGRAM, PRODUCT, KIND, MILESTONE -> new GroupColumns("NULL", "NULL");
         };
     }
 
@@ -778,7 +926,7 @@ public class ReportRepository {
             case PROGRAM -> new GroupColumns("p.id", "p.name");
             case MANAGER -> new GroupColumns("o.owner_manager_id", "m.display_name");
             case MONTH -> month("r.submitted_at");
-            case STAGE, PRODUCT -> throw new IllegalArgumentException("Unsupported demand grouping " + groupBy);
+            case STAGE, PRODUCT, KIND, MILESTONE -> throw new IllegalArgumentException("Unsupported demand grouping " + groupBy);
         };
     }
 
@@ -854,39 +1002,6 @@ public class ReportRepository {
                 .list();
     }
 
-    // Маршрут для диаграммы по этапам: этапы шаблона по умолчанию в его порядке (в том числе без работ), затем остальные этапы
-    // видимых работ по их наименьшему номеру; при нескольких версиях маршрута одно название считается одним этапом.
-    public List<String> findStageRoute(CrmProfile profile) {
-        Optional<VisibilityScope> scope = organizationRepository.visibilityScope(profile);
-        if (scope.isEmpty()) {
-            return List.of();
-        }
-        List<String> route = new ArrayList<>(jdbcClient.sql("""
-                SELECT ts.name
-                FROM workflow_template_stages ts
-                JOIN workflow_templates t ON t.id = ts.template_id AND t.default_template = TRUE
-                GROUP BY ts.name
-                ORDER BY MIN(ts.stage_order), ts.name
-                """)
-                .query(String.class)
-                .list());
-        jdbcClient.sql("""
-                SELECT st.name
-                FROM interaction_stages st
-                JOIN interactions i ON i.id = st.interaction_id
-                WHERE i.organization_id IN (%s)
-                GROUP BY st.name
-                ORDER BY MIN(st.stage_order), st.name
-                """.formatted(scope.get().currentOrganizations()))
-                .params(scope.get().parameters())
-                .query(String.class)
-                .list()
-                .stream()
-                .filter(name -> !route.contains(name))
-                .forEach(route::add);
-        return route;
-    }
-
     public Map<UUID, String> findOrganizationNames(CrmProfile profile, List<UUID> organizationIds) {
         Optional<VisibilityScope> scope = organizationRepository.visibilityScope(profile);
         if (scope.isEmpty() || organizationIds.isEmpty()) {
@@ -944,6 +1059,7 @@ public class ReportRepository {
         organizationFilters(conditions, parameters, filters);
         dimension(conditions, parameters, "d.id", "directionIds", filters.directionIds(), filters.includeNoDirection());
         dimension(conditions, parameters, "i.program_id", "programIds", filters.programIds(), filters.includeNoProgram());
+        dimension(conditions, parameters, "i.interaction_kind_id", "kindIds", filters.kindIds(), false);
         dimension(conditions, parameters, managerColumn(kind), "managerIds", filters.managerIds(), filters.includeNoManager());
         products(conditions, parameters, filters);
         agreements(conditions, parameters, filters);
@@ -991,6 +1107,7 @@ public class ReportRepository {
                 || onlySpecified(filters.directionIds(), filters.includeNoDirection())
                 || onlySpecified(filters.programIds(), filters.includeNoProgram())
                 || onlySpecified(filters.productIds(), filters.includeNoProduct())
+                || !filters.kindIds().isEmpty()
                 || !filters.stages().isEmpty()
                 || !filters.workStatuses().isEmpty()
                 || !filters.flags().isEmpty()
@@ -1545,7 +1662,9 @@ public class ReportRepository {
         DIRECTIONS("directions"),
         PROGRAMS("programs"),
         PRODUCTS("products"),
-        VENDORS("vendors");
+        VENDORS("vendors"),
+        INTERACTION_KINDS("interaction_kinds");
+
 
         private final String tableName;
 
@@ -1574,8 +1693,31 @@ public class ReportRepository {
             String stageName,
             OffsetDateTime occurredAt,
             Integer stageOrder,
-            boolean finalStage
+            boolean finalStage,
+            UUID templateId,
+            String templateName
     ) {
+        public StageEntry(UUID interactionId, OffsetDateTime createdAt, UUID teamId, String teamName, UUID programId,
+                          String programName, String stageName, OffsetDateTime occurredAt, Integer stageOrder, boolean finalStage) {
+            this(interactionId, createdAt, teamId, teamName, programId, programName, stageName, occurredAt, stageOrder, finalStage,
+                    null, null);
+        }
+    }
+
+    /**
+     * Маршрут работ выборки: шаблон и названия этапов в его порядке. templateId = null — работы без шаблона.
+     * formerStages — этапы работ, которых нет в текущей версии шаблона (они в конце stages).
+     */
+    public record StageRoute(UUID templateId, String templateName, List<String> stages, List<String> formerStages) {
+        static final String NO_TEMPLATE = "-";
+
+        public String key(String stage) {
+            return (templateId == null ? NO_TEMPLATE : templateId.toString()) + "|" + stage;
+        }
+
+        public String label(String stage) {
+            return (templateName == null ? "Без шаблона" : templateName) + ": " + stage;
+        }
     }
 
     private record GroupColumns(String key, String label) {

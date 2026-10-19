@@ -8,7 +8,9 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -24,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.catalog.OrganizationDetails;
 import ru.rtk.crm.interaction.InteractionFlag;
+import ru.rtk.crm.interaction.StageLmsRole;
 import ru.rtk.crm.catalog.CatalogReference;
 import ru.rtk.crm.interaction.ProductTransferKind;
 import ru.rtk.crm.access.UserRole;
@@ -58,7 +61,8 @@ public class ReportService {
             + " в рейтинг спрос не входит";
     private static final String DURATION_NOTE = "Длительность — календарные дни от входа в этап до перехода в следующий;"
             + " время до входа в последний этап — от создания взаимодействия до первого входа в последний этап маршрута, это не"
-            + " подтверждённое завершение; «нет данных» — в периоде не закончилось ни одного прохождения, это не ноль";
+            + " подтверждённое завершение; медиана и 90-й процентиль — по завершённым прохождениям, их число рядом;"
+            + " «нет данных» — в периоде не закончилось ни одного прохождения, это не ноль";
     private static final String EMPLOYEE_ACTION_NOTE = "последнее действие сотрудника — последнее событие взаимодействия без"
             + " автоматических записей источников (Moodle, сайт); «не зафиксировано» — таких действий нет";
     private static final Map<ReportEventType, String> EVENT_TYPE_TITLES = Map.ofEntries(
@@ -80,7 +84,11 @@ public class ReportService {
             + " действующего КАМ. Этап на начало и конец периода — по истории переходов. Комментарии — только людей."
             + " Итоги по менеджерам, командам и всего — отдельной таблицей и листом, в число строк не входят."
             + " «Обучение (LMS)» — последние данные Moodle по идущим потокам на момент формирования";
-    static final String GROUP_TOTALS_NOTE = "Итоги по продуктам и по вузам — отдельными таблицами и листами. Одно взаимодействие"
+    static final String MILESTONE_NOTE = "Веха — вход в этап с ролью LMS («Обучение преподавателей», «Идут занятия»,"
+            + " «Повышение квалификации») или отметка этого этапа выполненным; роль задаётся в шаблоне этапов, поэтому вехи"
+            + " одинаковы для разных маршрутов. Одно взаимодействие может достичь нескольких вех, сумма по вехам может быть"
+            + " больше итога; «Не указано» — ни одной вехи";
+    static final String GROUP_TOTALS_NOTE ="Итоги по продуктам и по вузам — отдельными таблицами и листами. Одно взаимодействие"
             + " может относиться к нескольким продуктам, поэтому сумма строк по продуктам бывает больше «Всего»: «Всего» считается"
             + " по уникальным взаимодействиям";
     private static final String IDLE_NOTE = "Строка — вуз с КАМ без идущего взаимодействия (группа «Без работы» «Контроля»);"
@@ -197,7 +205,12 @@ public class ReportService {
         OffsetDateTime generatedAt = OffsetDateTime.now();
         Map<String, StatisticsResult.Item> items = new LinkedHashMap<>();
         long unknown = 0;
-        for (ReportRepository.GroupCount group : repository.countGroups(profile, normalized, request.groupBy(), null, generatedAt)) {
+        List<ReportRepository.StageRoute> routes = request.groupBy() == StatisticsGroupBy.STAGE
+                ? repository.findStageRoutes(profile, normalized, generatedAt)
+                : List.of();
+        boolean stagesByRoute = routes.size() > 1;
+        for (ReportRepository.GroupCount group : repository.countGroups(
+                profile, normalized, request.groupBy(), null, generatedAt, stagesByRoute)) {
             if (group.key() == null) {
                 unknown += group.count();
             } else if (request.groupBy() == StatisticsGroupBy.MONTH) {
@@ -210,8 +223,7 @@ public class ReportService {
         long total = normalized.kind() == ReportKind.DEMAND
                 ? repository.sumApplications(profile, normalized)
                 : repository.countRows(profile, normalized, generatedAt);
-        List<StatisticsResult.Item> sorted = sortedItems(request.groupBy(), normalized, items,
-                request.groupBy() == StatisticsGroupBy.STAGE ? repository.findStageRoute(profile) : List.of());
+        List<StatisticsResult.Item> sorted = sortedItems(request.groupBy(), normalized, items, routeStages(routes));
         return new StatisticsResult(
                 normalized.kind(),
                 request.groupBy(),
@@ -257,14 +269,48 @@ public class ReportService {
         return values;
     }
 
+    // Разбор А05: в отчётах о прошлом этап и ответственный восстанавливаются по истории, а программа, продукты,
+    // направление и команда берутся текущими — истории этих принадлежностей в CRM нет. Подпись колонки это называет.
+    private static boolean pastWithCurrentFields(ReportRequest request, OffsetDateTime generatedAt) {
+        return switch (request.kind()) {
+            case SNAPSHOT, EVENTS, DURATION -> true;
+            case MANAGER_WORK -> request.filters().tile() != ManagerWorkTile.IDLE && historicalManager(request, generatedAt);
+            case PORTFOLIO, DEMAND, AGREEMENTS -> false;
+        };
+    }
+
+    private static final Map<ReportColumn, String> CURRENT_FIELD_TITLES = Map.of(
+            ReportColumn.DIRECTION, "ИТ-направление (текущее)",
+            ReportColumn.PROGRAM, "ИТ-программа (текущая)",
+            ReportColumn.PRODUCTS, "ИТ-продукты (текущие)",
+            ReportColumn.TEAM, "Команда (текущая)"
+    );
+
+    private static String fieldTimeNote(ReportRequest request) {
+        return switch (request.kind()) {
+            case SNAPSHOT -> "Время полей: на дату — этап и ответственный; текущее — ИТ-направление, ИТ-программа, ИТ-продукты"
+                    + " и команда";
+            case EVENTS -> "Время полей: на момент события — ответственный и этапы перехода; текущее — ИТ-направление,"
+                    + " ИТ-программа, ИТ-продукты и команда";
+            case DURATION -> "Время полей: прохождения — по истории переходов; текущее — команда и ИТ-программа";
+            default -> "Время полей: на конец периода — менеджер и этап; текущее — ИТ-направление, ИТ-программа, ИТ-продукты,"
+                    + " команда, следующий шаг и срок, проблемы и риски, договор, обучение (LMS)";
+        } + ". Истории программы, продуктов и команды вуза в CRM нет: после их смены отчёт за прошлый период строится"
+                + " по новым значениям";
+    }
+
     private Map<ReportColumn, String> columnTitles(ReportRequest request, OffsetDateTime generatedAt) {
+        Map<ReportColumn, String> titles = new EnumMap<>(ReportColumn.class);
+        if (pastWithCurrentFields(request, generatedAt)) {
+            titles.putAll(CURRENT_FIELD_TITLES);
+        }
         if (request.kind() == ReportKind.MANAGER_WORK) {
-            return request.filters().tile() == ManagerWorkTile.IDLE
-                    ? Map.of(ReportColumn.MANAGER, "КАМ вуза")
-                    : Map.of(ReportColumn.MANAGER, historicalManager(request, generatedAt) ? "Менеджер на конец периода" : "Текущий менеджер");
+            titles.put(ReportColumn.MANAGER, request.filters().tile() == ManagerWorkTile.IDLE ? "КАМ вуза"
+                    : historicalManager(request, generatedAt) ? "Менеджер на конец периода" : "Текущий менеджер");
+            return titles;
         }
         if (request.kind() != ReportKind.DEMAND) {
-            return Map.of();
+            return titles;
         }
         String snapshot = "на " + date(request.runsAsOf());
         return Map.of(
@@ -447,10 +493,16 @@ public class ReportService {
             StatisticsGroupBy groupBy,
             ReportRequest request,
             Map<String, StatisticsResult.Item> items,
-            List<String> stageRoute
+            List<RouteStage> stageRoute
     ) {
         if (groupBy == StatisticsGroupBy.STAGE) {
             return stageItems(items, stageRoute, request.filters().stages());
+        }
+        // Вехи идут в порядке ролей и показываются все, даже с нулём: «до занятий не дошёл никто» — тоже ответ.
+        if (groupBy == StatisticsGroupBy.MILESTONE) {
+            return Arrays.stream(StageLmsRole.values())
+                    .map(role -> items.getOrDefault(role.name(), new StatisticsResult.Item(role.name(), role.title(), 0)))
+                    .toList();
         }
         if (groupBy != StatisticsGroupBy.MONTH) {
             return items.values().stream()
@@ -469,16 +521,33 @@ public class ReportService {
         return items.values().stream().sorted(Comparator.comparing(StatisticsResult.Item::key)).toList();
     }
 
+    record RouteStage(String key, String label, String name) {
+    }
+
+    // Один маршрут в выборке — столбцы по названию этапа в порядке этого маршрута; несколько — группы «шаблон: этап»,
+    // маршрут за маршрутом, каждый в своём порядке.
+    static List<RouteStage> routeStages(List<ReportRepository.StageRoute> routes) {
+        if (routes.size() == 1) {
+            return routes.getFirst().stages().stream().map(name -> new RouteStage(name, name, name)).toList();
+        }
+        return routes.stream()
+                .flatMap(route -> route.stages().stream().map(name -> new RouteStage(route.key(name), route.label(name), name)))
+                .toList();
+    }
+
     // Этапы идут в порядке маршрута, пустые показаны нулём (звенья цикла видны); этапы вне маршрута — в конце по убыванию.
-    static List<StatisticsResult.Item> stageItems(Map<String, StatisticsResult.Item> items, List<String> route, List<String> selected) {
+    static List<StatisticsResult.Item> stageItems(Map<String, StatisticsResult.Item> items, List<RouteStage> route, List<String> selected) {
         List<StatisticsResult.Item> result = new ArrayList<>();
-        for (String name : route) {
-            if (selected.isEmpty() || selected.contains(name)) {
-                result.add(items.getOrDefault(name, new StatisticsResult.Item(name, name, 0)));
+        Set<String> keys = new HashSet<>();
+        for (RouteStage stage : route) {
+            keys.add(stage.key());
+            if (selected.isEmpty() || selected.contains(stage.name())) {
+                result.add(items.getOrDefault(stage.key(), new StatisticsResult.Item(stage.key(), stage.label(), 0)));
             }
         }
         items.values().stream()
-                .filter(item -> !route.contains(item.key()))
+                .filter(item -> !keys.contains(item.key()))
+
                 .sorted(Comparator.comparingLong(StatisticsResult.Item::count).reversed()
                         .thenComparing(StatisticsResult.Item::label, String.CASE_INSENSITIVE_ORDER))
                 .forEach(result::add);
@@ -516,6 +585,12 @@ public class ReportService {
         ));
         if (request.kind() == ReportKind.MANAGER_WORK && request.filters().tile() != ManagerWorkTile.IDLE) {
             notes.add(notes.size() - 1, GROUP_TOTALS_NOTE);
+        }
+        if (request.groupBy() == StatisticsGroupBy.MILESTONE) {
+            notes.add(notes.size() - 1, MILESTONE_NOTE);
+        }
+        if (pastWithCurrentFields(request, generatedAt)) {
+            notes.add(notes.size() - 1, fieldTimeNote(request));
         }
         if (request.filters().tile() != null) {
             notes.add("Отбор плиткой «Контроля»: " + TILE_NOTES.get(request.filters().tile()).formatted(
@@ -588,6 +663,8 @@ public class ReportService {
         catalogFilter(parts, "направления", CatalogTable.DIRECTIONS, filters.directionIds(), filters.includeNoDirection());
         catalogFilter(parts, "программы", CatalogTable.PROGRAMS, filters.programIds(), filters.includeNoProgram());
         catalogFilter(parts, "продукты", CatalogTable.PRODUCTS, filters.productIds(), filters.includeNoProduct());
+        catalogFilter(parts, "виды взаимодействия", CatalogTable.INTERACTION_KINDS, filters.kindIds(), false);
+
         if (!filters.managerIds().isEmpty() || filters.includeNoManager()) {
             Map<UUID, String> managers = repository.findManagerOptions(profile).stream()
                     .collect(Collectors.toMap(ReportManagerOption::id, ReportManagerOption::displayName));

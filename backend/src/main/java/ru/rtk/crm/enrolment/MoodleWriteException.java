@@ -24,7 +24,7 @@ class MoodleWriteException extends RuntimeException {
         return new MoodleWriteException(null, message, false);
     }
 
-    // Текст Moodle английский и ничего не говорит оператору, поэтому в строку партии идёт русское объяснение с кодом
+    // Текст Moodle английский и ничего не говорит менеджеру учебного процесса, поэтому в строку партии идёт русское объяснение с кодом
     // в скобках; исходное сообщение не сохраняется — в нём бывают логин и почта.
     static MoodleWriteException rejected(String function, String code) {
         return new MoodleWriteException(code, "Moodle: " + explain(function, code) + " (" + code + ")", false);
@@ -41,7 +41,10 @@ class MoodleWriteException extends RuntimeException {
                     : "данные запроса не приняты, проверьте курс, группу и анкету слушателя";
             case "emailexists", "usernameexists" -> "пользователь с такой почтой или логином уже есть";
             case "invalidrecord", "invaliduser", "invaliduserid", "usernotfound" -> "пользователь не найден";
-            default -> "запрос отклонён";
+            // codingerror и незнакомые коды — сбой внутри Moodle (кэш, права на каталоги, модули): оператор его не исправит.
+            case "codingerror", "dmlreadexception", "dmlwriteexception" -> "сбой на стороне Moodle, обратитесь к администратору Moodle, "
+                    + "после исправления повторите передачу";
+            default -> "запрос отклонён, обратитесь к администратору Moodle";
         };
     }
 

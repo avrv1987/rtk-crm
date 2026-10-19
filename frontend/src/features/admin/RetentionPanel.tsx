@@ -156,7 +156,7 @@ export const RetentionPanel = ({ onSessionExpired, onProfileUnavailable }: Sessi
           )}
           {enrolment && state.policy.learners.streamsWithoutEndDate > 0 && (
             <p className="security-warning" role="status">
-              Анкеты слушателей потоков без даты окончания автоматически не обезличиваются, пока оператор зачисления
+              Анкеты слушателей потоков без даты окончания автоматически не обезличиваются, пока менеджер учебного процесса
               не укажет дату окончания потока.
             </p>
           )}

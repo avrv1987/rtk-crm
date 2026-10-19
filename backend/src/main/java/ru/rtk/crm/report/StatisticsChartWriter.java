@@ -201,7 +201,9 @@ public class StatisticsChartWriter {
         lines.add("Показатель: " + statistics.kind().countTitle().toLowerCase(Locale.ROOT)
                 + " в группе; всего в выборке: " + statistics.total() + "; шкала начинается с нуля");
         if (statistics.groupBy() == StatisticsGroupBy.STAGE) {
-            lines.add("Этапы идут в порядке маршрута; этапы без взаимодействий показаны нулём");
+            lines.add("Этапы идут в порядке маршрута самих взаимодействий; при нескольких маршрутах — группами «шаблон: этап»;"
+                    + " этапы без взаимодействий показаны нулём");
+
         }
         if (statistics.groupBy() == StatisticsGroupBy.PRODUCT) {
             lines.add("Строка с несколькими ИТ-продуктами учтена в каждом из них, поэтому сумма столбцов может быть больше итога");

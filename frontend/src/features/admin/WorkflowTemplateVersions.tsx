@@ -14,7 +14,7 @@ import { ActionMenu } from '../../shared/ui/ActionMenu'
 import { HintButton } from '../../shared/ui/HintButton'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { CardDialog } from '../interactions/cardUi'
-import { diffRoutes, isEmptyDiff, routeFileName, routeToFile, type RouteDiff } from './workflowVersions'
+import { defaultRolloutSelection, diffRoutes, isEmptyDiff, refreshedRolloutSelection, routeFileName, routeToFile, type RouteDiff } from './workflowVersions'
 import './adminUi.css'
 import './workflowVersions.css'
 
@@ -92,6 +92,7 @@ const DiffList = ({ diff }: { diff: RouteDiff }) => {
     ['Переименованы', diff.renamed.map((item) => `«${item.from}» → «${item.to}»`)],
     ['Перемещены', diff.moved.map((name) => `«${name}»`)],
     ['Обязательность', diff.optionalChanged],
+    ['Свойства этапов', diff.propertiesChanged],
     ['Новые переходы', diff.transitionsAdded],
     ['Убраны переходы', diff.transitionsRemoved],
     ['Комментарий при переходе', diff.commentChanged]
@@ -300,6 +301,7 @@ const WorkflowRolloutWizard = ({ template, targetVersion, onCancel, onDone, onSe
   const [applying, setApplying] = useState(false)
   const [applyError, setApplyError] = useState<unknown>(null)
   const applyKey = useRef<string | null>(null)
+  const previousWorks = useRef<ReadonlyArray<{ id: string; noExit: boolean; landsOnFinal: boolean }>>([])
   const handlers = useMemo(() => ({ onSessionExpired, onProfileUnavailable }), [onSessionExpired, onProfileUnavailable])
   const stageMap = useMemo(
     () => Object.entries(overrides).map(([fromStageId, toStageId]) => ({ fromStageId, toStageId })),
@@ -311,13 +313,12 @@ const WorkflowRolloutWizard = ({ template, targetVersion, onCancel, onDone, onSe
     applyKey.current = null
     try {
       const preview = await apiClient.previewWorkflowRollout(template.id, targetVersion, { stageMap })
+      const previous = previousWorks.current
+      previousWorks.current = preview.works
       setPreviewState({ kind: 'ready', preview })
-      setSelected((current) => {
-        const ids = new Set(preview.works.map((work) => work.id))
-        return current === null
-          ? new Set(preview.works.filter((work) => !work.edited).map((work) => work.id))
-          : new Set([...current].filter((id) => ids.has(id)))
-      })
+      setSelected((current) => current === null
+        ? defaultRolloutSelection(preview.works)
+        : refreshedRolloutSelection(current, previous, preview.works))
     } catch (error) {
       if (!handleSessionError(error, handlers)) {
         setPreviewState({ kind: 'failed', error })
@@ -473,6 +474,8 @@ const WorkflowRolloutWizard = ({ template, targetVersion, onCancel, onDone, onSe
                     Этап «{work.targetStageName}»
                     {work.currentStageRemoved && <span className="workflow-rollout__flag">текущий этап исчезает</span>}
                     {work.edited && <span className="workflow-rollout__flag">этапы меняли в карточке</span>}
+                    {work.noExit && <span className="workflow-rollout__flag">с этапа нельзя дойти до финала</span>}
+                    {work.landsOnFinal && <span className="workflow-rollout__flag">окажется на финальном этапе</span>}
                     {work.changes.length > 0 && <span className="admin-table__sub">{work.changes}</span>}
                   </td>
                 </tr>

@@ -1,9 +1,20 @@
 package ru.rtk.crm.web;
 
+import java.sql.SQLException;
+import java.time.DateTimeException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import com.fasterxml.jackson.core.exc.StreamConstraintsException;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
+import com.fasterxml.jackson.databind.exc.PropertyBindingException;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.ConcurrencyFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -14,6 +25,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import ru.rtk.crm.access.AccountSyncException;
 import ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException;
@@ -45,6 +57,7 @@ import ru.rtk.crm.attachment.AttachmentValidationException;
 import ru.rtk.crm.enrolment.LearnerNotFoundException;
 import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionIssueNotFoundException;
+import ru.rtk.crm.interaction.InteractionKindNotFoundException;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.interaction.ProductAgreementNotFoundException;
@@ -55,6 +68,8 @@ import ru.rtk.crm.security.RequestId;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    private static final Logger LOGGER = LoggerFactory.getLogger(ApiExceptionHandler.class);
+
     @ExceptionHandler(CrmProfileNotFoundException.class)
     public ResponseEntity<ApiError> crmProfileNotFound(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
@@ -168,6 +183,12 @@ public class ApiExceptionHandler {
                 .body(ApiError.of("NOT_FOUND", "Шаблон процесса не найден", RequestId.from(request)));
     }
 
+    @ExceptionHandler(InteractionKindNotFoundException.class)
+    public ResponseEntity<ApiError> interactionKindNotFound(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of("NOT_FOUND", "Вид взаимодействия или правило не найдены", RequestId.from(request)));
+    }
+
     @ExceptionHandler(AttachmentNotFoundException.class)
     public ResponseEntity<ApiError> attachmentNotFound(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -202,7 +223,7 @@ public class ApiExceptionHandler {
     @ExceptionHandler(EnrolmentAccessDeniedException.class)
     public ResponseEntity<ApiError> enrolmentAccessDenied(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiError.of(
-                "FORBIDDEN", "Загрузка оплат и раздел «Зачисление» доступны только оператору зачисления", RequestId.from(request)
+                "FORBIDDEN", "Загрузка оплат и раздел «Зачисление» доступны только менеджеру учебного процесса", RequestId.from(request)
         ));
     }
 
@@ -302,7 +323,6 @@ public class ApiExceptionHandler {
     }
 
     @ExceptionHandler({
-            HttpMessageNotReadableException.class,
             MethodArgumentTypeMismatchException.class,
             MissingRequestHeaderException.class,
             MissingServletRequestParameterException.class,
@@ -329,6 +349,92 @@ public class ApiExceptionHandler {
             default -> Map.of("body", "Данные запроса в неверном формате");
         };
         return validationError(request, fieldErrors);
+    }
+
+    // Пределы разбора JSON (ApiJsonConfiguration) — это размер запроса, а не ошибка в поле: 413, как у файлов.
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiError> unreadableBody(HttpMessageNotReadableException exception, HttpServletRequest request) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof StreamConstraintsException) {
+                return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(ApiError.of("PAYLOAD_TOO_LARGE",
+                        "Запрос превышает допустимый размер: слишком длинная строка, число или вложенность", RequestId.from(request)));
+            }
+        }
+        // Значение не разобралось в тип поля (несуществующая дата, неизвестное значение списка): ошибка ставится на это
+        // поле, чтобы форма показала её у поля, а не общим текстом про «данные запроса».
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            // Неизвестное поле (PropertyBindingException) сюда не относится: его имя пришло от клиента, а не из модели.
+            if (cause instanceof JsonMappingException mapping && !(cause instanceof PropertyBindingException)
+                    && !mapping.getPath().isEmpty()) {
+                String field = mapping.getPath().stream().map(JsonMappingException.Reference::getFieldName)
+                        .filter(name -> name != null).reduce((left, right) -> left + "." + right).orElse(null);
+                if (field != null) {
+                    return validationError(request, Map.of(field, unreadableValueMessage(mapping)));
+                }
+            }
+        }
+        return validationError(request, Map.of("body", "Данные запроса в неверном формате"));
+    }
+
+    private static String unreadableValueMessage(JsonMappingException mapping) {
+        if (mapping instanceof InvalidFormatException format && format.getTargetType() != null) {
+            Class<?> type = format.getTargetType();
+            if (type.isEnum()) {
+                return "Недопустимое значение";
+            }
+            if (java.time.temporal.Temporal.class.isAssignableFrom(type)) {
+                return "Дата в неверном формате или такой даты нет";
+            }
+        }
+        return "Значение в неверном формате";
+    }
+
+    // Битый multipart (оборванная загрузка, неверная граница) Tomcat замечает только при разборе частей.
+    @ExceptionHandler(MultipartException.class)
+    public ResponseEntity<ApiError> brokenMultipart(HttpServletRequest request) {
+        return validationError(request, Map.of("file", "Файл передан не полностью или повреждён; загрузите его ещё раз"));
+    }
+
+    // Даты, которые разобрались, но не помещаются в календарь при сдвиге (год около ±999999999), и прочие
+    // ошибки java.time из вводимых значений — это неверный ввод, а не сбой сервера.
+    @ExceptionHandler(DateTimeException.class)
+    public ResponseEntity<ApiError> dateOutOfRange(HttpServletRequest request) {
+        return validationError(request, Map.of("date", "Дата вне допустимого диапазона"));
+    }
+
+    // Последний рубеж для ввода, который не отсекла проверка в коде, но отвергла база. Класс SQLSTATE 22 — значение
+    // не помещается в столбец (длина, диапазон числа или даты), 23 — нарушено ограничение. Уникальность и
+    // ссылочная целостность — конфликт с уже существующими данными (409), остальное — неверный ввод (400).
+    // В журнал — только SQLSTATE: текст ошибки PostgreSQL содержит значения полей, среди них персональные данные.
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiError> constraintViolated(DataIntegrityViolationException exception, HttpServletRequest request) {
+        String sqlState = sqlState(exception);
+        LOGGER.warn("Database rejected request input sqlState={} uri={}", sqlState, request.getRequestURI());
+        if (exception instanceof DuplicateKeyException || "23505".equals(sqlState)) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(ApiError.of("CONFLICT", "Такая запись уже есть", RequestId.from(request)));
+        }
+        if ("23503".equals(sqlState) || "23506".equals(sqlState)) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiError.of("CONFLICT",
+                    "Запись связана с другими данными или ссылается на удалённую; обновите страницу", RequestId.from(request)));
+        }
+        return validationError(request, Map.of("body", "Значение слишком длинное, вне допустимого диапазона или нарушает ограничение"));
+    }
+
+    // Взаимоблокировка или сбой сериализации транзакции: запрос верный, его можно просто повторить.
+    @ExceptionHandler(ConcurrencyFailureException.class)
+    public ResponseEntity<ApiError> concurrentChange(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of("CONFLICT", "Данные одновременно изменились; повторите действие", RequestId.from(request)));
+    }
+
+    private static String sqlState(Throwable exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sql && sql.getSQLState() != null) {
+                return sql.getSQLState();
+            }
+        }
+        return null;
     }
 
     private ResponseEntity<ApiError> validationError(HttpServletRequest request, Map<String, String> fieldErrors) {

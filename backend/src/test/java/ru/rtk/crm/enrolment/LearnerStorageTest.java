@@ -95,7 +95,7 @@ class LearnerStorageTest {
                 "crm_user_profiles")) {
             jdbcTemplate.update("DELETE FROM " + table);
         }
-        jdbcTemplate.update("INSERT INTO crm_user_profiles (id, display_name) VALUES (?, 'Оператор зачисления')", OPERATOR);
+        jdbcTemplate.update("INSERT INTO crm_user_profiles (id, display_name) VALUES (?, 'Менеджер учебного процесса')", OPERATOR);
     }
 
     @Test
@@ -261,9 +261,9 @@ class LearnerStorageTest {
                        || COALESCE(details, '') || '|' || request_id
                 FROM audit_events ORDER BY request_id
                 """, String.class)).containsExactly(
-                "LEARNER_VIEWED|LEARNER|LEARNER|Слушатель " + learner.id().toString().substring(0, 8) + "|Оператор зачисления||rq-card",
+                "LEARNER_VIEWED|LEARNER|LEARNER|Слушатель " + learner.id().toString().substring(0, 8) + "|Менеджер учебного процесса||rq-card",
                 "LEARNER_FIELDS_REVEALED|LEARNER|LEARNER|Слушатель " + learner.id().toString().substring(0, 8)
-                        + "|Оператор зачисления|группы: DOCUMENTS, PERSONAL|rq-reveal"
+                        + "|Менеджер учебного процесса|группы: DOCUMENTS, PERSONAL|rq-reveal"
         );
         assertThatThrownBy(() -> learnerService.reveal(OPERATOR, learner.id(), Set.of(), "rq-empty"))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception ->

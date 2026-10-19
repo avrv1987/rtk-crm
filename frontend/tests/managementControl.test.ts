@@ -17,7 +17,9 @@ import {
   changeHref,
   changeText,
   comparisonPeriods,
+  coverageText,
   nbsp,
+  portfolioText,
   registryHref,
   shareText,
   teamChanges,
@@ -112,15 +114,37 @@ test('доля всегда с числом и знаменателем, без 
   assert.equal(shareText({ count: 8, base: 80 }, 'активных'), `8 из 80 активных (10${nbsp}%)`)
   assert.equal(shareText({ count: 5, base: 10 }, 'активных'), `5 из 10 активных (50${nbsp}%)`)
   assert.equal(shareText({ count: 0, base: 0 }, 'активных'), '0 — активных: нет')
+  assert.equal(shareText({ count: 1, base: 3 }, 'активных'), '1 из 3 активных', 'при малой базе процента нет')
 })
 
 test('изменение к прошлому периоду: от нуля — «новое наблюдение», а не бесконечный рост', () => {
   assert.equal(changeText({ current: 4, previous: 0 }), 'новое наблюдение')
   assert.equal(changeText({ current: 0, previous: 0 }), 'без изменений')
-  assert.equal(changeText({ current: 5, previous: 3 }), `+2 (+67${nbsp}%)`)
-  assert.equal(changeText({ current: 3, previous: 4 }), `−1 (−25${nbsp}%)`)
+  assert.equal(changeText({ current: 5, previous: 3 }), '+2', 'при малой базе процента нет')
+  assert.equal(changeText({ current: 3, previous: 4 }), '−1')
+  assert.equal(changeText({ current: 15, previous: 12 }), `+3 (+25${nbsp}%)`)
+  assert.equal(changeText({ current: 9, previous: 10 }), `−1 (−10${nbsp}%)`)
   assert.equal(changeText({ current: 3, previous: 3 }), 'без изменений')
   assert.doesNotMatch(changeText({ current: 4, previous: 0 }), /%|∞/)
+})
+
+// Разбор §7.3: «было → стало» раскладывается на тех, кто остался, вошёл и вышел.
+test('состав портфеля: было → стало и из чего сложилась разница', () => {
+  const row = { teamId: 'a', teamName: 'А', atStart: 10, atEnd: 12, stayed: 8, created: 3, resumed: 1, completed: 1, paused: 1 }
+  assert.equal(portfolioText(row), '10 → 12: остались 8, новые +3, возобновлены +1, завершены −1, приостановлены −1')
+  assert.equal(portfolioText({ ...row, atEnd: 8, created: 0, resumed: 0, completed: 2, paused: 0 }), '10 → 8: остались 8, завершены −2')
+  assert.equal(row.atStart, row.stayed + row.completed + row.paused)
+  assert.equal(row.atEnd, row.stayed + row.created + row.resumed)
+})
+
+// Разбор §5.4: знаменатель — идущие сопоставленные потоки; без Moodle свежесть не оценивается.
+test('индикатор покрытия данных обучения', () => {
+  const coverage = { calculatedAt: '2026-10-19T10:00:00+03:00', sourceConfigured: true, staleAfterHours: 26, expected: 10, fresh: 7,
+    stale: 2, withoutObservation: 1, unappliedRecords: null, runs: [] }
+  assert.equal(coverageText(coverage), 'Данные обучения доступны для 7 из 10 идущих потоков; 3 требуют проверки')
+  assert.equal(coverageText({ ...coverage, fresh: 10, stale: 0, withoutObservation: 0 }), 'Данные обучения доступны для 10 из 10 идущих потоков')
+  assert.equal(coverageText({ ...coverage, expected: 0, fresh: 0, stale: 0, withoutObservation: 0 }), 'Данные обучения: идущих сопоставленных потоков нет')
+  assert.match(coverageText({ ...coverage, sourceConfigured: false }), /Moodle не подключён/)
 })
 
 test('окна сравнения одной длины и не пересекаются', () => {
@@ -190,10 +214,11 @@ test('реестр договоров: отбор по команде из ад�
     [{ id: 'a', name: 'Команда a' }, { id: 'b', name: 'Команда b' }])
 })
 
-test('копия шаблона предупреждает о правилах LMS так же, как правка', () => {
-  const base = { stages: [{ name: 'Поиск контакта' }, { name: 'Обучение преподавателей' }, { name: 'Занятия' }] }
-  const renamed = { stages: [{ name: 'Поиск контакта' }, { name: 'Обучение преподавателей' }, { name: 'Занятия со студентами' }] }
-  assert.match(templateLmsWarning(base, renamed) ?? '', /этап «Занятия»/)
+test('копия шаблона предупреждает об этапе, найденном по названию, так же, как правка', () => {
+  const base = { stages: [{ name: 'Поиск контакта' }, { name: 'Актуализация программы' }, { name: 'Занятия' }] }
+  const renamed = { stages: [{ name: 'Поиск контакта' }, { name: 'Обновление программы' }, { name: 'Занятия со студентами' }] }
+  assert.match(templateLmsWarning(base, renamed) ?? '', /этап «Актуализация программы»/)
+  assert.doesNotMatch(templateLmsWarning(base, renamed) ?? '', /«Занятия»/, 'занятия ищутся по роли этапа')
   assert.equal(templateLmsWarning(base, base), null)
   assert.equal(templateLmsWarning(null, renamed), null, 'новому шаблону сравнивать не с чем')
 })

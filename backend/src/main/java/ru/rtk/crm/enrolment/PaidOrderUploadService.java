@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -45,12 +46,15 @@ public class PaidOrderUploadService {
         this.objectMapper = objectMapper;
     }
 
-    public PaidOrderUpload upload(CrmProfile profile, MultipartFile file, String idempotencyKey, String requestId) {
+    public PaidOrderUpload upload(CrmProfile profile, boolean confirmNewStreams, MultipartFile file, String idempotencyKey,
+            String requestId) {
         enrolmentAccess.requireOperator(profile);
         String key = AdminAuthorization.requiredIdempotencyKey(idempotencyKey);
         byte[] content = content(file);
         PaidOrderBatch batch = parser.parse(new ByteArrayInputStream(content));
-        String fingerprint = CommandFingerprint.of(objectMapper, content);
+        String contentFingerprint = CommandFingerprint.of(objectMapper, content);
+        String fingerprint = confirmNewStreams ? CommandFingerprint.of(objectMapper, List.of(contentFingerprint, "confirmNewStreams"))
+                : contentFingerprint;
         UUID commandId = UUID.randomUUID();
         if (!commandIdempotencyRepository.reserve(
                 commandId, profile.id(), CommandOperation.UPLOAD_PAID_ORDERS, key, fingerprint, OffsetDateTime.now()
@@ -63,7 +67,7 @@ public class PaidOrderUploadService {
             }
             return read(previous.resultJson());
         }
-        PaidOrderUpload result = sourceSyncService.uploadPaidOrders(profile.id(), batch);
+        PaidOrderUpload result = sourceSyncService.uploadPaidOrders(profile.id(), batch, confirmNewStreams);
         paidOrderEnrolment.journalUpload(profile.id(), result, requestId);
         commandIdempotencyRepository.complete(commandId, write(result));
         return result;

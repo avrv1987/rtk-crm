@@ -12,7 +12,8 @@ import org.springframework.stereotype.Repository;
 public class AttachmentRepository {
     private static final String SELECT = """
             SELECT id, interaction_id, stage_id, event_id, original_name, media_type, size_bytes,
-                   storage_key, checksum, status, kind, revision, replaces_id, created_by, version, created_at, partner_visible
+                   storage_key, checksum, status, kind, revision, replaces_id, created_by, version, created_at, partner_visible,
+                   (SELECT dk.name FROM document_kinds dk WHERE dk.code = attachments.kind) AS kind_name
             FROM attachments
             """;
 
@@ -31,7 +32,7 @@ public class AttachmentRepository {
             long sizeBytes,
             UUID storageKey,
             String checksum,
-            AttachmentKind kind,
+            String kind,
             int revision,
             UUID replacesId,
             UUID createdBy,
@@ -55,13 +56,21 @@ public class AttachmentRepository {
                 .param("storageKey", storageKey)
                 .param("checksum", checksum)
                 .param("status", AttachmentStatus.QUARANTINE.name())
-                .param("kind", kind.name())
+                .param("kind", kind)
                 .param("revision", revision)
                 .param("replacesId", replacesId)
                 .param("createdBy", createdBy)
                 .param("createdAt", createdAt)
                 .param("updatedAt", createdAt)
                 .update();
+    }
+
+    // Вид нового или изменённого документа — только действующий вид справочника «Виды документов».
+    public boolean kindSelectable(String code) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM document_kinds WHERE code = :code AND archived = FALSE")
+                .param("code", code)
+                .query(Long.class)
+                .single() > 0;
     }
 
     public Optional<AttachmentRow> findById(UUID attachmentId) {
@@ -101,7 +110,7 @@ public class AttachmentRepository {
 
     public boolean updateKind(
             UUID attachmentId,
-            AttachmentKind kind,
+            String kind,
             boolean partnerVisible,
             int expectedVersion,
             OffsetDateTime updatedAt
@@ -112,7 +121,7 @@ public class AttachmentRepository {
                 WHERE id = :attachmentId AND version = :expectedVersion AND deleted_at IS NULL
                 """)
                 .param("attachmentId", attachmentId)
-                .param("kind", kind.name())
+                .param("kind", kind)
                 .param("partnerVisible", partnerVisible)
                 .param("expectedVersion", expectedVersion)
                 .param("updatedAt", updatedAt)
@@ -223,7 +232,8 @@ public class AttachmentRepository {
                 resultSet.getObject("storage_key", UUID.class),
                 resultSet.getString("checksum"),
                 AttachmentStatus.valueOf(resultSet.getString("status")),
-                AttachmentKind.valueOf(resultSet.getString("kind")),
+                resultSet.getString("kind"),
+                resultSet.getString("kind_name"),
                 resultSet.getInt("revision"),
                 resultSet.getObject("replaces_id", UUID.class),
                 resultSet.getObject("created_by", UUID.class),
@@ -244,7 +254,8 @@ public class AttachmentRepository {
             UUID storageKey,
             String checksum,
             AttachmentStatus status,
-            AttachmentKind kind,
+            String kind,
+            String kindName,
             int revision,
             UUID replacesId,
             UUID createdBy,
@@ -263,6 +274,7 @@ public class AttachmentRepository {
                     sizeBytes,
                     status,
                     kind,
+                    kindName,
                     revision,
                     replacesId,
                     createdBy,

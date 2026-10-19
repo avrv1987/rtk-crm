@@ -7,7 +7,7 @@ import { defaultPort, draftOf, invitationToken, mailPreferencesAvailable, rowSta
 const on = { enrolment: false, partner: false, mail: true }
 const off = { enrolment: false, partner: false }
 
-test('«Уведомления на почту» — при включённом модуле, кроме представителя вуза и оператора зачисления', () => {
+test('«Уведомления на почту» — при включённом модуле, кроме представителя вуза и менеджера учебного процесса', () => {
   assert.equal(mailPreferencesAvailable({ role: 'USER', enrolmentOperator: false }, on), true)
   assert.equal(mailPreferencesAvailable({ role: 'ADMIN', enrolmentOperator: false }, on), true)
   assert.equal(mailPreferencesAvailable({ role: 'MANAGEMENT', enrolmentOperator: false }, on), true)

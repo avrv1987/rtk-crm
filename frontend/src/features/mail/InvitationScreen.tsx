@@ -5,7 +5,14 @@ import './mail.css'
 
 // Страница ссылки из письма-приглашения. Пароль запрашивается кнопкой, а не при открытии: почтовые сканеры ссылок
 // открывают страницу сами, и приглашение не должно сгорать до того, как его откроет человек.
-export const InvitationScreen = ({ token }: { token: string }) => {
+// signedInAs — в этом браузере уже выполнен вход (Н-10, 2.5): ссылка не гасится, пока сотрудник не выйдет, иначе
+// пароль координатора показался бы в чужой сессии, а «Войти в CRM» открыло бы работу того, кто вошёл.
+export const InvitationScreen = ({ token, sessionChecking = false, signedInAs = null, onSignOut }: {
+  token: string
+  sessionChecking?: boolean
+  signedInAs?: string | null
+  onSignOut?: () => void
+}) => {
   const [state, setState] = useState<
     { kind: 'idle' } | { kind: 'busy' } | { kind: 'done'; result: MailInvitationRedeemed } | { kind: 'failed'; message: string }
   >({ kind: 'idle' })
@@ -23,10 +30,21 @@ export const InvitationScreen = ({ token }: { token: string }) => {
   return (
     <SessionScreen title="Вход в CRM ИТ Школы РТК">
       <div className="mail-invite">
-        {(state.kind === 'idle' || state.kind === 'busy') && (
+        {(state.kind === 'idle' || state.kind === 'busy') && signedInAs !== null && (
+          <>
+            <p role="alert">
+              В этом браузере выполнен вход как {signedInAs}. Чтобы получить пароль по ссылке, сначала выйдите, затем снова откройте
+              ссылку из письма. Ссылка пока не использована.
+            </p>
+            <button type="button" onClick={onSignOut}>Выйти</button>
+          </>
+        )}
+        {(state.kind === 'idle' || state.kind === 'busy') && signedInAs === null && (
           <>
             <p>Нажмите кнопку, чтобы получить временный пароль. Он показывается один раз — сразу сохраните его или войдите.</p>
-            <button type="button" disabled={state.kind === 'busy'} onClick={() => void redeem()}>Показать пароль</button>
+            <button type="button" disabled={state.kind === 'busy' || sessionChecking} onClick={() => void redeem()}>
+              {sessionChecking ? 'Проверяем сессию…' : 'Показать пароль'}
+            </button>
           </>
         )}
         {state.kind === 'done' && (

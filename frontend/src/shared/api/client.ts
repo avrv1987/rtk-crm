@@ -79,6 +79,8 @@ export type InteractionMarks = components['schemas']['InteractionMarks']
 export type InteractionStatusChange = components['schemas']['InteractionStatusChange']
 export type InteractionFlagsUpdate = components['schemas']['InteractionFlagsUpdate']
 export type AgentPlan = components['schemas']['AgentPlan']
+export type AgentPlanKind = components['schemas']['AgentPlanKind']
+export type AgentPlanListItem = components['schemas']['AgentPlanListItem']
 export type InteractionIssue = components['schemas']['InteractionIssue']
 export type InteractionIssueList = components['schemas']['InteractionIssueList']
 export type InteractionIssuePage = components['schemas']['InteractionIssuePage']
@@ -119,6 +121,7 @@ export type WorkControlQuery = {
   directionId: string[]
   programId: string[]
   productId: string[]
+  kindId: string[]
   managerId: string[]
   stage: string[]
   from: string
@@ -127,6 +130,10 @@ export type WorkControlQuery = {
   mode: 'NOW' | 'PERIOD'
 }
 export type LearningTrendItem = components['schemas']['LearningTrendItem']
+export type PortfolioChange = components['schemas']['PortfolioChange']
+export type PortfolioChangeRow = components['schemas']['PortfolioChangeRow']
+export type LearningCoverage = components['schemas']['LearningCoverage']
+export type LearningCoverageRun = components['schemas']['LearningCoverageRun']
 export type LearningDynamics = components['schemas']['LearningDynamics']
 export type LearningDynamicsQuery = {
   from?: string
@@ -281,6 +288,7 @@ export type CatalogImportMapping = {
 export type CatalogImportSheet = {
   name: string
   headers: string[]
+  hidden?: boolean
 }
 export type CatalogImportInspect = {
   sheets: CatalogImportSheet[]
@@ -619,6 +627,12 @@ export class ApiClient {
     if (query.noContactDays !== undefined) {
       searchParams.set('noContactDays', query.noContactDays.toString())
     }
+    for (const name of ['kindId', 'programId', 'productId'] as const) {
+      const value = query[name]
+      if (value !== undefined && value.length > 0) {
+        searchParams.set(name, value)
+      }
+    }
     if (query.page !== undefined) {
       searchParams.set('page', query.page.toString())
     }
@@ -689,12 +703,15 @@ export class ApiClient {
     })
   }
 
-  async uploadPaidOrders(file: File, idempotencyKey: string): Promise<PaidOrderUpload> {
+  async uploadPaidOrders(file: File, idempotencyKey: string, confirmNewStreams = false): Promise<PaidOrderUpload> {
     if (this.csrf === null) {
       await this.refreshCsrf()
     }
     const formData = new FormData()
     formData.set('file', file)
+    if (confirmNewStreams) {
+      formData.set('confirmNewStreams', 'true')
+    }
     return this.request<PaidOrderUpload>('/api/enrolment/paid-orders', {
       method: 'POST',
       headers: {
@@ -1100,6 +1117,14 @@ export class ApiClient {
 
   async getBackupStatus(): Promise<BackupStatus> {
     return this.request<BackupStatus>('/api/admin/backup-status')
+  }
+
+  async listAgentPlans(status: 'PENDING' | 'ALL' = 'PENDING', kind?: AgentPlanKind): Promise<AgentPlanListItem[]> {
+    const searchParams = new URLSearchParams({ status })
+    if (kind !== undefined) {
+      searchParams.set('kind', kind)
+    }
+    return this.request<AgentPlanListItem[]>(`/api/agent-plans?${searchParams.toString()}`)
   }
 
   async getAgentPlan(id: AgentPlan['id']): Promise<AgentPlan> {
@@ -1569,7 +1594,9 @@ export class ApiClient {
       directionId: query.directionId,
       programId: query.programId,
       productId: query.productId,
+      kindId: query.kindId,
       managerId: query.managerId,
+
       stage: query.stage
     }
     Object.entries(lists).forEach(([key, values]) => values.forEach((value) => params.append(key, value)))
@@ -1583,6 +1610,14 @@ export class ApiClient {
 
   async getLearningTrend(days?: number): Promise<LearningTrend> {
     return this.request<LearningTrend>(`/api/work/learning-trend${querySuffix({ days })}`)
+  }
+
+  async getPortfolioChange(from: string, to: string): Promise<PortfolioChange> {
+    return this.request<PortfolioChange>(`/api/work/portfolio-change?${new URLSearchParams({ from, to })}`)
+  }
+
+  async getLearningCoverage(): Promise<LearningCoverage> {
+    return this.request<LearningCoverage>('/api/learning-coverage')
   }
 
   async getLearningDynamics(query: LearningDynamicsQuery): Promise<LearningDynamics> {
@@ -2118,6 +2153,18 @@ export class ApiClient {
 
   private async throwResponseError(response: Response): Promise<never> {
     const body = parseJson(await response.text())
+    // Ограничение частоты: экраны показывают message ошибки, поэтому срок повтора из Retry-After вписывается прямо в
+    // него — ни один экран не нужно учить коду RATE_LIMITED.
+    if (response.status === 429) {
+      const seconds = Number.parseInt(response.headers.get('Retry-After') ?? '', 10)
+      throw new ApiError({
+        code: 'RATE_LIMITED',
+        message: Number.isFinite(seconds) && seconds > 0
+          ? `Слишком много запросов, повторите через ${seconds} сек.`
+          : 'Слишком много запросов, повторите чуть позже',
+        requestId: isApiErrorPayload(body) ? body.requestId : response.headers.get('X-Request-Id') ?? ''
+      }, response.status)
+    }
     if (isApiErrorPayload(body)) {
       throw new ApiError(body, response.status)
     }

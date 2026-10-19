@@ -174,7 +174,7 @@ class EnrolmentServicesTest {
             jdbcTemplate.update("DELETE FROM " + table);
         }
         SCAN.set(AttachmentScanOutcome.CLEAN);
-        profile(OPERATOR_ID, "Оператор зачисления", "USER", true);
+        profile(OPERATOR_ID, "Менеджер учебного процесса", "USER", true);
         profile(KAM_ID, "КАМ без флага", "USER", false);
         profile(ADMIN_ID, "Администратор", "ADMIN", false);
     }
@@ -305,9 +305,9 @@ class EnrolmentServicesTest {
                 });
         java.time.format.DateTimeFormatter format = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy");
         assertThat(journal("STREAM_END_DATE_CHANGED")).containsExactlyInAnyOrder(
-                "STREAM|" + PROMPT + ", поток 3|дата окончания: не указана → " + format.format(today.plusYears(5)) + "|Оператор зачисления",
+                "STREAM|" + PROMPT + ", поток 3|дата окончания: не указана → " + format.format(today.plusYears(5)) + "|Менеджер учебного процесса",
                 "STREAM|" + PROMPT + ", поток 3|дата окончания: " + format.format(today.plusYears(5)) + " → " + format.format(past)
-                        + "|Оператор зачисления");
+                        + "|Менеджер учебного процесса");
         assertThatThrownBy(() -> streams.learners(OPERATOR, UUID.randomUUID().toString(), "rq"))
                 .isInstanceOf(EnrolmentNotFoundException.class)
                 .hasMessage("Поток не найден");
@@ -342,7 +342,7 @@ class EnrolmentServicesTest {
         assertThat(view.learners()).filteredOn(learner -> learner.status() == PersonalDataStatus.RESTRICTED).hasSize(1);
         assertThat(view.roster().pending()).isEqualTo(new RosterScope(5, 1, 2, 1));
         assertThat(view.exports()).isEmpty();
-        assertThat(journal("LEARNER_LIST_VIEWED")).containsExactly("STREAM|" + PROMPT + ", поток 3|строк: 6|Оператор зачисления");
+        assertThat(journal("LEARNER_LIST_VIEWED")).containsExactly("STREAM|" + PROMPT + ", поток 3|строк: 6|Менеджер учебного процесса");
     }
 
     @Test
@@ -359,7 +359,7 @@ class EnrolmentServicesTest {
         assertThatThrownBy(() -> learners.search(OPERATOR, new LearnerSearch(LearnerSearchKind.SNILS, "12-34"), "rq"))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
                         assertThat(exception.field()).isEqualTo("value"));
-        assertThat(journal("LEARNER_SEARCHED")).contains("LEARNER|Поиск слушателя|вид: EMAIL; найдено: 1|Оператор зачисления");
+        assertThat(journal("LEARNER_SEARCHED")).contains("LEARNER|Поиск слушателя|вид: EMAIL; найдено: 1|Менеджер учебного процесса");
 
         LearnerCardView card = learners.card(OPERATOR, boris.id().toString(), "rq-card");
         assertThat(card.values()).containsEntry(LearnerField.PHONE, "+7 9** ***-**-02").doesNotContainKey(LearnerField.SNILS);
@@ -463,7 +463,7 @@ class EnrolmentServicesTest {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_records WHERE external_id = 'ORD-5-TYPO2'", Long.class))
                 .isEqualTo(1);
         assertThat(journal("LEARNER_ENROLMENTS_MOVED")).containsExactly("LEARNER|" + LearnerService.objectName(owner.id())
-                + "|из анкеты " + source.id() + ": зачислений перенесено 1, удалено повторных 1; поля: APARTMENT|Оператор зачисления");
+                + "|из анкеты " + source.id() + ": зачислений перенесено 1, удалено повторных 1; поля: APARTMENT|Менеджер учебного процесса");
         assertThat(learners.history(OPERATOR, owner.id().toString())).extracting(LearnerHistoryEntry::action)
                 .contains("LEARNER_ENROLMENTS_MOVED", "LEARNER_CHANGED");
     }
@@ -516,7 +516,7 @@ class EnrolmentServicesTest {
                 .containsExactly("Конфликт: ФИО не совпадает с анкетой");
         assertThat(preview.rows().get(5).learnerId()).isEqualTo(learner("Шестакова", "Ева").id());
         assertThat(journal("LEARNER_TEMPLATE_PREVIEWED")).containsExactly("STREAM|" + PROMPT
-                + ", поток 3|строк: 6; обновить: 2, без изменений: 1, ошибок: 2, конфликтов: 1|Оператор зачисления");
+                + ", поток 3|строк: 6; обновить: 2, без изменений: 1, ошибок: 2, конфликтов: 1|Менеджер учебного процесса");
 
         QuestionnaireImport applied = questionnaires.apply(OPERATOR, stream, template(), preview.fingerprint(), "apply", "rq-apply");
 
@@ -532,8 +532,12 @@ class EnrolmentServicesTest {
         assertThat(learner("Пятакова", "Дарья").profile().snils()).isNull();
         assertThat(questionnaires.apply(OPERATOR, stream, template(), preview.fingerprint(), "apply", "rq").rows())
                 .allSatisfy(row -> assertThat(row.lastName()).isNull());
+        // Н-4 (2.5): повтор «Применить» того же предпросмотра под новым ключом — «уже применено», а не конфликт.
+        QuestionnaireImport repeated = questionnaires.apply(OPERATOR, stream, template(), preview.fingerprint(), "apply-again", "rq");
+        assertThat(repeated.alreadyApplied()).isTrue();
+        assertThat(repeated.updated()).isEqualTo(2);
         assertThat(journal("LEARNER_TEMPLATE_IMPORTED")).containsExactly("STREAM|" + PROMPT
-                + ", поток 3|строк: 6; применено: 2, без изменений: 1, пропущено с ошибками и конфликтами: 3|Оператор зачисления");
+                + ", поток 3|строк: 6; применено: 2, без изменений: 1, пропущено с ошибками и конфликтами: 3|Менеджер учебного процесса");
 
         QuestionnaireImport again = questionnaires.preview(OPERATOR, stream, template(), "rq-again");
         Learner daria = learner("Пятакова", "Дарья");
@@ -619,7 +623,7 @@ class EnrolmentServicesTest {
                 excluded.exportId())).isEqualTo(4);
         assertThat(journal("LMS_ROSTER_EXPORTED")).containsExactly("STREAM|" + PROMPT + ", поток 3|строк: 4; выгрузка: "
                 + excluded.exportId() + "; режим: только не переданные; анкеты без обязательных полей: исключены; формат: XLSX по шаблону; SHA-256: "
-                + excluded.checksum() + "|Оператор зачисления");
+                + excluded.checksum() + "|Менеджер учебного процесса");
 
         RosterExportMarked marked = rosters.markTransferred(OPERATOR, excluded.exportId().toString(), "mark-1", "rq-m1");
         RosterExportMarked again = rosters.markTransferred(OPERATOR, excluded.exportId().toString(), "mark-2", "rq-m2");
@@ -830,7 +834,7 @@ class EnrolmentServicesTest {
         assertThat(journal("LMS_RECONCILED")).hasSize(2);
     }
 
-    // E-08, E-10: второй оператор не перезаписывает принятую строку; снятый флаг закрывает партии и очередь.
+    // E-08, E-10: второй менеджер учебного процесса не перезаписывает принятую строку; снятый флаг закрывает партии и очередь.
     @Test
     void secondOperatorCannotOverwriteAcceptedRowAndRevokedOperatorLosesAccess() {
         UUID secondId = UUID.fromString("82000000-0000-0000-0000-000000000004");
@@ -919,7 +923,7 @@ class EnrolmentServicesTest {
             accept(order("ORD-M-2", PROMPT, 3, "Второв", "Борис", null, "+79000000102", "boris.m@example.test"));
             accept(order("ORD-M-3", PROMPT, 3, "Шестаков", "Егор", null, "+79000000103", "egor.m@example.test"));
             update(learner("Второв", "Борис"), Map.of("SNILS", "123-456-789 64"), "snils-moodle");
-            stub.existing("egor.m@example.test", 900L);
+            stub.existing("egor.m@example.test", 900L, "Егор", "Шестаков");
             stub.rejectCreate("boris.m@example.test");
             String stream = streamId(PROMPT, 3).toString();
             LmsRoster roster = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
@@ -973,6 +977,113 @@ class EnrolmentServicesTest {
                     .isInstanceOf(InteractionValidationException.class);
             assertThatThrownBy(() -> moodle.transfer(KAM, roster.exportId().toString(), "moodle-kam", "rq"))
                     .isInstanceOf(EnrolmentAccessDeniedException.class);
+        } finally {
+            stub.stop();
+        }
+    }
+
+    // Н-1 (2.5): одна почта у двух слушателей партии — обе строки в ошибку, в Moodle не уходят. Учётная запись Moodle
+    // на другое имя не переименовывается и не зачисляется; совпадение имени без учёта регистра и «ё» — та же запись.
+    @Test
+    void moodleApiRejectsSharedEmailAndDoesNotTakeOverAccountWithOtherName() throws Exception {
+        MoodleStub stub = MoodleStub.start();
+        try {
+            org.mockito.Mockito.when(sourceSettings.moodleWrite()).thenReturn(java.util.Optional.of(new MoodleWriteTarget(stub.url(),
+                    "write-secret-token-0002", 5, Duration.ofSeconds(2), Duration.ofSeconds(5), DataSize.ofMegabytes(1))));
+            UUID openEnrollment = UUID.randomUUID();
+            jdbcTemplate.update("INSERT INTO organizations (id, type) VALUES (?, 'OPEN_ENROLLMENT')", openEnrollment);
+            mapCourse(PROMPT, openEnrollment, "42");
+            accept(order("ORD-S-1", PROMPT, 4, "Ребёнков", "Первый", null, "+79000000301", "parent.s@example.test"));
+            accept(order("ORD-S-2", PROMPT, 4, "Ребёнкова", "Вторая", null, "+79000000302", "Parent.S@example.test"));
+            accept(order("ORD-S-3", PROMPT, 4, "Чужов", "Пётр", null, "+79000000303", "other.s@example.test"));
+            accept(order("ORD-S-4", PROMPT, 4, "Свой", "Семён", null, "+79000000304", "own.s@example.test"));
+            stub.existing("other.s@example.test", 901L, "Иван", "Другой");
+            stub.existing("own.s@example.test", 902L, "СЕМЕН", "Свой");
+            LmsRoster roster = rosters.export(OPERATOR, streamId(PROMPT, 4).toString(),
+                    new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+
+            MoodleTransferResult result = moodle.transfer(OPERATOR, roster.exportId().toString(), "moodle-shared", "rq");
+
+            assertThat(result.sent()).isEqualTo(4);
+            assertThat(result.accepted()).isEqualTo(1);
+            assertThat(result.batch().items()).filteredOn(item -> item.result() == BatchItemResult.FAILED)
+                    .extracting(EnrolmentBatchItemView::error)
+                    .satisfiesExactlyInAnyOrder(
+                            error -> assertThat(error).isEqualTo(MoodleTransferService.SHARED_EMAIL),
+                            error -> assertThat(error).isEqualTo(MoodleTransferService.SHARED_EMAIL),
+                            error -> assertThat(error).contains("на другое имя", "не переименовывает"));
+            assertThat(stub.calls("core_user_create_users")).isZero();
+            assertThat(stub.calls("core_user_update_users")).isZero();
+            assertThat(stub.calls("enrol_manual_enrol_users")).isEqualTo(1);
+            assertThat(stub.bodies()).noneMatch(body -> body.contains("parent.s"));
+        } finally {
+            stub.stop();
+        }
+    }
+
+    // Н-А1 (2.5): настоящий Moodle с токеном записи отдаёт только fullname. Существующий пользователь с тем же именем
+    // (в любом порядке слов, без учёта регистра и «ё») зачисляется без создания второго, чужое имя по-прежнему
+    // отклоняется; повтор и перенос проходят. Слушатель без фамилии в Moodle не уходит (п. 14).
+    @Test
+    void moodleApiMatchesExistingUserByFullnameWhenMoodleReturnsNoNameParts() throws Exception {
+        MoodleStub stub = MoodleStub.start();
+        try {
+            org.mockito.Mockito.when(sourceSettings.moodleWrite()).thenReturn(java.util.Optional.of(new MoodleWriteTarget(stub.url(),
+                    "write-secret-token-0003", 5, Duration.ofSeconds(2), Duration.ofSeconds(5), DataSize.ofMegabytes(1))));
+            stub.userFields(MoodleStub.UserFields.FULLNAME_ONLY);
+            UUID openEnrollment = UUID.randomUUID();
+            jdbcTemplate.update("INSERT INTO organizations (id, type) VALUES (?, 'OPEN_ENROLLMENT')", openEnrollment);
+            mapCourse(PROMPT, openEnrollment, "42");
+            mapCourse(TESTER, openEnrollment, "43");
+            accept(order("ORD-F-1", PROMPT, 5, "Свой", "Семён", null, "+79000000401", "own.f@example.test"));
+            accept(order("ORD-F-2", PROMPT, 5, "Ковалёва", "Мария", "Ивановна", "+79000000402", "maria.f@example.test"));
+            accept(order("ORD-F-3", PROMPT, 5, "Чужов", "Пётр", null, "+79000000403", "other.f@example.test"));
+            accept(order("ORD-F-4", PROMPT, 5, "Новикова", "Нина", null, "+79000000404", "new.f@example.test"));
+            accept(order("ORD-F-5", PROMPT, 5, null, "Безфамильный", null, "+79000000405", "nolast.f@example.test"));
+            stub.existing("own.f@example.test", 910L, "СЕМЕН", "Свой");
+            // Сайт показывает «Фамилия Имя Отчество»: порядок слов другой, отчество есть.
+            stub.existing("maria.f@example.test", 911L, "Ковалева Мария", "Ивановна");
+            stub.existing("other.f@example.test", 912L, "Иван", "Другой");
+            String stream = streamId(PROMPT, 5).toString();
+            LmsRoster roster = rosters.export(OPERATOR, stream, new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+
+            MoodleTransferResult first = moodle.transfer(OPERATOR, roster.exportId().toString(), "moodle-fn-1", "rq");
+
+            assertThat(first.sent()).isEqualTo(5);
+            assertThat(first.accepted()).isEqualTo(3);
+            assertThat(first.batch().items()).filteredOn(item -> item.result() == BatchItemResult.FAILED)
+                    .extracting(EnrolmentBatchItemView::error)
+                    .satisfiesExactlyInAnyOrder(
+                            error -> assertThat(error).contains("на другое имя"),
+                            error -> assertThat(error).isEqualTo(MoodleTransferService.NO_LAST_NAME));
+            assertThat(first.batch().items()).filteredOn(item -> item.result() == BatchItemResult.ACCEPTED)
+                    .allMatch(item -> item.error() == null);
+            assertThat(stub.calls("core_user_create_users")).isEqualTo(1);
+            assertThat(stub.calls("core_user_update_users")).isZero();
+            assertThat(stub.bodies()).noneMatch(body -> body.contains("nolast.f") && body.contains("core_user_create_users"));
+
+            MoodleTransferResult repeat = moodle.transfer(OPERATOR, roster.exportId().toString(), "moodle-fn-2", "rq");
+            assertThat(repeat.sent()).isEqualTo(2);
+            assertThat(repeat.batch().accepted()).isEqualTo(3);
+            assertThat(stub.calls("core_user_create_users")).isEqualTo(1);
+
+            accept(order("ORD-F-1", TESTER, 2, "Свой", "Семён", null, "+79000000401", "own.f@example.test"));
+            EnrolmentQueueItem moved = group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.MOVED_AFTER_TRANSFER).items().getFirst();
+            MoodleMoveResult move = moodle.move(OPERATOR, moved.enrolmentId().toString(), "move-fn-1", "rq");
+            assertThat(move.courseTo()).isEqualTo(43L);
+
+            // Токен, которому имена не видны совсем: совпадение по почте с пометкой в протоколе, без переименования.
+            stub.userFields(MoodleStub.UserFields.NONE);
+            accept(order("ORD-F-6", PROMPT, 6, "Тихонов", "Тимур", null, "+79000000406", "quiet.f@example.test"));
+            stub.existing("quiet.f@example.test", 913L, "Кто", "Угодно");
+            LmsRoster silent = rosters.export(OPERATOR, streamId(PROMPT, 6).toString(),
+                    new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+            MoodleTransferResult noNames = moodle.transfer(OPERATOR, silent.exportId().toString(), "moodle-fn-3", "rq");
+            assertThat(noNames.accepted()).isEqualTo(1);
+            assertThat(noNames.batch().items()).singleElement()
+                    .satisfies(item -> assertThat(item.error()).isEqualTo(MoodleTransferService.NAME_NOT_CHECKED));
+            assertThat(stub.calls("core_user_create_users")).isEqualTo(1);
+            assertThat(stub.calls("core_user_update_users")).isZero();
         } finally {
             stub.stop();
         }

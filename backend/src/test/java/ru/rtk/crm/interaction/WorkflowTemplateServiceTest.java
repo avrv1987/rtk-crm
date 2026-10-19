@@ -29,6 +29,7 @@ import ru.rtk.crm.access.UserRole;
         WorkflowTemplateRepository.class,
         CommandIdempotencyRepository.class,
         WorkflowTemplateService.class,
+        ru.rtk.crm.attachment.DocumentKinds.class,
         ru.rtk.crm.audit.AuditJournalRepository.class,
         WorkflowTemplateServiceTest.JsonConfiguration.class
 })
@@ -418,6 +419,11 @@ class WorkflowTemplateServiceTest {
     }
 
     private void createSchema() {
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.create(jdbcTemplate);
+        // Удаление шаблона проверяет идущие взаимодействия и виды взаимодействия, которые его выбрали.
+        jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS interactions (id UUID PRIMARY KEY, workflow_template_id UUID,"
+                + " work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL)");
+        InteractionKindTestSchema.create(jdbcTemplate);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id UUID PRIMARY KEY, category VARCHAR(32) NOT NULL, action VARCHAR(64) NOT NULL, actor_profile_id UUID,
@@ -452,7 +458,7 @@ class WorkflowTemplateServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS workflow_template_stages (
+                CREATE TABLE IF NOT EXISTS workflow_template_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
                     id UUID PRIMARY KEY,
                     template_id UUID NOT NULL,
                     stage_order INTEGER NOT NULL,

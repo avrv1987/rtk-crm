@@ -1,6 +1,7 @@
 package ru.rtk.crm.mail;
 
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -206,13 +207,15 @@ public class MailRepository {
 
     // Повтор вручную — только для ещё не устаревших писем: просроченное отправщик всё равно сбросит.
     public boolean retry(UUID id, OffsetDateTime now) {
+        // Время усечено до микросекунд: база округляет остаток вверх, а часы Windows идут шагами около миллисекунды,
+        // и проход отправщика в тот же шаг часов видел бы письмо «из будущего» и пропускал его.
         return jdbcClient.sql("""
                 UPDATE mail_outbox
                 SET status = 'QUEUED', attempts = 0, next_attempt_at = :now
                 WHERE id = :id AND status = 'ERROR' AND expires_at > :now
                 """)
                 .param("id", id)
-                .param("now", now)
+                .param("now", now.truncatedTo(ChronoUnit.MICROS))
                 .update() == 1;
     }
 
@@ -222,7 +225,7 @@ public class MailRepository {
                 SET status = 'QUEUED', attempts = 0, next_attempt_at = :now
                 WHERE status = 'ERROR' AND expires_at > :now
                 """)
-                .param("now", now)
+                .param("now", now.truncatedTo(ChronoUnit.MICROS))
                 .update();
     }
 
@@ -337,11 +340,19 @@ public class MailRepository {
                 .update();
     }
 
+    public void replaceInvitationToken(UUID id, String tokenHash) {
+        jdbcClient.sql("UPDATE mail_invitations SET token_hash = :hash WHERE id = :id")
+                .param("id", id)
+                .param("hash", tokenHash)
+                .update();
+    }
+
     // Новое приглашение гасит прежние неиспользованные: работает только последняя ссылка.
     public void closeOpenInvitations(UUID profileId, OffsetDateTime now) {
+        // Усечение — как в retry: иначе закрытая ссылка, открытая в тот же шаг часов, ещё считалась бы действующей.
         jdbcClient.sql("UPDATE mail_invitations SET expires_at = :now WHERE profile_id = :profileId AND redeemed_at IS NULL AND expires_at > :now")
                 .param("profileId", profileId)
-                .param("now", now)
+                .param("now", now.truncatedTo(ChronoUnit.MICROS))
                 .update();
     }
 

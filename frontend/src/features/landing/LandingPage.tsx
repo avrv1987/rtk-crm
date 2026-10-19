@@ -179,9 +179,10 @@ const LinkRow = ({ link }: { link: SubmissionLink }) => (
 
 type LandingPageProps = {
   onLogin: () => void
+  notice?: string | null
 }
 
-export const LandingPage = ({ onLogin }: LandingPageProps) => {
+export const LandingPage = ({ onLogin, notice = null }: LandingPageProps) => {
   const [pending, setPending] = useState(false)
   const modules = getModules()
   const { showJurySection, juryAccessNote, privacyPolicyUrl, operatorDetails, sourceCodeUrl } = landingLinks
@@ -212,6 +213,12 @@ export const LandingPage = ({ onLogin }: LandingPageProps) => {
   return (
     <div className="landing">
       <a className="landing-skip" href="#lp-main">Перейти к содержанию</a>
+      {notice !== null && (
+        <div className="landing-session-notice" role="alert">
+          <p>{notice}</p>
+          <button type="button" onClick={login} disabled={pending}>Войти снова</button>
+        </div>
+      )}
       <header className="landing-header">
         <div className="landing-container landing-header__inner">
           <p className="landing-header__brand">CRM ИТ Школы РТК</p>

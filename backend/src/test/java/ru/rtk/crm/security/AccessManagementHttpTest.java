@@ -165,7 +165,7 @@ class AccessManagementHttpTest {
                             .header("Idempotency-Key", "orders-" + profile))
                     .andExpect(status().isForbidden())
                     .andExpect(jsonPath("$.code").value("FORBIDDEN"))
-                    .andExpect(jsonPath("$.message").value(containsString("оператору зачисления")))
+                    .andExpect(jsonPath("$.message").value(containsString("менеджеру учебного процесса")))
                     .andExpect(jsonPath("$.requestId").isNotEmpty());
         }
         mockMvc.perform(get("/api/me").with(login(USER_A)))

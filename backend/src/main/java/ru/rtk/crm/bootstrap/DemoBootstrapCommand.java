@@ -31,7 +31,7 @@ import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserProfileRepository;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.agreement.AgreementFileService;
-import ru.rtk.crm.attachment.AttachmentKind;
+import ru.rtk.crm.attachment.DocumentKinds;
 import ru.rtk.crm.attachment.AttachmentService;
 import ru.rtk.crm.attachment.AttachmentUploadRequest;
 import ru.rtk.crm.catalog.Contact;
@@ -73,6 +73,10 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     private static final int DEMO_SCENARIO_STAGE_GAP_DAYS = 14;
     private static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
     private static final String CONTROL_DEMO_LEADER = "leader-c";
+    private static final String DEMO_CYCLE_ORGANIZATION = "Классический университет (демо)";
+    private static final String DEMO_CYCLE_ACTOR = "kam-h";
+    private static final String DEMO_PREVIOUS_CYCLE = "Демо: закрытый цикл";
+    private static final String DEMO_NEXT_CYCLE = "Демо: повышение квалификации";
     private static final int CONTROL_STAGE_GAP_DAYS = 6;
     private static final List<DemoControlWork> DEMO_CONTROL_WORKS = List.of(
             new DemoControlWork("Политехнический университет (демо)", "kam-a", "Демо: платформа обучения", 7, 12, false,
@@ -155,8 +159,8 @@ public class DemoBootstrapCommand implements ApplicationRunner {
             new DemoContract("ДЕМО-А/ЛС-2", 2028, 7, null)
     );
     private static final List<DemoDocument> PARTNER_DOCUMENTS = List.of(
-            new DemoDocument("plan", "Демо: план сотрудничества.pdf", AttachmentKind.OTHER, "План сотрудничества вуза и ИТ Школы РТК"),
-            new DemoDocument("program", "Демо: рабочая программа.pdf", AttachmentKind.CURRICULUM, "Рабочая программа дисциплины")
+            new DemoDocument("plan", "Демо: план сотрудничества.pdf", DocumentKinds.OTHER, "План сотрудничества вуза и ИТ Школы РТК"),
+            new DemoDocument("program", "Демо: рабочая программа.pdf", DocumentKinds.CURRICULUM, "Рабочая программа дисциплины")
     );
 
     private final DemoBootstrapProperties properties;
@@ -861,6 +865,17 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                 .param("at", createdAt)
                 .param("id", interactionId)
                 .update();
+        // Риски, проблемы и лицензии сценария записаны до перевода по маршруту, поэтому в истории стоял первый этап.
+        // По времени они идут после всех (сдвинутых в прошлое) переходов — значит, сделаны на текущем этапе.
+        jdbcClient.sql("""
+                UPDATE interaction_events SET stage_id = :stageId, stage_name_snapshot = :stageName
+                WHERE interaction_id = :id AND type NOT IN ('CREATED', 'TRANSITIONED') AND occurred_at > :enteredAt
+                """)
+                .param("stageId", current.currentStageId())
+                .param("stageName", current.currentStageName())
+                .param("id", interactionId)
+                .param("enteredAt", enteredAt)
+                .update();
     }
 
     private void createAgreementLifecycle(
@@ -1056,6 +1071,42 @@ public class DemoBootstrapCommand implements ApplicationRunner {
                     .orElseThrow(() -> new IllegalStateException("Demo bootstrap requires active " + work.actorKey() + " profile"));
             createControlWork(actor, organizationId, work, catalog, now);
         }
+        linkDemoCycles(identitiesByKey, organizationIds);
+    }
+
+    // Связанная пара циклов для «Пути вуза»: завершённый цикл и следующий за ним, как после «Начать новый цикл».
+    private void linkDemoCycles(Map<String, DemoBootstrapProperties.Identity> identitiesByKey, Map<String, UUID> organizationIds) {
+        UUID organizationId = organizationIds.get(DEMO_CYCLE_ORGANIZATION);
+        DemoBootstrapProperties.Identity identity = identitiesByKey.get(DEMO_CYCLE_ACTOR);
+        if (organizationId == null || identity == null) {
+            return;
+        }
+        Optional<UUID> previous = demoWork(organizationId, DEMO_PREVIOUS_CYCLE);
+        Optional<UUID> next = demoWork(organizationId, DEMO_NEXT_CYCLE);
+        if (previous.isEmpty() || next.isEmpty()) {
+            return;
+        }
+        UUID actorId = userProfileRepository.findActiveByIdentity(identity.issuer(), identity.subject())
+                .orElseThrow(() -> new IllegalStateException("Demo bootstrap requires active " + DEMO_CYCLE_ACTOR + " profile"))
+                .id();
+        jdbcClient.sql("""
+                INSERT INTO interaction_cycles (interaction_id, previous_interaction_id, starts_on, created_by, created_at)
+                SELECT i.id, :previousId, CAST(i.created_at AS DATE), :actorId, i.created_at FROM interactions i
+                WHERE i.id = :nextId
+                  AND NOT EXISTS (SELECT 1 FROM interaction_cycles c WHERE c.interaction_id = :nextId OR c.previous_interaction_id = :previousId)
+                """)
+                .param("previousId", previous.get())
+                .param("nextId", next.get())
+                .param("actorId", actorId)
+                .update();
+    }
+
+    private Optional<UUID> demoWork(UUID organizationId, String title) {
+        return jdbcClient.sql("SELECT id FROM interactions WHERE organization_id = :organizationId AND title = :title ORDER BY created_at LIMIT 1")
+                .param("organizationId", organizationId)
+                .param("title", title)
+                .query(UUID.class)
+                .optional();
     }
 
     private void createControlWork(
@@ -1416,7 +1467,7 @@ public class DemoBootstrapCommand implements ApplicationRunner {
     ) {
     }
 
-    private record DemoDocument(String key, String name, AttachmentKind kind, String title) {
+    private record DemoDocument(String key, String name, String kind, String title) {
     }
 
     private record DemoFile(String originalName, byte[] content) implements MultipartFile {

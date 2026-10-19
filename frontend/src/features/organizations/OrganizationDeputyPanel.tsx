@@ -22,6 +22,7 @@ import '../work/workControl.css'
 
 type OrganizationDeputyPanelProps = AccessHandlers & {
   organization: Organization
+  profileId?: string
   onChanged: () => Promise<void>
 }
 
@@ -66,6 +67,7 @@ export const deputyHistoryEntries = (deputies: OrganizationDeputy[]): Assignment
 
 export const OrganizationDeputyPanel = ({
   organization,
+  profileId,
   onChanged,
   onSessionExpired,
   onProfileUnavailable
@@ -81,7 +83,8 @@ export const OrganizationDeputyPanel = ({
   const deputies = dataState.kind === 'ready' ? dataState.deputies : undefined
   const open = deputies?.find((deputy) => deputy.status !== 'ENDED')
   const deputyCandidates = dataState.kind === 'ready'
-    ? dataState.candidates.filter((candidate) => candidate.id !== organization.ownerManagerId)
+    // Заместителем сервер принимает только КАМ команды: руководителя (сам пользователь) в список не включаем.
+    ? dataState.candidates.filter((candidate) => candidate.id !== organization.ownerManagerId && candidate.id !== profileId)
     : []
 
   const load = useCallback(async () => {
@@ -208,6 +211,7 @@ export const OrganizationDeputyPanel = ({
               <input
                 type="date"
                 value={startsOn}
+                max={shiftCalendarDate(todayIso(), 365)}
                 required
                 disabled={commandState.kind === 'saving'}
                 onChange={(event) => edit(() => setStartsOn(event.target.value))}
@@ -241,11 +245,14 @@ export const OrganizationDeputyPanel = ({
       )}
       <ConfirmDialog
         open={confirmingEnd}
-        title="Завершить замещение?"
+        title={open?.status === 'SCHEDULED' ? 'Отменить запланированное замещение?' : 'Завершить замещение?'}
         description={open === undefined
           ? ''
-          : `${open.deputyDisplayName} потеряет доступ к вузу «${organization.name}». Записи заместителя в истории сохранятся.`}
-        confirmLabel="Завершить замещение"
+          : open.status === 'SCHEDULED'
+            // Запланированное замещение ещё не началось: доступа у заместителя нет, терять нечего.
+            ? `Замещение (${open.deputyDisplayName}, ${period(open)}) ещё не началось и не начнётся: доступ к вузу «${organization.name}» заместитель не получит.`
+            : `${open.deputyDisplayName} потеряет доступ к вузу «${organization.name}». Записи заместителя в истории сохранятся.`}
+        confirmLabel={open?.status === 'SCHEDULED' ? 'Отменить замещение' : 'Завершить замещение'}
         onConfirm={endDeputy}
         onCancel={() => setConfirmingEnd(false)}
       />

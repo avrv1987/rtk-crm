@@ -27,7 +27,7 @@ test('верхнее меню: 4–5 пунктов на роль, у админ
   assert.deepEqual(labels('PARTNER'), [])
 })
 
-test('«Зачисление» появляется только у оператора при включённом модуле', () => {
+test('«Зачисление» появляется только у менеджера учебного процесса при включённом модуле', () => {
   assert.ok(labels('USER', true, on).includes('Зачисление'))
   assert.ok(labels('LEADER', true, on).includes('Зачисление'))
   assert.ok(!labels('USER', true, off).includes('Зачисление'))
@@ -36,7 +36,7 @@ test('«Зачисление» появляется только у операт
   assert.ok(!sectionsFor('USER', true, off).includes('enrolment'))
 })
 
-test('нижняя панель телефона — четыре раздела (у оператора зачисления пять), остальное уходит в меню под аватаром', () => {
+test('нижняя панель телефона — четыре раздела (у менеджера учебного процесса пять), остальное уходит в меню под аватаром', () => {
   for (const role of ['USER', 'LEADER', 'MANAGEMENT'] as const) {
     const items = navFor(role, true, on)
     assert.deepEqual(items.filter((item) => item.phone).map((item) => item.label).slice(0, 4), ['Работа', 'Вузы', 'Договоры', 'Отчёты'])

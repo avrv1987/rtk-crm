@@ -25,7 +25,6 @@ import ru.rtk.crm.access.CurrentProfileService;
 import ru.rtk.crm.module.ModuleProperties;
 import ru.rtk.crm.attachment.Attachment;
 import ru.rtk.crm.attachment.AttachmentDeletionRequest;
-import ru.rtk.crm.attachment.AttachmentKind;
 import ru.rtk.crm.attachment.AttachmentService;
 import ru.rtk.crm.attachment.AttachmentUploadRequest;
 
@@ -68,7 +67,10 @@ public class InteractionsApiController {
             @RequestParam(required = false) Integer licenseExpiresBy,
             @RequestParam(required = false) String responsible,
             @RequestParam(required = false) String minDaysOnStage,
-            @RequestParam(required = false) String noContactDays
+            @RequestParam(required = false) String noContactDays,
+            @RequestParam(required = false) String kindId,
+            @RequestParam(required = false) String programId,
+            @RequestParam(required = false) String productId
     ) {
         return interactionService.list(
                 currentProfileService.requireActiveProfile(user),
@@ -83,7 +85,9 @@ public class InteractionsApiController {
                         responsible,
                         minDaysOnStage,
                         noContactDays
-                ),
+                ).withKind(parseOptionalUuid(kindId, "kindId"))
+                        .withCatalog(parseOptionalUuid(programId, "programId"), parseOptionalUuid(productId, "productId")),
+
                 InteractionQuery.from(page, size, sort)
         );
     }
@@ -259,7 +263,7 @@ public class InteractionsApiController {
             @PathVariable String id,
             @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestParam String stageId,
-            @RequestParam(required = false) AttachmentKind kind,
+            @RequestParam(required = false) String kind,
             @RequestParam(required = false) String replacesId,
             @RequestPart("file") MultipartFile file
     ) {

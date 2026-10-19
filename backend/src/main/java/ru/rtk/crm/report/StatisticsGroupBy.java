@@ -7,6 +7,9 @@ public enum StatisticsGroupBy {
     PROGRAM("по ИТ-программам", "ИТ-программа", true),
     PRODUCT("по ИТ-продуктам", "ИТ-продукт", true),
     MANAGER("по ответственным", "Ответственный", true),
+    KIND("по видам взаимодействия", "Вид взаимодействия", false),
+    MILESTONE("по вехам", "Веха", false),
+
     MONTH("по месяцам", "Месяц", false);
 
     private final String title;

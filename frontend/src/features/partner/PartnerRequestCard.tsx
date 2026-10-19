@@ -4,6 +4,8 @@ import { formatCalendarDate, formatMoscowDateTime } from '../../shared/format/da
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { saveFile } from '../admin/saveFile'
 import { handledAccessError } from '../interactions/workMarks'
+import { attachmentAccept, attachmentFormats } from '../documents/documentsApi'
+import { attachmentFileProblem, attachmentLimitMegabytes, attachmentNameLimit } from '../documents/attachmentRules'
 import {
   confirmPartnerDocument,
   downloadPartnerDocument,
@@ -38,6 +40,7 @@ const receiptLine = (receipt: PartnerReceipt) => {
 export const PartnerRequestCard = ({ request, onChanged, onSessionExpired, onProfileUnavailable }: PartnerRequestCardProps) => {
   const [message, setMessage] = useState('')
   const [file, setFile] = useState<File | null>(null)
+  const fileProblem = file === null ? null : attachmentFileProblem(file)
   // Ключ повтора живёт, пока ответ не принят: повторная отправка после обрыва связи уходит с тем же ключом,
   // и сервер вернёт ту же квитанцию вместо второго ответа.
   const [idempotencyKey, setIdempotencyKey] = useState(createIdempotencyKey)
@@ -161,10 +164,12 @@ export const PartnerRequestCard = ({ request, onChanged, onSessionExpired, onPro
           </label>
           <label>
             Файл (необязательно)
-            <input type="file" disabled={sending} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+            <input type="file" accept={attachmentAccept} disabled={sending} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+            <span className="partner-request__hint">До {attachmentLimitMegabytes} МБ: {attachmentFormats}. Имя файла — до {attachmentNameLimit} символов.</span>
+            {fileProblem !== null && <span className="partner-request__error" role="alert">{fileProblem}</span>}
           </label>
           <div className="partner-request__actions">
-            <button type="submit" disabled={sending || (message.trim().length === 0 && file === null)}>
+            <button type="submit" disabled={sending || fileProblem !== null || (message.trim().length === 0 && file === null)}>
               {sending ? 'Отправляем…' : 'Отправить ответ'}
             </button>
             <button type="button" className="button--secondary" disabled={sending || message.trim().length === 0 || file !== null}
@@ -175,7 +180,7 @@ export const PartnerRequestCard = ({ request, onChanged, onSessionExpired, onPro
       {state.kind === 'failed' && (
         <div className="interaction-command-error" role="alert">
           <p>{state.error instanceof ApiError
-            ? state.error.message
+            ? state.error.fieldErrors?.file ?? state.error.fieldErrors?.message ?? state.error.message
             : 'Связь прервалась. Нажмите «Отправить ответ» ещё раз: повторная отправка не создаст второй ответ.'}</p>
           {state.error instanceof ApiError && <SupportDetails requestId={state.error.requestId} code={state.error.code} />}
           {state.error instanceof ApiError && state.error.status === 409 && (

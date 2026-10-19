@@ -26,6 +26,7 @@ import ru.rtk.crm.work.WorkRepository.WorkCounts;
 @Service
 public class WorkService {
     private static final int MAX_STUCK_DAYS = 3650;
+    static final int MAX_PORTFOLIO_DAYS = 730;
     // Сигнал о вузах, оставшихся без КАМ после его блокировки, гаснет при назначении КАМ или через 30 дней:
     // дальше такие вузы видны в плитке «Вузов без КАМ».
     private static final int UNASSIGNED_SIGNAL_DAYS = 30;
@@ -116,6 +117,27 @@ public class WorkService {
     }
 
     @Transactional(readOnly = true)
+    public PortfolioChange portfolioChange(CrmProfile profile, LocalDate from, LocalDate to) {
+        if (profile.role() != UserRole.MANAGEMENT && profile.role() != UserRole.LEADER) {
+            throw new WorkAccessDeniedException();
+        }
+        if (from == null || to == null) {
+            throw new InteractionValidationException(from == null ? "from" : "to", "Укажите начало и конец периода");
+        }
+        if (from.isAfter(to) || from.plusDays(MAX_PORTFOLIO_DAYS).isBefore(to)) {
+            throw new InteractionValidationException("from", "Укажите период не длиннее " + MAX_PORTFOLIO_DAYS + " дней, начало не позже конца");
+        }
+        VisibilityScope scope = scope(profile);
+        return PortfolioChange.of(
+                workRepository.findPortfolioStates(scope, from.atStartOfDay(WorkProperties.ZONE).toOffsetDateTime(),
+                        to.plusDays(1).atStartOfDay(WorkProperties.ZONE).toOffsetDateTime()),
+                from,
+                to,
+                OffsetDateTime.now()
+        );
+    }
+
+    @Transactional(readOnly = true)
     public ReminderDigest reminders(CrmProfile profile) {
         requireOwnWork(profile);
         VisibilityScope scope = scope(profile);
@@ -141,7 +163,6 @@ public class WorkService {
                 workRepository.findExpiringLicenses(scope, properties.licenseExpiresBy(now), limit),
                 workRepository.findTrainingCycles(
                         scope,
-                        properties.trainingStageNames(),
                         trainedBefore,
                         properties.trainingCycleYears(),
                         limit
@@ -149,7 +170,6 @@ public class WorkService {
                 properties.licenseExpiresBy(now),
                 workRepository.findQualificationDue(
                         scope,
-                        properties.qualificationStageName(),
                         today.minusMonths(properties.qualificationAfterMonths()),
                         properties.qualificationAfterMonths(),
                         limit

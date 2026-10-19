@@ -9,6 +9,8 @@ info:
 
     Изменяющие запросы передают заголовок X-CSRF-TOKEN со значением token из GET /api/csrf; отсутствующий или устаревший токен даёт 403 CSRF_INVALID, клиент получает новый токен и повторяет запрос один раз. Команды передают Idempotency-Key; повтор с тем же ключом и телом возвращает прежний результат, с другим телом — 409 IDEMPOTENCY_CONFLICT. Устаревшая version даёт 409 VERSION_CONFLICT с currentVersion.
 
+    Частота запросов к /api/** ограничена: на вошедшего пользователя и на адрес клиента для запросов без входа (по умолчанию 1800 и 600 в минуту). Превышение даёт 429 RATE_LIMITED с заголовком Retry-After в секундах. Тело JSON ограничено 10 МБ, строка — 1 000 000 символов, число — 100 цифр, вложенность — 50 уровней; превышение даёт 413 PAYLOAD_TOO_LARGE. Даты в теле запроса — с годом от 1 до 9999.
+
     Ошибки возвращаются в формате ApiError {code, message, requestId}. requestId совпадает с заголовком X-Request-Id и записью в журнале сервера; stack trace и секреты в ответ не попадают.
 servers:
   - url: /
@@ -765,6 +767,34 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/path:
+    get:
+      tags: [Work]
+      summary: Путь вуза — все его взаимодействия с маршрутом, договором, обучением и повторными циклами
+      operationId: getOrganizationPath
+      x-implementation-stage: 1
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: >-
+            Все взаимодействия вуза, включая завершённые, новые сверху (не больше 100; total — сколько их всего). Доступно USER
+            по своим и замещаемым вузам, LEADER по вузам команды и MANAGEMENT по всем вузам; ADMIN и PARTNER получают 403,
+            невидимый вуз — 404
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationPath'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/organizations/{id}/assignment:
     post:
       tags: [Catalog]
@@ -1023,6 +1053,67 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/work/portfolio-change:
+    get:
+      tags: [Work]
+      summary: Состав активных взаимодействий на начало и конец периода
+      operationId: getPortfolioChange
+      description: >-
+        Только LEADER (своя команда) и MANAGEMENT (все команды). Было — активные на начало дня from, стало — активные на
+        конец дня to (МСК). Было = остались + завершены + приостановлены; стало = остались + новые + возобновлены. Статус
+        на дату — по последней смене статуса до границы. Команда — текущая команда вуза, архивные вузы не входят.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Состав по командам и итог
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortfolioChange'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/learning-coverage:
+    get:
+      tags: [Work]
+      summary: Покрытие данных обучения по ожидаемым потокам
+      operationId: getLearningCoverage
+      description: >-
+        ADMIN — все вузы, LEADER — вузы своей команды, MANAGEMENT — все команды; остальные роли получают 403. Ожидаемые
+        потоки — сопоставленные запуски занятий студентов Moodle, которые идут сегодня (МСК), с наблюдениями и без. FRESH —
+        последнее подтверждение наблюдения моложе staleAfterHours, STALE — старше, NO_DATA — наблюдений нет. Если Moodle не
+        подключён (sourceConfigured = false), свежесть не проверяется. runs — до 50 потоков, требующих проверки (STALE и
+        NO_DATA). unappliedRecords — записи Moodle, ждущие сопоставления или с ошибкой; только для ADMIN, иначе null.
+      responses:
+        '200':
+          description: Покрытие и потоки, требующие проверки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LearningCoverage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/work/control:
     get:
       tags: [Work]
@@ -1070,6 +1161,15 @@ paths:
         - name: productId
           in: query
           required: false
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+        - name: kindId
+          in: query
+          required: false
+          description: Вид взаимодействия
           schema:
             type: array
             items:
@@ -1843,7 +1943,7 @@ paths:
         - name: q
           in: query
           required: false
-          description: Часть названия взаимодействия или вуза без учёта регистра
+          description: Часть названия взаимодействия, вуза, ИТ-программы или продукта без учёта регистра
           schema:
             type: string
             maxLength: 200
@@ -1914,6 +2014,28 @@ paths:
             type: integer
             minimum: 1
             maximum: 3650
+        - name: kindId
+          in: query
+          required: false
+          description: Только взаимодействия этого вида
+          schema:
+            type: string
+            format: uuid
+        - name: programId
+          in: query
+          required: false
+          description: Только взаимодействия этой ИТ-программы
+          schema:
+            type: string
+            format: uuid
+        - name: productId
+          in: query
+          required: false
+          description: Только взаимодействия с этим продуктом
+          schema:
+            type: string
+            format: uuid
+
       responses:
         '200':
           description: Взаимодействия всех видимых организаций либо одной видимой организации при указании organizationId; фильтры, итог и страницы вычисляются на сервере
@@ -3084,8 +3206,8 @@ paths:
       summary: Договоры работы и этапы маршрута, связанные с договором
       operationId: getInteractionAgreements
       description: >-
-        Этапы «Обмен документами», «Корректировка документов» и «Подписание» определяются по постоянному идентификатору этапа
-        базового шаблона или по названию из настройки app.agreements.*-stage-names.
+        Роль SIGNING — этап с отметкой «требует действующего договора» (requiresAgreement). Этапы «Обмен документами» и
+        «Корректировка документов» определяются по постоянному идентификатору этапа базового шаблона или по названию из настройки app.agreements.*-stage-names.
       parameters:
         - $ref: '#/components/parameters/UuidId'
       responses:
@@ -4441,7 +4563,350 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/document-kinds:
+    get:
+      tags: [Catalog]
+      operationId: listDocumentKinds
+      summary: Справочник «Виды документов»
+      description: >-
+        Все виды, включая архивные (archived), для выбора вида при загрузке, чек-листа этапа и редактора шаблона. Доступно
+        всем сотрудникам; ведёт справочник администратор через /api/admin/catalogs/document_kinds.
+      responses:
+        '200':
+          description: Виды документов; «Иное» последним
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DocumentKind'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interaction-kinds:
+    get:
+      tags: [Catalog]
+      summary: Действующие виды взаимодействия
+      operationId: listInteractionKinds
+      x-implementation-stage: 9
+      description: Для формы создания карточки и отборов; teamTemplate* — шаблон команды текущего пользователя для вида
+      responses:
+        '200':
+          description: Действующие виды в порядке справочника
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InteractionKind'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/interaction-kinds/resolution:
+    get:
+      tags: [Catalog]
+      summary: Подсказка вида и маршрута новой карточки
+      operationId: resolveInteractionKind
+      x-implementation-stage: 9
+      description: >-
+        Тот же расчёт, что при создании: вид — выбранный, иначе первое подходящее правило (тип организации, программа,
+        продукт; меньший приоритет выше), иначе первый действующий; шаблон — командный для вида, шаблон вида, шаблон по
+        умолчанию. Ничего не записывает.
+      parameters:
+        - name: organizationId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: kindId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: programId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: productId
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+      responses:
+        '200':
+          description: Вид и шаблон, которые получит карточка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InteractionKindResolution'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/interaction-kinds:
+    get:
+      tags: [Administration]
+      summary: Справочник видов взаимодействия
+      operationId: listManagedInteractionKinds
+      x-implementation-stage: 9
+      description: Все виды, включая недействующие. ADMIN и LEADER со своей командой (руководитель видит шаблоны своей команды); остальным 403
+      responses:
+        '200':
+          description: Виды в порядке справочника
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InteractionKind'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Administration]
+      summary: Добавить вид взаимодействия
+      operationId: createInteractionKind
+      x-implementation-stage: 9
+      description: Только ADMIN. Шаблон вида — только общий. Изменение пишется в журнал аудита
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionKindRequest'
+      responses:
+        '201':
+          description: Вид добавлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InteractionKind'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/interaction-kinds/{id}:
+    patch:
+      tags: [Administration]
+      summary: Изменить вид взаимодействия
+      operationId: updateInteractionKind
+      x-implementation-stage: 9
+      description: Только ADMIN. Последний действующий вид отключить нельзя. Карточки с этим видом не меняются
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionKindRequest'
+      responses:
+        '200':
+          description: Вид изменён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InteractionKind'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/interaction-kinds/{id}/team-template:
+    put:
+      tags: [Administration]
+      summary: Шаблон команды для вида взаимодействия
+      operationId: setInteractionKindTeamTemplate
+      x-implementation-stage: 9
+      description: Только LEADER своей команды. Шаблон команды или общий; templateId = null возвращает команду к шаблону вида
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionKindTeamTemplate'
+      responses:
+        '200':
+          description: Шаблон команды сохранён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InteractionKind'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/interaction-kind-rules:
+    get:
+      tags: [Administration]
+      summary: Правила выбора вида взаимодействия
+      operationId: listInteractionKindRules
+      x-implementation-stage: 9
+      description: Только ADMIN. Порядок — по приоритету (меньший номер выше)
+      responses:
+        '200':
+          description: Правила
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InteractionKindRule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Administration]
+      summary: Добавить правило выбора вида
+      operationId: createInteractionKindRule
+      x-implementation-stage: 9
+      description: Только ADMIN. Нужно хотя бы одно условие из типа организации, программы и продукта
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionKindRuleRequest'
+      responses:
+        '201':
+          description: Правило добавлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InteractionKindRule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/interaction-kind-rules/{id}:
+    patch:
+      tags: [Administration]
+      summary: Изменить правило выбора вида
+      operationId: updateInteractionKindRule
+      x-implementation-stage: 9
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionKindRuleRequest'
+      responses:
+        '200':
+          description: Правило изменено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InteractionKindRule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Administration]
+      summary: Удалить правило выбора вида
+      operationId: deleteInteractionKindRule
+      x-implementation-stage: 9
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: version
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '204':
+          description: Правило удалено
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/workflow-templates:
+
     get:
       tags: [Catalog]
       summary: Доступные шаблоны процесса
@@ -4681,7 +5146,7 @@ paths:
       description: >-
         Только руководитель, по идущим работам своей команды на других версиях шаблона. Этапы сопоставляются по
         устойчивому идентификатору этапа шаблона, затем по названию; stageMap задаёт сопоставление вручную. Удалённый
-        этап без сопоставления переходит в следующий сохранившийся этап. Ничего не изменяет
+        этап без сопоставления переходит в предыдущий сохранившийся этап, а если его нет — в следующий. Ничего не изменяет
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/WorkflowVersionNumber'
@@ -4818,7 +5283,7 @@ paths:
       summary: Выгрузить список профилей CRM в XLSX
       operationId: exportCrmProfiles
       description: >-
-        Только администратор. Те же фильтры, что у списка, без постраничного вывода: сотрудник, логин, роль, подтверждена ли роль Keycloak, команда или вуз, состояние, флаг «Оператор зачисления», синхронизация с Keycloak, последний вход (МСК). Выгрузка записывается в журнал администратора.
+        Только администратор. Те же фильтры, что у списка, без постраничного вывода: сотрудник, логин, роль, подтверждена ли роль Keycloak, команда или вуз, состояние, флаг «Менеджер учебного процесса», синхронизация с Keycloak, последний вход (МСК). Выгрузка записывается в журнал администратора.
       parameters:
         - name: q
           in: query
@@ -4932,7 +5397,7 @@ paths:
       responses:
         '200':
           description: >-
-            Профиль CRM обновлён; изменение роли, команды или активности увеличивает accessRevision, каждое изменение записывается в журнал профиля. Роль хранится в Keycloak: смена роли сначала назначает роль realm crm-* учётной записи клиентом crm-account-sync и снимает прежнюю, затем меняет профиль CRM; если Keycloak недоступен или служебный клиент не настроен, роль не меняется (503). Если профиль CRM после этого не сохранился (конфликт версии, ошибка проверки), роль и обязательный второй фактор в Keycloak возвращаются к сохранённым в CRM; если вернуть не удалось, у профиля roleReconcileRequired равно true, пока администратор не выполнит синхронизацию. Закрытие или открытие доступа также отключает или включает учётную запись Keycloak через Admin API; если Keycloak недоступен или подключение не настроено, изменение CRM сохраняется, accountSyncRequired равно true, а accountSyncError объясняет, почему учётная запись не была синхронизирована. Если меняется, нужен ли второй фактор (роль «Администратор» или флаг «Оператор зачисления»), CRM сразу меняет это в Keycloak; при недоступном Keycloak изменение не сохраняется (503).
+            Профиль CRM обновлён; изменение роли, команды или активности увеличивает accessRevision, каждое изменение записывается в журнал профиля. Роль хранится в Keycloak: смена роли сначала назначает роль realm crm-* учётной записи клиентом crm-account-sync и снимает прежнюю, затем меняет профиль CRM; если Keycloak недоступен или служебный клиент не настроен, роль не меняется (503). Если профиль CRM после этого не сохранился (конфликт версии, ошибка проверки), роль и обязательный второй фактор в Keycloak возвращаются к сохранённым в CRM; если вернуть не удалось, у профиля roleReconcileRequired равно true, пока администратор не выполнит синхронизацию. Закрытие или открытие доступа также отключает или включает учётную запись Keycloak через Admin API; если Keycloak недоступен или подключение не настроено, изменение CRM сохраняется, accountSyncRequired равно true, а accountSyncError объясняет, почему учётная запись не была синхронизирована. Если меняется, нужен ли второй фактор (роль «Администратор» или флаг «Менеджер учебного процесса»), CRM сразу меняет это в Keycloak; при недоступном Keycloak изменение не сохраняется (503).
           content:
             application/json:
               schema:
@@ -5236,7 +5701,7 @@ paths:
       summary: Сбросить второй фактор сотрудника
       operationId: resetCrmProfileSecondFactor
       description: >-
-        Только администратор, не для своей учётной записи и не для другого администратора (400: второй фактор администратора сбрасывают в консоли Keycloak). Удаляет у пользователя Keycloak привязанные приложения-аутентификаторы (OTP). Администратору и оператору зачисления заново назначает обязательный второй фактор: при следующем входе Keycloak попросит подключить приложение. Сеансы не завершаются. Если Keycloak недоступен, ничего не меняется.
+        Только администратор, не для своей учётной записи и не для другого администратора (400: второй фактор администратора сбрасывают в консоли Keycloak). Удаляет у пользователя Keycloak привязанные приложения-аутентификаторы (OTP). Администратору и менеджеру учебного процесса заново назначает обязательный второй фактор: при следующем входе Keycloak попросит подключить приложение. Сеансы не завершаются. Если Keycloak недоступен, ничего не меняется.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -6675,7 +7140,7 @@ paths:
       summary: Ограничить обработку анкеты слушателя или снять ограничение
       operationId: restrictPersonalDataLearner
       description: >-
-        Ограниченный профиль обучающегося остаётся сохранённым и учитывается в статистике, но оператор зачисления не может ни раскрыть, ни изменить его (409 PERSONAL_DATA_RESTRICTED в модуле зачисления)
+        Ограниченный профиль обучающегося остаётся сохранённым и учитывается в статистике, но менеджер учебного процесса не может ни раскрыть, ни изменить его (409 PERSONAL_DATA_RESTRICTED в модуле зачисления)
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -7193,7 +7658,7 @@ paths:
       x-implementation-stage: 5
       description: >-
         Пока модуль «Слушатели» выключен (MODULE_ENROLMENT_ENABLED=false, по умолчанию), метод отвечает 404 всем.
-        Во включённом модуле — только профиль USER или LEADER с флагом «Оператор зачисления» (флаг читается заново
+        Во включённом модуле — только профиль USER или LEADER с флагом «Менеджер учебного процесса» (флаг читается заново
         при каждом запросе), остальным 403. Файл — JSON-массив «Данные оплат» (до 5 МиБ и 10 000 элементов, null пропускается со счётчиком)
         разбирается PaidOrderParser и регистрируется запуском UPLOAD источника «Сайт»: в source_records пишутся только
         номер заявки, курс (программа по сопоставлению) и номер потока; организация — служебная «Открытый набор
@@ -7214,6 +7679,9 @@ paths:
                 file:
                   type: string
                   format: binary
+                confirmNewStreams:
+                  type: boolean
+                  description: Подтверждение создать новые потоки и перенести в них уже зачисленных слушателей
       responses:
         '200':
           description: Протокол запуска без персональных данных
@@ -7241,8 +7709,8 @@ paths:
       summary: Протокол последней загрузки оплат
       operationId: getLastPaidOrderUpload
       description: >-
-        Модуль «Слушатели» выключен — 404 всем; включён — только оператор зачисления, остальным 403. Протокол берётся
-        из сохранённого результата последней загрузки оплат любым оператором; без загрузок — 204.
+        Модуль «Слушатели» выключен — 404 всем; включён — только менеджер учебного процесса, остальным 403. Протокол берётся
+        из сохранённого результата последней загрузки оплат любым менеджером учебного процесса; без загрузок — 204.
       responses:
         '200':
           description: Протокол последней загрузки и её время
@@ -7267,7 +7735,7 @@ paths:
       operationId: listEnrolmentStreams
       x-implementation-stage: 5
       description: >-
-        Модуль «Слушатели» выключен — 404 всем; включён — только оператор зачисления (флаг читается заново при каждом
+        Модуль «Слушатели» выключен — 404 всем; включён — только менеджер учебного процесса (флаг читается заново при каждом
         запросе), остальным 403. Только числа: paid — зачислений в потоке (одно на слушателя, повторная заявка второго
         не создаёт), profilesComplete — полных анкет, exported и transferred — отметки файла для LMS, pending —
         зачисления без отметки «передано». keepUntil — дата окончания потока плюс срок хранения анкет
@@ -7555,7 +8023,7 @@ paths:
       summary: Партия передачи в LMS построчно
       operationId: getEnrolmentBatch
       description: >-
-        Только оператор зачисления. Состав партии с номером строки файла, версией анкеты на момент выгрузки и текущей
+        Только менеджер учебного процесса. Состав партии с номером строки файла, версией анкеты на момент выгрузки и текущей
         версией, результатом приёма LMS и ошибкой. Фамилия и имя показываются как в списке потока; просмотр пишется в
         журнал (LEARNER_LIST_VIEWED). Cache-Control no-store.
       parameters:
@@ -7585,7 +8053,7 @@ paths:
       summary: Отметить результат приёма LMS по строкам
       operationId: recordEnrolmentBatchResults
       description: >-
-        Только оператор зачисления. Результат по одной или нескольким строкам: ACCEPTED — принята, FAILED — ошибка
+        Только менеджер учебного процесса. Результат по одной или нескольким строкам: ACCEPTED — принята, FAILED — ошибка
         (причина обязательна; пустая заменяется на «без описания»), PENDING — ожидает. Принятая строка окончательна: её
         не меняют ни повторная отметка, ни протокол — такие строки возвращаются в skipped. Принятая строка делает
         зачисление «Передано в LMS». Партия при первой записи результата считается переданной. Журнал —
@@ -7642,7 +8110,7 @@ paths:
       summary: Загрузить протокол приёма LMS
       operationId: importEnrolmentBatchProtocol
       description: >-
-        Только оператор зачисления. CSV (разделитель «;» или «,», UTF-8) или XLSX до 5 МиБ и 5000 строк с колонками
+        Только менеджер учебного процесса. CSV (разделитель «;» или «,», UTF-8) или XLSX до 5 МиБ и 5000 строк с колонками
         «строка, результат, ошибка»; первая строка-заголовок пропускается. Номер строки — как в файле партии.
         Результат: «принята», «ok», «успешно», «добавлен», «создан» — принята; «ошибка», «error», «отклонена» — ошибка;
         «ожидает» — ожидает. Нераспознанные строки и номера, которых нет в партии, возвращаются в skipped.
@@ -7686,7 +8154,7 @@ paths:
       summary: Передать партию в Moodle через API
       operationId: transferEnrolmentBatchToMoodle
       description: >-
-        Только оператор зачисления и только при MOODLE_WRITE_ENABLED=true с токеном MOODLE_WRITE_TOKEN; иначе 400.
+        Только менеджер учебного процесса и только при MOODLE_WRITE_ENABLED=true с токеном MOODLE_WRITE_TOKEN; иначе 400.
         По каждой не принятой строке: core_user_get_users_by_field (почта), при отсутствии — core_user_create_users
         (логин — почта, фамилия, имя, почта; другие поля анкеты не уходят), при расхождении имени —
         core_user_update_users; enrol_manual_enrol_users на курс потока с ролью студента; core_group_add_group_members,
@@ -7736,7 +8204,7 @@ paths:
       summary: Перенести слушателя между курсами Moodle
       operationId: moveEnrolmentInMoodle
       description: >-
-        Только оператор зачисления, при включённой записи в Moodle и только для зачисления из очереди «перенос после
+        Только менеджер учебного процесса, при включённой записи в Moodle и только для зачисления из очереди «перенос после
         передачи». enrol_manual_unenrol_users с курса прежнего потока, enrol_manual_enrol_users на курс нового, сверка;
         затем сверка снимается. Пользователь Moodle ищется по почте; нет или несколько — 400, перенос вручную. Журнал —
         LMS_API_MOVE.
@@ -7780,7 +8248,7 @@ paths:
       summary: Очередь зачисления — что обработать сегодня
       operationId: getEnrolmentQueue
       description: >-
-        Только оператор зачисления. Группы по всем потокам: MISSING_DATA — нет обязательных для LMS сведений;
+        Только менеджер учебного процесса. Группы по всем потокам: MISSING_DATA — нет обязательных для LMS сведений;
         AMBIGUOUS_MATCH — та же почта или телефон у другого слушателя потока; READY — готово к передаче; NOT_SENT — файл
         сформирован, партия не отмечена переданной; AWAITING_RESULT — ожидается результат LMS; LMS_ERROR — ошибка LMS;
         MOVED_AFTER_TRANSFER — перенос в другой поток после выгрузки, нужна сверка LMS; CHANGED_AFTER_TRANSFER —
@@ -7811,7 +8279,7 @@ paths:
       summary: Отметить сверку с LMS
       operationId: reconcileEnrolmentLms
       description: >-
-        Только оператор зачисления. MOVED_AFTER_TRANSFER — перенос учтён в LMS; CHANGED_AFTER_TRANSFER — изменения анкеты
+        Только менеджер учебного процесса. MOVED_AFTER_TRANSFER — перенос учтён в LMS; CHANGED_AFTER_TRANSFER — изменения анкеты
         внесены в LMS, learnerVersion обязана совпасть с текущей версией анкеты (иначе 409). Журнал — LMS_RECONCILED.
       parameters:
         - $ref: '#/components/parameters/UuidId'
@@ -8460,6 +8928,42 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/agent-plans:
+    get:
+      tags: [Interaction]
+      summary: Список своих планов ИИ-агента
+      operationId: listAgentPlans
+      description: Только при MCP_ENABLED=true. Свои планы, новые первыми, не больше 100; по умолчанию только ожидающие подтверждения. Ожидающий план с истёкшим сроком показывается как EXPIRED; планы по вузам, которые сотрудник больше не видит, не показываются.
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/AgentPlanKind'
+        - name: status
+          in: query
+          required: false
+          description: PENDING — только ожидающие (по умолчанию), ALL — и решённые
+          schema:
+            type: string
+            enum: [PENDING, ALL]
+      responses:
+        '200':
+          description: Планы сотрудника
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentPlanListItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/agent-plans/{id}:
     get:
       tags: [Interaction]
@@ -8488,7 +8992,7 @@ paths:
       tags: [Interaction]
       summary: Записать план ИИ-агента
       operationId: applyAgentPlan
-      description: Исполняет комментарий с новым шагом и сроком одной командой (ключ повтора agent-plan:<id>). Если карточку изменили после подготовки — STALE без изменений; ошибка команды — FAILED. Повтор возвращает тот же итог.
+      description: Исполняет план той же командой, что и действие из карточки (комментарий, переход этапа, проблема или риск, решение, пауза или возобновление), от имени сотрудника и с ключом повтора agent-plan:<id>; права, маршрут и ответственный проверяются заново. Если карточку изменили после подготовки — STALE без изменений; ошибка команды — FAILED. Повтор возвращает тот же итог.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -8592,7 +9096,7 @@ paths:
       summary: Состояние подключения MAX текущего сотрудника
       operationId: getMaxLink
       description: >-
-        Модуль MAX. Только КАМ и руководитель команды без флага оператора зачисления; остальным — 403. Состояния: NONE —
+        Модуль MAX. Только КАМ и руководитель команды без флага менеджера учебного процесса; остальным — 403. Состояния: NONE —
         не подключено; WAITING — ссылка выдана, бот ещё не открыт; FOUND — найден аккаунт MAX, ждёт подтверждения;
         ACTIVE — подключено; STOPPED — пользователь остановил бота.
       responses:
@@ -8915,7 +9419,7 @@ paths:
       summary: Мои уведомления на почту
       operationId: getMailPreferences
       description: >-
-        Любой активный сотрудник. Темы, доступные роли, и адрес учётной записи Keycloak, на который приходят письма. Оператору зачисления и представителю вуза тем нет.
+        Любой активный сотрудник. Темы, доступные роли, и адрес учётной записи Keycloak, на который приходят письма. Менеджеру учебного процесса и представителю вуза тем нет.
       responses:
         '200':
           description: Результат
@@ -9282,7 +9786,7 @@ paths:
       description: >-
         Модуль MAX. initData — строка window.WebApp.initData как есть. Сервер проверяет подпись HMAC (ключ — токен бота),
         однократность параметров и возраст auth_date (не старше 1 часа; повтор той же initData в пределах часа разрешён),
-        затем активную подтверждённую связь и профиль: только КАМ и руководитель команды без флага оператора зачисления.
+        затем активную подтверждённую связь и профиль: только КАМ и руководитель команды без флага менеджера учебного процесса.
         В ответе — токен сеанса для заголовка Authorization: Bearer; в базе только его SHA-256. Простой 30 минут,
         предел 4 часа, сеанс закрывается при смене роли, команды, блокировке (access_revision), отключении MAX,
         остановке бота и «Завершить сеансы» у администратора. Журнал — MAX_SESSION_STARTED.
@@ -9544,7 +10048,7 @@ components:
       name: to
       in: query
       required: false
-      description: Конец периода включительно, не позже сегодняшней даты (по умолчанию — сегодня)
+      description: Конец периода включительно; дата позже сегодняшней обрезается сегодняшним днём (по умолчанию — сегодня)
       schema:
         type: string
         format: date
@@ -9957,16 +10461,121 @@ components:
     AgentPlanStatus:
       type: string
       enum: [PENDING, APPLIED, REJECTED, EXPIRED, STALE, FAILED]
+    AgentPlanKind:
+      type: string
+      description: NOTE_UPDATE — итог и следующий шаг (в том числе напоминание), STAGE_TRANSITION — переход этапа, ISSUE_CREATE — проблема или риск, ISSUE_RESOLVE — решение проблемы, STATUS_CHANGE — пауза или возобновление
+      enum: [NOTE_UPDATE, STAGE_TRANSITION, ISSUE_CREATE, ISSUE_RESOLVE, STATUS_CHANGE]
+    AgentPlanListItem:
+      type: object
+      required: [id, kind, status, organizationId, organizationName, interactionId, interactionTitle, createdAt, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/AgentPlanKind'
+        status:
+          $ref: '#/components/schemas/AgentPlanStatus'
+        clientId:
+          type: [string, 'null']
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        interactionId:
+          type: string
+          format: uuid
+        interactionTitle:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+    AgentPlanEvidence:
+      type: object
+      required: [id, occurredAt, type, actorName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+        type:
+          type: string
+        actorName:
+          type: string
+        comment:
+          type: [string, 'null']
     AgentPlan:
       type: object
-      required: [id, status, organizationId, organizationName, interactionId, interactionTitle, cardChanged, note,
-                 nextAction, nextActionAt, createdAt, expiresAt]
+      required: [id, status, kind, organizationId, organizationName, interactionId, interactionTitle, stageTotal, cardChanged,
+                 evidence, warnings, createdAt, expiresAt]
       properties:
         id:
           type: string
           format: uuid
         status:
           $ref: '#/components/schemas/AgentPlanStatus'
+        kind:
+          $ref: '#/components/schemas/AgentPlanKind'
+        stagePosition:
+          type: [integer, 'null']
+          description: Номер этапа на момент подготовки в маршруте карточки
+        stageTotal:
+          type: integer
+        toStageName:
+          type: [string, 'null']
+          description: Этап-цель перехода
+        toStagePosition:
+          type: [integer, 'null']
+        currentStatus:
+          type: [string, 'null']
+          enum: [ACTIVE, PAUSED, COMPLETED, null]
+          description: Текущий статус взаимодействия
+        workStatus:
+          type: [string, 'null']
+          enum: [ACTIVE, PAUSED, null]
+          description: Статус, который предлагает план
+        resumeOn:
+          type: [string, 'null']
+          format: date
+        resumeAction:
+          type: [string, 'null']
+          description: Шаг возврата, который CRM поставит при паузе
+        resumeActionAt:
+          type: [string, 'null']
+          format: date-time
+        issueKind:
+          type: [string, 'null']
+          enum: [PROBLEM, RISK, null]
+        riskLevel:
+          type: [string, 'null']
+          enum: [MEDIUM, HIGH, null]
+        responsibleName:
+          type: [string, 'null']
+        dueOn:
+          type: [string, 'null']
+          format: date
+        issueDescription:
+          type: [string, 'null']
+          description: Текущее описание проблемы, которую план предлагает решить
+        issueStatus:
+          type: [string, 'null']
+          enum: [OPEN, RESOLVED, null]
+        evidence:
+          type: array
+          description: События истории карточки, на которые ссылается агент; даты, авторы и тексты — из CRM
+          items:
+            $ref: '#/components/schemas/AgentPlanEvidence'
+        warnings:
+          type: array
+          description: BACKWARD — возврат на прежний этап, SKIP — переход через этап, PAST_DUE — срок в прошлом
+          items:
+            type: string
         clientId:
           type: [string, 'null']
           description: Клиент MCP (azp токена), который подготовил план
@@ -9991,12 +10600,12 @@ components:
           type: [string, 'null']
           format: date-time
         note:
-          type: string
-          description: Комментарий, который предлагает агент; показывается как текст
+          type: [string, 'null']
+          description: Текст агента (комментарий, обоснование, описание, решение или причина); показывается как текст
         nextAction:
-          type: string
+          type: [string, 'null']
         nextActionAt:
-          type: string
+          type: [string, 'null']
           format: date-time
         createdAt:
           type: string
@@ -10012,8 +10621,18 @@ components:
     PaidOrderUpload:
       type: object
       required: [runId, received, emptyElements, created, updated, skipped, needsMapping, failed, message, streams, issues,
-                 learners, unmappedCourses]
+                 learners, unmappedCourses, heldStreamTransfers, duplicatesInFile]
       properties:
+        duplicatesInFile:
+          type: integer
+          minimum: 0
+          description: Повторы заявки с тем же содержимым внутри файла; пропущены и в skipped не входят
+        heldStreamTransfers:
+          type: integer
+          minimum: 0
+          description: >-
+            Заявки, которые перенесли бы уже зачисленного слушателя в ещё не существующий поток: не применены, описаны в
+            issues. Применить их можно повторной загрузкой с confirmNewStreams=true.
         runId:
           type: string
           format: uuid
@@ -10034,7 +10653,7 @@ components:
         skipped:
           type: integer
           minimum: 0
-          description: Заявки без изменений и повторы с тем же содержимым
+          description: Заявки, уже загруженные раньше с тем же содержимым (повторы внутри файла — в duplicatesInFile)
         needsMapping:
           type: integer
           minimum: 0
@@ -10099,7 +10718,7 @@ components:
           description: true — запись принята (например, телефон не прошёл проверку и не сохранён)
         orderNumber:
           type: [string, 'null']
-          description: Номер заявки из элемента, если он есть; по нему оператор находит запись в файле
+          description: Номер заявки из элемента, если он есть; по нему менеджер учебного процесса находит запись в файле
     LearnerIntake:
       type: object
       required: [newLearners, foundLearners, enrolled, repeatOrders, movedStreams, movedAfterLms, contactsDiffer]
@@ -10720,7 +11339,7 @@ components:
         confirmNameMismatch:
           type: [boolean, 'null']
           description: >
-            Подтверждение оператора, что анкеты с разными ФИО принадлежат одному человеку. Без него при расхождении
+            Подтверждение менеджера учебного процесса, что анкеты с разными ФИО принадлежат одному человеку. Без него при расхождении
             фамилии, имени или отчества (если отчество есть в обеих анкетах) перенос отклоняется с ошибкой поля
             confirmNameMismatch
     LearnerMoveResult:
@@ -10763,11 +11382,14 @@ components:
           description: Коды полей и групп, числа и идентификаторы; значений нет
     QuestionnaireImport:
       type: object
-      required: [applied, fingerprint, ignoredHeaders, rows, updated, unchanged, errors, conflicts]
+      required: [applied, fingerprint, ignoredHeaders, rows, updated, unchanged, errors, conflicts, alreadyApplied]
       properties:
         applied:
           type: boolean
           description: false — предпросмотр, true — итог применения
+        alreadyApplied:
+          type: boolean
+          description: Повтор «Применить» того же предпросмотра — возвращён итог первого применения, ничего не изменено
         fingerprint:
           type: string
           pattern: '^[0-9a-f]{64}$'
@@ -11046,8 +11668,11 @@ components:
           $ref: '#/components/schemas/AgreementStageRole'
     WorkAgreements:
       type: object
-      required: [interactionId, organizationId, signingRuleEnabled, stages, agreements]
+      required: [interactionId, organizationId, signingRuleEnabled, stages, agreements, activeAgreementNumber]
       properties:
+        activeAgreementNumber:
+          type: [string, 'null']
+          description: Номер действующего договора школы с вузом (любого, не только связанного с работой); по нему правило договора пропускает переход
         interactionId:
           type: string
           format: uuid
@@ -11056,7 +11681,7 @@ components:
           format: uuid
         signingRuleEnabled:
           type: boolean
-          description: Этап «Подписание» нельзя завершить без действующего договора с датой подписания
+          description: Общий выключатель правила; при true пройти дальше этапа с отметкой «требует действующего договора» можно только при действующем договоре школы с вузом
         stages:
           type: array
           description: Этапы маршрута работы, связанные с договором
@@ -11889,7 +12514,7 @@ components:
             - type: 'null'
     PartnerDocument:
       type: object
-      required: [id, workId, workTitle, name, kind, mediaType, sizeBytes, downloadable, createdAt, revision, replaced, receivedAt]
+      required: [id, workId, workTitle, name, kind, kindName, mediaType, sizeBytes, downloadable, createdAt, revision, replaced, receivedAt]
       properties:
         id:
           type: string
@@ -11903,6 +12528,8 @@ components:
           type: string
         kind:
           $ref: '#/components/schemas/AttachmentKind'
+        kindName:
+          type: [string, 'null']
         mediaType:
           type: string
         sizeBytes:
@@ -12162,7 +12789,7 @@ components:
           format: date-time
     Me:
       type: object
-      required: [id, role, teamId, teamName, accessRevision, enrolmentOperator]
+      required: [id, role, teamId, teamName, accessRevision, enrolmentOperator, enrolmentOnly]
       properties:
         id:
           type: string
@@ -12185,8 +12812,13 @@ components:
         enrolmentOperator:
           type: boolean
           description: >-
-            true, если модуль «Слушатели» включён и у профиля есть флаг «Оператор зачисления» (только USER и LEADER);
+            true, если модуль «Слушатели» включён и у профиля есть флаг «Менеджер учебного процесса» (только USER и LEADER);
             открывает раздел «Зачисление» и загрузку оплат
+        enrolmentOnly:
+          type: boolean
+          description: >-
+            true, если это менеджер учебного процесса служебной команды «Открытый набор» (USER с флагом); ему показываются
+            только «Зачисление» и справка, заводить вузы он не может
     LogoutResult:
       type: object
       required: [logoutUrl]
@@ -12665,7 +13297,7 @@ components:
           type: [string, 'null']
     CatalogLookup:
       type: object
-      required: [id, name, archived, version]
+      required: [id, name, archived, version, groupName]
       properties:
         id:
           type: string
@@ -12677,6 +13309,9 @@ components:
         version:
           type: integer
           minimum: 0
+        groupName:
+          type: [string, 'null']
+          description: ИТ-направление программы или вендор продукта — по нему формы группируют списки; у направлений null
     CatalogReference:
       type: object
       required: [id, name, archived, version]
@@ -12812,7 +13447,7 @@ components:
           description: Удобен чат в Telegram; ника в справочнике нет
     InteractionStage:
       type: object
-      required: [id, name, order, optional]
+      required: [id, name, order, optional, requiresAgreement, lmsRole, documentKinds]
       properties:
         id:
           type: string
@@ -12824,6 +13459,47 @@ components:
           minimum: 0
         optional:
           type: boolean
+        requiresAgreement:
+          type: boolean
+          description: «Требует действующего договора» — пройти дальше этапа можно только при действующем договоре школы с вузом
+        lmsRole:
+          oneOf:
+            - $ref: '#/components/schemas/StageLmsRole'
+            - type: 'null'
+          description: Роль этапа для LMS; null — этап с LMS не связан
+        documentKinds:
+          type: array
+          maxItems: 20
+          description: Коды обязательных видов документов этапа (справочник «Виды документов»)
+          items:
+            type: string
+    StageLmsRole:
+      type: string
+      description: TEACHER_TRAINING — обучение преподавателей, CLASSES — идут занятия, QUALIFICATION — повышение квалификации
+      enum: [TEACHER_TRAINING, CLASSES, QUALIFICATION]
+    StageDocument:
+      type: object
+      required: [code, name, attached]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        attached:
+          type: boolean
+          description: К этапу загружен не удалённый документ этого вида, не отклонённый антивирусом
+    DocumentKind:
+      type: object
+      required: [code, name, archived]
+      properties:
+        code:
+          type: string
+          maxLength: 32
+        name:
+          type: string
+        archived:
+          type: boolean
+          description: Вид в архиве не выбирается для новых документов, но остаётся у сохранённых документов и этапов
     InteractionTransitionOption:
       type: object
       required: [stageId, stageName, commentRequired]
@@ -13131,8 +13807,20 @@ components:
       allOf:
         - $ref: '#/components/schemas/InteractionSummary'
         - type: object
-          required: [stages, transitions, allowedTransitions, program, productAgreements, attachments, stageCompletions, nextStepPartnerVisible]
+          required: [stages, transitions, allowedTransitions, program, productAgreements, attachments, stageCompletions, nextStepPartnerVisible, documentChecklist]
           properties:
+            documentChecklist:
+              type: array
+              description: >-
+                Чек-лист обязательных документов текущего этапа. Если чего-то не хватает, переход вперёд требует комментария
+                (commentRequired у вариантов перехода), сервер ставит в начало комментария «Не хватает документов: …».
+              items:
+                $ref: '#/components/schemas/StageDocument'
+            kind:
+              description: Вид взаимодействия; смена вида маршрут не меняет
+              anyOf:
+                - $ref: '#/components/schemas/InteractionKindRef'
+                - type: 'null'
             nextStepPartnerVisible:
               type: boolean
               description: «Показывать вузу» — следующий шаг виден в кабинете вуза; сбрасывается, когда шаг или срок меняются без явного флага
@@ -13209,6 +13897,15 @@ components:
             deputyEndsOn:
               type: [string, 'null']
               format: date
+            kindId:
+              type: [string, 'null']
+              format: uuid
+            kindName:
+              type: [string, 'null']
+              description: Вид взаимодействия
+            missingDocuments:
+              type: boolean
+              description: На текущем этапе не хватает обязательного документа (сигнал «нет документов»)
     InteractionCreate:
       type: object
       required: [organizationId, title]
@@ -13249,6 +13946,11 @@ components:
         templateId:
           type: [string, 'null']
           format: uuid
+          description: Ручной выбор шаблона; без него шаблон берётся по виду (командный шаблон вида → шаблон вида → шаблон по умолчанию)
+        kindId:
+          type: [string, 'null']
+          format: uuid
+          description: Вид взаимодействия; без него вид подбирают правила, затем первый действующий вид справочника
     InteractionTransition:
       type: object
       required: [version, toStageId]
@@ -13624,7 +14326,7 @@ components:
           description: Последнее действие сотрудника по вузу — событие его взаимодействий, кроме автоматических записей источников; null — не зафиксировано
     WorkControlItem:
       type: object
-      required: [interactionId, organizationId, organizationName, title, products, stage, stagePosition, stageTotal, due, problems, risks, transitions, created, completed, stageUnderApproval]
+      required: [interactionId, organizationId, organizationName, title, products, stage, stagePosition, stageTotal, due, problems, risks, transitions, created, completed, stageUnderApproval, missingDocuments]
       properties:
         interactionId:
           type: string
@@ -13710,6 +14412,29 @@ components:
           description: >-
             Текущий этап — этап договора, а договор на согласовании, корректировке или подписании. Такая работа не входит
             в «на этапе дольше N дней»: срок контролируют пороги согласования
+        programId:
+          type: [string, 'null']
+          format: uuid
+        productIds:
+          type: array
+          description: Идентификаторы продуктов в том же порядке, что названия в products
+          items:
+            type: string
+            format: uuid
+        kindId:
+          type: [string, 'null']
+          format: uuid
+          description: Вид взаимодействия
+        routeId:
+          type: [string, 'null']
+          format: uuid
+          description: Шаблон маршрута работы (WorkControl.routes); null — работа не связана с шаблоном
+        stageAtEnd:
+          type: [string, 'null']
+          description: Этап на конец периода (по нему работает отбор по этапу); без периода или с незакончившимся периодом — текущий
+        missingDocuments:
+          type: boolean
+          description: Сейчас на текущем этапе не хватает обязательного документа (сигнал «нет документов»)
     WorkLearning:
       type: object
       required: [runs, participants, signals, signalTitles]
@@ -13806,6 +14531,132 @@ components:
             вузов из строк и группы «Без работы». Предмет и дата подписания не заполняются
           items:
             $ref: '#/components/schemas/AgreementRegistryRow'
+        routes:
+          type: array
+          description: Маршруты строк для матрицы «программа × этап»; этапы шаблона по порядку, затем этапы работ вне шаблона
+          items:
+            $ref: '#/components/schemas/WorkControlRoute'
+    WorkControlRoute:
+      type: object
+      required: [stages]
+      properties:
+        templateId:
+          type: [string, 'null']
+          format: uuid
+        templateName:
+          type: [string, 'null']
+        stages:
+          type: array
+          items:
+            type: string
+        formerStages:
+          type: array
+          description: Этапы работ, которых нет в текущей версии шаблона (прежние версии); стоят в конце stages
+          items:
+            type: string
+    OrganizationPath:
+      type: object
+      required: [organizationId, calculatedAt, total, works]
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+        calculatedAt:
+          type: string
+          format: date-time
+        total:
+          type: integer
+          minimum: 0
+        works:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrganizationPathWork'
+    OrganizationPathStage:
+      type: object
+      required: [name, optional]
+      properties:
+        name:
+          type: string
+        optional:
+          type: boolean
+    OrganizationPathWork:
+      type: object
+      required: [interactionId, title, status, products, stages, stageName, stagePosition, due, problems, risks, createdAt]
+      properties:
+        interactionId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        kindName:
+          type: [string, 'null']
+        status:
+          type: string
+          enum: [ACTIVE, PAUSED, COMPLETED]
+        programId:
+          type: [string, 'null']
+          format: uuid
+        programName:
+          type: [string, 'null']
+        products:
+          type: array
+          items:
+            type: string
+        stages:
+          type: array
+          description: Этапы маршрута самой карточки по порядку
+          items:
+            $ref: '#/components/schemas/OrganizationPathStage'
+        stageName:
+          type: string
+        stagePosition:
+          type: integer
+          minimum: 0
+          description: Номер текущего этапа в stages, с 1
+        daysOnStage:
+          type: [integer, 'null']
+          minimum: 0
+          description: null у завершённой работы
+        nextAction:
+          type: [string, 'null']
+        nextActionAt:
+          type: [string, 'null']
+          format: date-time
+        due:
+          $ref: '#/components/schemas/ManagerWorkDue'
+        problems:
+          type: integer
+          minimum: 0
+        risks:
+          type: integer
+          minimum: 0
+        agreementStatus:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementStatus'
+            - type: 'null'
+        agreementNumber:
+          type: [string, 'null']
+        agreementValidUntil:
+          type: [string, 'null']
+          format: date
+        learning:
+          oneOf:
+            - $ref: '#/components/schemas/WorkLearning'
+            - type: 'null'
+        cycleStartsOn:
+          type: [string, 'null']
+          format: date
+        previous:
+          oneOf:
+            - $ref: '#/components/schemas/CycleLink'
+            - type: 'null'
+        next:
+          oneOf:
+            - $ref: '#/components/schemas/CycleLink'
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
     TeamsSummary:
       type: object
       required: [calculatedAt, stuckDays, teams, total]
@@ -13822,6 +14673,107 @@ components:
             $ref: '#/components/schemas/TeamSummary'
         total:
           $ref: '#/components/schemas/TeamSummary'
+    LearningCoverage:
+      type: object
+      required: [calculatedAt, sourceConfigured, staleAfterHours, expected, fresh, stale, withoutObservation, runs]
+      properties:
+        calculatedAt:
+          type: string
+          format: date-time
+        sourceConfigured:
+          type: boolean
+        staleAfterHours:
+          type: integer
+          format: int64
+        expected:
+          type: integer
+        fresh:
+          type: integer
+        stale:
+          type: integer
+        withoutObservation:
+          type: integer
+        unappliedRecords:
+          type: [integer, 'null']
+          format: int64
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/LearningCoverageRun'
+    LearningCoverageRun:
+      type: object
+      required: [mappingId, organizationName, programName, courseName, runStartsOn, runEndsOn, state]
+      properties:
+        mappingId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        programName:
+          type: string
+        courseName:
+          type: string
+        runStartsOn:
+          type: string
+          format: date
+        runEndsOn:
+          type: string
+          format: date
+        lastObservedAt:
+          type: [string, 'null']
+          format: date-time
+        state:
+          type: string
+          enum: [FRESH, STALE, NO_DATA]
+    PortfolioChange:
+      type: object
+      required: [calculatedAt, from, to, teams, total]
+      properties:
+        calculatedAt:
+          type: string
+          format: date-time
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        teams:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortfolioChangeRow'
+        total:
+          $ref: '#/components/schemas/PortfolioChangeRow'
+    PortfolioChangeRow:
+      type: object
+      required: [atStart, atEnd, stayed, created, resumed, completed, paused]
+      properties:
+        teamId:
+          type: [string, 'null']
+          format: uuid
+        teamName:
+          type: [string, 'null']
+        atStart:
+          type: integer
+          format: int64
+        atEnd:
+          type: integer
+          format: int64
+        stayed:
+          type: integer
+          format: int64
+        created:
+          type: integer
+          format: int64
+        resumed:
+          type: integer
+          format: int64
+        completed:
+          type: integer
+          format: int64
+        paused:
+          type: integer
+          format: int64
     LearningDynamics:
       type: object
       required: [generatedAt, from, to, timezone, seriesBy, notes, months, series, totalParticipants, totalCompleted, totalKnown,
@@ -13856,7 +14808,7 @@ components:
             $ref: '#/components/schemas/LearningDynamicsSeries'
         totalParticipants:
           type: array
-          description: Участия в потоках с наблюдением; 0 — потоков в месяце не было, null — потоки были, но ни у одного нет наблюдения («нет данных»)
+          description: Участия в потоках с наблюдением; 0 — потоков в месяце не было, null — «нет данных» (потоки были, но ни у одного нет наблюдения, или месяц раньше первого потока)
           items:
             type: [integer, 'null']
             format: int64
@@ -14097,9 +15049,12 @@ components:
     LearningTrendItem:
       type: object
       description: >
-        start, end и change — по сопоставимым потокам (есть значение на начало, до начала потока — ноль); потоки без
-        значения на начало (runsWithoutData) в них не входят, их обучающиеся на конец — endWithoutBase
-      required: [start, end, change, runsWithoutData, endWithoutBase]
+        Разложение состава. start, end и change — по сопоставимым потокам: идут и на начало, и на конец и имеют значение
+        на начало. Идущие потоки без значения на начало (runsWithoutData) в них не входят, их обучающиеся на конец —
+        endWithoutBase. startedRuns и endStarted — потоки, начавшиеся внутри периода, и их обучающиеся на конец;
+        endedRuns и startEnded — закончившиеся внутри периода и их обучающиеся на начало. В change и в рейтинги роста и
+        падения входят только сопоставимые потоки.
+      required: [start, end, change, runsWithoutData, endWithoutBase, startedRuns, endStarted, endedRuns, startEnded]
       properties:
         id:
           type: [string, 'null']
@@ -14118,6 +15073,16 @@ components:
         runsWithoutData:
           type: integer
         endWithoutBase:
+          type: integer
+          format: int64
+        startedRuns:
+          type: integer
+        endStarted:
+          type: integer
+          format: int64
+        endedRuns:
+          type: integer
+        startEnded:
           type: integer
           format: int64
     ReminderStep:
@@ -14327,7 +15292,7 @@ components:
       required: [interactionId, organizationId, title, organizationName, stageName, trainedOn, dueOn]
       description: >
         Активная работа, у которой с последней записи «Обучение преподавателей» прошло не меньше
-        app.work.qualification-after-months месяцев, а этап app.work.qualification-stage-name ещё впереди и не отмечен.
+        app.work.qualification-after-months месяцев, а первый этап с ролью LMS QUALIFICATION ещё впереди и не отмечен.
       properties:
         interactionId:
           type: string
@@ -14370,7 +15335,7 @@ components:
           type: string
           enum: [STUDENTS_APPEARED, NO_STUDENTS, LOW_COMPLETION, COMPLETION_UNVERIFIED, LOW_ACTIVITY, NOT_STARTED, DROPOUT, TEACHER_INACTIVE, NO_ACTIVITY]
           description: >
-            STUDENTS_APPEARED — в идущем потоке есть обучающиеся, а текущий этап маршрута раньше этапа «Занятия»;
+            STUDENTS_APPEARED — в идущем потоке есть обучающиеся, а текущий этап маршрута раньше первого этапа с ролью LMS CLASSES («Идут занятия»);
             NO_STUDENTS — поток идёт дольше app.lms-signals.no-students-after-days дней, обучающихся 0;
             LOW_COMPLETION — поток закрыт или до его конца не больше app.lms-signals.completion-window-days дней,
             отслеживание завершения включено, статус известен не меньше чем у app.lms-signals.completion-coverage-percent
@@ -14432,7 +15397,7 @@ components:
           oneOf:
             - $ref: '#/components/schemas/LmsSignalAction'
             - type: 'null'
-          description: Переход к этапу «Занятия», разрешённый маршрутом из текущего этапа; выполняется только существующим API перехода
+          description: Переход к первому этапу с ролью LMS CLASSES, разрешённый маршрутом из текущего этапа; выполняется только существующим API перехода
         actionHint:
           type: [string, 'null']
           description: Почему кнопки перехода нет
@@ -14506,6 +15471,11 @@ components:
         nextActionAt:
           type: [string, 'null']
           format: date-time
+        kindId:
+          type: string
+          format: uuid
+          description: Новый вид взаимодействия; маршрут работы не меняется (мастер версий переводит только между версиями её шаблона)
+
         programId:
           type: [string, 'null']
           format: uuid
@@ -14583,7 +15553,10 @@ components:
       properties:
         type:
           type: string
-          enum: [RENAME, ADD_AFTER, MOVE_AFTER, DELETE]
+          enum: [RENAME, ADD_AFTER, MOVE_AFTER, DELETE, SET_OPTIONAL]
+          description: >-
+            SET_OPTIONAL меняет обязательность будущего этапа без событий (поля id и optional). ADD_AFTER принимает и
+            свойства нового этапа: requiresAgreement, lmsRole, documentKinds
         id:
           type: [string, 'null']
           format: uuid
@@ -14595,10 +15568,26 @@ components:
           maxLength: 200
         optional:
           type: [boolean, 'null']
+        requiresAgreement:
+          type: [boolean, 'null']
+          description: Только для ADD_AFTER — «требует действующего договора»
+        lmsRole:
+          oneOf:
+            - $ref: '#/components/schemas/StageLmsRole'
+            - type: 'null'
+          description: Только для ADD_AFTER — роль этапа для LMS
+        documentKinds:
+          type: [array, 'null']
+          maxItems: 20
+          description: Только для ADD_AFTER — коды обязательных видов документов
+          items:
+            type: string
     AttachmentKind:
       type: string
-      description: Вид документа; OTHER, если не указан
-      enum: [CONTRACT, LICENSE_AGREEMENT, APPENDIX, ACT, SIGNED_SCAN, MATERIALS, DOCUMENTATION, CURRICULUM, QUALIFICATION, OTHER]
+      maxLength: 32
+      description: >-
+        Код вида документа из справочника «Виды документов» (GET /api/document-kinds); OTHER, если не указан. Новый или
+        изменённый документ — только действующий вид, иначе 400
     AttachmentKindUpdate:
       type: object
       required: [version]
@@ -14626,7 +15615,7 @@ components:
           maxLength: 500
     Attachment:
       type: object
-      required: [id, interactionId, stageId, eventId, originalName, mediaType, sizeBytes, status, kind, revision, replacesId, createdBy, version, createdAt, partnerVisible]
+      required: [id, interactionId, stageId, eventId, originalName, mediaType, sizeBytes, status, kind, kindName, revision, replacesId, createdBy, version, createdAt, partnerVisible]
       properties:
         id:
           type: string
@@ -14654,6 +15643,9 @@ components:
           enum: [QUARANTINE, CLEAN, REJECTED, UNVERIFIABLE]
         kind:
           $ref: '#/components/schemas/AttachmentKind'
+        kindName:
+          type: [string, 'null']
+          description: Название вида документа по справочнику
         revision:
           type: integer
           minimum: 1
@@ -14777,6 +15769,9 @@ components:
         occurredAt:
           type: string
           format: date-time
+        preparedByAgent:
+          type: boolean
+          description: Событие записано по плану ИИ-агента, который подтвердил сотрудник (ключ повтора agent-plan:<id>)
     WorkflowStageInput:
       type: object
       required: [name, order, optional]
@@ -14794,6 +15789,20 @@ components:
           type: [string, 'null']
           format: uuid
           description: Идентификатор этапа текущей версии, если этап сохраняется; новый этап — без идентификатора
+        requiresAgreement:
+          type: [boolean, 'null']
+          description: «Требует действующего договора»; по умолчанию false
+        lmsRole:
+          oneOf:
+            - $ref: '#/components/schemas/StageLmsRole'
+            - type: 'null'
+          description: Роль этапа для LMS; null — без связи с LMS
+        documentKinds:
+          type: [array, 'null']
+          maxItems: 20
+          description: Коды обязательных видов документов из справочника «Виды документов»
+          items:
+            type: string
     WorkflowTransitionInput:
       type: object
       required: [fromOrder, toOrder, commentRequired]
@@ -14872,7 +15881,158 @@ components:
           format: uuid
         commentRequired:
           type: boolean
+    InteractionKindRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    InteractionKind:
+      type: object
+      required: [id, name, description, active, templateId, templateName, sortOrder, version, teamTemplateId, teamTemplateName,
+                 defaultKind]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: [string, 'null']
+        active:
+          type: boolean
+        defaultKind:
+          type: boolean
+          description: >-
+            Вид по умолчанию для новых карточек, если КАМ не выбрал вид и ни одно правило не подошло. Такой вид один и
+            назначается явно; снять отметку можно, только назначив другой вид.
+        templateId:
+          type: [string, 'null']
+          format: uuid
+          description: Общий шаблон маршрута вида; null — шаблон по умолчанию
+        templateName:
+          type: [string, 'null']
+        sortOrder:
+          type: integer
+        version:
+          type: integer
+        teamTemplateId:
+          type: [string, 'null']
+          format: uuid
+          description: Шаблон команды текущего руководителя или сотрудника для этого вида
+        teamTemplateName:
+          type: [string, 'null']
+    InteractionKindRequest:
+      type: object
+      required: [name]
+      properties:
+        version:
+          type: [integer, 'null']
+          minimum: 0
+          description: Обязательна при изменении
+        name:
+          type: string
+          maxLength: 200
+        description:
+          type: [string, 'null']
+          maxLength: 1000
+        active:
+          type: [boolean, 'null']
+        defaultKind:
+          type: [boolean, 'null']
+          description: true — сделать видом по умолчанию (должен действовать); null — не менять; false у текущего — 400
+        templateId:
+          type: [string, 'null']
+          format: uuid
+        sortOrder:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 10000
+    InteractionKindTeamTemplate:
+      type: object
+      properties:
+        templateId:
+          type: [string, 'null']
+          format: uuid
+          description: Шаблон команды или общий; null — вернуться к шаблону вида
+    InteractionKindRule:
+      type: object
+      required: [id, kindId, kindName, organizationType, programId, programName, productId, productName, priority, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kindId:
+          type: string
+          format: uuid
+        kindName:
+          type: string
+        organizationType:
+          type: [string, 'null']
+          enum: [UNIVERSITY, SCHOOL, COLLEGE, OPEN_ENROLLMENT, null]
+        programId:
+          type: [string, 'null']
+          format: uuid
+        programName:
+          type: [string, 'null']
+        productId:
+          type: [string, 'null']
+          format: uuid
+        productName:
+          type: [string, 'null']
+        priority:
+          type: integer
+        version:
+          type: integer
+    InteractionKindRuleRequest:
+      type: object
+      required: [kindId]
+      properties:
+        version:
+          type: [integer, 'null']
+          minimum: 0
+        kindId:
+          type: string
+          format: uuid
+        organizationType:
+          type: [string, 'null']
+          enum: [UNIVERSITY, SCHOOL, COLLEGE, OPEN_ENROLLMENT, null]
+        programId:
+          type: [string, 'null']
+          format: uuid
+        productId:
+          type: [string, 'null']
+          format: uuid
+        priority:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 1000
+          description: Меньший номер — выше приоритет; по умолчанию 100
+    InteractionKindResolution:
+      type: object
+      required: [kindId, kindName, kindSource, templateId, templateName, templateSource]
+      properties:
+        kindId:
+          type: string
+          format: uuid
+        kindName:
+          type: string
+        kindSource:
+          type: string
+          enum: [SELECTED, RULE, FIRST_ACTIVE]
+        templateId:
+          type: string
+          format: uuid
+        templateName:
+          type: string
+        templateSource:
+          type: string
+          enum: [TEAM_KIND, KIND, DEFAULT]
     WorkflowTemplate:
+
       type: object
       required: [id, teamId, name, stages, transitions, defaultTemplate, version, routeVersion]
       properties:
@@ -14952,7 +16112,7 @@ components:
           description: Идущие работы области на этой версии; null — у роли нет области бизнес-данных
     WorkflowStageMatch:
       type: string
-      description: SAME — тот же этап; RENAMED — тот же этап, новое название; BY_NAME — найден по названию; MANUAL — выбран вручную; REMOVED — этапа нет, работа переходит в следующий сохранившийся этап
+      description: SAME — тот же этап; RENAMED — тот же этап, новое название; BY_NAME — найден по названию; MANUAL — выбран вручную; REMOVED — этапа нет, работа переходит в предыдущий сохранившийся этап (если его нет — в следующий)
       enum: [SAME, RENAMED, BY_NAME, MANUAL, REMOVED]
     WorkflowStageMapInput:
       type: object
@@ -15027,7 +16187,7 @@ components:
             $ref: '#/components/schemas/WorkflowRolloutStageMatch'
     WorkflowRolloutWork:
       type: object
-      required: [id, title, organizationName, version, sourceVersion, currentStageName, targetStageName, currentStageRemoved, edited, changes]
+      required: [id, title, organizationName, version, sourceVersion, currentStageName, targetStageName, currentStageRemoved, edited, changes, noExit, landsOnFinal]
       properties:
         id:
           type: string
@@ -15054,6 +16214,13 @@ components:
           description: Этапы работы изменены в карточке
         changes:
           type: string
+          description: Изменения этапов и переходов через «; » (добавлен или убран переход «А» → «Б»)
+        noExit:
+          type: boolean
+          description: С этапа, на котором окажется карточка, по новой версии нельзя дойти до финального этапа; в мастере не отмечается по умолчанию
+        landsOnFinal:
+          type: boolean
+          description: Текущий этап исчезает, и карточка встаёт на финальный этап; в мастере не отмечается по умолчанию
     WorkflowRolloutPreview:
       type: object
       required: [templateId, targetVersion, targetStages, sources, works]
@@ -15122,7 +16289,7 @@ components:
           type: boolean
         enrolmentOperator:
           type: boolean
-          description: Флаг «Оператор зачисления»; только у USER и LEADER
+          description: Флаг «Менеджер учебного процесса»; только у USER и LEADER
         pendingActivation:
           type: boolean
           description: Профиль, созданный при первом входе OIDC и ни разу не активированный администратором
@@ -15246,7 +16413,7 @@ components:
           type: boolean
         enrolmentOperator:
           type: boolean
-          description: Назначить или снять флаг «Оператор зачисления» (400 для ADMIN и MANAGEMENT)
+          description: Назначить или снять флаг «Менеджер учебного процесса» (400 для ADMIN и MANAGEMENT)
         transferOrganizationsTo:
           type: string
           format: uuid
@@ -15559,10 +16726,11 @@ components:
           description: Совпал ИНН; создание не блокируется
     CatalogKind:
       type: string
-      enum: [directions, programs, vendors, products]
+      description: document_kinds — справочник «Виды документов» (код нового вида назначается сервером)
+      enum: [directions, programs, vendors, products, document_kinds]
     CatalogEntityType:
       type: string
-      enum: [ORGANIZATION, TEAM, DIRECTION, PROGRAM, VENDOR, PRODUCT, AGREEMENT, VENDOR_CONTACT]
+      enum: [ORGANIZATION, TEAM, DIRECTION, PROGRAM, VENDOR, PRODUCT, AGREEMENT, VENDOR_CONTACT, DOCUMENT_KIND]
     AdminCatalogEntry:
       type: object
       required: [id, name, parentId, parentName, archived, version, laborMarket]
@@ -15787,7 +16955,7 @@ components:
         columns:
           type: object
           description: >-
-            Соответствие поля импорта заголовку книги. AGREEMENT требует organizationName, vendorName и productName и принимает contractNumber, licenseSigned, licenseExpiryYear, transferStatus, managerName, contactName, comment, organizationType, organizationExternalKey, vendorExternalKey, productExternalKey, agreementExternalKey, contactExternalKey, contactPosition, contactEmail, contactPhone и interactionId. Недостающие внешние ключи выводятся из нормализованных имён. DIRECTION_PROGRAM требует directionExternalKey и directionName и принимает programExternalKey, programName и programDirectionRef. VENDOR_CONTACTS требует vendorName и принимает productNames, vendorContactName, vendorContactPhone, vendorContactEmail и vendorContactChannels.
+            Соответствие поля импорта заголовку книги. AGREEMENT требует organizationName, vendorName и productName и принимает contractNumber, licenseSigned, licenseExpiryYear, transferStatus, managerName, contactName, comment, organizationType, organizationExternalKey, vendorExternalKey, productExternalKey, agreementExternalKey, contactExternalKey, contactPosition, contactEmail, contactPhone, interactionId и programName (ИТ-программа из справочника; строки одного вуза и программы дают одно взаимодействие, без колонки organizationType тип нового вуза берётся из названия). Недостающие внешние ключи выводятся из нормализованных имён. DIRECTION_PROGRAM требует directionExternalKey и directionName и принимает programExternalKey, programName и programDirectionRef. VENDOR_CONTACTS требует vendorName и принимает productNames, vendorContactName, vendorContactPhone, vendorContactEmail и vendorContactChannels.
           additionalProperties:
             type: string
             minLength: 1
@@ -15813,10 +16981,13 @@ components:
             Без команды строка остаётся ошибкой.
     CatalogImportSheet:
       type: object
-      required: [name, headers]
+      required: [name, headers, hidden]
       properties:
         name:
           type: string
+        hidden:
+          type: boolean
+          description: Лист скрыт в книге Excel
         headers:
           type: array
           items:
@@ -16030,8 +17201,9 @@ components:
         paid_order сервисной организации «Открытый набор (физлица)», видимой каждому USER и LEADER; период отчёта к
         ним не применяется, поскольку сайт не передаёт дату оплаты. SNAPSHOT допускает ORGANIZATION, INTERACTION,
         DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT. DURATION допускает TEAM, PROGRAM,
-        STAGE, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; дни — десятичные числа с одним знаком после
-        запятой. AGREEMENTS допускает ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND,
+        STAGE, COMPLETED, MEDIAN_DAYS, P90_DAYS, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; дни — десятичные числа с
+        одним знаком после запятой; MEDIAN_DAYS и P90_DAYS — медиана и 90-й процентиль (ближайший ранг) завершённых
+        прохождений, их число — COMPLETED. AGREEMENTS допускает ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND,
         ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS,
         PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS. MANAGER_WORK допускает MANAGER, ORGANIZATION, PRODUCTS,
         PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS, NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS,
@@ -16045,7 +17217,8 @@ components:
              APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, COMPLETION_BASIS,
              PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND, VENDORS, CONTRACT_NUMBER,
              LICENSE_SIGNED, LICENSE_EXPIRY_YEAR,
-             TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON, TEAM, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS,
+             TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON, TEAM, COMPLETED, MEDIAN_DAYS, P90_DAYS, AVG_DAYS, MAX_DAYS, CURRENT,
+             CURRENT_MAX_DAYS,
              AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME,
              VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, ACTIVITY_STATUS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS,
              STAGE_AT_START, STAGE_AT_END, STAGE_POSITION, TRANSITIONS, PERIOD_COMMENTS, DUE_STATE, OVERDUE_DAYS,
@@ -16077,6 +17250,13 @@ components:
             format: uuid
         includeNoProgram:
           type: boolean
+        kindIds:
+          type: array
+          maxItems: 500
+          description: Виды взаимодействия; недоступно для DEMAND и AGREEMENTS
+          items:
+            type: string
+            format: uuid
         productIds:
           type: array
           maxItems: 500
@@ -16425,8 +17605,12 @@ components:
           minimum: 0
     StatisticsGroupBy:
       type: string
-      description: DEMAND суммирует заявки и принимает ORGANIZATION, DIRECTION, PROGRAM, MANAGER и MONTH (месяц подачи)
-      enum: [STAGE, ORGANIZATION, DIRECTION, PROGRAM, PRODUCT, MANAGER, MONTH]
+      description: >-
+        DEMAND суммирует заявки и принимает ORGANIZATION, DIRECTION, PROGRAM, MANAGER и MONTH (месяц подачи). STAGE идёт в порядке
+        маршрута работ выборки; при нескольких маршрутах группы — «шаблон: этап». KIND — по виду взаимодействия.
+        MILESTONE — по вехам (роль этапа для LMS: вход в этап или его отметка выполненным), только для PORTFOLIO и SNAPSHOT
+        и не для seriesBy; группы не взаимоисключающие, всегда три строки в порядке ролей.
+      enum: [STAGE, ORGANIZATION, DIRECTION, PROGRAM, PRODUCT, MANAGER, MONTH, KIND, MILESTONE]
     StatisticsRequest:
       type: object
       required: [kind, groupBy]
@@ -17480,6 +18664,10 @@ components:
         templateId:
           type: [string, 'null']
           format: uuid
+        kindId:
+          type: [string, 'null']
+          format: uuid
+          description: Вид нового цикла; без него — вид прошлого цикла, если он действует, иначе по правилам
         startsOn:
           type: [string, 'null']
           format: date
@@ -17825,7 +19013,8 @@ components:
                  PARTNER_RESPONSE_REVIEWED, PARTNER_MATERIAL_RECEIVED, LMS_RESULTS_RECORDED, LMS_RECONCILED,
                  LMS_API_TRANSFER, LMS_API_MOVE,
                  LOGIN_FAILED, ACCOUNT_LOCKOUT_RELEASED, ORGANIZATION_RECORD_CHANGED, CATALOG_CHANGED, CATALOG_IMPORT_APPLIED,
-                 WORKFLOW_TEMPLATE_CHANGED, WORKFLOW_ROLLOUT_APPLIED, SOURCE_MAPPING_CHANGED,
+                 WORKFLOW_TEMPLATE_CHANGED, WORKFLOW_ROLLOUT_APPLIED, INTERACTION_KIND_CHANGED,
+                 INTERACTION_KIND_RULE_CHANGED, SOURCE_MAPPING_CHANGED,
                  MAIL_SETTINGS_CHANGED, MAIL_CONNECTION_CHECKED, MAIL_TEST_SENT, MAIL_LETTER_VIEWED, MAIL_OUTBOX_REQUEUED,
                  MAIL_OUTBOX_CANCELLED, MAIL_INVITATION_SENT, MAIL_INVITATION_REDEEMED, MAIL_SUBJECT_REPORT_SENT]
         actionLabel:
@@ -18147,8 +19336,15 @@ components:
     AnonymizationResult:
       type: object
       required: [contacts, profiles, mentions, attachmentsRenamed, sourceRecords, technicalRecords, attachmentsDeleted,
-                 reportFilesDeleted, learners]
+                 reportFilesDeleted, learners, reportFilesMarked]
       properties:
+        reportFilesMarked:
+          type: integer
+          minimum: 0
+          description: >-
+            Готовые отчёты, файл которых проверить на данные субъекта не удалось: файл не удаляется, отчёт помечается
+            «требует пересоздания» (ошибка REPORT_NEEDS_REBUILD). Удаляются (reportFilesDeleted) только отчёты, в файле
+            которых субъект найден.
         contacts:
           type: integer
           minimum: 0
@@ -18321,7 +19517,7 @@ components:
           format: date-time
     MailTopic:
       type: string
-      enum: [DIGEST, ASSIGNMENT, AGREEMENT, ISSUES, PARTNER_REPLIES, SITE_REQUEST, UNASSIGNED, WEEKLY, ADMIN_ALERTS]
+      enum: [DIGEST, ASSIGNMENT, AGREEMENT, ISSUES, PARTNER_REPLIES, AGENT_PLANS, SITE_REQUEST, UNASSIGNED, WEEKLY, ADMIN_ALERTS]
     MailPreferences:
       type: object
       required: [topics]
@@ -18451,7 +19647,7 @@ components:
           format: uuid
         kind:
           type: string
-          enum: [INVITATION, DIGEST, ASSIGNMENT, AGREEMENT_CORRECTION, AGREEMENT_EXPIRY, ISSUE_ASSIGNED, ISSUE_RESOLVED, PARTNER_REQUEST, PARTNER_RETURNED, PARTNER_REPLY, SITE_REQUEST, ORGANIZATIONS_UNASSIGNED, WEEKLY_SUMMARY, ADMIN_SOURCE_FAILURE, ADMIN_PENDING_ACTIVATION, ADMIN_DAILY, TEST, SUBJECT_REPORT]
+          enum: [INVITATION, PASSWORD_RESET, DIGEST, ASSIGNMENT, AGREEMENT_CORRECTION, AGREEMENT_EXPIRY, ISSUE_ASSIGNED, ISSUE_RESOLVED, PARTNER_REQUEST, PARTNER_RETURNED, PARTNER_REPLY, SITE_REQUEST, AGENT_PLAN, ORGANIZATIONS_UNASSIGNED, WEEKLY_SUMMARY, ADMIN_SOURCE_FAILURE, ADMIN_PENDING_ACTIVATION, ADMIN_DAILY, TEST, SUBJECT_REPORT]
         kindTitle:
           type: string
         recipient:

@@ -28,6 +28,7 @@ import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.audit.AuditAction;
 import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.catalog.CatalogArchivedEvent;
+import ru.rtk.crm.catalog.ContactEmailChangedEvent;
 import ru.rtk.crm.catalog.ContactNotFoundException;
 import ru.rtk.crm.catalog.OrganizationNotFoundException;
 import ru.rtk.crm.catalog.OrganizationRepository;
@@ -174,6 +175,24 @@ public class PartnerAccessService {
         return deactivate(actor.id(), profile, requestId);
     }
 
+    // Новая почта контакта сразу становится почтой учётки координатора, иначе письма и приглашения уходили бы на
+    // старый адрес. Логин учётки не меняется. Сбой Keycloak откатывает и правку контакта: адреса не расходятся.
+    @EventListener
+    @Transactional
+    public void contactEmailChanged(ContactEmailChangedEvent event) {
+        Optional<PartnerProfile> profile = partnerAccessRepository.lockProfileByContact(event.contactId()).filter(PartnerProfile::active);
+        if (profile.isEmpty()) {
+            return;
+        }
+        if (event.email() == null) {
+            throw new InteractionValidationException("email",
+                    "У контакта открыт доступ в кабинет вуза: почту нельзя удалить, сначала закройте доступ");
+        }
+        keycloakAccountClient.changeEmail(profile.get().subject(), event.email().strip().toLowerCase(Locale.ROOT));
+        auditJournalRepository.record(AuditAction.ACCOUNT_EMAIL_CHANGED, event.actorProfileId(), "PROFILE", profile.get().id(),
+                profile.get().displayName(), "почта учётки обновлена вместе с почтой контакта", currentRequestId());
+    }
+
     @EventListener
     @Transactional
     public void catalogArchived(CatalogArchivedEvent event) {
@@ -209,6 +228,9 @@ public class PartnerAccessService {
         OffsetDateTime now = OffsetDateTime.now();
         partnerAccessRepository.changeActive(profile.id(), false, now);
         recordProfileEvent(actorProfileId, profile.id(), profile.displayName(), true, false, requestId, now);
+        // Без доступа координатор не ответит: открытые запросы ему закрываются с причиной, а не висят «Ожидает ответа».
+        int cancelled = partnerAccessRepository.cancelOpenRequests(partnerAccessRepository.contactOf(profile.id()),
+                "Доступ координатора в кабинет вуза закрыт", now);
         try {
             keycloakAccountClient.setEnabled(profile.subject(), false);
         } catch (AccountSyncException exception) {
@@ -221,7 +243,8 @@ public class PartnerAccessService {
         }
         partnerAccessRepository.markIdpEnabled(profile.id(), false);
         auditJournalRepository.record(
-                AuditAction.ACCOUNT_DISABLED, actorProfileId, "PROFILE", profile.id(), profile.displayName(), null, requestId
+                AuditAction.ACCOUNT_DISABLED, actorProfileId, "PROFILE", profile.id(), profile.displayName(),
+                cancelled == 0 ? null : "отменено открытых запросов вузу: " + cancelled, requestId
         );
         return partnerAccessRepository.findAccess(profile.id());
     }

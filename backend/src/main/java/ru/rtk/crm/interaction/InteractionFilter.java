@@ -15,7 +15,10 @@ public record InteractionFilter(
         UUID responsibleId,
         boolean unassigned,
         Integer minDaysOnStage,
-        Integer noContactDays
+        Integer noContactDays,
+        UUID kindId,
+        UUID programId,
+        UUID productId
 ) {
     static final String UNASSIGNED = "UNASSIGNED";
     private static final String ALL_STATUSES = "ALL";
@@ -73,9 +76,23 @@ public record InteractionFilter(
                 responsibleValue == null || unassigned ? null : responsibleId(responsibleValue),
                 unassigned,
                 days(minDaysOnStage, "minDaysOnStage"),
-                days(noContactDays, "noContactDays")
+                days(noContactDays, "noContactDays"),
+                null,
+                null,
+                null
         );
     }
+
+    public InteractionFilter withKind(UUID value) {
+        return new InteractionFilter(organizationId, search, due, stage, status, flag, licenseExpiresBy, responsibleId, unassigned,
+                minDaysOnStage, noContactDays, value, programId, productId);
+    }
+
+    public InteractionFilter withCatalog(UUID program, UUID product) {
+        return new InteractionFilter(organizationId, search, due, stage, status, flag, licenseExpiresBy, responsibleId, unassigned,
+                minDaysOnStage, noContactDays, kindId, program, product);
+    }
+
 
     private static InteractionWorkStatus status(String value) {
         if (value == null || value.isBlank()) {

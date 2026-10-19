@@ -142,7 +142,7 @@ export const PartnerAccessControl = ({
       <ConfirmDialog
         open={state.kind === 'confirmClose'}
         title="Закрыть доступ в кабинет вуза?"
-        description={`${contact.name} больше не сможет войти: профиль будет заблокирован, учётная запись Keycloak отключена, сеансы завершены.`}
+        description={`${contact.name} больше не сможет войти: профиль будет заблокирован, учётная запись Keycloak отключена, сеансы завершены. Открытые запросы вузу этому контакту отменятся с причиной «доступ закрыт».`}
         confirmLabel="Закрыть доступ"
         onConfirm={() => void run('close')}
         onCancel={() => setState({ kind: 'idle' })}

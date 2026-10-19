@@ -42,7 +42,9 @@ export const updateOf = (profile: CrmProfile, draft: ProfileDraft): CrmProfileUp
     update.active = draft.active
   }
   const enrolmentOperator = draft.enrolmentOperator && operatorAllowed(draft.role)
-  if (enrolmentOperator !== profile.enrolmentOperator && (enrolmentOperator || update.role === undefined)) {
+  // При смене на роль без флага сервер снимет его сам (строка об этом — в accessSummary); при смене КАМ ↔ руководитель
+  // снятие флага нужно передать явно, иначе сервер оставит прежний.
+  if (enrolmentOperator !== profile.enrolmentOperator && (operatorAllowed(draft.role) || update.role === undefined)) {
     update.enrolmentOperator = enrolmentOperator
   }
   return update
@@ -76,11 +78,11 @@ export const accessSummary = (profile: CrmProfile, update: CrmProfileUpdate, tea
   }
   if (update.enrolmentOperator !== undefined) {
     lines.push(update.enrolmentOperator
-      ? 'Флаг «Оператор зачисления»: появится раздел «Зачисление» и загрузка файла оплат с данными слушателей, если включён модуль «Слушатели».'
-      : 'Флаг «Оператор зачисления» снимается: раздел «Зачисление» закроется.')
+      ? 'Флаг «Менеджер учебного процесса»: появится раздел «Зачисление» и загрузка файла оплат с данными слушателей, если включён модуль «Слушатели».'
+      : 'Флаг «Менеджер учебного процесса» снимается: раздел «Зачисление» закроется.')
   }
   if (getModules().enrolment && profile.enrolmentOperator && update.role !== undefined && !operatorAllowed(update.role)) {
-    lines.push('Флаг «Оператор зачисления» будет снят: он доступен только КАМ и руководителю.')
+    lines.push('Флаг «Менеджер учебного процесса» будет снят: он доступен только КАМ и руководителю.')
   }
   lines.push('Новые права действуют со следующего запроса пользователя; ранее сформированные им отчёты станут недоступны для скачивания.')
   return lines
@@ -101,7 +103,7 @@ export const eventChanges = (event: CrmProfileEvent) => {
     changes.push(event.active ? 'Доступ открыт' : 'Доступ закрыт')
   }
   if (event.previousEnrolmentOperator !== event.enrolmentOperator) {
-    changes.push(event.enrolmentOperator ? 'Назначен флаг «Оператор зачисления»' : 'Снят флаг «Оператор зачисления»')
+    changes.push(event.enrolmentOperator ? 'Назначен флаг «Менеджер учебного процесса»' : 'Снят флаг «Менеджер учебного процесса»')
   }
   return changes
 }

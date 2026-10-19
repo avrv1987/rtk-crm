@@ -77,6 +77,11 @@ public class MaxSettingsService {
                 : MaxMessage.Button.link("Открыть CRM", properties.crmUrl(crmHash));
     }
 
+    // Прямая ссылка на экран CRM, которого нет в мини-приложении (например, план ИИ-агента).
+    public MaxMessage.Button crmLink(String label, String crmHash) {
+        return MaxMessage.Button.link(label, properties.crmUrl(crmHash));
+    }
+
     @Transactional(readOnly = true)
     public View view(CrmProfile actor) {
         AdminAuthorization.requireAdmin(actor);

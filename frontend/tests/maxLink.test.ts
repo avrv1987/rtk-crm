@@ -7,7 +7,7 @@ import { categoryLabels } from '../src/features/admin/auditJournal.ts'
 const on = { enrolment: false, partner: false, max: true }
 const off = { enrolment: false, partner: false }
 
-test('«Подключить MAX» видят только КАМ и руководитель без флага оператора при включённом модуле', () => {
+test('«Подключить MAX» видят только КАМ и руководитель без флага менеджера учебного процесса при включённом модуле', () => {
   assert.equal(maxLinkAvailable({ role: 'USER', enrolmentOperator: false }, on), true)
   assert.equal(maxLinkAvailable({ role: 'LEADER', enrolmentOperator: false }, on), true)
   assert.equal(maxLinkAvailable({ role: 'USER', enrolmentOperator: false }, off), false)

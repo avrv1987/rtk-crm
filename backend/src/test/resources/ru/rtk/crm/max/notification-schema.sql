@@ -38,3 +38,17 @@ CREATE TABLE IF NOT EXISTS source_records (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
     applied_at TIMESTAMP WITH TIME ZONE
 );
+
+CREATE TABLE IF NOT EXISTS interactions (interaction_kind_id UUID, 
+    id UUID PRIMARY KEY,
+    organization_id UUID NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_change_plans (
+    id UUID PRIMARY KEY,
+    requester_profile_id UUID NOT NULL,
+    interaction_id UUID NOT NULL,
+    state VARCHAR(16) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);

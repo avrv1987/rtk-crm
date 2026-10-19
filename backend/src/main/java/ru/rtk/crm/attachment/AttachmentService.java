@@ -114,6 +114,9 @@ public class AttachmentService {
         if (request.replacesId() != null) {
             requireReplaceable(interactionId, request.replacesId());
         }
+        if (request.kind() != null) {
+            requireSelectableKind(request.kind());
+        }
 
         UUID attachmentId = UUID.randomUUID();
         UUID storageKey = UUID.randomUUID();
@@ -129,9 +132,9 @@ public class AttachmentService {
             AttachmentRepository.AttachmentRow replaced = request.replacesId() == null
                     ? null
                     : requireReplaceable(interactionId, request.replacesId());
-            AttachmentKind kind = request.kind() != null
-                    ? request.kind()
-                    : replaced == null ? AttachmentKind.OTHER : replaced.kind();
+            String kind = request.kind() != null
+                    ? requireSelectableKind(request.kind())
+                    : replaced == null ? DocumentKinds.OTHER : replaced.kind();
             attachmentRepository.insert(
                     attachmentId,
                     interactionId,
@@ -172,7 +175,7 @@ public class AttachmentService {
             store(storageKey, file, inspection);
             AttachmentScanOutcome outcome = scan(storageKey, inspection.sizeBytes());
             attachmentRepository.insert(attachmentId, interactionId, stageId, inspection.originalName(), inspection.mediaType(),
-                    inspection.sizeBytes(), storageKey, inspection.checksum(), AttachmentKind.OTHER, 1, null, createdBy, now);
+                    inspection.sizeBytes(), storageKey, inspection.checksum(), DocumentKinds.OTHER, 1, null, createdBy, now);
             applyScan(attachmentId, storageKey, outcome);
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
@@ -213,9 +216,9 @@ public class AttachmentService {
         if (request.version() == null || request.version() < 0) {
             throw new InteractionValidationException("version", "Укажите версию сведений о документе");
         }
-        AttachmentKind kind = request.kind() == null ? attachment.kind() : request.kind();
+        String kind = request.kind() == null || request.kind().equals(attachment.kind()) ? attachment.kind() : requireSelectableKind(request.kind());
         boolean partnerVisible = request.partnerVisible() == null ? attachment.partnerVisible() : request.partnerVisible();
-        if (attachment.kind() == kind && attachment.partnerVisible() == partnerVisible) {
+        if (attachment.kind().equals(kind) && attachment.partnerVisible() == partnerVisible) {
             return attachment.attachment();
         }
         if (!attachmentRepository.updateKind(attachmentId, kind, partnerVisible, request.version(), OffsetDateTime.now())) {
@@ -378,7 +381,7 @@ public class AttachmentService {
 
     private String deletionComment(AttachmentRepository.AttachmentRow attachment, String reason) {
         String comment = "Удалён документ «" + attachment.originalName() + "» (вид: "
-                + attachment.kind().title().toLowerCase(Locale.ROOT) + ", версия " + attachment.revision() + ")";
+                + (attachment.kindName() == null ? attachment.kind() : attachment.kindName()).toLowerCase(Locale.ROOT) + ", версия " + attachment.revision() + ")";
         return reason == null ? comment : comment + ". Причина: " + reason;
     }
 
@@ -463,13 +466,20 @@ public class AttachmentService {
         return value;
     }
 
+    private String requireSelectableKind(String code) {
+        if (!attachmentRepository.kindSelectable(code)) {
+            throw new AttachmentValidationException("kind", "Выберите действующий вид документа из справочника");
+        }
+        return code;
+    }
+
     public record DownloadedAttachment(Attachment attachment, InputStream content) {
     }
 
     private record UploadAttachmentCommand(
             UUID interactionId,
             UUID stageId,
-            AttachmentKind kind,
+            String kind,
             UUID replacesId,
             String originalName,
             String mediaType,

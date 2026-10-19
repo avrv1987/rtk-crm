@@ -31,3 +31,18 @@ test('кнопки только у ожидающего плана; итог к�
   assert.match(statusText({ status: 'PENDING', cardChanged: false }), /Агент сам записать не может/)
   assert.match(statusText({ status: 'PENDING', cardChanged: true }), /Карточку изменили/)
 })
+
+test('итог записанного плана называет действие его вида; предупреждения переведены', async () => {
+  const { kindLabels, warningTexts } = await import('../src/features/agentPlans/agentPlan.ts')
+  for (const kind of Object.keys(kindLabels) as (keyof typeof kindLabels)[]) {
+    assert.ok(statusText({ status: 'APPLIED', cardChanged: false, kind }).startsWith('Записано'), kind)
+  }
+  assert.match(statusText({ status: 'APPLIED', cardChanged: false, kind: 'STAGE_TRANSITION' }), /этап/)
+  for (const code of ['BACKWARD', 'SKIP', 'PAST_DUE']) {
+    assert.ok(warningTexts[code], code)
+  }
+})
+
+test('список планов открывается по адресу без идентификатора', () => {
+  assert.deepEqual(parseRoute('#/agent-plans'), { section: 'agent-plans', organizationId: undefined, interactionId: undefined, query: '' })
+})

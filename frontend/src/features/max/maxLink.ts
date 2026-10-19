@@ -3,7 +3,7 @@ import type { Modules } from '../../shared/modules'
 
 type Profile = { role: string; enrolmentOperator: boolean }
 
-/** Пункт «Подключить MAX» виден только при включённом модуле КАМ и руководителю без флага оператора зачисления. */
+/** Пункт «Подключить MAX» виден только при включённом модуле КАМ и руководителю без флага менеджера учебного процесса. */
 export const maxLinkAvailable = (profile: Profile, modules: Modules): boolean => (
   modules.max === true && (profile.role === 'USER' || profile.role === 'LEADER') && !profile.enrolmentOperator
 )

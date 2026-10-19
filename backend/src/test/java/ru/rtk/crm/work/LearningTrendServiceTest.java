@@ -43,17 +43,21 @@ class LearningTrendServiceTest {
 
         assertThat(trend.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change,
                         LearningTrend.Item::endWithoutBase)
-                .containsExactly(23L, 22L, -1L, 50L);
+                .containsExactly(19L, 17L, -2L, 50L);
+        assertThat(trend.total()).extracting(LearningTrend.Item::startedRuns, LearningTrend.Item::endStarted,
+                        LearningTrend.Item::endedRuns, LearningTrend.Item::startEnded)
+                .containsExactly(1, 5L, 1, 4L);
         assertThat(trend.runsWithoutData()).isEqualTo(1);
         assertThat(trend.teams()).extracting(LearningTrend.Item::name, LearningTrend.Item::start, LearningTrend.Item::end,
-                        LearningTrend.Item::endWithoutBase)
-                .containsExactly(tuple("Команда А", 10L, 19L, 50L), tuple("Команда Б", 13L, 3L, 0L));
+                        LearningTrend.Item::endWithoutBase, LearningTrend.Item::endStarted, LearningTrend.Item::startEnded)
+                .containsExactly(tuple("Команда А", 10L, 14L, 50L, 5L, 0L), tuple("Команда Б", 9L, 3L, 0L, 0L, 4L));
         assertThat(trend.programs()).extracting(LearningTrend.Item::name, LearningTrend.Item::change)
-                .containsExactly(tuple("Java", 9L), tuple("Данные", -10L));
+                .containsExactly(tuple("Java", 4L), tuple("Данные", -6L));
+        // Новый поток — не рост, закончившийся по плану — не падение: в рейтинги идёт только изменение сопоставимых.
         assertThat(trend.growing()).extracting(LearningTrend.Item::name, LearningTrend.Item::change)
-                .containsExactly(tuple("Вуз В", 5L), tuple("Вуз А", 4L));
+                .containsExactly(tuple("Вуз А", 4L));
         assertThat(trend.falling()).extracting(LearningTrend.Item::name, LearningTrend.Item::change)
-                .containsExactly(tuple("Вуз Б", -6L), tuple("Вуз Г", -4L));
+                .containsExactly(tuple("Вуз Б", -6L));
     }
 
     // П17: «сопоставимые потоки: 10 → 12, +2» и отдельно «без базы сравнения: 20» — не «10 → 32 (+2)».
@@ -96,7 +100,7 @@ class LearningTrendServiceTest {
     }
 
     @Test
-    void runStartedInsidePeriodIsZeroAtStartAndEndedRunIsZeroAtEnd() {
+    void runsStartedAndEndedInsidePeriodAreCompositionChangeNotChange() {
         UUID started = UUID.randomUUID();
         UUID ended = UUID.randomUUID();
         UUID beforeStart = UUID.randomUUID();
@@ -108,8 +112,10 @@ class LearningTrendServiceTest {
 
         LearningTrend trend = LearningTrendService.trend(observations, FROM, TO, 92);
 
-        assertThat(trend.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change)
-                .containsExactly(8L, 6L, -2L);
+        assertThat(trend.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change,
+                        LearningTrend.Item::startedRuns, LearningTrend.Item::endStarted, LearningTrend.Item::endedRuns,
+                        LearningTrend.Item::startEnded)
+                .containsExactly(0L, 0L, 0L, 1, 6L, 1, 8L);
         assertThat(trend.runsWithoutData()).isEqualTo(0);
     }
 
@@ -124,8 +130,9 @@ class LearningTrendServiceTest {
         LearningTrend midPeriod = LearningTrendService.trend(observations, LocalDate.parse("2026-04-02"), TO, 152);
         LearningTrend shortPeriod = LearningTrendService.trend(observations, LocalDate.parse("2026-08-02"), TO, 30);
 
-        assertThat(longPeriod.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change)
-                .containsExactly(0L, 13L, 13L);
+        assertThat(longPeriod.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change,
+                        LearningTrend.Item::endStarted)
+                .containsExactly(0L, 0L, 0L, 13L);
         assertThat(longPeriod.runsWithoutData()).isEqualTo(0);
         assertThat(midPeriod.total()).extracting(LearningTrend.Item::start, LearningTrend.Item::end, LearningTrend.Item::change,
                         LearningTrend.Item::endWithoutBase)

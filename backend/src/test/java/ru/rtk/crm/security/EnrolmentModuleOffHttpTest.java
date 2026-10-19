@@ -63,7 +63,7 @@ class EnrolmentModuleOffHttpTest {
         jdbcTemplate.update("DELETE FROM crm_user_profiles");
         jdbcTemplate.update("""
                 INSERT INTO crm_user_profiles (id, issuer, subject, display_name, role, enrolment_operator)
-                VALUES (?, ?, ?, 'Оператор зачисления', 'USER', TRUE)
+                VALUES (?, ?, ?, 'Менеджер учебного процесса', 'USER', TRUE)
                 """, OPERATOR, ISSUER, OPERATOR.toString());
     }
 

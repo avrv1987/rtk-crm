@@ -1,5 +1,7 @@
 .control {
   display: grid;
+  /* Без явной колонки сетка растягивается по самому широкому блоку: на ширине около 760 px «Контроль» вылезал вбок. */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
 }
 
@@ -101,6 +103,9 @@
 }
 
 .control-manager {
+  /* Таблица менеджера в 2.5 стала шире (метки документов): на узком экране прокручивается внутри карточки, а не сдвигает страницу. */
+  min-width: 0;
+  overflow-x: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
@@ -489,6 +494,7 @@
 
 .control-board {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3);
 }
 
@@ -601,6 +607,7 @@
 
 .control-tiles {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-1);
 }
 
@@ -699,4 +706,10 @@
     display: block;
     padding: var(--space-1) var(--space-4);
   }
+}
+
+/* Вложенные сетки «Контроля» не растягиваются по самому широкому блоку. */
+.control-matrix,
+.control-team {
+  grid-template-columns: minmax(0, 1fr);
 }

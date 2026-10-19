@@ -1,6 +1,6 @@
 import { clearUnsavedDrafts } from './unsavedDrafts.ts'
 
-export type InteractionStageEditType = 'RENAME' | 'ADD_AFTER' | 'MOVE_AFTER' | 'DELETE'
+export type InteractionStageEditType = 'RENAME' | 'ADD_AFTER' | 'MOVE_AFTER' | 'DELETE' | 'SET_OPTIONAL'
 
 export type InteractionDraft = {
   createTitle: string
@@ -102,7 +102,8 @@ const stringArrayValue = (value: unknown) => Array.isArray(value)
   : []
 
 const stageEditTypeValue = (value: unknown): InteractionStageEditType => (
-  value === 'ADD_AFTER' || value === 'MOVE_AFTER' || value === 'DELETE' ? value : 'RENAME'
+  value === 'ADD_AFTER' || value === 'MOVE_AFTER' || value === 'DELETE' || value === 'SET_OPTIONAL' ? value : 'RENAME'
+
 )
 
 // Прочитанное из хранилища не доверяется: черновик мог быть записан прежней версией интерфейса или повреждён,
@@ -320,9 +321,13 @@ export const saveFormDraft = (profileId: string, key: string, draft: object | nu
 
 // Адрес запоминается перед уходом на вход в Keycloak и восстанавливается после него. Принимаются только
 // внутренние адреса вида «#/…»: произвольный адрес из хранилища не станет переходом на чужой сайт.
+// Адрес приглашения не запоминается: ссылка одноразовая, и после первого входа координатор вернулся бы на
+// «Показать пароль» вместо кабинета (В-1).
+export const returnRouteAllowed = (hash: string) => hash.startsWith('#/') && !hash.startsWith('#/invite/')
+
 export const rememberReturnRoute = () => {
   const sessionStorage = storage()
-  if (sessionStorage === null || !window.location.hash.startsWith('#/')) {
+  if (sessionStorage === null || !returnRouteAllowed(window.location.hash)) {
     return
   }
   try {
@@ -340,7 +345,7 @@ export const takeReturnRoute = (): string | null => {
   try {
     const route = sessionStorage.getItem(returnRouteKey)
     sessionStorage.removeItem(returnRouteKey)
-    return route !== null && route.startsWith('#/') ? route : null
+    return route !== null && returnRouteAllowed(route) ? route : null
   } catch {
     return null
   }

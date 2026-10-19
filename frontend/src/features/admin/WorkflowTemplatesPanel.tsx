@@ -6,9 +6,7 @@ import {
   type Me,
   type PageWorkflowTemplate,
   type WorkflowTemplate,
-  type WorkflowTemplateCreate,
-  type WorkflowTemplateVersion,
-  type WorkflowTransitionInput
+  type WorkflowTemplateVersion
 } from '../../shared/api/client'
 import { ActionMenu } from '../../shared/ui/ActionMenu'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
@@ -18,15 +16,33 @@ import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { Toast } from '../../shared/ui/Toast'
 import { CardDialog } from '../interactions/cardUi'
+import { loadFormDraft, saveFormDraft } from '../interactions/drafts'
 import { templateLmsWarning } from '../training/lmsStageSuggestionRules'
 import { WorkflowTemplateVersions } from './WorkflowTemplateVersions'
 import { canEditTemplate, isEffectiveDefault, templateRowActions, templateScopeLabel, type RowMenuKey } from './workflowTemplateRows'
 import { parseRouteFile } from './workflowVersions'
+import {
+  draftChanged,
+  draftFromTemplate,
+  draftProblems,
+  emptyDraft,
+  emptyStage,
+  movedStage,
+  payloadFromDraft,
+  storedEditorDraft,
+  withoutStage,
+  type StageDraft,
+  type TemplateDraft,
+  type TransitionDraft
+} from './workflowTemplateDraft'
+import { useDocumentKinds } from '../documents/useDocumentKinds'
+import { lmsRoleLabels, lmsRoles, selectableDocumentKinds, stagePropertiesOf, type StageLmsRole } from '../documents/stageProperties'
 import './adminUi.css'
 import './workflowVersions.css'
 
 type WorkflowTemplatesPanelProps = {
   role: Me['role']
+  profileId: string
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
@@ -41,21 +57,6 @@ type CommandState =
   | { kind: 'saving'; action: 'create' | 'update' | 'delete' }
   | { kind: 'failed'; action: 'create' | 'update' | 'delete'; error: unknown }
 
-type StageDraft = {
-  id?: string
-  name: string
-  optional: boolean
-}
-
-type TransitionDraft = WorkflowTransitionInput
-
-type TemplateDraft = {
-  name: string
-  stages: StageDraft[]
-  transitions: TransitionDraft[]
-  comment: string
-}
-
 type PendingDelete = {
   template: WorkflowTemplate
   idempotencyKey: string | null
@@ -63,131 +64,6 @@ type PendingDelete = {
 
 const templatesPageSize = 25
 const templatesSort = 'name,asc' as const
-
-const emptyDraft = (): TemplateDraft => ({
-  name: '',
-  stages: [{ name: '', optional: false }],
-  transitions: [],
-  comment: ''
-})
-
-const draftFromTemplate = (template: Pick<WorkflowTemplate, 'name' | 'stages' | 'transitions'>): TemplateDraft => {
-  const stages = [...template.stages]
-    .sort((left, right) => left.order - right.order)
-    .map((stage) => ({ id: stage.id, name: stage.name, optional: stage.optional }))
-  const orderById = new Map(template.stages.map((stage) => [stage.id, stage.order]))
-  const transitions = template.transitions.flatMap((transition) => {
-    const fromOrder = orderById.get(transition.fromStageId)
-    const toOrder = orderById.get(transition.toStageId)
-    return fromOrder === undefined || toOrder === undefined
-      ? []
-      : [{ fromOrder, toOrder, commentRequired: transition.commentRequired }]
-  })
-  return { name: template.name, stages, transitions, comment: '' }
-}
-
-const payloadFromDraft = (draft: TemplateDraft): WorkflowTemplateCreate => ({
-  name: draft.name.trim(),
-  stages: draft.stages.map((stage, order) => ({
-    name: stage.name.trim(),
-    order,
-    optional: stage.optional,
-    ...(stage.id === undefined ? {} : { id: stage.id })
-  })),
-  transitions: draft.transitions,
-  ...(draft.comment.trim().length === 0 ? {} : { comment: draft.comment.trim() })
-})
-
-const stageTitle = (draft: TemplateDraft, order: number) => `«${draft.stages[order]?.name.trim() || `этап ${order + 1}`}»`
-
-const draftProblem = (draft: TemplateDraft): string | null => {
-  if (draft.name.trim().length === 0) {
-    return 'Укажите название шаблона.'
-  }
-  if (draft.stages.length === 0) {
-    return 'Добавьте хотя бы один этап.'
-  }
-  const unnamed = draft.stages.findIndex((stage) => stage.name.trim().length === 0)
-  if (unnamed >= 0) {
-    return `Укажите название этапа ${unnamed + 1}.`
-  }
-  const edgeKeys = new Set<string>()
-  const edges = new Map<number, number[]>()
-  for (const transition of draft.transitions) {
-    const route = `${stageTitle(draft, transition.fromOrder)} → ${stageTitle(draft, transition.toOrder)}`
-    if (
-      transition.fromOrder < 0
-      || transition.toOrder < 0
-      || transition.fromOrder >= draft.stages.length
-      || transition.toOrder >= draft.stages.length
-      || transition.fromOrder === transition.toOrder
-    ) {
-      return `Переход ${route} должен вести в другой существующий этап.`
-    }
-    if (Math.abs(transition.fromOrder - transition.toOrder) !== 1 && !transition.commentRequired) {
-      return `Переход ${route} пропускает этапы или ведёт назад: отметьте «Нужен комментарий» или удалите переход.`
-    }
-    if (!edgeKeys.add(`${transition.fromOrder}:${transition.toOrder}`)) {
-      return `Переход ${route} указан дважды.`
-    }
-    const next = edges.get(transition.fromOrder) ?? []
-    next.push(transition.toOrder)
-    edges.set(transition.fromOrder, next)
-  }
-  const deadEnd = draft.stages.findIndex((_, order) => order < draft.stages.length - 1 && !edges.has(order))
-  if (deadEnd >= 0) {
-    return `У этапа ${stageTitle(draft, deadEnd)} нет выхода: добавьте переход из него в следующий этап.`
-  }
-  const reachable = new Set<number>()
-  const pending = [0]
-  while (pending.length > 0) {
-    const order = pending.pop()
-    if (order !== undefined && !reachable.has(order)) {
-      reachable.add(order)
-      pending.push(...(edges.get(order) ?? []))
-    }
-  }
-  const unreachable = draft.stages.findIndex((_, order) => !reachable.has(order))
-  return unreachable >= 0
-    ? `Этап ${stageTitle(draft, unreachable)} недостижим из первого этапа ${stageTitle(draft, 0)}: добавьте переход в него из предыдущего этапа.`
-    : null
-}
-
-const withoutStage = (draft: TemplateDraft, index: number) => {
-  const reorder = (order: number) => (order > index ? order - 1 : order)
-  const kept = draft.transitions.filter((transition) => transition.fromOrder !== index && transition.toOrder !== index)
-  const keys = new Set(kept.map((transition) => `${transition.fromOrder}:${transition.toOrder}`))
-  const bridges: TransitionDraft[] = []
-  for (const incoming of draft.transitions.filter((transition) => transition.toOrder === index)) {
-    for (const outgoing of draft.transitions.filter((transition) => transition.fromOrder === index)) {
-      const key = `${incoming.fromOrder}:${outgoing.toOrder}`
-      if (incoming.fromOrder !== outgoing.toOrder && !keys.has(key)) {
-        keys.add(key)
-        const adjacent = Math.abs(reorder(incoming.fromOrder) - reorder(outgoing.toOrder)) === 1
-        bridges.push({
-          fromOrder: incoming.fromOrder,
-          toOrder: outgoing.toOrder,
-          commentRequired: !adjacent || (incoming.commentRequired && outgoing.commentRequired)
-        })
-      }
-    }
-  }
-  const names = bridges.map((bridge) => `${stageTitle(draft, bridge.fromOrder)} → ${stageTitle(draft, bridge.toOrder)}`)
-  return {
-    draft: {
-      ...draft,
-      stages: draft.stages.filter((_, stageIndex) => stageIndex !== index),
-      transitions: [...kept, ...bridges].map((transition) => ({
-        ...transition,
-        fromOrder: reorder(transition.fromOrder),
-        toOrder: reorder(transition.toOrder)
-      }))
-    },
-    notice: names.length === 0
-      ? `Этап ${stageTitle(draft, index)} удалён.`
-      : `Этап ${stageTitle(draft, index)} удалён; соседние этапы соединены: ${names.join(', ')}.`
-  }
-}
 
 const requestIdOf = (error: unknown) => (
   error instanceof ApiError ? error.requestId : undefined
@@ -220,19 +96,29 @@ const commandMessage = (error: unknown) => {
 
 const errorCode = (error: unknown) => (error instanceof ApiError ? error.code : undefined)
 
-export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavailable }: WorkflowTemplatesPanelProps) => {
+const editorDraftKey = 'workflow-template-editor'
+
+export const WorkflowTemplatesPanel = ({ role, profileId, onSessionExpired, onProfileUnavailable }: WorkflowTemplatesPanelProps) => {
   const canManageTemplates = role === 'LEADER' || role === 'ADMIN'
+  // Н-РТ-2: плашка истёкшего сеанса обещает вернуть несохранённый текст. Изменённый черновик редактора лежит в
+  // sessionStorage вкладки и после повторного входа открывается снова.
+  const [restored] = useState(() => storedEditorDraft(loadFormDraft(profileId, editorDraftKey)))
   const [templatesState, setTemplatesState] = useState<TemplatesState>({ kind: 'loading' })
   const [pageIndex, setPageIndex] = useState(0)
-  const [editorOpen, setEditorOpen] = useState(false)
-  const [editingTemplate, setEditingTemplate] = useState<WorkflowTemplate | null>(null)
-  const [sourceTemplate, setSourceTemplate] = useState<{ stages: { name: string }[] } | null>(null)
-  const [draft, setDraft] = useState<TemplateDraft>(emptyDraft)
+  const [editorOpen, setEditorOpen] = useState(restored !== null)
+  const [editingTemplate, setEditingTemplate] = useState<WorkflowTemplate | null>((restored?.template ?? null) as WorkflowTemplate | null)
+  const [sourceTemplate, setSourceTemplate] = useState<{ stages: { name: string }[] } | null>(restored?.source ?? null)
+  const [draft, setDraft] = useState<TemplateDraft>(() => restored?.draft ?? emptyDraft())
+  const [initialDraft, setInitialDraft] = useState<TemplateDraft>(() => restored?.initialDraft ?? emptyDraft())
+  const [confirmClose, setConfirmClose] = useState(false)
+  const documentKinds = useDocumentKinds()
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const [commandState, setCommandState] = useState<CommandState>({ kind: 'idle' })
   const [stageNotice, setStageNotice] = useState<string | null>(null)
   const [historyTemplate, setHistoryTemplate] = useState<WorkflowTemplate | null>(null)
-  const [importNotice, setImportNotice] = useState<{ text: string; error: boolean } | null>(null)
+  const [importNotice, setImportNotice] = useState<{ text: string; error: boolean } | null>(restored === null
+    ? null
+    : { text: 'Восстановлен несохранённый черновик шаблона. Проверьте его и сохраните.', error: false })
   const [defaultState, setDefaultState] = useState<{ templateId: string; saving: boolean; error?: unknown; key: string } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const listRequestVersion = useRef(0)
@@ -280,6 +166,12 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     }
   }, [canManageTemplates, loadTemplates, pageIndex])
 
+  useEffect(() => {
+    saveFormDraft(profileId, editorDraftKey, editorOpen && draftChanged(initialDraft, draft)
+      ? { template: editingTemplate, source: sourceTemplate, draft, initialDraft }
+      : null)
+  }, [draft, editingTemplate, editorOpen, initialDraft, profileId, sourceTemplate])
+
   const updateDraft = (updater: (current: TemplateDraft) => TemplateDraft) => {
     saveKey.current = null
     setCommandState({ kind: 'idle' })
@@ -324,13 +216,21 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     setStageNotice(null)
     setImportNotice(null)
     setDraft(next)
+    setInitialDraft(next)
+    setConfirmClose(false)
     setEditorOpen(true)
   }
 
-  const closeEditor = () => {
+  // Escape, «Закрыть» и «Отмена» при изменённом черновике сначала спрашивают: иначе введённое теряется без следа.
+  const closeEditor = (force = false) => {
     if (commandState.kind === 'saving') {
       return
     }
+    if (!force && draftChanged(initialDraft, draft)) {
+      setConfirmClose(true)
+      return
+    }
+    setConfirmClose(false)
     setEditorOpen(false)
     setEditingTemplate(null)
     setCommandState({ kind: 'idle' })
@@ -356,11 +256,19 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     }
     updateDraft((current) => ({
       name: editingTemplate === null ? parsed.file.name : current.name,
-      stages: parsed.file.stages.map((stage) => ({
-        ...(stage.key === undefined ? {} : { id: stage.key }),
-        name: stage.name,
-        optional: stage.optional
-      })),
+      stages: parsed.file.stages.map((stage) => {
+        const properties = stagePropertiesOf(stage)
+        return {
+          ...(stage.key === undefined ? {} : { id: stage.key }),
+          name: stage.name,
+          optional: stage.optional,
+          ...properties,
+          // Виды документов из другой установки могут отсутствовать в справочнике: такие коды не переносятся.
+          documentKinds: documentKinds.length === 0
+            ? properties.documentKinds
+            : properties.documentKinds.filter((code) => documentKinds.some((kind) => kind.code === code))
+        }
+      }),
       transitions: parsed.file.transitions.map((transition) => ({
         fromOrder: transition.from,
         toOrder: transition.to,
@@ -413,6 +321,16 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     try {
       const template = await apiClient.getWorkflowTemplate(target.id)
       saveKey.current = null
+      // После конфликта черновик заменяется текущей версией: иначе следующее сохранение молча затёрло бы чужую правку.
+      if (editingTemplate !== null && editingTemplate.id === template.id) {
+        const fresh = draftFromTemplate(template)
+        setDraft(fresh)
+        setInitialDraft(fresh)
+        setImportNotice({
+          text: `Загружена текущая версия маршрута ${template.routeVersion}: ваши несохранённые изменения не применены. Внесите их заново поверх неё.`,
+          error: true
+        })
+      }
       setEditingTemplate((current) => current?.id === template.id ? template : current)
       setPendingDelete((current) => current?.template.id === template.id
         ? { ...current, template, idempotencyKey: null }
@@ -435,7 +353,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (draftProblem(draft) !== null || commandState.kind === 'saving') {
+    if (draftProblems(draft).length > 0 || commandState.kind === 'saving') {
       return
     }
     const payload = payloadFromDraft(draft)
@@ -507,7 +425,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
   const addStage = () => {
     updateDraft((current) => ({
       ...current,
-      stages: [...current.stages, { name: '', optional: false }]
+      stages: [...current.stages, emptyStage()]
     }))
   }
 
@@ -531,32 +449,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
     if (to < 0 || to >= draft.stages.length) {
       return
     }
-    updateDraft((current) => {
-      const stages = [...current.stages]
-      const [stage] = stages.splice(from, 1)
-      stages.splice(to, 0, stage)
-      const mappedOrder = (order: number) => {
-        if (order === from) {
-          return to
-        }
-        if (from < to && order > from && order <= to) {
-          return order - 1
-        }
-        if (to < from && order >= to && order < from) {
-          return order + 1
-        }
-        return order
-      }
-      return {
-        ...current,
-        stages,
-        transitions: current.transitions.map((transition) => ({
-          ...transition,
-          fromOrder: mappedOrder(transition.fromOrder),
-          toOrder: mappedOrder(transition.toOrder)
-        }))
-      }
-    })
+    updateDraft((current) => movedStage(current, from, to))
   }
 
   const addTransition = () => {
@@ -609,7 +502,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
   }
 
   const saving = commandState.kind === 'saving'
-  const problem = draftProblem(draft)
+  const problems = draftProblems(draft)
   const teamDefaultTemplateId = templatesState.kind === 'ready' ? templatesState.page.teamDefaultTemplateId : null
   const commandError = commandState.kind === 'failed' ? commandState.error : undefined
   const hasConflict = commandError instanceof ApiError && commandError.status === 409
@@ -754,7 +647,7 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
       <CardDialog
         open={editorOpen}
         title={editingTemplate === null ? 'Новый шаблон' : `Редактирование: ${editingTemplate.name}`}
-        onClose={closeEditor}
+        onClose={() => closeEditor()}
       >
         <form className="admin-form wt-editor" onSubmit={(event) => void submit(event)}>
           <div className="wt-editor__import">
@@ -810,6 +703,44 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
                     />
                     Необязательный
                   </label>
+                  <label className="admin-form__check">
+                    <input
+                      type="checkbox"
+                      checked={stage.requiresAgreement}
+                      onChange={(event) => updateStage(index, { requiresAgreement: event.target.checked })}
+                    />
+                    Требует действующего договора
+                  </label>
+                  <label>
+                    Роль для LMS
+                    <select
+                      value={stage.lmsRole ?? ''}
+                      onChange={(event) => updateStage(index, { lmsRole: event.target.value === '' ? null : event.target.value as StageLmsRole })}
+                    >
+                      <option value="">Без связи с LMS</option>
+                      {lmsRoles.map((lmsRole) => <option key={lmsRole} value={lmsRole}>{lmsRoleLabels[lmsRole]}</option>)}
+                    </select>
+                  </label>
+                  <details className="wt-editor__documents">
+                    <summary>Обязательные документы: {stage.documentKinds.length === 0 ? 'нет' : stage.documentKinds.length}</summary>
+                    {documentKinds.length === 0 && <p className="admin-form__hint">Справочник видов документов загружается…</p>}
+                    {selectableDocumentKinds(documentKinds).concat(
+                      documentKinds.filter((kind) => kind.archived && stage.documentKinds.includes(kind.code))
+                    ).map((kind) => (
+                      <label key={kind.code} className="admin-form__check">
+                        <input
+                          type="checkbox"
+                          checked={stage.documentKinds.includes(kind.code)}
+                          onChange={(event) => updateStage(index, {
+                            documentKinds: event.target.checked
+                              ? [...stage.documentKinds, kind.code]
+                              : stage.documentKinds.filter((code) => code !== kind.code)
+                          })}
+                        />
+                        {kind.name}{kind.archived ? ' (в архиве)' : ''}
+                      </label>
+                    ))}
+                  </details>
                   <div className="wt-editor__row-actions">
                     <button type="button" className="button--secondary" aria-label={`Выше: этап ${index + 1}`} disabled={index === 0 || saving} onClick={() => moveStage(index, index - 1)}>Выше</button>
                     <button type="button" className="button--secondary" aria-label={`Ниже: этап ${index + 1}`} disabled={index === draft.stages.length - 1 || saving} onClick={() => moveStage(index, index + 1)}>Ниже</button>
@@ -864,7 +795,12 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
               onChange={(event) => updateDraft((current) => ({ ...current, comment: event.target.value }))}
             />
           </label>
-          {problem !== null && <p className="admin-form__hint" role="status">{problem}</p>}
+          {problems.length === 1 && <p className="admin-form__hint" role="status">{problems[0]}</p>}
+          {problems.length > 1 && (
+            <ul className="admin-form__hint" role="status">
+              {problems.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          )}
           {lmsWarning !== null && <p className="notice" role="note">{lmsWarning}</p>}
           {editorFailed && (
             <div className="interaction-command-error" role="alert">
@@ -874,8 +810,8 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
             </div>
           )}
           <div className="admin-form__actions wt-editor__actions">
-            <button type="button" className="button--secondary" disabled={saving} onClick={closeEditor}>Отмена</button>
-            <button type="submit" disabled={saving || problem !== null}>
+            <button type="button" className="button--secondary" disabled={saving} onClick={() => closeEditor()}>Отмена</button>
+            <button type="submit" disabled={saving || problems.length > 0}>
               {commandState.kind === 'saving' && commandState.action !== 'delete'
                 ? 'Сохраняем…'
                 : editingTemplate === null ? 'Создать шаблон' : 'Сохранить шаблон'}
@@ -885,9 +821,19 @@ export const WorkflowTemplatesPanel = ({ role, onSessionExpired, onProfileUnavai
       </CardDialog>
 
       <ConfirmDialog
+        open={confirmClose}
+        title="Закрыть без сохранения?"
+        description="Изменения черновика шаблона не сохранены и пропадут."
+        confirmLabel="Закрыть без сохранения"
+        onConfirm={() => closeEditor(true)}
+        onCancel={() => setConfirmClose(false)}
+      />
+      <ConfirmDialog
         open={pendingDelete !== null && commandState.kind === 'idle'}
         title={`Удалить шаблон «${pendingDelete?.template.name ?? ''}»?`}
-        description="Новые взаимодействия больше не смогут выбрать этот шаблон."
+        description={'Новые взаимодействия больше не смогут выбрать этот шаблон, история его версий будет удалена.'
+          + ' Шаблон, по которому идут незавершённые взаимодействия или который выбран маршрутом вида взаимодействия,'
+          + ' удалить нельзя — сначала переведите их на другой маршрут.'}
         confirmLabel="Подтвердить удаление"
         onConfirm={() => void confirmDelete()}
         onCancel={() => setPendingDelete(null)}

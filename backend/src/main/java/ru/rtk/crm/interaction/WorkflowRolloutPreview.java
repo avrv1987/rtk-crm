@@ -33,7 +33,9 @@ public record WorkflowRolloutPreview(
             String targetStageName,
             boolean currentStageRemoved,
             boolean edited,
-            String changes
+            String changes,
+            boolean noExit,
+            boolean landsOnFinal
     ) {
     }
 }

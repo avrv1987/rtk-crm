@@ -294,6 +294,14 @@ public record ReportRow(
         return duration == null ? null : duration.maxDays();
     }
 
+    public BigDecimal medianDays() {
+        return duration == null ? null : duration.medianDays();
+    }
+
+    public BigDecimal p90Days() {
+        return duration == null ? null : duration.p90Days();
+    }
+
     public Long currentCount() {
         return duration == null ? null : duration.current();
     }
@@ -377,7 +385,9 @@ public record ReportRow(
             BigDecimal averageDays,
             BigDecimal maxDays,
             long current,
-            BigDecimal currentMaxDays
+            BigDecimal currentMaxDays,
+            BigDecimal medianDays,
+            BigDecimal p90Days
     ) {
     }
 

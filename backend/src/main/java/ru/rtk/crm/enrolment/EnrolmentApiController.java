@@ -64,9 +64,10 @@ public class EnrolmentApiController {
             @AuthenticationPrincipal OidcUser user,
             @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestPart(name = "file", required = false) MultipartFile file,
+            @RequestParam(name = "confirmNewStreams", defaultValue = "false") boolean confirmNewStreams,
             HttpServletRequest request
     ) {
-        return paidOrderUploadService.upload(currentProfileService.requireActiveProfile(user), file, idempotencyKey,
+        return paidOrderUploadService.upload(currentProfileService.requireActiveProfile(user), confirmNewStreams, file, idempotencyKey,
                 RequestId.from(request));
     }
 

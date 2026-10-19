@@ -3,6 +3,7 @@ package ru.rtk.crm.source;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -28,7 +29,7 @@ import ru.rtk.crm.module.ModuleProperties;
 class DemoSourcesBootstrapTest {
     private static final UUID OPERATOR_ID = UUID.randomUUID();
     private static final DemoBootstrapProperties.Identity OPERATOR = new DemoBootstrapProperties.Identity(
-            "enrol", "issuer", "subject-enrol", "Оператор зачисления", UserRole.USER, "open-enrolment", true, null, null);
+            "enrol", "issuer", "subject-enrol", "Менеджер учебного процесса", UserRole.USER, "open-enrolment", true, null, null);
 
     private final UserProfileRepository profiles = mock(UserProfileRepository.class);
     private final SourceRepository repository = mock(SourceRepository.class);
@@ -38,12 +39,12 @@ class DemoSourcesBootstrapTest {
     void demoPaidOrdersOfTheOperatorFillOneStreamOfAMappedCourseOnce() {
         when(profiles.findActiveByIdentity("issuer", "subject-enrol"))
                 .thenReturn(Optional.of(new CrmProfile(OPERATOR_ID, UserRole.USER, UUID.randomUUID(), 0)));
-        when(sync.uploadPaidOrders(eq(OPERATOR_ID), any())).thenReturn(mock(PaidOrderUpload.class));
+        when(sync.uploadPaidOrders(eq(OPERATOR_ID), any(), eq(true))).thenReturn(mock(PaidOrderUpload.class));
 
         bootstrap(true).uploadDemoPaidOrders();
 
         ArgumentCaptor<PaidOrderBatch> batch = ArgumentCaptor.forClass(PaidOrderBatch.class);
-        verify(sync).uploadPaidOrders(eq(OPERATOR_ID), batch.capture());
+        verify(sync).uploadPaidOrders(eq(OPERATOR_ID), batch.capture(), eq(true));
         assertThat(batch.getValue().issues()).isEmpty();
         assertThat(batch.getValue().orders()).extracting(PaidOrder::course, PaidOrder::streamNumber)
                 .containsOnly(tuple("Промпт-инжиниринг", 1));
@@ -57,7 +58,7 @@ class DemoSourcesBootstrapTest {
         bootstrap(true).uploadDemoPaidOrders();
         bootstrap(false).uploadDemoPaidOrders();
 
-        verify(sync, never()).uploadPaidOrders(any(), any());
+        verify(sync, never()).uploadPaidOrders(any(), any(), anyBoolean());
     }
 
     private DemoSourcesBootstrap bootstrap(boolean enrolment) {

@@ -368,6 +368,33 @@ class McpTools {
             }
         }
 
+        List<UUID> uuids(String name, int maxItems) {
+            Object value = values.get(name);
+            if (value == null) {
+                return List.of();
+            }
+            if (!(value instanceof List<?> items) || items.size() > maxItems) {
+                throw new InteractionValidationException(name, "Укажите список не больше чем из " + maxItems + " идентификаторов");
+            }
+            try {
+                return items.stream().map(item -> UUID.fromString(String.valueOf(item))).toList();
+            } catch (IllegalArgumentException exception) {
+                throw new InteractionValidationException(name, "Некорректный идентификатор");
+            }
+        }
+
+        <E extends Enum<E>> E enumValue(String name, Class<E> type) {
+            String value = text(name);
+            if (value == null) {
+                return null;
+            }
+            try {
+                return Enum.valueOf(type, value);
+            } catch (IllegalArgumentException exception) {
+                throw new InteractionValidationException(name, "Недопустимое значение");
+            }
+        }
+
         // Идентификатор объекта для журнала: по нему администратор видит, какую карточку читал агент.
         UUID objectId() {
             for (String name : List.of("interactionId", "organizationId", "managerId", "planId")) {

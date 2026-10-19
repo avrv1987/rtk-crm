@@ -74,7 +74,7 @@ public class CatalogImportService {
             "vendorName", "vendorExternalKey", "productName", "productExternalKey",
             "agreementExternalKey", "contractNumber", "licenseSigned", "licenseExpiryYear",
             "transferStatus", "managerName", "contactName", "contactExternalKey", "contactPosition",
-            "contactEmail", "contactPhone", "interactionId", "comment"
+            "contactEmail", "contactPhone", "interactionId", "comment", "programName"
     );
     private static final List<String> AGREEMENT_VALUE_FIELDS = List.of(
             "agreementExternalKey", "contractNumber", "licenseSigned", "licenseExpiryYear", "transferStatus", "comment",
@@ -85,6 +85,8 @@ public class CatalogImportService {
             "directionExternalKey", "directionName", "programExternalKey", "programName", "programDirectionRef"
     );
     private static final String CONTACT_ENTRY_SEPARATORS = "[;\\r\\n]+";
+    private static final String IMPORTED_TITLE = "Лицензии и передача ПО (из реестра)";
+    private static final java.util.regex.Pattern SPO_WORD = java.util.regex.Pattern.compile("(^|[^\\p{L}])спо([^\\p{L}]|$)");
 
     private final CatalogImportRepository repository;
     private final OrganizationAssignmentRepository organizationAssignmentRepository;
@@ -237,6 +239,16 @@ public class CatalogImportService {
 
         CatalogImportStored stored = repository.findByIdForUpdate(importId)
                 .orElseThrow(CatalogImportNotFoundException::new);
+        // Повторное «Применить» того же предпросмотра (двойной клик, повтор с новым ключом) — не конфликт: импорт уже
+        // применён этой версией, и ответ тот же, что у первого применения.
+        if (stored.status() == CatalogImportStatus.APPLIED && stored.version() == normalizedRequest.version() + 1) {
+            Optional<UUID> appliedJob = repository.findLatestApplyJobId(stored.id());
+            if (appliedJob.isPresent()) {
+                CatalogImportApplyResponse response = new CatalogImportApplyResponse(appliedJob.get(), stored.id());
+                commandIdempotencyRepository.complete(commandId, write(response));
+                return response;
+            }
+        }
         if (stored.status() != CatalogImportStatus.PREVIEWED || stored.version() != normalizedRequest.version()) {
             throw InteractionConflictException.catalogImportVersion(stored.version());
         }
@@ -270,11 +282,12 @@ public class CatalogImportService {
         selectedRows.sort(Comparator.comparingInt(CatalogImportStoredRow::rowNumber));
         try {
             OffsetDateTime now = OffsetDateTime.now();
+            Map<String, UUID> createdInteractions = new HashMap<>();
             for (CatalogImportStoredRow row : selectedRows) {
                 switch (stored.profile()) {
                     case DIRECTION_PROGRAM -> applyDirectionProgram(row.plan(), profile.id(), commandId, now);
                     case VENDOR_CONTACTS -> vendorContactImport.apply(row.plan(), profile.id(), commandId, now);
-                    case AGREEMENT -> applyAgreement(row.plan(), profile.id(), commandId, now);
+                    case AGREEMENT -> applyAgreement(row.plan(), profile.id(), commandId, now, createdInteractions);
                 }
             }
             for (ImportAgreementLink link : archivedLinks) {
@@ -426,7 +439,26 @@ public class CatalogImportService {
                 "то же ПО у другой записи каталога");
 
         planContact(row, catalogs, organization);
+        planProgram(row);
         planProductAgreement(row, catalogs, planning, organization, product, productName);
+    }
+
+    // Необязательная колонка «ИТ-программа»: программа ищется в справочнике по точному названию и попадает в новое
+    // взаимодействие. Новую программу импорт реестра не заводит — для этого есть профиль «Направления и программы».
+    private void planProgram(PlannedRow row) {
+        String programName = optional(row, "programName", 200);
+        row.values.put("programId", "");
+        if (programName.isEmpty()) {
+            return;
+        }
+        List<UUID> programs = repository.findActiveProgramIdsByName(programName);
+        if (programs.size() != 1) {
+            row.error("programName", programs.isEmpty()
+                    ? "ИТ-программа «" + programName + "» не найдена в справочнике: добавьте её в «Справочниках» или очистите ячейку"
+                    : "В справочнике несколько программ «" + programName + "»");
+            return;
+        }
+        row.values.put("programId", programs.getFirst().toString());
     }
 
     private Optional<ImportProfile> planManager(PlannedRow row, AgreementCatalogs catalogs) {
@@ -726,14 +758,20 @@ public class CatalogImportService {
             useInteraction(row, interactionIds.getFirst(), linked.getFirst().interactionTitle());
             return;
         }
+        // Одно новое взаимодействие на вуз и программу, продукты строк — его списком (в карточке одна программа и несколько
+        // продуктов). Раньше каждая строка ПО давала отдельную карточку без программы.
+        String programName = optional(row, "programName", 200);
+        String title = programName.isEmpty() ? IMPORTED_TITLE : programName;
+        String planKey = organization.identity() + "|program:" + row.values.getOrDefault("programId", "");
         row.values.put("interactionId", "");
-        row.values.put("interactionTitle", productName);
+        row.values.put("interactionTitle", title);
+        row.values.put("interactionPlanKey", planKey);
         Integer plannedBy = row.hasErrors()
                 ? null
-                : planning.interactions().putIfAbsent(organization.identity() + "|" + product.identity(), row.rowNumber);
+                : planning.interactions().putIfAbsent(planKey, row.rowNumber);
         row.compare(false, "interaction", "", plannedBy == null
-                ? "Новое взаимодействие «" + productName + "» по базовому процессу"
-                : "Взаимодействие, создаваемое строкой " + plannedBy);
+                ? "Новое взаимодействие «" + title + "» по базовому процессу"
+                : "Взаимодействие, создаваемое строкой " + plannedBy + "; ПО «" + productName + "» добавится в него");
     }
 
     private void useInteraction(PlannedRow row, UUID interactionId, String title) {
@@ -860,7 +898,8 @@ public class CatalogImportService {
         }
     }
 
-    private void applyAgreement(CatalogImportPlan plan, UUID actorProfileId, UUID commandId, OffsetDateTime now) {
+    private void applyAgreement(CatalogImportPlan plan, UUID actorProfileId, UUID commandId, OffsetDateTime now,
+                                Map<String, UUID> createdInteractions) {
         UUID organizationId = ensureOrganization(plan, actorProfileId, commandId, now);
         UUID vendorId = ensureCatalogEntry(VENDORS, "vendor", "vendorName", plan, actorProfileId, commandId, now);
         UUID productId = ensureChildEntry(PRODUCTS, "product", "productName", "vendorName", vendorId, plan, actorProfileId, commandId, now);
@@ -868,7 +907,7 @@ public class CatalogImportService {
             ensureContact(plan, entity, organizationId, actorProfileId, now);
         }
         if (!plan.values().getOrDefault("agreementExternalKey", "").isEmpty()) {
-            ensureProductAgreement(plan, organizationId, productId, actorProfileId, commandId, now);
+            ensureProductAgreement(plan, organizationId, productId, actorProfileId, commandId, now, createdInteractions);
         }
     }
 
@@ -1156,7 +1195,8 @@ public class CatalogImportService {
             UUID productId,
             UUID actorProfileId,
             UUID commandId,
-            OffsetDateTime now
+            OffsetDateTime now,
+            Map<String, UUID> createdInteractions
     ) {
         Map<String, String> values = plan.values();
         String key = values.get("agreementExternalKey");
@@ -1171,7 +1211,7 @@ public class CatalogImportService {
         UUID interactionId;
         if (existing.isEmpty()) {
             requireCreatable(id);
-            interactionId = interactionFor(values, organizationId, productId, actorProfileId, commandId, now);
+            interactionId = interactionFor(values, organizationId, productId, actorProfileId, commandId, now, createdInteractions);
             UUID createdId = UUID.randomUUID();
             repository.insertAgreement(createdId, key, interactionId, productId, next, now);
             journal(CatalogEntityType.AGREEMENT, createdId, CatalogChangeAction.CREATE, agreementName(values),
@@ -1231,7 +1271,8 @@ public class CatalogImportService {
             UUID productId,
             UUID actorProfileId,
             UUID commandId,
-            OffsetDateTime now
+            OffsetDateTime now,
+            Map<String, UUID> createdInteractions
     ) {
         UUID explicitId = uuid(values.get("interactionId"));
         if (explicitId != null) {
@@ -1247,12 +1288,23 @@ public class CatalogImportService {
         if (interactionIds.size() == 1) {
             return interactionIds.getFirst();
         }
+        // Предпросмотр сгруппировал строки по вузу и программе: следующая строка группы добавляет ПО в уже созданную карточку.
+        String planKey = values.get("interactionPlanKey");
+        UUID planned = planKey == null ? null : createdInteractions.get(planKey);
+        if (planned != null) {
+            return planned;
+        }
         UUID ownerManagerId = repository.findOrganizationById(organizationId)
                 .map(ImportOrganization::ownerManagerId)
                 .orElse(null);
-        return interactionService.createImportedInteraction(
-                organizationId, ownerManagerId, values.get("interactionTitle"), actorProfileId, commandId, now
+        UUID created = interactionService.createImportedInteraction(
+                organizationId, ownerManagerId, values.get("interactionTitle"), uuid(values.get("programId")), productId, actorProfileId,
+                commandId, now
         );
+        if (planKey != null) {
+            createdInteractions.put(planKey, created);
+        }
+        return created;
     }
 
     // Если при предпросмотре запись была найдена (есть UUID), а при применении её уже нет, создавать новую
@@ -1407,8 +1459,10 @@ public class CatalogImportService {
         return new KeyChoice(key.length() <= MAX_KEY_LENGTH ? key : prefix + ":" + CommandFingerprint.of(objectMapper, joined), true);
     }
 
+    // Без колонки «Тип организации» новый вуз получает тип по названию: колледж и техникум — СПО, школа, лицей и
+    // гимназия — школа; иначе вуз. У найденной организации тип не меняется.
     private static String organizationType(PlannedRow row, Optional<ImportOrganization> organization) {
-        String fallback = organization.map(ImportOrganization::type).orElse("UNIVERSITY");
+        String fallback = organization.map(ImportOrganization::type).orElseGet(() -> typeByName(row.values.get("organizationName")));
         return switch (normalized(optional(row, "organizationType", 16))) {
             case "" -> fallback;
             case "university", "вуз" -> "UNIVERSITY";
@@ -1419,6 +1473,14 @@ public class CatalogImportService {
                 yield fallback;
             }
         };
+    }
+
+    static String typeByName(String name) {
+        String text = normalized(name == null ? "" : name);
+        if (text.contains("колледж") || text.contains("техникум") || SPO_WORD.matcher(text).find()) {
+            return "COLLEGE";
+        }
+        return text.contains("школа") || text.contains("лицей") || text.contains("гимназия") ? "SCHOOL" : "UNIVERSITY";
     }
 
     private static String typeLabel(String type) {

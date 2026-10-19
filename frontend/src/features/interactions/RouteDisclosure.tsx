@@ -92,7 +92,10 @@ export const RouteDisclosure = ({ interaction, items, canEdit, onCompleteStage, 
   return (
     <section className="work-route" aria-labelledby="work-route-title">
       <div className="work-route__summary">
-        <h4 id="work-route-title" className="work-route__title">Маршрут</h4>
+        <h4 id="work-route-title" className="work-route__title">
+          Маршрут{interaction.kind ? <span className="work-route__kind"> · {interaction.kind.name}</span> : null}
+        </h4>
+
         <div className="work-route__bar" aria-hidden="true">
           {items.map((item) => (
             <span key={item.stage.id} className={`work-route__segment work-route__segment--${item.status}`} title={item.stage.name} />

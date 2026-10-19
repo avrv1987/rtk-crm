@@ -11,7 +11,11 @@ export const queueKinds: Record<QueueKind, { title: string; next: string; action
     next: 'Уберите слушателя с прежнего курса в LMS, проверьте новый и отметьте сверку',
     action: 'reconcile'
   },
-  LMS_ERROR: { title: 'Ошибка LMS', next: 'Исправьте анкету по тексту ошибки и выгрузите поток повторно', action: 'learner' },
+  LMS_ERROR: {
+    title: 'Ошибка LMS',
+    next: 'Исправьте анкету по тексту ошибки и выгрузите поток повторно; если курс Moodle не сопоставлен — обратитесь к администратору',
+    action: 'learner'
+  },
   CHANGED_AFTER_TRANSFER: {
     title: 'Анкета изменена после передачи',
     next: 'Внесите изменения в LMS или выгрузите анкету повторно, затем отметьте сверку',
@@ -37,6 +41,9 @@ export const queueKinds: Record<QueueKind, { title: string; next: string; action
 }
 
 export const queueOrder = Object.keys(queueKinds) as QueueKind[]
+
+// «Нет курса Moodle» — не ошибка анкеты: курс программы сопоставляет администратор, менеджер учебного процесса этого не может.
+export const courseNotMapped = (detail: string | null) => detail !== null && detail.startsWith('Нет курса Moodle')
 
 export const lmsStatusText: Record<'PENDING' | 'EXPORTED' | 'SENT' | 'FAILED' | 'TRANSFERRED', string> = {
   PENDING: 'Ожидает выгрузки',

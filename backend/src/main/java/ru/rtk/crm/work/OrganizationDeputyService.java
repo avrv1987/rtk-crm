@@ -180,11 +180,14 @@ public class OrganizationDeputyService {
         }
         Optional<OrganizationDeputyRepository.DeputyRow> open = organizationDeputyRepository.findOpenForUpdate(organizationId);
         if (open.isPresent() && open.get().endsAt().isAfter(now)) {
-            throw new InteractionValidationException(
-                    "deputyProfileId",
-                    "У вуза уже есть заместитель до " + DATE_FORMAT.format(open.get().endsOn())
-                            + "; сначала завершите текущее замещение"
-            );
+            // Запланированное замещение ещё не началось — так и говорим, а не «текущее»: опечатка в годе (2062)
+            // иначе выглядела как действующий заместитель, мешающий назначить срочного.
+            throw new InteractionValidationException("deputyProfileId", open.get().startsAt().isAfter(now)
+                    ? "У вуза запланировано замещение (" + open.get().deputyDisplayName() + " с "
+                            + DATE_FORMAT.format(open.get().startsOn()) + " по " + DATE_FORMAT.format(open.get().endsOn())
+                            + "), оно ещё не началось. Чтобы назначить другое, сначала отмените запланированное: «Завершить замещение»"
+                    : "У вуза уже есть заместитель до " + DATE_FORMAT.format(open.get().endsOn())
+                            + "; сначала завершите текущее замещение");
         }
         open.ifPresent(expired -> endAutomatically(expired));
         OrganizationAssignmentProfile deputy = organizationAssignmentRepository.lockProfileForUpdate(command.deputyProfileId())
@@ -277,6 +280,12 @@ public class OrganizationDeputyService {
         }
         if (ChronoUnit.DAYS.between(request.startsOn(), request.endsOn()) >= MAX_PERIOD_DAYS) {
             throw new InteractionValidationException("endsOn", "Замещение можно назначить не больше чем на год");
+        }
+        // Начало — не дальше года вперёд (Н-8, 2.5): замещение «на 2062 год» из опечатки занимало вуз на десятилетия.
+        LocalDate today = LocalDate.now(WorkProperties.ZONE);
+        if (request.startsOn().isAfter(today.plusYears(1))) {
+            throw new InteractionValidationException("startsOn", "Дата начала замещения — не позже чем через год, до "
+                    + DATE_FORMAT.format(today.plusYears(1)));
         }
         return request;
     }

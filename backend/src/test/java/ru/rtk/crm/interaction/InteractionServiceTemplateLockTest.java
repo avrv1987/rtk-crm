@@ -139,7 +139,7 @@ class InteractionServiceTemplateLockTest {
             currentStageId.set(invocation.getArgument(3));
             return null;
         }).when(interactionRepository).insertInteraction(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()
         );
         doAnswer(invocation -> {
             stages.set(List.copyOf(invocation.getArgument(1)));
@@ -174,6 +174,11 @@ class InteractionServiceTemplateLockTest {
         when(interactionRepository.findProductIds(any())).thenReturn(List.of());
         when(interactionRepository.findProductAgreements(any())).thenReturn(List.of());
         when(attachmentRepository.findByInteractionId(any())).thenReturn(List.of());
+        InteractionKindRepository kindRepository = mock(InteractionKindRepository.class);
+        when(kindRepository.findFirstActiveKind()).thenReturn(Optional.of(UUID.randomUUID()));
+        InteractionKindService kindService = new InteractionKindService(kindRepository, workflowTemplateRepository,
+                organizationRepository, catalogRepository, commandIdempotencyRepository,
+                mock(ru.rtk.crm.audit.AuditJournalRepository.class), new ObjectMapper());
 
         return new Fixture(
                 new InteractionService(
@@ -185,8 +190,10 @@ class InteractionServiceTemplateLockTest {
                         attachmentRepository,
                         commandIdempotencyRepository,
                         new ObjectMapper().findAndRegisterModules(),
-                        mock(ru.rtk.crm.agreement.AgreementStages.class)
+                        mock(ru.rtk.crm.agreement.AgreementStages.class),
+                        kindService
                 ),
+
                 workflowTemplateRepository
         );
     }

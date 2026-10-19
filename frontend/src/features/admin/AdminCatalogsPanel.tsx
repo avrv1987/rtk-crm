@@ -17,6 +17,7 @@ import { Pagination } from '../../shared/ui/Pagination'
 import { Segmented } from '../../shared/ui/Segmented'
 import { Toast } from '../../shared/ui/Toast'
 import { ActivityKindsPanel } from '../agreements/ActivityKindsPanel'
+import { InteractionKindRulesPanel, InteractionKindsPanel } from './InteractionKindsPanel'
 import { CardDialog } from '../interactions/cardUi'
 import { formatDateTime, handledSessionError, requestIdOf, type SessionHandlers } from './adminShared'
 import { catalogAddLabels, catalogTabLabels, catalogTabSlugs, type CatalogsTabSlug } from './catalogTabs'
@@ -51,7 +52,8 @@ const kinds: Array<{ kind: CatalogKind; label: string; parent?: CatalogKind; par
   { kind: 'directions', label: catalogTabLabels.directions },
   { kind: 'programs', label: catalogTabLabels.programs, parent: 'directions', parentLabel: 'ИТ-направление' },
   { kind: 'vendors', label: catalogTabLabels.vendors },
-  { kind: 'products', label: catalogTabLabels.products, parent: 'vendors', parentLabel: 'Вендор' }
+  { kind: 'products', label: catalogTabLabels.products, parent: 'vendors', parentLabel: 'Вендор' },
+  { kind: 'document_kinds', label: catalogTabLabels.document_kinds }
 ]
 
 const stateOptions: Array<{ value: EntryState; label: string }> = [
@@ -68,7 +70,8 @@ const entityLabels: Record<CatalogEntityType, string> = {
   VENDOR: 'Вендор',
   PRODUCT: 'ИТ-продукт',
   AGREEMENT: 'Договор',
-  VENDOR_CONTACT: 'Контакт вендора'
+  VENDOR_CONTACT: 'Контакт вендора',
+  DOCUMENT_KIND: 'Вид документа'
 }
 
 const actionLabels: Record<CatalogChangeEvent['action'], string> = {
@@ -205,7 +208,7 @@ export const AdminCatalogsPanel = ({ tab: tabProp, onTabChange, onSessionExpired
   }
 
   const openAdd = () => {
-    if (tab === 'activity-kinds') {
+    if (tab === 'activity-kinds' || tab === 'interaction-kinds' || tab === 'interaction-kind-rules') {
       setKindsAddRequest((value) => value + 1)
       return
     }
@@ -311,7 +314,26 @@ export const AdminCatalogsPanel = ({ tab: tabProp, onTabChange, onSessionExpired
         ))}
       </div>
 
+      {tab === 'interaction-kinds' && (
+        <InteractionKindsPanel
+          addRequest={kindsAddRequest}
+          onNotify={setMessage}
+          onSessionExpired={onSessionExpired}
+          onProfileUnavailable={onProfileUnavailable}
+        />
+      )}
+
+      {tab === 'interaction-kind-rules' && (
+        <InteractionKindRulesPanel
+          addRequest={kindsAddRequest}
+          onNotify={setMessage}
+          onSessionExpired={onSessionExpired}
+          onProfileUnavailable={onProfileUnavailable}
+        />
+      )}
+
       {tab === 'activity-kinds' && (
+
         <ActivityKindsPanel
           addRequest={kindsAddRequest}
           onNotify={setMessage}

@@ -51,9 +51,13 @@ const seesTeams = (role: Role) => role === 'LEADER' || role === 'MANAGEMENT'
 
 const enrolmentVisible = (enrolmentOperator: boolean, modules: Modules) => modules.enrolment && enrolmentOperator
 
-export const sectionsFor = (role: Role, enrolmentOperator: boolean, modules: Modules): Section[] => {
+// enrolmentOnly — менеджер учебного процесса служебной команды «Открытый набор»: своих вузов у него нет, разделы КАМ лишние.
+export const sectionsFor = (role: Role, enrolmentOperator: boolean, modules: Modules, enrolmentOnly = false): Section[] => {
   if (role === 'ADMIN') {
     return ['admin', 'help']
+  }
+  if (enrolmentOnly && enrolmentVisible(enrolmentOperator, modules)) {
+    return ['enrolment', 'help']
   }
   if (role === 'PARTNER') {
     return modules.partner ? ['partner', 'help'] : ['help']
@@ -67,7 +71,7 @@ export const sectionsFor = (role: Role, enrolmentOperator: boolean, modules: Mod
   if (role === 'LEADER') {
     sections.push('admin')
   }
-  // Экран подтверждения плана ИИ-агента открывается только по ссылке, в меню его нет. Планы готовят КАМ и руководитель.
+  // Планы ИИ-агента открываются по ссылке агента, из колокольчика и по адресу #/agent-plans; в меню их нет. Планы готовят КАМ и руководитель.
   // Без модуля MCP агентов нет вовсе, и ссылка ведёт на первый доступный раздел, а не на «План не найден».
   if (modules.mcp && (role === 'USER' || role === 'LEADER')) {
     sections.push('agent-plans')
@@ -76,9 +80,12 @@ export const sectionsFor = (role: Role, enrolmentOperator: boolean, modules: Mod
   return sections
 }
 
-export const navFor = (role: Role, enrolmentOperator: boolean, modules: Modules): NavItem[] => {
+export const navFor = (role: Role, enrolmentOperator: boolean, modules: Modules, enrolmentOnly = false): NavItem[] => {
   if (role === 'ADMIN' || role === 'PARTNER') {
     return []
+  }
+  if (enrolmentOnly && enrolmentVisible(enrolmentOperator, modules)) {
+    return [{ label: 'Зачисление', href: '#/enrolment', sections: ['enrolment'], phone: true }]
   }
   const items: NavItem[] = [
     role === 'MANAGEMENT'
@@ -148,7 +155,7 @@ const titles: Record<Section, string> = {
   enrolment: 'Зачисление',
   partner: 'Сотрудничество с ИТ Школой РТК',
   help: 'Справка',
-  'agent-plans': 'План ИИ-агента',
+  'agent-plans': 'Планы ИИ-агента',
   summary: 'Сводка команд'
 }
 

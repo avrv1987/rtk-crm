@@ -50,6 +50,8 @@ public class PersonalDataService {
     private static final Logger LOGGER = LoggerFactory.getLogger(PersonalDataService.class);
     private static final String REPORTS_AFTER_ANONYMIZATION =
             "Отчёт сформирован до обезличивания персональных данных, файл удалён; сформируйте отчёт заново";
+    private static final String REPORTS_NEED_REBUILD =
+            "Требует пересоздания: после обезличивания персональных данных проверить этот файл не удалось; сформируйте отчёт заново";
     private static final int MAX_COMMENT = 500;
     private static final int MAX_IDS = 200;
 
@@ -339,31 +341,44 @@ public class PersonalDataService {
         List<String> profileSpellings = pendingContacts.isEmpty() ? spellings : List.of();
         List<UUID> deletedFiles = files.stream().map(StoredFile::id).toList();
         Set<UUID> organizations = new LinkedHashSet<>();
+        List<SubjectTerms> subjects = new ArrayList<>();
         for (ContactState contact : pendingContacts) {
-            replace(SubjectTerms.subject(contact.name(), contact.email(), contact.phone(), spellings), CONTACT_MARKER,
+            SubjectTerms terms = SubjectTerms.subject(contact.name(), contact.email(), contact.phone(), spellings);
+            replace(terms, CONTACT_MARKER,
                     new Scope(List.of(contact.organizationId()), List.of(contact.id()), deletedFiles), counts, dryRun);
+            subjects.add(terms);
             organizations.add(contact.organizationId());
         }
         for (ProfileState profile : pendingProfiles) {
             List<UUID> profileOrganizations = repository.profileOrganizationIds(profile.id());
-            replace(SubjectTerms.subject(profile.displayName(), null, null, profileSpellings), EMPLOYEE_MARKER,
+            SubjectTerms terms = SubjectTerms.subject(profile.displayName(), null, null, profileSpellings);
+            replace(terms, EMPLOYEE_MARKER,
                     new Scope(profileOrganizations, List.of(profile.id()), deletedFiles), counts, dryRun);
+            subjects.add(terms);
             organizations.addAll(profileOrganizations);
         }
         int reports = 0;
+        int marked = 0;
         if (expireReports && !(pendingContacts.isEmpty() && pendingProfiles.isEmpty())) {
-            List<StoredFile> reportFiles = repository.findSubjectReports(
-                    List.copyOf(organizations), pendingProfiles.stream().map(ProfileState::id).toList()
-            );
-            if (dryRun) {
-                reports = reportFiles.size();
-            } else {
-                List<UUID> expired = reportFiles.stream()
-                        .filter(report -> repository.expireReport(report, REPORTS_AFTER_ANONYMIZATION))
-                        .map(StoredFile::storageKey)
-                        .toList();
+            // Отчёт удаляется, только если субъект найден в самом файле; непрочитанный файл помечается, а не удаляется.
+            List<UUID> expired = new ArrayList<>();
+            for (PersonalDataRepository.SubjectReport report : repository.findSubjectReports(
+                    List.copyOf(organizations), pendingProfiles.stream().map(ProfileState::id).toList())) {
+                ReportContentScanner.Presence presence = ReportContentScanner.scan(
+                        reportStorage.resultFile(report.file().storageKey()), report.format(), report.groupBy(),
+                        !pendingProfiles.isEmpty(), subjects);
+                if (presence == ReportContentScanner.Presence.FOUND) {
+                    if (dryRun || repository.expireReport(report.file(), REPORTS_AFTER_ANONYMIZATION)) {
+                        reports++;
+                        expired.add(report.file().storageKey());
+                    }
+                } else if (presence == ReportContentScanner.Presence.UNKNOWN
+                        && (dryRun || repository.markReportForRebuild(report.file(), REPORTS_NEED_REBUILD))) {
+                    marked++;
+                }
+            }
+            if (!dryRun) {
                 afterCommit(() -> expired.forEach(key -> reportStorage.delete(reportStorage.resultFile(key))));
-                reports = expired.size();
             }
         }
         if (!dryRun) {
@@ -380,7 +395,7 @@ public class PersonalDataService {
         }
         return new AnonymizationResult(
                 pendingContacts.size(), pendingProfiles.size(), counts.mentions, counts.files, counts.sourceRecords,
-                counts.technical, files.size(), reports, 0
+                counts.technical, files.size(), reports, 0, marked
         );
     }
 

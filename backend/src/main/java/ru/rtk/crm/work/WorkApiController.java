@@ -1,5 +1,8 @@
 package ru.rtk.crm.work;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -36,6 +39,15 @@ public class WorkApiController {
         return workService.teamsSummary(currentProfileService.requireActiveProfile(user), days(stuckDays));
     }
 
+    @GetMapping("/api/work/portfolio-change")
+    public PortfolioChange portfolioChange(
+            @AuthenticationPrincipal OidcUser user,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to
+    ) {
+        return workService.portfolioChange(currentProfileService.requireActiveProfile(user), date(from, "from"), date(to, "to"));
+    }
+
     @GetMapping("/api/reminders")
     public WorkModels.ReminderDigest reminders(@AuthenticationPrincipal OidcUser user) {
         return workService.reminders(currentProfileService.requireActiveProfile(user));
@@ -47,6 +59,17 @@ public class WorkApiController {
             @RequestBody(required = false) WorkModels.ReminderSettings request
     ) {
         return workService.saveReminderSettings(currentProfileService.requireActiveProfile(user), request);
+    }
+
+    private static LocalDate date(String value, String field) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value.strip());
+        } catch (DateTimeParseException exception) {
+            throw new InteractionValidationException(field, "Укажите дату в формате ГГГГ-ММ-ДД");
+        }
     }
 
     private Integer days(String value) {

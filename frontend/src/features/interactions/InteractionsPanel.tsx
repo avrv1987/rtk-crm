@@ -61,16 +61,34 @@ import { ProductAgreementsSection } from '../documents/ProductAgreementsSection'
 import {
   attachmentAccept,
   attachmentFormats,
-  attachmentKindLabels,
-  attachmentKinds,
   type AttachmentKind
 } from '../documents/documentsApi'
+import { useDocumentKinds } from '../documents/useDocumentKinds'
+import {
+  documentKindName,
+  lmsRoleLabels,
+  lmsRoles,
+  missingDocuments,
+  selectableDocumentKinds,
+  transitionCommentWithDocuments,
+  type StageLmsRole
+} from '../documents/stageProperties'
+import { attachmentFileProblem, attachmentLimitMegabytes } from '../documents/attachmentRules'
 import { InteractionCycles } from '../training/InteractionCycles'
 import { LmsStageSuggestionPanel } from '../training/LmsStageSuggestion'
 import { lmsStageWarning } from '../training/lmsStageSuggestionRules'
 import { TeacherTrainings } from '../training/TeacherTrainings'
 import { TeacherRoster } from '../training/TeacherRoster'
 import { StageCompletionPanel } from './StageCompletionPanel'
+import {
+  automaticKindLabel,
+  interactionKindsApi,
+  optionalityLabel,
+  optionalityOperation,
+  resolutionHint,
+  type InteractionKind,
+  type InteractionKindResolution
+} from './interactionKinds'
 import { WorkAgreementBlock } from '../agreements/WorkAgreementBlock'
 import { agreementsApi, type WorkAgreements } from '../agreements/agreementsApi'
 import { activeStageRole } from '../agreements/agreementModel'
@@ -83,11 +101,17 @@ import {
   cardHash,
   isSignedAgreement,
   primaryAction,
+  forwardCommentOptionNote,
+  forwardCommentReason,
+  forwardCommentSelectedNote,
   primaryShortLabels,
   signingBlock,
   type TransitionDirection,
-  transitionsToward
+  transitionBesidePrimary,
+  transitionsToward,
+  undeletableStageReason
 } from './workCardModel'
+import { catalogGroups } from '../../shared/catalogGroups'
 import { formatMoscowDateTime, isoFromMoscowInput, moscowInputValue } from './moscowTime'
 import './workCard.css'
 
@@ -467,8 +491,6 @@ const attachmentMessage = (error: unknown, action: 'upload' | 'download' | 'refr
     : 'Не удалось связаться с сервисом. Повторите попытку позже.'
 }
 
-const attachmentLimitMegabytes = 20
-const attachmentLimitBytes = attachmentLimitMegabytes * 1024 * 1024
 
 type CardDialogKind = 'contact' | 'create' | 'transition' | 'step' | 'program' | 'comment' | 'upload' | 'status' | 'flags' | 'issues' | 'stageEdit' | 'stageCompletion' | 'details'
 
@@ -543,6 +565,10 @@ export const InteractionsPanel = ({
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [uploadKind, setUploadKind] = useState<AttachmentKind>('OTHER')
   const [attachmentKindFilter, setAttachmentKindFilter] = useState<AttachmentKind | ''>('')
+  const documentKinds = useDocumentKinds()
+  const [stageEditRequiresAgreement, setStageEditRequiresAgreement] = useState(false)
+  const [stageEditLmsRole, setStageEditLmsRole] = useState<StageLmsRole | ''>('')
+  const [stageEditDocuments, setStageEditDocuments] = useState<string[]>([])
   const [uploadState, setUploadState] = useState<CommandState>({ kind: 'idle' })
   const [attachmentRefreshState, setAttachmentRefreshState] = useState<AttachmentRefreshState>({ kind: 'idle' })
   const [attachmentDownloadState, setAttachmentDownloadState] = useState<AttachmentDownloadState>({ kind: 'idle' })
@@ -559,6 +585,9 @@ export const InteractionsPanel = ({
   const [createProgramId, setCreateProgramId] = useState(restoredDraft.current.createProgramId)
   const [createTemplateId, setCreateTemplateId] = useState(restoredDraft.current.createTemplateId)
   const [confirmedTemplateId, setConfirmedTemplateId] = useState<string | null>(null)
+  const [createKindId, setCreateKindId] = useState('')
+  const [kinds, setKinds] = useState<InteractionKind[]>([])
+  const [kindResolution, setKindResolution] = useState<InteractionKindResolution | null>(null)
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>(restoredDraft.current.selectedProductIds)
   const [createLastContactAt, setCreateLastContactAt] = useState(restoredDraft.current.createLastContactAt)
   const [createState, setCreateState] = useState<CommandState>({ kind: 'idle' })
@@ -594,6 +623,7 @@ export const InteractionsPanel = ({
   const [agreementCreateSignal, setAgreementCreateSignal] = useState(0)
   const [signalCount, setSignalCount] = useState(0)
   const [cyclesFocus, setCyclesFocus] = useState(0)
+  const [cycleFormRequested, setCycleFormRequested] = useState(false)
   const [confirmStageDelete, setConfirmStageDelete] = useState(false)
   const [agreementsRevision, setAgreementsRevision] = useState(0)
   const contactFromDetails = useRef(false)
@@ -878,6 +908,8 @@ export const InteractionsPanel = ({
     if (view === 'works') {
       setTemplatesPageIndex(0)
       void loadAvailableTemplates(0)
+      // Список видов нужен только для выбора: если он не загрузился, сервер всё равно подберёт вид по правилам.
+      interactionKindsApi.available().then(setKinds).catch(() => setKinds([]))
     }
     return () => {
       catalogRequestVersion.current += 1
@@ -1075,8 +1107,12 @@ export const InteractionsPanel = ({
   const stageEditNeedsTarget = stageEditType !== 'ADD_AFTER'
   const stageEditNeedsAfter = stageEditType === 'ADD_AFTER' || stageEditType === 'MOVE_AFTER'
   const stageEditNeedsName = stageEditType === 'RENAME' || stageEditType === 'ADD_AFTER'
+  const stageDeleteBlock = (stageId: string) => stageEditType !== 'DELETE' || currentInteraction === undefined
+    ? null
+    : undeletableStageReason(stageId, currentInteraction.currentStageId, currentEvents, currentInteraction.attachments)
   const stageEditCanSubmit = currentInteraction !== undefined
     && (!stageEditNeedsTarget || stageEditTargetExists)
+    && stageDeleteBlock(stageEditId) === null
     && (!stageEditNeedsAfter || stageEditAfterExists)
     && (!stageEditNeedsName || stageEditName.trim().length > 0)
     && (stageEditType !== 'MOVE_AFTER' || stageEditId !== stageEditAfterId)
@@ -1151,6 +1187,34 @@ export const InteractionsPanel = ({
     }
   }, [cardTab, cyclesFocus])
 
+  // Подсказка «какой вид и маршрут получит карточка» пересчитывается сервером тем же правилом, что и при создании.
+  const productKey = selectedProductIds.join(',')
+  useEffect(() => {
+    if (dialog !== 'create') {
+      return
+    }
+    let active = true
+    interactionKindsApi.resolve({
+      organizationId,
+      kindId: createKindId || undefined,
+      programId: createProgramId || undefined,
+      productIds: productKey === '' ? [] : productKey.split(',')
+    })
+      .then((resolution) => {
+        if (active) {
+          setKindResolution(resolution)
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setKindResolution(null)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [createKindId, createProgramId, dialog, organizationId, productKey])
+
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const title = createTitle.trim()
@@ -1166,7 +1230,8 @@ export const InteractionsPanel = ({
       programId: createProgramId || null,
       productIds: selectedProductIds,
       lastContactAt: toIsoDateTime(createLastContactAt),
-      templateId: createTemplateId || null
+      templateId: createTemplateId || null,
+      kindId: createKindId || null
     }
     setCreateState({ kind: 'saving' })
     try {
@@ -1180,6 +1245,7 @@ export const InteractionsPanel = ({
       setCreateNextActionAt('')
       setCreateProgramId('')
       setCreateTemplateId('')
+      setCreateKindId('')
       setConfirmedTemplateId(null)
       setSelectedProductIds([])
       setCreateLastContactAt('')
@@ -1477,10 +1543,20 @@ export const InteractionsPanel = ({
     const operation: InteractionStageEdit['operations'][number] = stageEditType === 'RENAME'
       ? { type: 'RENAME', id: stageEditId, name }
       : stageEditType === 'ADD_AFTER'
-        ? { type: 'ADD_AFTER', afterId: stageEditAfterId, name, optional: stageEditOptional }
+        ? {
+            type: 'ADD_AFTER',
+            afterId: stageEditAfterId,
+            name,
+            optional: stageEditOptional,
+            requiresAgreement: stageEditRequiresAgreement,
+            lmsRole: stageEditLmsRole === '' ? null : stageEditLmsRole,
+            documentKinds: stageEditDocuments
+          }
         : stageEditType === 'MOVE_AFTER'
           ? { type: 'MOVE_AFTER', id: stageEditId, afterId: stageEditAfterId }
-          : { type: 'DELETE', id: stageEditId }
+          : stageEditType === 'SET_OPTIONAL' && stageEditTarget !== undefined
+            ? optionalityOperation(stageEditTarget)
+            : { type: 'DELETE', id: stageEditId }
     const payload: InteractionStageEdit = {
       version: currentInteraction.version,
       operations: [operation]
@@ -1682,10 +1758,9 @@ export const InteractionsPanel = ({
     setUploadStageId(value)
   }
 
-  const uploadTooLarge = uploadFile !== null && uploadFile.size > attachmentLimitBytes
-  const uploadFileError = uploadTooLarge
-    ? `Файл больше ${attachmentLimitMegabytes} МБ. Выберите файл меньшего размера.`
-    : fieldErrorOf(uploadState, 'file')
+  const uploadProblem = uploadFile === null ? null : attachmentFileProblem(uploadFile)
+  const uploadTooLarge = uploadProblem !== null
+  const uploadFileError = uploadProblem ?? fieldErrorOf(uploadState, 'file')
 
   const changeUploadFile = (file: File | null) => {
     uploadKey.current = null
@@ -1787,7 +1862,9 @@ export const InteractionsPanel = ({
   }
 
   const planProgramOptions = catalogState.kind === 'ready'
-    ? catalogState.programs.map((program) => ({ id: program.id, name: program.name }))
+    ? catalogState.programs.map((program): { id: string; name: string; groupName?: string | null } => (
+      { id: program.id, name: program.name, groupName: program.groupName }
+    ))
     : []
   if (currentInteraction?.program && !planProgramOptions.some((program) => program.id === currentInteraction.program?.id)) {
     planProgramOptions.push({ id: currentInteraction.program.id, name: `${currentInteraction.program.name} (архивирована)` })
@@ -1801,7 +1878,9 @@ export const InteractionsPanel = ({
       || agreement.transfers.length > 0)
     .map((agreement) => agreement.productId) ?? [])
   const planProductOptions = catalogState.kind === 'ready'
-    ? catalogState.products.map((product) => ({ id: product.id, name: product.name }))
+    ? catalogState.products.map((product): { id: string; name: string; groupName?: string | null } => (
+      { id: product.id, name: product.name, groupName: product.groupName }
+    ))
     : []
   currentInteraction?.productAgreements.forEach((agreement) => {
     if (!planProductOptions.some((product) => product.id === agreement.productId)) {
@@ -1843,12 +1922,24 @@ export const InteractionsPanel = ({
     ? []
     : transitionsToward(currentInteraction.allowedTransitions, currentInteraction.stages, currentInteraction.currentStageId, direction)
 
+  const forwardNote = (option: { stageId: string; commentRequired: boolean }, notes: Record<string, string>) => {
+    const reason = currentInteraction === undefined ? null : forwardCommentReason(currentInteraction.stages,
+      currentInteraction.currentStageId, option.stageId, option.commentRequired, missingDocuments(currentInteraction.documentChecklist).length > 0)
+    return reason === null ? '' : notes[reason]
+  }
+
   const openTransition = (direction: TransitionDirection = 'forward') => {
     const options = transitionOptions(direction)
     if (!options.some((option) => option.stageId === transitionStageId)) {
       changeTransitionStage(options[0]?.stageId ?? '')
     }
     setTransitionDirection(direction)
+    if (direction === 'forward' && currentInteraction !== undefined) {
+      const prefilled = transitionCommentWithDocuments(transitionDraft, currentInteraction.documentChecklist, true)
+      if (prefilled !== transitionDraft) {
+        changeTransitionDraft(prefilled)
+      }
+    }
     setDialog('transition')
   }
 
@@ -2035,14 +2126,15 @@ export const InteractionsPanel = ({
                       </span>
                       <span className="interaction-list-item__stage">
                         Этап: {interaction.currentStageName}
-                        {!Number.isNaN(days) && <span className="interaction-list-item__days"> · {daysLabel(days)} на этапе</span>}
+                        {!Number.isNaN(days) && interaction.marks.status !== 'COMPLETED' && <span className="interaction-list-item__days"> · {daysLabel(days)} на этапе</span>}
                       </span>
-                      <span className="interaction-list-item__action">{interaction.nextAction ?? 'Следующий шаг не задан'}</span>
+                      {interaction.nextAction?.trim() && <span className="interaction-list-item__action">{interaction.nextAction}</span>}
                       {interaction.marks.status === 'ACTIVE' && (
                         <span className={`interaction-list-item__due ${itemSchedule.className}`}>{itemSchedule.label}</span>
                       )}
                       <span className="interaction-list-item__catalog">
-                        Программа: {interaction.programName ?? 'не указана'} · Продукты: {interaction.productIds.length === 0 ? 'не указаны' : interaction.productIds.length} · Последний контакт: {lastContactLabel(interaction.lastContactAt)}
+                        {interaction.kindName ? `${interaction.kindName} · ` : ''}Программа: {interaction.programName ?? 'не указана'} · Продукты:
+ {interaction.productIds.length === 0 ? 'не указаны' : interaction.productIds.length} · Последний контакт: {lastContactLabel(interaction.lastContactAt)}
                       </span>
                     </a>
                   </li>
@@ -2077,6 +2169,15 @@ export const InteractionsPanel = ({
                   />
                   <FieldError id="interaction-create-title-error" message={fieldErrorOf(createState, 'title')} />
                 </label>
+                {kinds.length > 0 && (
+                  <label>
+                    Вид взаимодействия
+                    <select value={createKindId} onChange={(event) => setCreateKindId(event.target.value)}>
+                      <option value="">{automaticKindLabel(kindResolution)}</option>
+                      {kinds.map((kind) => <option key={kind.id} value={kind.id}>{kind.name}</option>)}
+                    </select>
+                  </label>
+                )}
                 <label>
                   Шаблон процесса
                   <select
@@ -2085,7 +2186,9 @@ export const InteractionsPanel = ({
                     onChange={(event) => changeCreateTemplate(event.target.value)}
                   >
                     <option value="">
-                      {templatesState.kind === 'ready' && templatesState.page.teamDefaultTemplateId !== null
+                      {kindResolution !== null
+                        ? `По виду: ${kindResolution.templateName}`
+                        : templatesState.kind === 'ready' && templatesState.page.teamDefaultTemplateId !== null
                         ? `Шаблон команды по умолчанию: ${templatesState.page.items.find((template) => (
                           template.id === templatesState.page.teamDefaultTemplateId
                         ))?.name ?? 'выбран руководителем'}`
@@ -2099,6 +2202,10 @@ export const InteractionsPanel = ({
                     ))}
                   </select>
                 </label>
+                {kindResolution !== null && createTemplateId === '' && (
+                  <p className="interaction-catalog-message" role="note">{resolutionHint(kindResolution)}</p>
+                )}
+
                 {templatesState.kind === 'loading' && (
                   <p className="interaction-catalog-message" role="status">Загружаем доступные шаблоны процесса…</p>
                 )}
@@ -2198,8 +2305,10 @@ export const InteractionsPanel = ({
                         onChange={(event) => changeCreateProgram(event.target.value)}
                       >
                         <option value="">Не указана</option>
-                        {catalogState.programs.map((program) => (
-                          <option key={program.id} value={program.id}>{program.name}</option>
+                        {catalogGroups(catalogState.programs, 'Без направления').map((group) => (
+                          <optgroup key={group.label} label={group.label}>
+                            {group.items.map((program) => <option key={program.id} value={program.id}>{program.name}</option>)}
+                          </optgroup>
                         ))}
                       </select>
                     </label>
@@ -2208,20 +2317,23 @@ export const InteractionsPanel = ({
                       {catalogState.products.length === 0 ? (
                         <p>Доступных продуктов нет. Их можно не указывать.</p>
                       ) : (
-                        <ul>
-                          {catalogState.products.map((product) => (
-                            <li key={product.id}>
-                              <label>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedProductIds.includes(product.id)}
-                                  onChange={() => toggleProduct(product.id)}
-                                />
-                                <span>{product.name}</span>
-                              </label>
-                            </li>
-                          ))}
-                        </ul>
+                        catalogGroups(catalogState.products, 'Без вендора').map((group) => (
+                          <ul key={group.label} aria-label={group.label}>
+                            <li className="interaction-catalog-picker__group" aria-hidden="true">{group.label}</li>
+                            {group.items.map((product) => (
+                              <li key={product.id}>
+                                <label>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedProductIds.includes(product.id)}
+                                    onChange={() => toggleProduct(product.id)}
+                                  />
+                                  <span>{product.name}</span>
+                                </label>
+                              </li>
+                            ))}
+                          </ul>
+                        ))
                       )}
                       {catalogState.productTotal > catalogState.products.length && (
                         <p>Показаны первые {catalogState.products.length} из {catalogState.productTotal} доступных продуктов.</p>
@@ -2333,6 +2445,7 @@ export const InteractionsPanel = ({
   const startNewCycle = () => {
     setCardTab('learning')
     setCyclesFocus((value) => value + 1)
+    setCycleFormRequested(true)
   }
   const runPrimary = () => {
     if (primary === null) {
@@ -2350,23 +2463,25 @@ export const InteractionsPanel = ({
       setDialog('step')
     }
   }
+  // Завершённую работу сервер не меняет, пока её не вернут в работу: команды этапов и комментарий скрыты.
+  const completed = workStatus === 'COMPLETED'
   const addItems: ActionMenuItem[] = canManageDailyWork ? [
-    { label: 'Комментарий…', onSelect: () => setDialog('comment') },
+    ...(completed ? [] : [{ label: 'Комментарий…', onSelect: () => setDialog('comment') }]),
     { label: 'Документ…', onSelect: () => setDialog('upload') },
     { label: 'Проблема или риск…', onSelect: () => setDialog('issues') }
   ] : []
   const moreItems: ActionMenuItem[] = canManageDailyWork ? [
-    { label: 'Изменить шаг и срок…', onSelect: () => setDialog('step') },
-    ...(primary?.kind === 'transition' || transitionOptions('forward').length === 0
+    ...(completed ? [] : [{ label: 'Изменить шаг и срок…', onSelect: () => setDialog('step') }]),
+    ...(completed || primary?.kind === 'transition' || transitionOptions('forward').length === 0
       ? []
       : [{ label: 'Перейти на следующий этап…', onSelect: () => openTransition('forward') }]),
-    ...(transitionOptions('back').length === 0 ? [] : [{ label: 'Вернуться на этап…', onSelect: () => openTransition('back') }]),
-    { label: 'Отметить этап выполненным (без перехода)…', onSelect: () => setDialog('stageCompletion') },
+    ...(completed || transitionOptions('back').length === 0 ? [] : [{ label: 'Вернуться на этап…', onSelect: () => openTransition('back') }]),
+    ...(completed ? [] : [{ label: 'Отметить этап выполненным (без перехода)…', onSelect: () => setDialog('stageCompletion') }]),
     { label: 'Чего ждём от вуза или РТК…', onSelect: () => setDialog('flags') },
     { label: 'Проблемы и риски…', onSelect: () => setDialog('issues') },
     { label: 'Изменить данные взаимодействия…', onSelect: () => setDialog('details'), separated: true },
     { label: 'Программа и продукты…', onSelect: () => setDialog('program') },
-    { label: 'Изменить этапы этого взаимодействия…', onSelect: () => setDialog('stageEdit') },
+    ...(completed ? [] : [{ label: 'Изменить этапы этого взаимодействия…', onSelect: () => setDialog('stageEdit') }]),
     { label: 'Начать новый цикл…', onSelect: startNewCycle },
     {
       label: workStatus === 'ACTIVE' ? 'Приостановить или завершить…' : 'Возобновить…',
@@ -2428,8 +2543,10 @@ export const InteractionsPanel = ({
             Программа
             <select value={planValues.programId} onChange={(event) => changePlan('programId', event.target.value)}>
               <option value="">Не указана</option>
-              {planProgramOptions.map((program) => (
-                <option key={program.id} value={program.id}>{program.name}</option>
+              {catalogGroups(planProgramOptions, 'Без направления').map((group) => (
+                <optgroup key={group.label} label={group.label}>
+                  {group.items.map((program) => <option key={program.id} value={program.id}>{program.name}</option>)}
+                </optgroup>
               ))}
             </select>
           </label>
@@ -2438,8 +2555,10 @@ export const InteractionsPanel = ({
             {planProductOptions.length === 0 ? (
               <p>Доступных продуктов нет.</p>
             ) : (
-              <ul>
-                {planProductOptions.map((product) => (
+              catalogGroups(planProductOptions, 'Без вендора').map((group) => (
+              <ul key={group.label} aria-label={group.label}>
+                <li className="interaction-catalog-picker__group" aria-hidden="true">{group.label}</li>
+                {group.items.map((product) => (
                   <li key={product.id}>
                     <label>
                       <input
@@ -2454,6 +2573,7 @@ export const InteractionsPanel = ({
                   </li>
                 ))}
               </ul>
+              ))
             )}
           </fieldset>
         </>
@@ -2541,6 +2661,12 @@ export const InteractionsPanel = ({
                   <span className="work-card__primary-short">{primaryShortLabels[primary.kind]}</span>
                 </button>
               )}
+              {transitionBesidePrimary(primary, transitionOptions('forward').length) && (
+                <button type="button" className="button--secondary work-card__transition" onClick={() => openTransition('forward')}>
+                  <span className="work-card__primary-full">Перейти на следующий этап…</span>
+                  <span className="work-card__primary-short">Этап →</span>
+                </button>
+              )}
               <ActionMenu label="Добавить" toggle="Добавить ▾" className="work-card__add" items={addItems} />
               <ActionMenu label="Ещё действия со взаимодействием" className="work-card__more" items={moreItems} />
             </div>
@@ -2564,7 +2690,7 @@ export const InteractionsPanel = ({
               {getModules().partner && currentInteraction.nextStepPartnerVisible && <span className="status status--planned">Виден вузу</span>}
               <span className="work-step__due">{schedule.label}</span>
             </p>
-            {canManageDailyWork && !completingStep && (
+            {canManageDailyWork && !completingStep && !completed && (
               <div className="work-step__actions">
                 {hasStepOrDue && (
                   <button
@@ -2579,7 +2705,7 @@ export const InteractionsPanel = ({
                 <button type="button" className="button--secondary" onClick={() => setDialog('step')}>Изменить</button>
               </div>
             )}
-            {canManageDailyWork && completingStep && (
+            {canManageDailyWork && completingStep && !completed && (
               <StepCompletion
                 key={currentInteraction.id}
                 interaction={currentInteraction}
@@ -2635,7 +2761,7 @@ export const InteractionsPanel = ({
                       Отбор по виду документа
                       <select value={attachmentKindFilter} onChange={(event) => setAttachmentKindFilter(event.target.value as AttachmentKind | '')}>
                         <option value="">Все виды</option>
-                        {attachmentKinds.map((kind) => <option key={kind} value={kind}>{attachmentKindLabels[kind]}</option>)}
+                        {documentKinds.map((kind) => <option key={kind.code} value={kind.code}>{kind.name}</option>)}
                       </select>
                     </label>
                   )}
@@ -2643,12 +2769,29 @@ export const InteractionsPanel = ({
                     <button type="button" className="button--secondary" onClick={() => setDialog('upload')}>Загрузить документ</button>
                   )}
                 </div>
+                {currentInteraction.documentChecklist.length > 0 && (
+                  <div className="stage-document-checklist" aria-label="Обязательные документы текущего этапа">
+                    <p>
+                      <strong>Документы этапа «{currentInteraction.currentStageName}»</strong>
+                      {missingDocuments(currentInteraction.documentChecklist).length === 0
+                        ? ' — всё приложено.'
+                        : ' — перейти дальше можно и без них, но с комментарием.'}
+                    </p>
+                    <ul>
+                      {currentInteraction.documentChecklist.map((document) => (
+                        <li key={document.code} className={document.attached ? 'stage-document--attached' : 'stage-document--missing'}>
+                          {document.attached ? '✓ ' : '✗ '}{document.name}{document.attached ? ' — приложен' : ' — не хватает'}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {currentInteraction.attachments.length === 0 && (
                   <p>Документов пока нет.</p>
                 )}
                 {attachmentKindFilter !== '' && currentInteraction.attachments.length > 0
                   && !currentInteraction.attachments.some((attachment) => attachment.kind === attachmentKindFilter) && (
-                  <p>Документов вида «{attachmentKindLabels[attachmentKindFilter]}» нет.</p>
+                  <p>Документов вида «{documentKindName(documentKinds, attachmentKindFilter)}» нет.</p>
                 )}
                 {currentInteraction.attachments.length > 0 && (
                   <ul className="interaction-attachment-list">
@@ -2822,6 +2965,8 @@ export const InteractionsPanel = ({
                     interaction={currentInteraction}
                     canEdit={canManageDailyWork}
                     onOpen={goToInteraction}
+                    formRequested={cycleFormRequested}
+                    onFormRequestHandled={() => setCycleFormRequested(false)}
                     onStarted={(id) => {
                       carriedNotice = { interactionId: id, text: 'Новый цикл начат. Это его карточка.' }
                       goToInteraction(id)
@@ -2917,7 +3062,7 @@ export const InteractionsPanel = ({
                         <option value="">Выберите этап</option>
                         {transitionOptions(transitionDirection).map((option) => (
                           <option key={option.stageId} value={option.stageId}>
-                            {option.stageName}{transitionDirection === 'forward' && option.commentRequired ? ' (через этап, нужен комментарий)' : ''}
+                            {option.stageName}{transitionDirection === 'forward' ? forwardNote(option, forwardCommentOptionNote) : ''}
                           </option>
                         ))}
                       </select>
@@ -2928,7 +3073,13 @@ export const InteractionsPanel = ({
                       </p>
                     )}
                     {selectedTransition !== undefined && transitionDirection === 'forward' && selectedTransition.commentRequired && (
-                      <p className="interaction-stage-choice">Выбран этап: {selectedTransition.stageName}; комментарий обязателен (пропуск этапа).</p>
+                      <p className="interaction-stage-choice">Выбран этап: {selectedTransition.stageName}; {forwardNote(selectedTransition, forwardCommentSelectedNote)}.</p>
+                    )}
+                    {transitionDirection === 'forward' && missingDocuments(currentInteraction.documentChecklist).length > 0 && (
+                      <p className="notice" role="note">
+                        Не хватает документов этапа: {missingDocuments(currentInteraction.documentChecklist).join(', ')}. Перейти можно,
+                        но комментарий обязателен: перечень уже подставлен, допишите, почему переходите без них.
+                      </p>
                     )}
                     {transitionSigningBlock !== null && (
                       <p className="interaction-catalog-message interaction-catalog-message--error work-card__signing" role="alert">{transitionSigningBlock}</p>
@@ -3120,7 +3271,8 @@ export const InteractionsPanel = ({
                   <label>
                     Вид документа
                     <select value={uploadKind} onChange={(event) => setUploadKind(event.target.value as AttachmentKind)}>
-                      {attachmentKinds.map((kind) => <option key={kind} value={kind}>{attachmentKindLabels[kind]}</option>)}
+                      {(documentKinds.length === 0 ? [{ code: 'OTHER', name: 'Иное', archived: false }] : selectableDocumentKinds(documentKinds))
+                        .map((kind) => <option key={kind.code} value={kind.code}>{kind.name}</option>)}
                     </select>
                   </label>
                   <label>
@@ -3205,8 +3357,8 @@ export const InteractionsPanel = ({
                 <StageCompletionPanel
                   interaction={currentInteraction}
                   signingWarning={work !== null && work.signingRuleEnabled && work.stages.some((stage) => stage.role === 'SIGNING')
-                    && !work.agreements.some(isSignedAgreement)
-                    ? 'Этап «Подписание» можно отметить выполненным только при подписанном договоре с вузом.'
+                    && !work.activeAgreementNumber && !work.agreements.some(isSignedAgreement)
+                    ? 'Этап с отметкой «требует действующего договора» можно отметить выполненным только при действующем договоре с вузом.'
                     : undefined}
                   onChanged={(interaction) => {
                     const attachableIds = attachableIdsOf(interaction)
@@ -3233,6 +3385,7 @@ export const InteractionsPanel = ({
                       <option value="ADD_AFTER">Добавить этап после выбранного</option>
                       <option value="MOVE_AFTER">Переместить этап после выбранного</option>
                       <option value="DELETE">Удалить этап</option>
+                      <option value="SET_OPTIONAL">Изменить обязательность этапа</option>
                     </select>
                   </label>
                   {stageEditNeedsTarget && (
@@ -3240,9 +3393,14 @@ export const InteractionsPanel = ({
                       <span>Этап<RequiredMark /></span>
                       <select value={stageEditId} required onChange={(event) => changeStageEditId(event.target.value)}>
                         <option value="">Выберите этап</option>
-                        {currentInteraction.stages.map((stage) => (
-                          <option key={stage.id} value={stage.id}>{stage.order + 1}. {stage.name}</option>
-                        ))}
+                        {currentInteraction.stages.map((stage) => {
+                          const blocked = stageDeleteBlock(stage.id)
+                          return (
+                            <option key={stage.id} value={stage.id} disabled={blocked !== null}>
+                              {stage.order + 1}. {stage.name}{blocked === null ? '' : ` — нельзя удалить: ${blocked}`}
+                            </option>
+                          )
+                        })}
                       </select>
                     </label>
                   )}
@@ -3282,7 +3440,47 @@ export const InteractionsPanel = ({
                       Необязательный этап
                     </label>
                   )}
+                  {stageEditType === 'ADD_AFTER' && (
+                    <>
+                      <label className="interaction-stage-editor__checkbox">
+                        <input
+                          type="checkbox"
+                          checked={stageEditRequiresAgreement}
+                          onChange={(event) => setStageEditRequiresAgreement(event.target.checked)}
+                        />
+                        Требует действующего договора
+                      </label>
+                      <label>
+                        Роль этапа для LMS
+                        <select value={stageEditLmsRole} onChange={(event) => setStageEditLmsRole(event.target.value as StageLmsRole | '')}>
+                          <option value="">Без связи с LMS</option>
+                          {lmsRoles.map((role) => <option key={role} value={role}>{lmsRoleLabels[role]}</option>)}
+                        </select>
+                      </label>
+                      {documentKinds.length > 0 && (
+                        <fieldset className="interaction-attachment-picker">
+                          <legend>Обязательные документы этапа</legend>
+                          {selectableDocumentKinds(documentKinds).map((kind) => (
+                            <label key={kind.code} className="interaction-stage-editor__checkbox">
+                              <input
+                                type="checkbox"
+                                checked={stageEditDocuments.includes(kind.code)}
+                                onChange={(event) => setStageEditDocuments((codes) => event.target.checked
+                                  ? [...codes, kind.code]
+                                  : codes.filter((code) => code !== kind.code))}
+                              />
+                              {kind.name}
+                            </label>
+                          ))}
+                        </fieldset>
+                      )}
+                    </>
+                  )}
+                  {stageEditType === 'SET_OPTIONAL' && stageEditTarget !== undefined && (
+                    <p role="note">{optionalityLabel(stageEditTarget)} Менять можно только будущие этапы без событий.</p>
+                  )}
                   {stageEditLmsWarning !== null && <p className="notice" role="note">{stageEditLmsWarning}</p>}
+
                   <button
                     type="submit"
                     className={stageEditType === 'DELETE' ? 'button--danger' : undefined}

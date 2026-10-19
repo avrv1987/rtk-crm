@@ -19,6 +19,8 @@ public record InteractionEvent(
         String actorDisplayName,
         UUID ownerManagerIdSnapshot,
         int version,
-        OffsetDateTime occurredAt
+        OffsetDateTime occurredAt,
+        // Событие записано по плану ИИ-агента, который подтвердил сотрудник (ключ команды agent-plan:<id>).
+        boolean preparedByAgent
 ) {
 }

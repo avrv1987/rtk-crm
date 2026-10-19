@@ -13,6 +13,9 @@ const trendPeriods = [30, 90, 180, 365]
 
 const signed = (value: number) => (value > 0 ? `+${value.toLocaleString('ru-RU')}` : value < 0 ? `−${Math.abs(value).toLocaleString('ru-RU')}` : '0')
 
+// Начавшиеся и закончившиеся в периоде потоки — изменение состава, не рост и не падение (разбор А08).
+const runsCell = (runs: number, learners: number, sign: '+' | '−') => (runs > 0 ? `${sign}${learners} (потоков: ${runs})` : '—')
+
 const TrendTable = ({ title, rows, total }: { title: string; rows: LearningTrendItem[]; total?: LearningTrendItem }) => (
   <div className="work-control__scroll">
     <table className="work-control__table">
@@ -23,6 +26,8 @@ const TrendTable = ({ title, rows, total }: { title: string; rows: LearningTrend
           <th scope="col">На конец</th>
           <th scope="col">Изменение</th>
           <th scope="col">Без базы сравнения, на конец</th>
+          <th scope="col">Начались в периоде, на конец</th>
+          <th scope="col">Закончились в периоде, на начало</th>
         </tr>
       </thead>
       <tbody>
@@ -33,6 +38,8 @@ const TrendTable = ({ title, rows, total }: { title: string; rows: LearningTrend
             <td>{row.end}</td>
             <td className={row.change < 0 ? 'work-control__cell--danger' : undefined}>{signed(row.change)}</td>
             <td>{row.runsWithoutData > 0 ? `${row.endWithoutBase} (потоков: ${row.runsWithoutData})` : '—'}</td>
+            <td>{runsCell(row.startedRuns, row.endStarted, '+')}</td>
+            <td>{runsCell(row.endedRuns, row.startEnded, '−')}</td>
           </tr>
         ))}
         {total && (
@@ -42,6 +49,8 @@ const TrendTable = ({ title, rows, total }: { title: string; rows: LearningTrend
             <td>{total.end}</td>
             <td>{signed(total.change)}</td>
             <td>{total.runsWithoutData > 0 ? `${total.endWithoutBase} (потоков: ${total.runsWithoutData})` : '—'}</td>
+            <td>{runsCell(total.startedRuns, total.endStarted, '+')}</td>
+            <td>{runsCell(total.endedRuns, total.startEnded, '−')}</td>
           </tr>
         )}
       </tbody>
@@ -123,6 +132,12 @@ export const LearningTrendPanel = ({ ownTeam = false, onSessionExpired, onProfil
               { label: 'Изменение в сопоставимых потоках', value: signed(state.trend.total.change), tone: state.trend.total.change < 0 ? ' desk-tile--danger' : ' desk-tile--plain' },
               ...(state.trend.total.runsWithoutData > 0
                 ? [{ label: `Новые потоки без базы сравнения, на ${formatDate(state.trend.to)}`, value: state.trend.total.endWithoutBase.toLocaleString('ru-RU'), tone: ' desk-tile--plain' }]
+                : []),
+              ...(state.trend.total.startedRuns > 0
+                ? [{ label: `Начались в периоде (потоков: ${state.trend.total.startedRuns}), на ${formatDate(state.trend.to)}`, value: `+${state.trend.total.endStarted.toLocaleString('ru-RU')}`, tone: ' desk-tile--plain' }]
+                : []),
+              ...(state.trend.total.endedRuns > 0
+                ? [{ label: `Закончились в периоде (потоков: ${state.trend.total.endedRuns}), было на ${formatDate(state.trend.from)}`, value: `−${state.trend.total.startEnded.toLocaleString('ru-RU')}`, tone: ' desk-tile--plain' }]
                 : [])
             ].map((tile) => (
               <li key={tile.label}>
@@ -134,7 +149,7 @@ export const LearningTrendPanel = ({ ownTeam = false, onSessionExpired, onProfil
             ))}
           </ul>
           <p className="work-control__caption">
-            {`Участия в потоках занятий студентов Moodle, которые идут в этот день, на конец дня ${formatDate(state.trend.from)} и ${formatDate(state.trend.to)} по истории наблюдений: берётся последнее наблюдение не позже этой даты; до начала потока и после его окончания — ноль.`}
+            {`Участия в потоках занятий студентов Moodle, которые идут в этот день, на конец дня ${formatDate(state.trend.from)} и ${formatDate(state.trend.to)} по истории наблюдений: берётся последнее наблюдение не позже этой даты. Сопоставимые — потоки, которые идут в обе даты; начавшиеся и закончившиеся в периоде показаны отдельно: это изменение состава, а не рост или падение, и в рейтинги ниже они не входят.`}
           </p>
           {state.trend.runsWithoutData > 0 && (
             <p className="notice" role="note">

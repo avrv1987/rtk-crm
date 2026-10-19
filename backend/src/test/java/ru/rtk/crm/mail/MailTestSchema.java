@@ -12,7 +12,7 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 // Схема тестов модуля: таблицы CRM, которые читает модуль, и настоящая миграция V55 — она проверяется здесь же.
 final class MailTestSchema {
     private static final List<String> TABLES = List.of(
-            "mail_outbox", "mail_preferences", "mail_invitations", "audit_events", "crm_profile_events", "command_idempotency_records",
+            "agent_change_plans", "mail_outbox", "mail_preferences", "mail_invitations", "audit_events", "crm_profile_events", "command_idempotency_records",
             "organization_assignment_events", "agreement_status_events", "agreements", "source_records", "interaction_issues",
             "interactions", "sync_runs", "crm_exchange_events", "organizations", "crm_user_profiles", "teams"
     );

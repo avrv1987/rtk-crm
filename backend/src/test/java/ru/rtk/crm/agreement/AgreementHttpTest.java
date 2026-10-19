@@ -184,6 +184,7 @@ class AgreementHttpTest {
         jdbcTemplate.update("INSERT INTO interaction_stages (id, interaction_id, stage_order, name, template_stage_id) VALUES"
                         + " (?, ?, 1, 'Обмен документами', NULL), (?, ?, 2, 'Подписание договора', ?)",
                 UUID.randomUUID(), work, UUID.randomUUID(), work, UUID.fromString("00000000-0000-0000-0000-000000000816"));
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.markLegacyStages(jdbcTemplate);
         jdbcTemplate.update("INSERT INTO agreement_interactions (agreement_id, interaction_id) VALUES (?, ?)", AGREEMENT_A, work);
 
         mockMvc.perform(get("/api/interactions/{id}/agreements", work).with(login(USER_A)))

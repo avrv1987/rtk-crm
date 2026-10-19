@@ -20,7 +20,10 @@ class MoodleWriteExceptionTest {
         assertThat(MoodleWriteException.rejected("core_group_add_group_members", "invalidrecord").getMessage())
                 .isEqualTo("Moodle: пользователь не найден (invalidrecord)");
         assertThat(MoodleWriteException.rejected("enrol_manual_enrol_users", "somethingnew").getMessage())
-                .isEqualTo("Moodle: запрос отклонён (somethingnew)");
+                .isEqualTo("Moodle: запрос отклонён, обратитесь к администратору Moodle (somethingnew)");
+        assertThat(MoodleWriteException.rejected("core_user_create_users", "codingerror").getMessage())
+                .isEqualTo("Moodle: сбой на стороне Moodle, обратитесь к администратору Moodle, после исправления повторите передачу"
+                        + " (codingerror)");
         assertThat(MoodleWriteException.rejected("enrol_manual_enrol_users", "somethingnew").code()).isEqualTo("somethingnew");
     }
 }

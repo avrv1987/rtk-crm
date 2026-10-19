@@ -101,13 +101,21 @@ public class QuestionnaireImportService {
             throw new InteractionValidationException("fingerprint", "Сначала постройте предпросмотр файла");
         }
         String checksum = inspect(file);
+        String requestFingerprint = commands.fingerprint(List.of(stream.id(), checksum, fingerprint));
         EnrolmentCommands.Reservation reservation = commands.reserve(actor.id(), CommandOperation.APPLY_QUESTIONNAIRE_IMPORT,
-                idempotencyKey, commands.fingerprint(List.of(stream.id(), checksum, fingerprint)));
+                idempotencyKey, requestFingerprint);
         if (reservation.repeated()) {
             return commands.read(reservation.previousResult(), QuestionnaireImport.class);
         }
         Plan plan = plan(stream, file, checksum);
         if (!plan.fingerprint().equals(fingerprint)) {
+            // Анкеты изменило первое применение этого же предпросмотра: это повтор, а не конфликт — ответ «уже применено».
+            Optional<String> applied = commands.completedResult(actor.id(), CommandOperation.APPLY_QUESTIONNAIRE_IMPORT, requestFingerprint);
+            if (applied.isPresent()) {
+                QuestionnaireImport repeat = commands.read(applied.get(), QuestionnaireImport.class).asAlreadyApplied();
+                commands.complete(reservation, repeat);
+                return repeat;
+            }
             throw InteractionConflictException.questionnaireChanged();
         }
         for (PlannedRow row : plan.rows()) {

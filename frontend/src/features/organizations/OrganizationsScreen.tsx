@@ -13,9 +13,11 @@ import { OrganizationAssignmentPanel } from './OrganizationAssignmentPanel'
 import { OrganizationHistoryFeed } from './OrganizationHistoryFeed'
 import { OrganizationStatusBadge } from './OrganizationCatalogPanel'
 import { OrganizationCardHeader, OrganizationSummary, deputyLabel, type OrganizationCounts } from './OrganizationCard'
+import { OrganizationPath } from './OrganizationPath'
 import { OrganizationForm, organizationTypeLabels } from './OrganizationForm'
 import { OrganizationBulkTransfer } from './OrganizationBulkTransfer'
-import { filtersFromQuery, listStatuses, queryFromFilters, type ListFilters, type ListStatus } from './organizationFilters'
+import { filtersFromQuery, listStatuses, organizationLoadFailure, queryFromFilters, type ListFilters, type ListStatus } from './organizationFilters'
+import { assignmentResultText } from './organizationHistory'
 
 type OrganizationsScreenProps = {
   profileId: string
@@ -27,7 +29,7 @@ type OrganizationsScreenProps = {
   onProfileUnavailable: (requestId: string) => void
 }
 
-type OrganizationTab = 'works' | 'contacts' | 'documents' | 'timeline'
+type OrganizationTab = 'works' | 'path' | 'contacts' | 'documents' | 'timeline'
 
 const listStatusOf: Record<Organization['status'], ListStatus> = {
   ACTIVE: 'CURRENT',
@@ -44,7 +46,7 @@ type DetailState =
   | { kind: 'idle' }
   | { kind: 'loading'; id: Organization['id'] }
   | { kind: 'ready'; organization: Organization }
-  | { kind: 'failed'; id: Organization['id']; requestId?: string }
+  | { kind: 'failed'; id: Organization['id']; requestId?: string; status?: number }
 
 const pageSize = 25
 const searchDelayMilliseconds = 300
@@ -134,7 +136,7 @@ export const OrganizationsScreen = ({
       if (requestVersion !== detailRequestVersion.current || handleAccessError(error)) {
         return
       }
-      setDetailState({ kind: 'failed', id, requestId: requestIdOf(error) })
+      setDetailState({ kind: 'failed', id, requestId: requestIdOf(error), status: error instanceof ApiError ? error.status : undefined })
     }
   }, [handleAccessError])
 
@@ -306,6 +308,7 @@ export const OrganizationsScreen = ({
 
   const organizationTabs: CardTab<OrganizationTab>[] = [
     { id: 'works', label: 'Взаимодействия', count: counts?.works },
+    ...(role === 'USER' || role === 'LEADER' || role === 'MANAGEMENT' ? [{ id: 'path' as const, label: 'Путь вуза' }] : []),
     { id: 'contacts', label: 'Контакты', count: counts?.contacts },
     { id: 'documents', label: 'Договоры и документы', count: counts?.agreements },
     { id: 'timeline', label: 'История' }
@@ -528,9 +531,11 @@ export const OrganizationsScreen = ({
             <>
               <h3 id="organization-detail-title">Карточка вуза</h3>
               <div className="notice notice--error" role="alert">
-                <p>Не удалось открыть карточку вуза. Возможно, вуз передан другому КАМ; обновите список или повторите попытку.</p>
+                <p>{organizationLoadFailure(detailState.status).text}</p>
                 <SupportDetails requestId={detailState.requestId} />
-                <button type="button" onClick={() => void loadOrganization(detailState.id)}>Повторить</button>
+                {organizationLoadFailure(detailState.status).retry && (
+                  <button type="button" onClick={() => void loadOrganization(detailState.id)}>Повторить</button>
+                )}
               </div>
             </>
           )}
@@ -595,6 +600,13 @@ export const OrganizationsScreen = ({
                     onProfileUnavailable={onProfileUnavailable}
                   />
                 )}
+                {organizationTab === 'path' && (
+                  <OrganizationPath
+                    key={`path:${detailState.organization.id}:${cardRevision}`}
+                    organizationId={detailState.organization.id}
+                    onSessionError={handleAccessError}
+                  />
+                )}
                 {organizationTab === 'documents' && (
                   <AgreementsPanel
                     key={`agreements:${detailState.organization.id}`}
@@ -642,7 +654,7 @@ export const OrganizationsScreen = ({
                       profileId={profileId}
                       onOrganizationChanged={(organization) => {
                         setAssignmentDialog(null)
-                        setCardMessage('Назначение ответственного сохранено.')
+                        setCardMessage(assignmentResultText(assignmentDialog ?? 'assignment', organization.ownerManagerId))
                         replaceOrganization(organization)
                         cardChanged()
                       }}

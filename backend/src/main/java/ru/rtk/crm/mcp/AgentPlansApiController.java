@@ -1,5 +1,6 @@
 package ru.rtk.crm.mcp;
 
+import java.util.List;
 import java.util.UUID;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -13,9 +14,12 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.CurrentProfileService;
+import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.mcp.AgentPlanService.AgentPlanListItem;
 import ru.rtk.crm.mcp.AgentPlanService.AgentPlanNotFoundException;
 import ru.rtk.crm.mcp.AgentPlanService.AgentPlanScreen;
 import ru.rtk.crm.security.RequestId;
@@ -33,6 +37,25 @@ public class AgentPlansApiController {
     public AgentPlansApiController(CurrentProfileService currentProfileService, AgentPlanService agentPlanService) {
         this.currentProfileService = currentProfileService;
         this.agentPlanService = agentPlanService;
+    }
+
+    // Свои планы: по умолчанию только ожидающие подтверждения (status=PENDING), status=ALL — и решённые.
+    @GetMapping
+    public List<AgentPlanListItem> list(
+            @AuthenticationPrincipal OidcUser user,
+            @RequestParam(required = false) String kind,
+            @RequestParam(defaultValue = "PENDING") String status
+    ) {
+        AgentPlanService.Kind parsedKind;
+        try {
+            parsedKind = kind == null || kind.isBlank() ? null : AgentPlanService.Kind.valueOf(kind);
+        } catch (IllegalArgumentException exception) {
+            throw new InteractionValidationException("kind", "Неизвестный вид плана");
+        }
+        if (!status.equals("PENDING") && !status.equals("ALL")) {
+            throw new InteractionValidationException("status", "Укажите PENDING или ALL");
+        }
+        return agentPlanService.list(currentProfileService.requireActiveProfile(user), parsedKind, status.equals("PENDING"));
     }
 
     @GetMapping("/{id}")

@@ -18,7 +18,7 @@ import ru.rtk.crm.work.LmsSignalModels.LmsSignalType;
 @Repository
 public class LmsSignalRepository {
     // Потоки LMS для работы: снимок того же вуза и программы, только потоки обучающихся с датами, внутри окна цикла
-    // карточки (как в SourceRepository) и только у активных работ. Этап занятий — самый ранний этап с этим названием в
+    // карточки (как в SourceRepository) и только у активных работ. Этап занятий — самый ранний этап с ролью LMS «Идут занятия» в
     // маршруте работы; route показывает, есть ли прямой переход к нему из текущего этапа.
     private static final String SOURCES = """
             SELECT i.id AS interaction_id, i.title, i.organization_id, o.name AS organization_name, o.owner_manager_id,
@@ -34,10 +34,10 @@ public class LmsSignalRepository {
             JOIN organizations o ON o.id = i.organization_id
             LEFT JOIN crm_user_profiles owner_profile ON owner_profile.id = o.owner_manager_id
             JOIN interaction_stages current_stage ON current_stage.id = i.current_stage_id
-            LEFT JOIN interaction_stages classes ON classes.interaction_id = i.id AND classes.name = :classesStageName
+            LEFT JOIN interaction_stages classes ON classes.interaction_id = i.id AND classes.lms_role = 'CLASSES'
                 AND NOT EXISTS (
                     SELECT 1 FROM interaction_stages earlier
-                    WHERE earlier.interaction_id = i.id AND earlier.name = :classesStageName
+                    WHERE earlier.interaction_id = i.id AND earlier.lms_role = 'CLASSES'
                       AND earlier.stage_order < classes.stage_order
                 )
             LEFT JOIN interaction_stage_transitions route ON route.interaction_id = i.id
@@ -59,13 +59,12 @@ public class LmsSignalRepository {
         this.jdbcClient = jdbcClient;
     }
 
-    List<SignalSource> findSources(VisibilityScope scope, UUID interactionId, String classesStageName) {
+    List<SignalSource> findSources(VisibilityScope scope, UUID interactionId) {
         String sql = SOURCES.formatted(scope.condition())
                 + (interactionId == null ? "" : " AND i.id = :interactionId")
                 + " ORDER BY o.name, i.title, i.id, s.course_name, s.group_name, m.run_starts_on, s.mapping_id";
         JdbcClient.StatementSpec statement = jdbcClient.sql(sql)
-                .params(scope.parameters())
-                .param("classesStageName", classesStageName);
+                .params(scope.parameters());
         if (interactionId != null) {
             statement = statement.param("interactionId", interactionId);
         }

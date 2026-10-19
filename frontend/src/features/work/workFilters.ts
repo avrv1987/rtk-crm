@@ -5,6 +5,9 @@ export type WorkFilters = {
   q: string
   due: InteractionDue | ''
   stage: string
+  kindId: string
+  programId: string
+  productId: string
   organizationId: string
   flag: InteractionFlagFilter | ''
   licenseExpiresBy: string
@@ -43,6 +46,9 @@ export const emptyWorkFilters: WorkFilters = {
   q: '',
   due: '',
   stage: '',
+  kindId: '',
+  programId: '',
+  productId: '',
   organizationId: '',
   flag: '',
   licenseExpiresBy: '',
@@ -77,6 +83,9 @@ export const filtersFromQuery = (query: string): WorkFilters => {
     q: params.get('q') ?? '',
     due: isDue(due) ? due : '',
     stage: params.get('stage') ?? '',
+    kindId: params.get('kind') ?? '',
+    programId: params.get('program') ?? '',
+    productId: params.get('product') ?? '',
     organizationId: params.get('organization') ?? '',
     flag: isFlag(flag) ? flag : '',
     licenseExpiresBy: /^\d{4}$/.test(params.get('license') ?? '') ? params.get('license') ?? '' : '',
@@ -98,6 +107,9 @@ export const queryFromFilters = (filters: WorkFilters) => {
   set('q', filters.q.trim())
   set('due', filters.due)
   set('stage', filters.stage)
+  set('kind', filters.kindId)
+  set('program', filters.programId)
+  set('product', filters.productId)
   set('organization', filters.organizationId)
   set('flag', filters.flag)
   set('license', filters.licenseExpiresBy)
@@ -112,6 +124,10 @@ export const queryFromFilters = (filters: WorkFilters) => {
 export const activeFilterCount = (filters: WorkFilters) => [
   filters.due !== '',
   filters.stage.length > 0,
+  filters.kindId.length > 0,
+  filters.programId.length > 0,
+  filters.productId.length > 0,
+
   filters.organizationId.length > 0,
   filters.responsible.length > 0,
   filters.status !== 'ACTIVE',

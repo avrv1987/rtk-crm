@@ -13,6 +13,7 @@ import { CatalogImportPanel } from './CatalogImportPanel'
 import { PersonalDataPanel } from './PersonalDataPanel'
 import { RetentionPanel } from './RetentionPanel'
 import { SourcesPanel } from './SourcesPanel'
+import { InteractionKindTeamTemplates } from './InteractionKindTeamTemplates'
 import { WorkflowTemplatesPanel } from './WorkflowTemplatesPanel'
 import { getModules } from '../../shared/modules'
 import { MaxAdminPanel } from '../max/MaxAdminPanel'
@@ -73,17 +74,19 @@ const useAdminSummary = (role: AdminNavRole, refreshKey: string, handlers: Sessi
       apiClient.listCrmProfiles({ size: 1 }),
       apiClient.listDataSources(),
       apiClient.listCrmExchangeEvents(),
-      apiClient.getBackupStatus()
+      apiClient.getBackupStatus(),
+      apiClient.getLearningCoverage()
     ])
     if (results.some(handled)) {
       return
     }
-    const [profiles, sources, events, backup] = results
+    const [profiles, sources, events, backup, coverage] = results
     setSummary({
       pendingProfiles: profiles.status === 'fulfilled' ? profiles.value.pendingTotal : undefined,
       sources: sources.status === 'fulfilled' ? sources.value : undefined,
       crmEvents: events.status === 'fulfilled' ? events.value.counts : undefined,
       backup: backup.status === 'fulfilled' ? backup.value : undefined,
+      coverage: coverage.status === 'fulfilled' ? coverage.value : undefined,
       failed: results.some((result) => result.status === 'rejected')
     })
   }, [onProfileUnavailable, onSessionExpired, role])
@@ -149,7 +152,9 @@ export const AdminScreen = ({ profile, slug, query = '', onSessionExpired, onPro
         {section === 'teams' && <AdminTeamsPanel {...handlers} />}
         {section === 'organizations' && <AdminOrganizationsPanel {...handlers} />}
         {section === 'catalogs' && <AdminCatalogsPanel tab={catalogTabFrom(address.query)} onTabChange={changeCatalogTab} {...handlers} />}
-        {section === 'workflow-templates' && <WorkflowTemplatesPanel role={profile.role} {...handlers} />}
+        {section === 'workflow-templates' && <WorkflowTemplatesPanel role={profile.role} profileId={profile.id} {...handlers} />}
+        {section === 'workflow-templates' && role === 'LEADER' && <InteractionKindTeamTemplates {...handlers} />}
+
         {section === 'catalog-import' && <CatalogImportPanel {...handlers} />}
         {section === 'sources' && <SourcesPanel {...handlers} onSynced={() => setSourcesRevision((value) => value + 1)} />}
         {section === 'sources' && getModules().max === true && <MaxAdminPanel {...handlers} />}

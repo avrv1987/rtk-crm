@@ -27,11 +27,15 @@ import org.springframework.stereotype.Service;
 import ru.rtk.crm.access.ContactInteractionMutationAuthorization;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.audit.AuditAction;
+import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
 import ru.rtk.crm.enrolment.LearnerIntake;
 import ru.rtk.crm.enrolment.PaidOrder;
 import ru.rtk.crm.enrolment.PaidOrderBatch;
 import ru.rtk.crm.enrolment.PaidOrderEnrolment;
+import ru.rtk.crm.enrolment.PaidOrderIssue;
+import ru.rtk.crm.enrolment.PaidOrderParser;
 import ru.rtk.crm.enrolment.PaidOrderUpload;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionValidationException;
@@ -63,6 +67,7 @@ public class SourceSyncService {
     private final SourceProperties properties;
     private final SourceSettingsService settings;
     private final ObjectMapper objectMapper;
+    private final AuditJournalRepository auditJournalRepository;
     private final OffsetDateTime processStartedAt = OffsetDateTime.now();
 
     public SourceSyncService(
@@ -78,7 +83,8 @@ public class SourceSyncService {
             SourceSyncExecutor executor,
             SourceProperties properties,
             SourceSettingsService settings,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            AuditJournalRepository auditJournalRepository
     ) {
         this.repository = repository;
         this.applier = applier;
@@ -93,6 +99,7 @@ public class SourceSyncService {
         this.properties = properties;
         this.settings = settings;
         this.objectMapper = objectMapper;
+        this.auditJournalRepository = auditJournalRepository;
     }
 
     public List<SourceView> sources(CrmProfile profile) {
@@ -258,7 +265,8 @@ public class SourceSyncService {
         return runId;
     }
 
-    public PaidOrderUpload uploadPaidOrders(UUID actorProfileId, PaidOrderBatch batch) {
+    public PaidOrderUpload uploadPaidOrders(UUID actorProfileId, PaidOrderBatch uploaded, boolean confirmNewStreams) {
+        PaidOrderBatch batch = confirmNewStreams || !paidOrderEnrolment.enabled() ? uploaded : holdNewStreamTransfers(uploaded);
         UUID runId = insertRun(SourceCode.WEBSITE, actorProfileId, SyncTrigger.UPLOAD, null);
         // Загрузка применяется в этом же потоке, поэтому запуск занимается сразу, минуя очередь исполнителя.
         if (!repository.claimRun(runId, null, OffsetDateTime.now())) {
@@ -277,6 +285,28 @@ public class SourceSyncService {
         SyncRunView run = repository.findRun(runId).map(StoredRun::run).orElseThrow(SourceException::recordNotFound);
         return PaidOrderUpload.of(run.id(), run.createdCount(), run.updatedCount(), run.skippedCount(), run.needsMappingCount(),
                 run.failedCount(), run.errorMessage(), batch, applied.intake(), applied.unmappedCourses());
+    }
+
+    // Заявки, которые перенесли бы слушателя в ещё не существующий поток, из файла не применяются и попадают в замечания:
+    // запись источника не меняется, поэтому повторная загрузка с подтверждением применит их как обычно.
+    private PaidOrderBatch holdNewStreamTransfers(PaidOrderBatch batch) {
+        List<PaidOrder> orders = new ArrayList<>();
+        List<PaidOrderIssue> issues = new ArrayList<>(batch.issues());
+        int held = 0;
+        for (PaidOrder order : batch.orders()) {
+            Optional<String> current = paidOrderEnrolment.transferIntoNewStream(
+                    order.orderNumber(), SiteRecord.programKey(order.course()), order.streamNumber());
+            if (current.isPresent()) {
+                held++;
+                issues.add(new PaidOrderIssue(0, PaidOrderParser.STREAM_NUMBER, "Слушатель уже зачислен: " + current.get()
+                        + ". Потока " + order.streamNumber() + " ещё нет — перенос не выполнен. Проверьте номер потока; если поток"
+                        + " действительно новый, нажмите «Создать новые потоки и перенести»", false, order.orderNumber()));
+            } else {
+                orders.add(order);
+            }
+        }
+        return held == 0 ? batch : new PaidOrderBatch(List.copyOf(orders), List.copyOf(issues), batch.elements(),
+                batch.emptyElements(), batch.duplicates(), held);
     }
 
     public List<SourceRecordView> problemRecords(CrmProfile profile) {
@@ -362,6 +392,7 @@ public class SourceSyncService {
             }
             repository.saveMapping(stored.source(), "ORGANIZATION", item.organizationKey(), request.organizationId(), null,
                     null, profile.id(), now);
+            journalMapping(profile, stored, item.organizationKey(), "организация сопоставлена из записи для разбора");
         }
         if (request != null && request.programId() != null) {
             if (item.programName() == null) {
@@ -372,6 +403,7 @@ public class SourceSyncService {
             }
             repository.saveMapping(stored.source(), "PROGRAM", SiteRecord.programKey(item.programName()), null,
                     request.programId(), null, profile.id(), now);
+            journalMapping(profile, stored, SiteRecord.programKey(item.programName()), "программа сопоставлена из записи для разбора");
         }
     }
 
@@ -389,6 +421,14 @@ public class SourceSyncService {
         LearningUnit unit = LearningUnit.parseStored(objectMapper, stored.payload());
         moodleApplier.saveMapping(unit, request.organizationId(), request.programId(), run,
                 request.runKind() != null ? request.runKind() : suggestedRunKind(unit), profile.id(), now);
+        journalMapping(profile, stored, unit.groupId() == null ? Long.toString(unit.courseId()) : unit.courseId() + ":" + unit.groupId(),
+                "вуз, программа и даты потока сопоставлены из записи для разбора");
+    }
+
+    // Как правка на вкладке «Сопоставления» (SourceMappingService.journal): ключ источника без персональных данных.
+    private void journalMapping(CrmProfile profile, StoredRecord stored, String externalKey, String change) {
+        auditJournalRepository.record(AuditAction.SOURCE_MAPPING_CHANGED, profile.id(), "SOURCE", stored.id(), externalKey,
+                stored.source().title() + ": " + change, null);
     }
 
     // Без дат потока сопоставление не сохраняется: по датам наблюдение относится к потоку
@@ -601,7 +641,8 @@ public class SourceSyncService {
                 unmappedCourses.add(order.course());
             }
         }
-        counts[SyncOutcome.SKIPPED.ordinal()] += batch.duplicates();
+        // Повтор заявки внутри файла — не «без изменений» относительно базы, а лишняя строка файла: он считается
+        // отдельно (PaidOrderUpload.duplicatesInFile), иначе «Без изменений» вводило в заблуждение (Н-12).
         counts[SyncOutcome.FAILED.ordinal()] += batch.rejected();
         return new PaidOrdersApplied(totals(batch.received(), counts), intake, List.copyOf(unmappedCourses));
     }

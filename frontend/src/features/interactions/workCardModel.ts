@@ -16,8 +16,10 @@ export type WorkAgreementLike = {
 
 export type WorkAgreementsLike<A extends WorkAgreementLike = WorkAgreementLike> = {
   signingRuleEnabled: boolean
-  stages: readonly { stageId: string; role: AgreementStageRole }[]
+  stages: readonly { stageId: string; role: AgreementStageRole; name?: string }[]
   agreements: readonly A[]
+  /** Действующий договор школы с вузом, в том числе не связанный с работой (решение владельца 19.10). */
+  activeAgreementNumber?: string | null
 }
 
 // Адрес карточки строится из вуза самого взаимодействия, а не из вуза открытой панели: при переходе из колокольчика
@@ -43,6 +45,41 @@ export const transitionsToward = <T extends { stageId: string }>(
   return options
     .filter((option) => direction === 'forward' ? orderedOf(option) > current : orderedOf(option) < current)
     .sort((left, right) => direction === 'forward' ? orderedOf(left) - orderedOf(right) : orderedOf(right) - orderedOf(left))
+}
+
+// Почему переход вперёд требует комментария. Сервер ставит commentRequired и за пропуск этапа, и за нехватку
+// документов, а окно раньше любое называло пропуском — даже ближайший этап (Н-Р3).
+export type ForwardCommentReason = 'skip' | 'documents' | 'route'
+
+export const forwardCommentReason = (
+  stages: readonly { id: string; order: number }[],
+  currentStageId: string,
+  targetStageId: string,
+  commentRequired: boolean,
+  documentsMissing: boolean
+): ForwardCommentReason | null => {
+  if (!commentRequired) {
+    return null
+  }
+  const orderOf = new Map(stages.map((stage) => [stage.id, stage.order]))
+  const current = orderOf.get(currentStageId) ?? -1
+  const target = orderOf.get(targetStageId) ?? -1
+  if (stages.some((stage) => stage.order > current && stage.order < target)) {
+    return 'skip'
+  }
+  return documentsMissing ? 'documents' : 'route'
+}
+
+export const forwardCommentOptionNote: Record<ForwardCommentReason, string> = {
+  skip: ' (через этап, нужен комментарий)',
+  documents: ' (нужен комментарий: не хватает документов)',
+  route: ' (нужен комментарий)'
+}
+
+export const forwardCommentSelectedNote: Record<ForwardCommentReason, string> = {
+  skip: 'комментарий обязателен (пропуск этапа)',
+  documents: 'комментарий обязателен (не хватает документов этапа)',
+  route: 'комментарий обязателен по маршруту'
 }
 
 export const primaryShortLabels: Record<PrimaryAction['kind'], string> = {
@@ -94,7 +131,13 @@ export const primaryAction = (context: PrimaryContext): PrimaryAction | null => 
   return { kind: 'transition', label: 'Перейти на следующий этап', disabled: false }
 }
 
-// «Действует» с истёкшим сроком не засчитывается, «Завершён» засчитывается — как на сервере (AgreementStages).
+// На этапах документов главная кнопка — «Создать договор», но переход по маршруту остаётся рядом на виду: КАМ только что
+// им пользовался, и прятать его в «⋯» значит терять знакомое действие.
+export const transitionBesidePrimary = (primary: PrimaryAction | null, forwardCount: number) => (
+  primary?.kind === 'createAgreement' && forwardCount > 0
+)
+
+// Засчитывается только «Действует» с датой подписания и неистёкшим сроком — как на сервере (AgreementStages).
 // Модуль без зависимостей времени выполнения (его проверяют node-тесты), поэтому «сегодня по МСК» и признак
 // «срок истёк» записаны здесь, а не взяты из shared/format и agreementModel.
 const moscowToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date())
@@ -104,30 +147,38 @@ const expiredOn = (agreement: WorkAgreementLike, today: string) => (
 )
 
 const signedOn = (agreement: WorkAgreementLike, today: string) => (
-  (agreement.status === 'ACTIVE' || agreement.status === 'COMPLETED') && Boolean(agreement.concludedOn) && !expiredOn(agreement, today)
+  agreement.status === 'ACTIVE' && Boolean(agreement.concludedOn) && !expiredOn(agreement, today)
+)
+
+const hasActiveAgreement = (work: Pick<WorkAgreementsLike, 'agreements' | 'activeAgreementNumber'>, today: string) => (
+  Boolean(work.activeAgreementNumber) || work.agreements.some((agreement) => signedOn(agreement, today))
 )
 
 export const isSignedAgreement = (agreement: WorkAgreementLike) => signedOn(agreement, moscowToday())
 
-// Подсказка правила «Подписание» во вкладке договора: после подписания старое «завершится, когда договор будет
-// подписан» вводило в заблуждение, поэтому подписанный договор меняет текст, а вне этапа подсказка исчезает.
+// Подсказка правила договора во вкладке договора: при действующем договоре текст меняется, а вне отмеченного этапа
+// подсказка исчезает.
 export const signingRuleHint = (
   role: AgreementStageRole | null,
-  agreements: readonly WorkAgreementLike[],
+  work: Pick<WorkAgreementsLike, 'agreements' | 'activeAgreementNumber'>,
   today: string = moscowToday()
 ): string | null => {
-  if (agreements.some((agreement) => signedOn(agreement, today))) {
-    return role === 'SIGNING' ? 'Договор подписан: этап «Подписание» можно завершить.' : null
+  if (hasActiveAgreement(work, today)) {
+    return role === 'SIGNING'
+      ? `Договор с вузом действует${work.activeAgreementNumber ? ` (№ ${work.activeAgreementNumber})` : ''}: дальше этапа можно пройти.`
+      : null
   }
-  return role === 'SIGNING' ? 'Этап завершится, когда договор будет подписан.' : 'Этап «Подписание» завершится только с подписанным договором.'
+  return role === 'SIGNING'
+    ? 'Дальше этапа можно пройти, когда у вуза будет действующий договор.'
+    : 'Этап с отметкой «требует действующего договора» проходится только при действующем договоре с вузом.'
 }
 
 const byStatusChangeDesc = <A extends WorkAgreementLike>(left: A, right: A) => (
   new Date(right.statusChangedAt).getTime() - new Date(left.statusChangedAt).getTime()
 )
 
-// Повторяет серверную проверку правила «Подписание»: переход вперёд, который уходит с этапа подписания
-// или перешагивает его, требует связанного договора «Действует» или «Завершён» с датой подписания.
+// Повторяет серверную проверку: переход вперёд, который уходит с этапа «требует действующего договора» или
+// перешагивает его, требует любого действующего договора школы с вузом.
 export const signingBlock = (
   work: WorkAgreementsLike | null,
   stages: readonly { id: string; order: number }[],
@@ -144,23 +195,24 @@ export const signingBlock = (
   if (from === undefined || to === undefined || to <= from) {
     return null
   }
-  const passesSigning = work.stages.some((stage) => {
+  const gate = work.stages.find((stage) => {
     const order = orderOf.get(stage.stageId)
     return stage.role === 'SIGNING' && order !== undefined && order >= from && order < to
   })
-  if (!passesSigning || work.agreements.some((agreement) => signedOn(agreement, today))) {
+  if (gate === undefined || hasActiveAgreement(work, today)) {
     return null
   }
+  const rule = `Дальше этапа «${gate.name ?? 'с отметкой «требует действующего договора»'}» можно пройти только при действующем договоре с вузом.`
   const expired = [...work.agreements].sort(byStatusChangeDesc).find((agreement) => expiredOn(agreement, today))
   if (expired?.validUntil) {
-    return `Этап «Подписание» завершится только с действующим договором. Срок договора № ${expired.number} истёк `
+    return `${rule} Срок договора № ${expired.number} истёк `
       + `${expired.validUntil.split('-').reverse().join('.')}: продлите срок в реквизитах договора или оформите новый договор.`
   }
   if (work.agreements.length === 0) {
-    return 'Этап «Подписание» завершится только с подписанным договором. Создайте договор с вузом.'
+    return `${rule} Создайте договор с вузом.`
   }
   const latest = [...work.agreements].sort(byStatusChangeDesc)[0]
-  return `Этап «Подписание» завершится только с подписанным договором. Переведите договор № ${latest.number} в статус «Действует» с датой подписания.`
+  return `${rule} Переведите договор № ${latest.number} в статус «Действует» с датой подписания.`
 }
 
 export type AgreementFact<A extends WorkAgreementLike> =
@@ -222,3 +274,18 @@ export const historyPageSize = 10
 export const newestFirst = <E extends { occurredAt: string }>(events: readonly E[]) => (
   [...events].sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime())
 )
+
+// З-1: сервер не удаляет текущий этап и этап, на который ссылаются события истории или файлы. Такие этапы в списке
+// «Удалить этап» помечаются заранее, а не отказом после подтверждения. Пока история не загружена, известен только текущий.
+export const undeletableStageReason = (
+  stageId: string,
+  currentStageId: string | null | undefined,
+  events: readonly { stageId: string; fromStageId?: string | null; toStageId?: string | null }[] | undefined,
+  attachments: readonly { stageId: string }[]
+): string | null => {
+  if (stageId === currentStageId) {
+    return 'текущий этап'
+  }
+  const inHistory = (events ?? []).some((event) => event.stageId === stageId || event.fromStageId === stageId || event.toStageId === stageId)
+  return inHistory || attachments.some((attachment) => attachment.stageId === stageId) ? 'есть события или файлы' : null
+}

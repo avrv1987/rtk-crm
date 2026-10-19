@@ -11,6 +11,7 @@ public record MeResponse(
         String teamName,
         int accessRevision,
         boolean enrolmentOperator,
-        String displayName
+        String displayName,
+        boolean enrolmentOnly
 ) {
 }

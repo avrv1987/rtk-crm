@@ -53,3 +53,10 @@ export const historyTitle = (item: OrganizationHistoryItem): string => {
       return kindTitles[item.kind]
   }
 }
+
+// Н-3 (2.5): после «Снять назначение» тост называл действие сохранённым назначением.
+export const assignmentResultText = (part: 'assignment' | 'deputy', ownerManagerId: string | null | undefined) => (
+  part === 'deputy'
+    ? 'Заместитель сохранён.'
+    : ownerManagerId ? 'Назначение ответственного сохранено.' : 'Назначение снято: вуз в «Требует назначения».'
+)

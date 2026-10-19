@@ -1,4 +1,6 @@
-export const catalogTabSlugs = ['directions', 'programs', 'vendors', 'products', 'activity-kinds', 'journal'] as const
+export const catalogTabSlugs = [
+  'directions', 'programs', 'vendors', 'products', 'document_kinds', 'interaction-kinds', 'interaction-kind-rules', 'activity-kinds', 'journal'
+] as const
 
 export type CatalogsTabSlug = typeof catalogTabSlugs[number]
 
@@ -7,6 +9,9 @@ export const catalogTabLabels: Record<CatalogsTabSlug, string> = {
   programs: 'ИТ-программы',
   vendors: 'Вендоры',
   products: 'ИТ-продукты',
+  document_kinds: 'Виды документов',
+  'interaction-kinds': 'Виды взаимодействия',
+  'interaction-kind-rules': 'Правила выбора вида',
   'activity-kinds': 'Виды мероприятий',
   journal: 'Журнал изменений'
 }
@@ -17,8 +22,12 @@ export const catalogAddLabels: Partial<Record<CatalogsTabSlug, string>> = {
   programs: 'Добавить программу',
   vendors: 'Добавить вендора',
   products: 'Добавить продукт',
+  document_kinds: 'Добавить вид документа',
+  'interaction-kinds': 'Добавить вид взаимодействия',
+  'interaction-kind-rules': 'Добавить правило',
   'activity-kinds': 'Добавить вид мероприятия'
 }
+
 
 /** Разбор параметра `tab` из строки запроса адреса (с «?» или без); неизвестное значение — «ИТ-направления». */
 export const catalogTabFrom = (query: string): CatalogsTabSlug => {

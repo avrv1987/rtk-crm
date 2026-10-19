@@ -130,6 +130,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
         AttachmentRepository.class,
         CommandIdempotencyRepository.class,
         InteractionService.class,
+        ru.rtk.crm.interaction.InteractionKindRepository.class,
+        ru.rtk.crm.interaction.InteractionKindService.class,
         ru.rtk.crm.agreement.AgreementStages.class,
         SourceRepository.class,
         SiteRecordApplier.class,
@@ -694,6 +696,10 @@ class SourceSyncServiceTest {
         assertThat(recordStatus("pr-3")).isEqualTo("APPLIED");
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT external_key FROM source_mappings WHERE kind = 'ORGANIZATION'", String.class)).isEqualTo("id:site-org-x");
+        // Н-3 (2.5): сопоставление из «Записей для разбора» пишется в журнал, как правка на вкладке «Сопоставления».
+        assertThat(jdbcTemplate.queryForList("SELECT details FROM audit_events WHERE action = 'SOURCE_MAPPING_CHANGED' AND object_id = ?"
+                + " AND object_name = 'id:site-org-x'", String.class, applicationId))
+                .containsExactly("Сайт ИТ Школы (Laravel): организация сопоставлена из записи для разбора");
         assertThat(interactionIds(ORGANIZATION_A)).hasSize(2).contains(existingInteractionA);
         assertThat(service.problemRecords(admin)).isEmpty();
         assertThat(demandApplications(kamA)).isEqualTo(4);
@@ -903,6 +909,8 @@ class SourceSyncServiceTest {
         SourceRecordApplyResult mapped = service.apply(admin, javaRecord, moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
 
         assertThat(mapped.record().status()).isEqualTo(SourceRecordStatus.APPLIED);
+        assertThat(jdbcTemplate.queryForList("SELECT details FROM audit_events WHERE action = 'SOURCE_MAPPING_CHANGED' AND object_id = ?",
+                String.class, javaRecord)).containsExactly("LMS Moodle: вуз, программа и даты потока сопоставлены из записи для разбора");
         assertThat(mapped.record().interactionId()).isEqualTo(existingInteractionA);
         assertThat(events(existingInteractionA)).containsExactly("CREATED", "COMMENTED");
         assertThat(lastComment(existingInteractionA)).startsWith("Данные LMS: курс «Демо: Java-разработчик», обучающихся 6,"
@@ -1836,32 +1844,51 @@ class SourceSyncServiceTest {
         assertThat(demandApplications(kamA)).isEqualTo(4);
     }
 
+    // Н-12 (2.5): повтор заявки внутри файла — отдельный счётчик, а не «Без изменений».
+    @Test
+    void duplicateOrderInsideFileIsNotCountedAsUnchanged() {
+        insertOpenEnrolment();
+        insertProgram("Промпт-инжиниринг");
+        UUID operator = UUID.fromString("00000000-0000-0000-0000-000000000032");
+        insertProfile(operator, "Менеджер УП Повторов", "USER", TEAM_A);
+        jdbcTemplate.update("UPDATE crm_user_profiles SET enrolment_operator = TRUE WHERE id = ?", operator);
+        CrmProfile operatorProfile = new CrmProfile(operator, UserRole.USER, TEAM_A, 0);
+        String order = """
+                {"Номер заявки": "ORD-20260901000009-DUP09", "Курс": "Промпт-инжиниринг", "Фамилия": "Повторова", "Имя": "Вера",
+                 "Email": "vera.dup@example.test", "Номер потока": 3}""";
+
+        PaidOrderUpload upload = paidOrderUploadService.upload(operatorProfile, false, paidOrdersFile("[" + order + "," + order + "]"),
+                "dup-1", "rq-dup-1");
+
+        assertThat(List.of(upload.received(), upload.created(), upload.skipped(), upload.duplicatesInFile())).containsExactly(2, 1, 0, 1);
+    }
+
     @Test
     void operatorUploadsPaidOrdersIntoOpenEnrolmentWithoutPersonalDataAndRepeatsWithoutDuplicates() {
         UUID openEnrolment = insertOpenEnrolment();
         UUID prompt = insertProgram("Промпт-инжиниринг");
         UUID tester = insertProgram("Инженер-тестировщик");
         UUID operator = UUID.fromString("00000000-0000-0000-0000-000000000031");
-        insertProfile(operator, "Оператор зачисления Демо", "USER", TEAM_A);
+        insertProfile(operator, "Менеджер учебного процесса Демо", "USER", TEAM_A);
         CrmProfile operatorProfile = new CrmProfile(operator, UserRole.USER, TEAM_A, 0);
-        assertThatThrownBy(() -> paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-1", "rq"))
+        assertThatThrownBy(() -> paidOrderUploadService.upload(operatorProfile, false, paidOrdersFile(PAID_ORDERS), "upload-1", "rq"))
                 .isInstanceOf(EnrolmentAccessDeniedException.class);
-        assertThatThrownBy(() -> paidOrderUploadService.upload(admin, paidOrdersFile(PAID_ORDERS), "upload-1", "rq"))
+        assertThatThrownBy(() -> paidOrderUploadService.upload(admin, false, paidOrdersFile(PAID_ORDERS), "upload-1", "rq"))
                 .isInstanceOf(EnrolmentAccessDeniedException.class);
         jdbcTemplate.update("UPDATE crm_user_profiles SET enrolment_operator = TRUE WHERE id = ?", operator);
         EnrolmentAccess moduleOff = new EnrolmentAccess(new ModuleProperties(new ModuleProperties.Toggle(false), null), userProfileRepository);
         assertThat(moduleOff.isOperator(operator)).isFalse();
         assertThat(enrolmentAccess.isOperator(operator)).isTrue();
         assertThatThrownBy(() -> new PaidOrderUploadService(moduleOff, paidOrderParser, service, commandIdempotencyRepository,
-                paidOrderEnrolment, objectMapper).upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-off", "rq"))
+                paidOrderEnrolment, objectMapper).upload(operatorProfile, false, paidOrdersFile(PAID_ORDERS), "upload-off", "rq"))
                 .isInstanceOf(ModuleDisabledException.class);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM source_records WHERE record_type = 'paid_order'", Integer.class))
                 .isZero();
 
         assertThat(paidOrderUploadService.last(operatorProfile)).isEmpty();
-        PaidOrderUpload first = paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-1", "rq-upload-1");
+        PaidOrderUpload first = paidOrderUploadService.upload(operatorProfile, false, paidOrdersFile(PAID_ORDERS), "upload-1", "rq-upload-1");
 
-        assertThat(paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-1", "rq-upload-1")).isEqualTo(first);
+        assertThat(paidOrderUploadService.upload(operatorProfile, false, paidOrdersFile(PAID_ORDERS), "upload-1", "rq-upload-1")).isEqualTo(first);
         assertThat(List.of(first.received(), first.emptyElements(), first.created(), first.updated(), first.skipped(),
                 first.needsMapping(), first.failed())).containsExactly(6, 1, 5, 0, 0, 1, 0);
         assertThat(first.unmappedCourses()).containsExactly(LONG_COURSE);
@@ -1885,7 +1912,7 @@ class SourceSyncServiceTest {
                 UUID.class)).isEqualTo(prompt);
         SyncRunView run = service.runs(admin, SourceCode.WEBSITE).getFirst();
         assertThat(run.trigger()).isEqualTo(SyncTrigger.UPLOAD);
-        assertThat(run.startedByName()).isEqualTo("Оператор зачисления Демо");
+        assertThat(run.startedByName()).isEqualTo("Менеджер учебного процесса Демо");
         assertThat(run.errorMessage()).contains("пустых элементов пропущено: 1");
         assertThat(service.sources(admin)).filteredOn(source -> source.source() == SourceCode.WEBSITE).singleElement()
                 .satisfies(source -> {
@@ -1911,13 +1938,13 @@ class SourceSyncServiceTest {
         assertThat(recordStatus("ORD-20260901000005-DEMO05")).isEqualTo("APPLIED");
         assertThat(demandApplications(kamA)).isZero();
 
-        PaidOrderUpload repeat = paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "upload-2", "rq-upload-2");
+        PaidOrderUpload repeat = paidOrderUploadService.upload(operatorProfile, false, paidOrdersFile(PAID_ORDERS), "upload-2", "rq-upload-2");
 
         assertThat(List.of(repeat.created(), repeat.updated(), repeat.skipped(), repeat.needsMapping(), repeat.failed()))
                 .containsExactly(0, 0, 6, 0, 0);
         OffsetDateTime received = jdbcTemplate.queryForObject(
                 "SELECT submitted_at FROM source_records WHERE external_id = 'ORD-20260901000002-DEMO02'", OffsetDateTime.class);
-        PaidOrderUpload moved = paidOrderUploadService.upload(operatorProfile, paidOrdersFile("""
+        PaidOrderUpload moved = paidOrderUploadService.upload(operatorProfile, true, paidOrdersFile("""
                 [{"Номер заявки": "ORD-20260901000002-DEMO02", "Курс": "Промпт-инжиниринг", "Фамилия": "Второв", "Имя": "Борис",
                   "Телефон": "7 (900) 000-00-02", "Email": "boris@example.test", "Номер потока": 4}]
                 """), "upload-3", "rq-upload-3");
@@ -1939,7 +1966,7 @@ class SourceSyncServiceTest {
         insertOpenEnrolment();
         insertProgram("Промпт-инжиниринг");
         insertProgram("Инженер-тестировщик");
-        service.uploadPaidOrders(KAM_A, paidOrderParser.parse(new ByteArrayInputStream(PAID_ORDERS.getBytes(StandardCharsets.UTF_8))));
+        service.uploadPaidOrders(KAM_A, paidOrderParser.parse(new ByteArrayInputStream(PAID_ORDERS.getBytes(StandardCharsets.UTF_8))), false);
         ReportRequest all = new ReportRequest(ReportKind.DEMAND, null, null, null, ReportFilters.none(), null, null, null, null);
         ReportRequest oldPeriod = new ReportRequest(ReportKind.DEMAND, TODAY.minusYears(2), TODAY.minusYears(1), null,
                 ReportFilters.none(), null, null, null, ReportColumn.PAID_ORDERS);
@@ -1965,11 +1992,11 @@ class SourceSyncServiceTest {
         insertProgram("Промпт-инжиниринг");
         insertProgram("Инженер-тестировщик");
         UUID operator = UUID.fromString("00000000-0000-0000-0000-000000000031");
-        insertProfile(operator, "Оператор зачисления Демо", "USER", TEAM_A);
+        insertProfile(operator, "Менеджер учебного процесса Демо", "USER", TEAM_A);
         jdbcTemplate.update("UPDATE crm_user_profiles SET enrolment_operator = TRUE WHERE id = ?", operator);
         CrmProfile operatorProfile = new CrmProfile(operator, UserRole.USER, TEAM_A, 0);
 
-        PaidOrderUpload first = paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "learners-1", "rq-learners-1");
+        PaidOrderUpload first = paidOrderUploadService.upload(operatorProfile, false, paidOrdersFile(PAID_ORDERS), "learners-1", "rq-learners-1");
 
         assertThat(first.learners()).isEqualTo(new LearnerIntake(5, 1, 6, 0, 0, 0, 0));
         assertThat(first.needsMapping()).isEqualTo(1);
@@ -1994,12 +2021,27 @@ class SourceSyncServiceTest {
         assertThat(dump.toString()).doesNotContain("Первова", "Анна", "anna.pervova", "BORIS", "(900)", "9000000001");
 
         service.apply(admin, problemId("ORD-20260901000005-DEMO05"), new SourceRecordApplyRequest(null, PROGRAM_DATA, null, null));
-        PaidOrderUpload repeat = paidOrderUploadService.upload(operatorProfile, paidOrdersFile(PAID_ORDERS), "learners-2", "rq-learners-2");
+        PaidOrderUpload repeat = paidOrderUploadService.upload(operatorProfile, false, paidOrdersFile(PAID_ORDERS), "learners-2", "rq-learners-2");
 
         assertThat(repeat.skipped()).isEqualTo(6);
         assertThat(repeat.learners()).isEqualTo(new LearnerIntake(0, 6, 0, 0, 0, 0, 0));
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learners", Integer.class)).isEqualTo(5);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learner_enrolments", Integer.class)).isEqualTo(6);
+
+        // Н-7: опечатка в номере потока у уже зачисленного слушателя не создаёт поток и не переносит без подтверждения.
+        String typo = """
+                [{"Номер заявки": "ORD-20260901000002-DEMO02", "Курс": "Промпт-инжиниринг", "Фамилия": "Второв", "Имя": "Борис",
+                  "Телефон": "7 (900) 000-00-02", "Email": "boris@example.test", "Номер потока": 99}]
+                """;
+        PaidOrderUpload held = paidOrderUploadService.upload(operatorProfile, false, paidOrdersFile(typo), "learners-3", "rq-learners-3");
+        assertThat(held.heldStreamTransfers()).isEqualTo(1);
+        assertThat(held.learners().movedStreams()).isZero();
+        assertThat(held.issues()).anySatisfy(issue -> assertThat(issue.message()).contains("Потока 99 ещё нет"));
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM enrolment_streams WHERE stream_no = 99", Integer.class)).isZero();
+        PaidOrderUpload confirmed = paidOrderUploadService.upload(operatorProfile, true, paidOrdersFile(typo), "learners-4", "rq-learners-4");
+        assertThat(confirmed.heldStreamTransfers()).isZero();
+        assertThat(confirmed.learners().movedStreams()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM enrolment_streams WHERE stream_no = 99", Integer.class)).isEqualTo(1);
     }
 
     @Test
@@ -2392,7 +2434,7 @@ class SourceSyncServiceTest {
                 new CrmClient(properties, objectMapper), event -> { }, null);
         return new SourceSyncService(repository, siteRecordApplier, crmRecordApplier, crmExchangeService, paidOrderEnrolment,
                 siteApiClient, moodleSnapshotApplier, moodleClient, laborMarketSync, sourceSyncExecutor, properties, settings,
-                objectMapper);
+                objectMapper, auditJournalRepository);
     }
 
     private SyncRunView sync() {
@@ -2795,6 +2837,7 @@ class SourceSyncServiceTest {
     }
 
     private void createSchema() {
+        ru.rtk.crm.interaction.InteractionKindTestSchema.create(jdbcTemplate);
         List.of(
                 """
                 CREATE TABLE IF NOT EXISTS catalog_change_events (
@@ -2906,7 +2949,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (interaction_kind_id UUID, workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500),
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL,
                     current_stage_id UUID NOT NULL, next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE,
@@ -2924,7 +2967,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
+                CREATE TABLE IF NOT EXISTS interaction_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), template_stage_id UUID, 
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL,
                     name VARCHAR(200) NOT NULL, optional BOOLEAN NOT NULL
                 )
@@ -2956,7 +2999,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS workflow_template_stages (
+                CREATE TABLE IF NOT EXISTS workflow_template_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
                     id UUID PRIMARY KEY, template_id UUID NOT NULL, stage_order INTEGER NOT NULL,
                     name VARCHAR(200) NOT NULL, optional BOOLEAN NOT NULL
                 )

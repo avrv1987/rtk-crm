@@ -8,5 +8,6 @@ public enum MaxMessageKind {
     ASSIGNMENT,
     AGREEMENT_CORRECTION,
     AGREEMENT_EXPIRY,
-    SITE_REQUEST
+    SITE_REQUEST,
+    AGENT_PLAN
 }

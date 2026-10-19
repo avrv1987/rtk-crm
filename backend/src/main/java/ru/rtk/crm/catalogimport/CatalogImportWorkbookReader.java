@@ -58,7 +58,8 @@ public class CatalogImportWorkbookReader {
                     continue;
                 }
                 try {
-                    sheets.add(new CatalogImportSheet(sheet.getSheetName(), headers(sheet, headerRow, formatter)));
+                    sheets.add(new CatalogImportSheet(sheet.getSheetName(), headers(sheet, headerRow, formatter),
+                            workbook.isSheetHidden(index) || workbook.isSheetVeryHidden(index)));
                 } catch (InteractionValidationException exception) {
                     firstSheetError = firstSheetError == null ? exception : firstSheetError;
                 }

@@ -125,3 +125,16 @@ test('остановка опроса снаружи прекращает зап
 
   assert.equal(ticks, 1)
 })
+
+test('429 показывает срок повтора из Retry-After и не ломает разбор ошибки', async (t) => {
+  t.after(() => mock.restoreAll())
+  serve([
+    () => new Response(JSON.stringify(apiError('RATE_LIMITED')), { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '17' } }),
+    () => new Response('', { status: 429 })
+  ])
+
+  await assert.rejects(new ApiClient().me(), (error: unknown) => error instanceof ApiError
+    && error.status === 429 && error.code === 'RATE_LIMITED' && error.message === 'Слишком много запросов, повторите через 17 сек.')
+  await assert.rejects(new ApiClient().me(), (error: unknown) => error instanceof ApiError
+    && error.message === 'Слишком много запросов, повторите чуть позже')
+})

@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.CrmProfile;
+import ru.rtk.crm.attachment.DocumentKinds;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.audit.AuditAction;
 import ru.rtk.crm.audit.AuditJournalRepository;
@@ -26,17 +27,20 @@ public class WorkflowTemplateService {
     private final CommandIdempotencyRepository commandIdempotencyRepository;
     private final ObjectMapper objectMapper;
     private final AuditJournalRepository auditJournalRepository;
+    private final DocumentKinds documentKinds;
 
     public WorkflowTemplateService(
             WorkflowTemplateRepository workflowTemplateRepository,
             CommandIdempotencyRepository commandIdempotencyRepository,
             ObjectMapper objectMapper,
-            AuditJournalRepository auditJournalRepository
+            AuditJournalRepository auditJournalRepository,
+            DocumentKinds documentKinds
     ) {
         this.workflowTemplateRepository = workflowTemplateRepository;
         this.commandIdempotencyRepository = commandIdempotencyRepository;
         this.objectMapper = objectMapper;
         this.auditJournalRepository = auditJournalRepository;
+        this.documentKinds = documentKinds;
     }
 
     @Transactional(readOnly = true)
@@ -280,6 +284,20 @@ public class WorkflowTemplateService {
         if (current.version() != expectedVersion) {
             throw InteractionConflictException.workflowTemplateVersion(current.version());
         }
+        // Удаление стирает историю версий (каскадом), и идущие карточки больше нельзя обновить или вернуть к версии;
+        // привязки видов взаимодействия база сняла бы молча (SET NULL / CASCADE). Поэтому такой шаблон не удаляется.
+        long open = workflowTemplateRepository.countOpenInteractions(templateId);
+        if (open > 0) {
+            throw new InteractionValidationException("id", "По шаблону идут незавершённые взаимодействия: " + open
+                    + ". Удаление стёрло бы историю версий, и их нельзя было бы обновить; сначала переведите их на другой маршрут"
+                    + " или завершите");
+        }
+        List<String> kinds = workflowTemplateRepository.findKindNamesUsing(templateId);
+        if (!kinds.isEmpty()) {
+            throw new InteractionValidationException("id", "Шаблон выбран маршрутом видов взаимодействия: "
+                    + kinds.stream().map(kind -> "«" + kind + "»").collect(Collectors.joining(", "))
+                    + ". Сначала выберите для них другой шаблон");
+        }
         if (!workflowTemplateRepository.delete(templateId, expectedVersion)) {
             int currentVersion = workflowTemplateRepository.findById(templateId)
                     .map(WorkflowTemplateRepository.WorkflowTemplateRow::version)
@@ -394,13 +412,27 @@ public class WorkflowTemplateService {
             }
             stages.add(new WorkflowTemplateStage(
                     kept ? stage.id() : UUID.randomUUID(),
-                    requiredText(stage.name(), "stages", 200),
+                    stageName(stage.name(), order + 1),
                     order,
-                    stage.optional()
+                    stage.optional(),
+                    Boolean.TRUE.equals(stage.requiresAgreement()),
+                    stage.lmsRole(),
+                    documentKinds.normalizeRequired(stage.documentKinds(), "stages")
             ));
         }
-        if (requestedTransitions == null || requestedTransitions.size() > 1000) {
+        if (requestedTransitions == null) {
+            throw new InteractionValidationException("transitions", "Не передан список переходов");
+        }
+        if (requestedTransitions.size() > 1000) {
             throw new InteractionValidationException("transitions", "Можно задать не более 1000 переходов");
+        }
+        // Отчёты и «Контроль» отбирают и группируют этапы по названию: одноимённые этапы шаблона там неразличимы.
+        Set<String> names = new HashSet<>();
+        for (WorkflowTemplateStage stage : stages) {
+            if (!names.add(stage.name().strip().toLowerCase(java.util.Locale.ROOT))) {
+                throw new InteractionValidationException("stages", "Названия этапов не должны повторяться: «" + stage.name()
+                        + "» уже есть в шаблоне");
+            }
         }
         Map<Integer, WorkflowTemplateStage> stageByOrder = new HashMap<>();
         stages.forEach(stage -> stageByOrder.put(stage.order(), stage));
@@ -524,6 +556,18 @@ public class WorkflowTemplateService {
         String normalized = value.trim();
         if (normalized.length() > maxLength) {
             throw new InteractionValidationException(field, "Слишком длинное значение");
+        }
+        return normalized;
+    }
+
+    // Номер этапа в тексте: файл и внешний клиент (MCP) не видят формы, где этап подсвечен.
+    private static String stageName(String value, int order) {
+        if (value == null || value.isBlank()) {
+            throw new InteractionValidationException("stages", "Этап " + order + ": заполните название");
+        }
+        String normalized = value.trim();
+        if (normalized.length() > 200) {
+            throw new InteractionValidationException("stages", "Этап " + order + ": название длиннее 200 символов");
         }
         return normalized;
     }

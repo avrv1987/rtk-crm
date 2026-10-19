@@ -353,7 +353,7 @@ class MaxAppHttpTest {
         OffsetDateTime now = OffsetDateTime.now();
         return new Interaction(INTERACTION, ORGANIZATION, "Встреча", STAGE, "Первичный контакт", List.of(), List.of(), List.of(),
                 "Позвонить", now.plusDays(1), List.of(CONTACT, RESTRICTED_CONTACT), null, null, List.of(), List.of(), List.of(), List.of(),
-                null, 3, KAM, now, now, null, false, null);
+                null, 3, KAM, now, now, null, false, null, null);
     }
 
     private static Contact contact(UUID id, String name, String phone, PersonalDataStatus status) {

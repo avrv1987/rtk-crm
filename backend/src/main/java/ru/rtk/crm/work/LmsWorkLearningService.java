@@ -54,7 +54,7 @@ public class LmsWorkLearningService {
         OffsetDateTime now = OffsetDateTime.now();
         Set<UUID> wanted = new HashSet<>(interactionIds);
         Map<String, Boolean> dismissals = repository.findDismissals(scope.get(), null);
-        Map<UUID, List<SignalSource>> byWork = repository.findSources(scope.get(), null, properties.classesStageName()).stream()
+        Map<UUID, List<SignalSource>> byWork = repository.findSources(scope.get(), null).stream()
                 .filter(source -> wanted.contains(source.interactionId()))
                 .collect(Collectors.groupingBy(SignalSource::interactionId, LinkedHashMap::new, Collectors.toList()));
         Map<UUID, WorkLearning> result = new HashMap<>();

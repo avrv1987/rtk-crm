@@ -364,6 +364,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/organizations/{id}/path": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Путь вуза — все его взаимодействия с маршрутом, договором, обучением и повторными циклами */
+        get: operations["getOrganizationPath"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/organizations/{id}/assignment": {
         parameters: {
             query?: never;
@@ -491,6 +508,46 @@ export interface paths {
          * @description Только роли MANAGEMENT (просмотр всех команд без изменений).
          */
         get: operations["getTeamsSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/work/portfolio-change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Состав активных взаимодействий на начало и конец периода
+         * @description Только LEADER (своя команда) и MANAGEMENT (все команды). Было — активные на начало дня from, стало — активные на конец дня to (МСК). Было = остались + завершены + приостановлены; стало = остались + новые + возобновлены. Статус на дату — по последней смене статуса до границы. Команда — текущая команда вуза, архивные вузы не входят.
+         */
+        get: operations["getPortfolioChange"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/learning-coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Покрытие данных обучения по ожидаемым потокам
+         * @description ADMIN — все вузы, LEADER — вузы своей команды, MANAGEMENT — все команды; остальные роли получают 403. Ожидаемые потоки — сопоставленные запуски занятий студентов Moodle, которые идут сегодня (МСК), с наблюдениями и без. FRESH — последнее подтверждение наблюдения моложе staleAfterHours, STALE — старше, NO_DATA — наблюдений нет. Если Moodle не подключён (sourceConfigured = false), свежесть не проверяется. runs — до 50 потоков, требующих проверки (STALE и NO_DATA). unappliedRecords — записи Moodle, ждущие сопоставления или с ошибкой; только для ADMIN, иначе null.
+         */
+        get: operations["getLearningCoverage"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1524,7 +1581,7 @@ export interface paths {
         };
         /**
          * Договоры работы и этапы маршрута, связанные с договором
-         * @description Этапы «Обмен документами», «Корректировка документов» и «Подписание» определяются по постоянному идентификатору этапа базового шаблона или по названию из настройки app.agreements.*-stage-names.
+         * @description Роль SIGNING — этап с отметкой «требует действующего договора» (requiresAgreement). Этапы «Обмен документами» и «Корректировка документов» определяются по постоянному идентификатору этапа базового шаблона или по названию из настройки app.agreements.*-stage-names.
          */
         get: operations["getInteractionAgreements"];
         put?: never;
@@ -2196,6 +2253,172 @@ export interface paths {
         patch: operations["updateSavedReport"];
         trace?: never;
     };
+    "/api/document-kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Справочник «Виды документов»
+         * @description Все виды, включая архивные (archived), для выбора вида при загрузке, чек-листа этапа и редактора шаблона. Доступно всем сотрудникам; ведёт справочник администратор через /api/admin/catalogs/document_kinds.
+         */
+        get: operations["listDocumentKinds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interaction-kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Действующие виды взаимодействия
+         * @description Для формы создания карточки и отборов; teamTemplate* — шаблон команды текущего пользователя для вида
+         */
+        get: operations["listInteractionKinds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/interaction-kinds/resolution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Подсказка вида и маршрута новой карточки
+         * @description Тот же расчёт, что при создании: вид — выбранный, иначе первое подходящее правило (тип организации, программа, продукт; меньший приоритет выше), иначе первый действующий; шаблон — командный для вида, шаблон вида, шаблон по умолчанию. Ничего не записывает.
+         */
+        get: operations["resolveInteractionKind"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/interaction-kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Справочник видов взаимодействия
+         * @description Все виды, включая недействующие. ADMIN и LEADER со своей командой (руководитель видит шаблоны своей команды); остальным 403
+         */
+        get: operations["listManagedInteractionKinds"];
+        put?: never;
+        /**
+         * Добавить вид взаимодействия
+         * @description Только ADMIN. Шаблон вида — только общий. Изменение пишется в журнал аудита
+         */
+        post: operations["createInteractionKind"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/interaction-kinds/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить вид взаимодействия
+         * @description Только ADMIN. Последний действующий вид отключить нельзя. Карточки с этим видом не меняются
+         */
+        patch: operations["updateInteractionKind"];
+        trace?: never;
+    };
+    "/api/admin/interaction-kinds/{id}/team-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Шаблон команды для вида взаимодействия
+         * @description Только LEADER своей команды. Шаблон команды или общий; templateId = null возвращает команду к шаблону вида
+         */
+        put: operations["setInteractionKindTeamTemplate"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/interaction-kind-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Правила выбора вида взаимодействия
+         * @description Только ADMIN. Порядок — по приоритету (меньший номер выше)
+         */
+        get: operations["listInteractionKindRules"];
+        put?: never;
+        /**
+         * Добавить правило выбора вида
+         * @description Только ADMIN. Нужно хотя бы одно условие из типа организации, программы и продукта
+         */
+        post: operations["createInteractionKindRule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/interaction-kind-rules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Удалить правило выбора вида */
+        delete: operations["deleteInteractionKindRule"];
+        options?: never;
+        head?: never;
+        /** Изменить правило выбора вида */
+        patch: operations["updateInteractionKindRule"];
+        trace?: never;
+    };
     "/api/workflow-templates": {
         parameters: {
             query?: never;
@@ -2301,7 +2524,7 @@ export interface paths {
         put?: never;
         /**
          * Предпросмотр обновления работ до версии шаблона
-         * @description Только руководитель, по идущим работам своей команды на других версиях шаблона. Этапы сопоставляются по устойчивому идентификатору этапа шаблона, затем по названию; stageMap задаёт сопоставление вручную. Удалённый этап без сопоставления переходит в следующий сохранившийся этап. Ничего не изменяет
+         * @description Только руководитель, по идущим работам своей команды на других версиях шаблона. Этапы сопоставляются по устойчивому идентификатору этапа шаблона, затем по названию; stageMap задаёт сопоставление вручную. Удалённый этап без сопоставления переходит в предыдущий сохранившийся этап, а если его нет — в следующий. Ничего не изменяет
          */
         post: operations["previewWorkflowRollout"];
         delete?: never;
@@ -2356,7 +2579,7 @@ export interface paths {
         };
         /**
          * Выгрузить список профилей CRM в XLSX
-         * @description Только администратор. Те же фильтры, что у списка, без постраничного вывода: сотрудник, логин, роль, подтверждена ли роль Keycloak, команда или вуз, состояние, флаг «Оператор зачисления», синхронизация с Keycloak, последний вход (МСК). Выгрузка записывается в журнал администратора.
+         * @description Только администратор. Те же фильтры, что у списка, без постраничного вывода: сотрудник, логин, роль, подтверждена ли роль Keycloak, команда или вуз, состояние, флаг «Менеджер учебного процесса», синхронизация с Keycloak, последний вход (МСК). Выгрузка записывается в журнал администратора.
          */
         get: operations["exportCrmProfiles"];
         put?: never;
@@ -2576,7 +2799,7 @@ export interface paths {
         put?: never;
         /**
          * Сбросить второй фактор сотрудника
-         * @description Только администратор, не для своей учётной записи и не для другого администратора (400: второй фактор администратора сбрасывают в консоли Keycloak). Удаляет у пользователя Keycloak привязанные приложения-аутентификаторы (OTP). Администратору и оператору зачисления заново назначает обязательный второй фактор: при следующем входе Keycloak попросит подключить приложение. Сеансы не завершаются. Если Keycloak недоступен, ничего не меняется.
+         * @description Только администратор, не для своей учётной записи и не для другого администратора (400: второй фактор администратора сбрасывают в консоли Keycloak). Удаляет у пользователя Keycloak привязанные приложения-аутентификаторы (OTP). Администратору и менеджеру учебного процесса заново назначает обязательный второй фактор: при следующем входе Keycloak попросит подключить приложение. Сеансы не завершаются. Если Keycloak недоступен, ничего не меняется.
          */
         post: operations["resetCrmProfileSecondFactor"];
         delete?: never;
@@ -3263,7 +3486,7 @@ export interface paths {
         put?: never;
         /**
          * Ограничить обработку анкеты слушателя или снять ограничение
-         * @description Ограниченный профиль обучающегося остаётся сохранённым и учитывается в статистике, но оператор зачисления не может ни раскрыть, ни изменить его (409 PERSONAL_DATA_RESTRICTED в модуле зачисления)
+         * @description Ограниченный профиль обучающегося остаётся сохранённым и учитывается в статистике, но менеджер учебного процесса не может ни раскрыть, ни изменить его (409 PERSONAL_DATA_RESTRICTED в модуле зачисления)
          */
         post: operations["restrictPersonalDataLearner"];
         delete?: never;
@@ -3552,7 +3775,7 @@ export interface paths {
         put?: never;
         /**
          * Загрузить файл оплат в формате организатора
-         * @description Пока модуль «Слушатели» выключен (MODULE_ENROLMENT_ENABLED=false, по умолчанию), метод отвечает 404 всем. Во включённом модуле — только профиль USER или LEADER с флагом «Оператор зачисления» (флаг читается заново при каждом запросе), остальным 403. Файл — JSON-массив «Данные оплат» (до 5 МиБ и 10 000 элементов, null пропускается со счётчиком) разбирается PaidOrderParser и регистрируется запуском UPLOAD источника «Сайт»: в source_records пишутся только номер заявки, курс (программа по сопоставлению) и номер потока; организация — служебная «Открытый набор (физлица)». ФИО, телефон и email не сохраняются. Повтор файла даёт «Пропущено», повтор с тем же Idempotency-Key возвращает прежний результат. Запрос ждёт окончания запуска; при идущей синхронизации сайта — 409 SYNC_ALREADY_RUNNING.
+         * @description Пока модуль «Слушатели» выключен (MODULE_ENROLMENT_ENABLED=false, по умолчанию), метод отвечает 404 всем. Во включённом модуле — только профиль USER или LEADER с флагом «Менеджер учебного процесса» (флаг читается заново при каждом запросе), остальным 403. Файл — JSON-массив «Данные оплат» (до 5 МиБ и 10 000 элементов, null пропускается со счётчиком) разбирается PaidOrderParser и регистрируется запуском UPLOAD источника «Сайт»: в source_records пишутся только номер заявки, курс (программа по сопоставлению) и номер потока; организация — служебная «Открытый набор (физлица)». ФИО, телефон и email не сохраняются. Повтор файла даёт «Пропущено», повтор с тем же Idempotency-Key возвращает прежний результат. Запрос ждёт окончания запуска; при идущей синхронизации сайта — 409 SYNC_ALREADY_RUNNING.
          */
         post: operations["uploadPaidOrders"];
         delete?: never;
@@ -3570,7 +3793,7 @@ export interface paths {
         };
         /**
          * Протокол последней загрузки оплат
-         * @description Модуль «Слушатели» выключен — 404 всем; включён — только оператор зачисления, остальным 403. Протокол берётся из сохранённого результата последней загрузки оплат любым оператором; без загрузок — 204.
+         * @description Модуль «Слушатели» выключен — 404 всем; включён — только менеджер учебного процесса, остальным 403. Протокол берётся из сохранённого результата последней загрузки оплат любым менеджером учебного процесса; без загрузок — 204.
          */
         get: operations["getLastPaidOrderUpload"];
         put?: never;
@@ -3590,7 +3813,7 @@ export interface paths {
         };
         /**
          * Потоки «курс + номер» со счётчиками зачислений и анкет
-         * @description Модуль «Слушатели» выключен — 404 всем; включён — только оператор зачисления (флаг читается заново при каждом запросе), остальным 403. Только числа: paid — зачислений в потоке (одно на слушателя, повторная заявка второго не создаёт), profilesComplete — полных анкет, exported и transferred — отметки файла для LMS, pending — зачисления без отметки «передано». keepUntil — дата окончания потока плюс срок хранения анкет (app.retention.learner-profiles, по умолчанию P3Y); у потока без даты окончания срок не определён. Программа — по сопоставлению курса у записей оплат. Счётчики — как в блоке «Сроки хранения» администратора.
+         * @description Модуль «Слушатели» выключен — 404 всем; включён — только менеджер учебного процесса (флаг читается заново при каждом запросе), остальным 403. Только числа: paid — зачислений в потоке (одно на слушателя, повторная заявка второго не создаёт), profilesComplete — полных анкет, exported и transferred — отметки файла для LMS, pending — зачисления без отметки «передано». keepUntil — дата окончания потока плюс срок хранения анкет (app.retention.learner-profiles, по умолчанию P3Y); у потока без даты окончания срок не определён. Программа — по сопоставлению курса у записей оплат. Счётчики — как в блоке «Сроки хранения» администратора.
          */
         get: operations["listEnrolmentStreams"];
         put?: never;
@@ -3730,7 +3953,7 @@ export interface paths {
         };
         /**
          * Партия передачи в LMS построчно
-         * @description Только оператор зачисления. Состав партии с номером строки файла, версией анкеты на момент выгрузки и текущей версией, результатом приёма LMS и ошибкой. Фамилия и имя показываются как в списке потока; просмотр пишется в журнал (LEARNER_LIST_VIEWED). Cache-Control no-store.
+         * @description Только менеджер учебного процесса. Состав партии с номером строки файла, версией анкеты на момент выгрузки и текущей версией, результатом приёма LMS и ошибкой. Фамилия и имя показываются как в списке потока; просмотр пишется в журнал (LEARNER_LIST_VIEWED). Cache-Control no-store.
          */
         get: operations["getEnrolmentBatch"];
         put?: never;
@@ -3752,7 +3975,7 @@ export interface paths {
         put?: never;
         /**
          * Отметить результат приёма LMS по строкам
-         * @description Только оператор зачисления. Результат по одной или нескольким строкам: ACCEPTED — принята, FAILED — ошибка (причина обязательна; пустая заменяется на «без описания»), PENDING — ожидает. Принятая строка окончательна: её не меняют ни повторная отметка, ни протокол — такие строки возвращаются в skipped. Принятая строка делает зачисление «Передано в LMS». Партия при первой записи результата считается переданной. Журнал — LMS_RESULTS_RECORDED.
+         * @description Только менеджер учебного процесса. Результат по одной или нескольким строкам: ACCEPTED — принята, FAILED — ошибка (причина обязательна; пустая заменяется на «без описания»), PENDING — ожидает. Принятая строка окончательна: её не меняют ни повторная отметка, ни протокол — такие строки возвращаются в skipped. Принятая строка делает зачисление «Передано в LMS». Партия при первой записи результата считается переданной. Журнал — LMS_RESULTS_RECORDED.
          */
         post: operations["recordEnrolmentBatchResults"];
         delete?: never;
@@ -3772,7 +3995,7 @@ export interface paths {
         put?: never;
         /**
          * Загрузить протокол приёма LMS
-         * @description Только оператор зачисления. CSV (разделитель «;» или «,», UTF-8) или XLSX до 5 МиБ и 5000 строк с колонками «строка, результат, ошибка»; первая строка-заголовок пропускается. Номер строки — как в файле партии. Результат: «принята», «ok», «успешно», «добавлен», «создан» — принята; «ошибка», «error», «отклонена» — ошибка; «ожидает» — ожидает. Нераспознанные строки и номера, которых нет в партии, возвращаются в skipped.
+         * @description Только менеджер учебного процесса. CSV (разделитель «;» или «,», UTF-8) или XLSX до 5 МиБ и 5000 строк с колонками «строка, результат, ошибка»; первая строка-заголовок пропускается. Номер строки — как в файле партии. Результат: «принята», «ok», «успешно», «добавлен», «создан» — принята; «ошибка», «error», «отклонена» — ошибка; «ожидает» — ожидает. Нераспознанные строки и номера, которых нет в партии, возвращаются в skipped.
          */
         post: operations["importEnrolmentBatchProtocol"];
         delete?: never;
@@ -3792,7 +4015,7 @@ export interface paths {
         put?: never;
         /**
          * Передать партию в Moodle через API
-         * @description Только оператор зачисления и только при MOODLE_WRITE_ENABLED=true с токеном MOODLE_WRITE_TOKEN; иначе 400. По каждой не принятой строке: core_user_get_users_by_field (почта), при отсутствии — core_user_create_users (логин — почта, фамилия, имя, почта; другие поля анкеты не уходят), при расхождении имени — core_user_update_users; enrol_manual_enrol_users на курс потока с ролью студента; core_group_add_group_members, если у курса одна сопоставленная группа; затем сверка core_enrol_get_enrolled_users. Курс — из сопоставлений Moodle программы потока; нет курса — ошибка строки «нет курса для потока». Строка «принята» только после сверки; отказ Moodle — ошибка строки с кодом Moodle. Moodle недоступен или отклонил токен — передача останавливается, оставшиеся строки ждут (stoppedReason). Повтор отправляет только не принятые строки. Журнал — LMS_API_TRANSFER без персональных данных.
+         * @description Только менеджер учебного процесса и только при MOODLE_WRITE_ENABLED=true с токеном MOODLE_WRITE_TOKEN; иначе 400. По каждой не принятой строке: core_user_get_users_by_field (почта), при отсутствии — core_user_create_users (логин — почта, фамилия, имя, почта; другие поля анкеты не уходят), при расхождении имени — core_user_update_users; enrol_manual_enrol_users на курс потока с ролью студента; core_group_add_group_members, если у курса одна сопоставленная группа; затем сверка core_enrol_get_enrolled_users. Курс — из сопоставлений Moodle программы потока; нет курса — ошибка строки «нет курса для потока». Строка «принята» только после сверки; отказ Moodle — ошибка строки с кодом Moodle. Moodle недоступен или отклонил токен — передача останавливается, оставшиеся строки ждут (stoppedReason). Повтор отправляет только не принятые строки. Журнал — LMS_API_TRANSFER без персональных данных.
          */
         post: operations["transferEnrolmentBatchToMoodle"];
         delete?: never;
@@ -3812,7 +4035,7 @@ export interface paths {
         put?: never;
         /**
          * Перенести слушателя между курсами Moodle
-         * @description Только оператор зачисления, при включённой записи в Moodle и только для зачисления из очереди «перенос после передачи». enrol_manual_unenrol_users с курса прежнего потока, enrol_manual_enrol_users на курс нового, сверка; затем сверка снимается. Пользователь Moodle ищется по почте; нет или несколько — 400, перенос вручную. Журнал — LMS_API_MOVE.
+         * @description Только менеджер учебного процесса, при включённой записи в Moodle и только для зачисления из очереди «перенос после передачи». enrol_manual_unenrol_users с курса прежнего потока, enrol_manual_enrol_users на курс нового, сверка; затем сверка снимается. Пользователь Moodle ищется по почте; нет или несколько — 400, перенос вручную. Журнал — LMS_API_MOVE.
          */
         post: operations["moveEnrolmentInMoodle"];
         delete?: never;
@@ -3830,7 +4053,7 @@ export interface paths {
         };
         /**
          * Очередь зачисления — что обработать сегодня
-         * @description Только оператор зачисления. Группы по всем потокам: MISSING_DATA — нет обязательных для LMS сведений; AMBIGUOUS_MATCH — та же почта или телефон у другого слушателя потока; READY — готово к передаче; NOT_SENT — файл сформирован, партия не отмечена переданной; AWAITING_RESULT — ожидается результат LMS; LMS_ERROR — ошибка LMS; MOVED_AFTER_TRANSFER — перенос в другой поток после выгрузки, нужна сверка LMS; CHANGED_AFTER_TRANSFER — анкета изменена после передачи. В группе total и до 50 строк. Анкеты с ограниченной обработкой и обезличенные в очереди передачи не показываются. Просмотр пишется в журнал.
+         * @description Только менеджер учебного процесса. Группы по всем потокам: MISSING_DATA — нет обязательных для LMS сведений; AMBIGUOUS_MATCH — та же почта или телефон у другого слушателя потока; READY — готово к передаче; NOT_SENT — файл сформирован, партия не отмечена переданной; AWAITING_RESULT — ожидается результат LMS; LMS_ERROR — ошибка LMS; MOVED_AFTER_TRANSFER — перенос в другой поток после выгрузки, нужна сверка LMS; CHANGED_AFTER_TRANSFER — анкета изменена после передачи. В группе total и до 50 строк. Анкеты с ограниченной обработкой и обезличенные в очереди передачи не показываются. Просмотр пишется в журнал.
          */
         get: operations["getEnrolmentQueue"];
         put?: never;
@@ -3852,7 +4075,7 @@ export interface paths {
         put?: never;
         /**
          * Отметить сверку с LMS
-         * @description Только оператор зачисления. MOVED_AFTER_TRANSFER — перенос учтён в LMS; CHANGED_AFTER_TRANSFER — изменения анкеты внесены в LMS, learnerVersion обязана совпасть с текущей версией анкеты (иначе 409). Журнал — LMS_RECONCILED.
+         * @description Только менеджер учебного процесса. MOVED_AFTER_TRANSFER — перенос учтён в LMS; CHANGED_AFTER_TRANSFER — изменения анкеты внесены в LMS, learnerVersion обязана совпасть с текущей версией анкеты (иначе 409). Журнал — LMS_RECONCILED.
          */
         post: operations["reconcileEnrolmentLms"];
         delete?: never;
@@ -4149,6 +4372,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Список своих планов ИИ-агента
+         * @description Только при MCP_ENABLED=true. Свои планы, новые первыми, не больше 100; по умолчанию только ожидающие подтверждения. Ожидающий план с истёкшим сроком показывается как EXPIRED; планы по вузам, которые сотрудник больше не видит, не показываются.
+         */
+        get: operations["listAgentPlans"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-plans/{id}": {
         parameters: {
             query?: never;
@@ -4180,7 +4423,7 @@ export interface paths {
         put?: never;
         /**
          * Записать план ИИ-агента
-         * @description Исполняет комментарий с новым шагом и сроком одной командой (ключ повтора agent-plan:<id>). Если карточку изменили после подготовки — STALE без изменений; ошибка команды — FAILED. Повтор возвращает тот же итог.
+         * @description Исполняет план той же командой, что и действие из карточки (комментарий, переход этапа, проблема или риск, решение, пауза или возобновление), от имени сотрудника и с ключом повтора agent-plan:<id>; права, маршрут и ответственный проверяются заново. Если карточку изменили после подготовки — STALE без изменений; ошибка команды — FAILED. Повтор возвращает тот же итог.
          */
         post: operations["applyAgentPlan"];
         delete?: never;
@@ -4238,7 +4481,7 @@ export interface paths {
         };
         /**
          * Состояние подключения MAX текущего сотрудника
-         * @description Модуль MAX. Только КАМ и руководитель команды без флага оператора зачисления; остальным — 403. Состояния: NONE — не подключено; WAITING — ссылка выдана, бот ещё не открыт; FOUND — найден аккаунт MAX, ждёт подтверждения; ACTIVE — подключено; STOPPED — пользователь остановил бота.
+         * @description Модуль MAX. Только КАМ и руководитель команды без флага менеджера учебного процесса; остальным — 403. Состояния: NONE — не подключено; WAITING — ссылка выдана, бот ещё не открыт; FOUND — найден аккаунт MAX, ждёт подтверждения; ACTIVE — подключено; STOPPED — пользователь остановил бота.
          */
         get: operations["getMaxLink"];
         put?: never;
@@ -4450,7 +4693,7 @@ export interface paths {
         };
         /**
          * Мои уведомления на почту
-         * @description Любой активный сотрудник. Темы, доступные роли, и адрес учётной записи Keycloak, на который приходят письма. Оператору зачисления и представителю вуза тем нет.
+         * @description Любой активный сотрудник. Темы, доступные роли, и адрес учётной записи Keycloak, на который приходят письма. Менеджеру учебного процесса и представителю вуза тем нет.
          */
         get: operations["getMailPreferences"];
         /**
@@ -4680,7 +4923,7 @@ export interface paths {
         put?: never;
         /**
          * Войти в мини-приложение MAX по initData
-         * @description Модуль MAX. initData — строка window.WebApp.initData как есть. Сервер проверяет подпись HMAC (ключ — токен бота), однократность параметров и возраст auth_date (не старше 1 часа; повтор той же initData в пределах часа разрешён), затем активную подтверждённую связь и профиль: только КАМ и руководитель команды без флага оператора зачисления. В ответе — токен сеанса для заголовка Authorization: Bearer; в базе только его SHA-256. Простой 30 минут, предел 4 часа, сеанс закрывается при смене роли, команды, блокировке (access_revision), отключении MAX, остановке бота и «Завершить сеансы» у администратора. Журнал — MAX_SESSION_STARTED.
+         * @description Модуль MAX. initData — строка window.WebApp.initData как есть. Сервер проверяет подпись HMAC (ключ — токен бота), однократность параметров и возраст auth_date (не старше 1 часа; повтор той же initData в пределах часа разрешён), затем активную подтверждённую связь и профиль: только КАМ и руководитель команды без флага менеджера учебного процесса. В ответе — токен сеанса для заголовка Authorization: Bearer; в базе только его SHA-256. Простой 30 минут, предел 4 часа, сеанс закрывается при смене роли, команды, блокировке (access_revision), отключении MAX, остановке бота и «Завершить сеансы» у администратора. Журнал — MAX_SESSION_STARTED.
          */
         post: operations["startMaxAppSession"];
         /** Завершить сеанс мини-приложения */
@@ -4813,10 +5056,79 @@ export interface components {
     schemas: {
         /** @enum {string} */
         AgentPlanStatus: "PENDING" | "APPLIED" | "REJECTED" | "EXPIRED" | "STALE" | "FAILED";
+        /**
+         * @description NOTE_UPDATE — итог и следующий шаг (в том числе напоминание), STAGE_TRANSITION — переход этапа, ISSUE_CREATE — проблема или риск, ISSUE_RESOLVE — решение проблемы, STATUS_CHANGE — пауза или возобновление
+         * @enum {string}
+         */
+        AgentPlanKind: "NOTE_UPDATE" | "STAGE_TRANSITION" | "ISSUE_CREATE" | "ISSUE_RESOLVE" | "STATUS_CHANGE";
+        AgentPlanListItem: {
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["AgentPlanKind"];
+            status: components["schemas"]["AgentPlanStatus"];
+            clientId?: string | null;
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            /** Format: uuid */
+            interactionId: string;
+            interactionTitle: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        AgentPlanEvidence: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            occurredAt: string;
+            type: string;
+            actorName: string;
+            comment?: string | null;
+        };
         AgentPlan: {
             /** Format: uuid */
             id: string;
             status: components["schemas"]["AgentPlanStatus"];
+            kind: components["schemas"]["AgentPlanKind"];
+            /** @description Номер этапа на момент подготовки в маршруте карточки */
+            stagePosition?: number | null;
+            stageTotal: number;
+            /** @description Этап-цель перехода */
+            toStageName?: string | null;
+            toStagePosition?: number | null;
+            /**
+             * @description Текущий статус взаимодействия
+             * @enum {string|null}
+             */
+            currentStatus?: "ACTIVE" | "PAUSED" | "COMPLETED" | null;
+            /**
+             * @description Статус, который предлагает план
+             * @enum {string|null}
+             */
+            workStatus?: "ACTIVE" | "PAUSED" | null;
+            /** Format: date */
+            resumeOn?: string | null;
+            /** @description Шаг возврата, который CRM поставит при паузе */
+            resumeAction?: string | null;
+            /** Format: date-time */
+            resumeActionAt?: string | null;
+            /** @enum {string|null} */
+            issueKind?: "PROBLEM" | "RISK" | null;
+            /** @enum {string|null} */
+            riskLevel?: "MEDIUM" | "HIGH" | null;
+            responsibleName?: string | null;
+            /** Format: date */
+            dueOn?: string | null;
+            /** @description Текущее описание проблемы, которую план предлагает решить */
+            issueDescription?: string | null;
+            /** @enum {string|null} */
+            issueStatus?: "OPEN" | "RESOLVED" | null;
+            /** @description События истории карточки, на которые ссылается агент; даты, авторы и тексты — из CRM */
+            evidence: components["schemas"]["AgentPlanEvidence"][];
+            /** @description BACKWARD — возврат на прежний этап, SKIP — переход через этап, PAST_DUE — срок в прошлом */
+            warnings: string[];
             /** @description Клиент MCP (azp токена), который подготовил план */
             clientId?: string | null;
             /** Format: uuid */
@@ -4831,11 +5143,11 @@ export interface components {
             currentNextAction?: string | null;
             /** Format: date-time */
             currentNextActionAt?: string | null;
-            /** @description Комментарий, который предлагает агент; показывается как текст */
-            note: string;
-            nextAction: string;
+            /** @description Текст агента (комментарий, обоснование, описание, решение или причина); показывается как текст */
+            note?: string | null;
+            nextAction?: string | null;
             /** Format: date-time */
-            nextActionAt: string;
+            nextActionAt?: string | null;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -4845,6 +5157,10 @@ export interface components {
             errorCode?: string | null;
         };
         PaidOrderUpload: {
+            /** @description Повторы заявки с тем же содержимым внутри файла; пропущены и в skipped не входят */
+            duplicatesInFile: number;
+            /** @description Заявки, которые перенесли бы уже зачисленного слушателя в ещё не существующий поток: не применены, описаны в issues. Применить их можно повторной загрузкой с confirmNewStreams=true. */
+            heldStreamTransfers: number;
             /** Format: uuid */
             runId: string;
             /** @description Непустых элементов массива */
@@ -4853,7 +5169,7 @@ export interface components {
             created: number;
             /** @description Заявки, у которых изменились курс или номер потока */
             updated: number;
-            /** @description Заявки без изменений и повторы с тем же содержимым */
+            /** @description Заявки, уже загруженные раньше с тем же содержимым (повторы внутри файла — в duplicatesInFile) */
             skipped: number;
             /** @description Курс не сопоставлен с программой; сопоставляет администратор в разборе источника */
             needsMapping: number;
@@ -4884,7 +5200,7 @@ export interface components {
             message: string;
             /** @description true — запись принята (например, телефон не прошёл проверку и не сохранён) */
             warning: boolean;
-            /** @description Номер заявки из элемента, если он есть; по нему оператор находит запись в файле */
+            /** @description Номер заявки из элемента, если он есть; по нему менеджер учебного процесса находит запись в файле */
             orderNumber?: string | null;
         };
         /** @description Приём оплат в модуль «Слушатели» — только числа, без персональных данных */
@@ -5213,7 +5529,7 @@ export interface components {
         LearnerMove: {
             snils: string;
             version: number;
-            /** @description Подтверждение оператора, что анкеты с разными ФИО принадлежат одному человеку. Без него при расхождении фамилии, имени или отчества (если отчество есть в обеих анкетах) перенос отклоняется с ошибкой поля confirmNameMismatch */
+            /** @description Подтверждение менеджера учебного процесса, что анкеты с разными ФИО принадлежат одному человеку. Без него при расхождении фамилии, имени или отчества (если отчество есть в обеих анкетах) перенос отклоняется с ошибкой поля confirmNameMismatch */
             confirmNameMismatch?: boolean | null;
         };
         LearnerMoveResult: {
@@ -5241,6 +5557,8 @@ export interface components {
         QuestionnaireImport: {
             /** @description false — предпросмотр, true — итог применения */
             applied: boolean;
+            /** @description Повтор «Применить» того же предпросмотра — возвращён итог первого применения, ничего не изменено */
+            alreadyApplied: boolean;
             fingerprint: string;
             /** @description Заголовки столбцов, которых нет в шаблоне; их значения не читаются */
             ignoredHeaders: string[];
@@ -5397,11 +5715,13 @@ export interface components {
             role: components["schemas"]["AgreementStageRole"];
         };
         WorkAgreements: {
+            /** @description Номер действующего договора школы с вузом (любого, не только связанного с работой); по нему правило договора пропускает переход */
+            activeAgreementNumber: string | null;
             /** Format: uuid */
             interactionId: string;
             /** Format: uuid */
             organizationId: string;
-            /** @description Этап «Подписание» нельзя завершить без действующего договора с датой подписания */
+            /** @description Общий выключатель правила; при true пройти дальше этапа с отметкой «требует действующего договора» можно только при действующем договоре школы с вузом */
             signingRuleEnabled: boolean;
             /** @description Этапы маршрута работы, связанные с договором */
             stages: components["schemas"]["WorkAgreementStage"][];
@@ -5838,6 +6158,7 @@ export interface components {
             workTitle: string;
             name: string;
             kind: components["schemas"]["AttachmentKind"];
+            kindName: string | null;
             mediaType: string;
             /** Format: int64 */
             sizeBytes: number;
@@ -6008,8 +6329,10 @@ export interface components {
             teamId: string | null;
             teamName: string | null;
             accessRevision: number;
-            /** @description true, если модуль «Слушатели» включён и у профиля есть флаг «Оператор зачисления» (только USER и LEADER); открывает раздел «Зачисление» и загрузку оплат */
+            /** @description true, если модуль «Слушатели» включён и у профиля есть флаг «Менеджер учебного процесса» (только USER и LEADER); открывает раздел «Зачисление» и загрузку оплат */
             enrolmentOperator: boolean;
+            /** @description true, если это менеджер учебного процесса служебной команды «Открытый набор» (USER с флагом); ему показываются только «Зачисление» и справка, заводить вузы он не может */
+            enrolmentOnly: boolean;
         };
         LogoutResult: {
             /**
@@ -6248,6 +6571,8 @@ export interface components {
             name: string;
             archived: boolean;
             version: number;
+            /** @description ИТ-направление программы или вендор продукта — по нему формы группируют списки; у направлений null */
+            groupName: string | null;
         };
         CatalogReference: {
             /** Format: uuid */
@@ -6321,6 +6646,29 @@ export interface components {
             name: string;
             order: number;
             optional: boolean;
+            /** @description «Требует действующего договора» — пройти дальше этапа можно только при действующем договоре школы с вузом */
+            requiresAgreement: boolean;
+            /** @description Роль этапа для LMS; null — этап с LMS не связан */
+            lmsRole: components["schemas"]["StageLmsRole"] | null;
+            /** @description Коды обязательных видов документов этапа (справочник «Виды документов») */
+            documentKinds: string[];
+        };
+        /**
+         * @description TEACHER_TRAINING — обучение преподавателей, CLASSES — идут занятия, QUALIFICATION — повышение квалификации
+         * @enum {string}
+         */
+        StageLmsRole: "TEACHER_TRAINING" | "CLASSES" | "QUALIFICATION";
+        StageDocument: {
+            code: string;
+            name: string;
+            /** @description К этапу загружен не удалённый документ этого вида, не отклонённый антивирусом */
+            attached: boolean;
+        };
+        DocumentKind: {
+            code: string;
+            name: string;
+            /** @description Вид в архиве не выбирается для новых документов, но остаётся у сохранённых документов и этапов */
+            archived: boolean;
         };
         InteractionTransitionOption: {
             /** Format: uuid */
@@ -6517,6 +6865,10 @@ export interface components {
             marks: components["schemas"]["InteractionMarks"];
         };
         Interaction: components["schemas"]["InteractionSummary"] & {
+            /** @description Чек-лист обязательных документов текущего этапа. Если чего-то не хватает, переход вперёд требует комментария (commentRequired у вариантов перехода), сервер ставит в начало комментария «Не хватает документов: …». */
+            documentChecklist: components["schemas"]["StageDocument"][];
+            /** @description Вид взаимодействия; смена вида маршрут не меняет */
+            kind?: components["schemas"]["InteractionKindRef"] | null;
             /** @description «Показывать вузу» — следующий шаг виден в кабинете вуза; сбрасывается, когда шаг или срок меняются без явного флага */
             nextStepPartnerVisible: boolean;
             /** @description Шаблон и версия маршрута, по которым идёт работа; null — работа не связана с шаблоном */
@@ -6550,6 +6902,12 @@ export interface components {
             deputyManagerName: string | null;
             /** Format: date */
             deputyEndsOn: string | null;
+            /** Format: uuid */
+            kindId?: string | null;
+            /** @description Вид взаимодействия */
+            kindName?: string | null;
+            /** @description На текущем этапе не хватает обязательного документа (сигнал «нет документов») */
+            missingDocuments?: boolean;
         };
         InteractionCreate: {
             /** Format: uuid */
@@ -6564,8 +6922,16 @@ export interface components {
             productIds?: string[];
             /** Format: date-time */
             lastContactAt?: string | null;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Ручной выбор шаблона; без него шаблон берётся по виду (командный шаблон вида → шаблон вида → шаблон по умолчанию)
+             */
             templateId?: string | null;
+            /**
+             * Format: uuid
+             * @description Вид взаимодействия; без него вид подбирают правила, затем первый действующий вид справочника
+             */
+            kindId?: string | null;
         };
         InteractionTransition: {
             version: number;
@@ -6791,6 +7157,24 @@ export interface components {
             agreementApproval?: components["schemas"]["AgreementApproval"] | null;
             /** @description Текущий этап — этап договора, а договор на согласовании, корректировке или подписании. Такая работа не входит в «на этапе дольше N дней»: срок контролируют пороги согласования */
             stageUnderApproval: boolean;
+            /** Format: uuid */
+            programId?: string | null;
+            /** @description Идентификаторы продуктов в том же порядке, что названия в products */
+            productIds?: string[];
+            /**
+             * Format: uuid
+             * @description Вид взаимодействия
+             */
+            kindId?: string | null;
+            /**
+             * Format: uuid
+             * @description Шаблон маршрута работы (WorkControl.routes); null — работа не связана с шаблоном
+             */
+            routeId?: string | null;
+            /** @description Этап на конец периода (по нему работает отбор по этапу); без периода или с незакончившимся периодом — текущий */
+            stageAtEnd?: string | null;
+            /** @description Сейчас на текущем этапе не хватает обязательного документа (сигнал «нет документов») */
+            missingDocuments: boolean;
         };
         /** @description Последние снимки идущих потоков занятий студентов работы (без учёта периода отчёта) и действующие, не скрытые сигналы LMS. Персональных данных нет. */
         WorkLearning: {
@@ -6836,6 +7220,64 @@ export interface components {
             idleOrganizations?: components["schemas"]["WorkControlIdleOrganization"][] | null;
             /** @description Договоры на согласовании, корректировке и подписании для плитки «Договор на согласовании» — по правилу реестра, в том числе не привязанные к взаимодействию. Без отборов и периода совпадают с реестром; при отборе — договоры вузов из строк и группы «Без работы». Предмет и дата подписания не заполняются */
             agreements?: components["schemas"]["AgreementRegistryRow"][];
+            /** @description Маршруты строк для матрицы «программа × этап»; этапы шаблона по порядку, затем этапы работ вне шаблона */
+            routes?: components["schemas"]["WorkControlRoute"][];
+        };
+        WorkControlRoute: {
+            /** Format: uuid */
+            templateId?: string | null;
+            templateName?: string | null;
+            stages: string[];
+            /** @description Этапы работ, которых нет в текущей версии шаблона (прежние версии); стоят в конце stages */
+            formerStages?: string[];
+        };
+        OrganizationPath: {
+            /** Format: uuid */
+            organizationId: string;
+            /** Format: date-time */
+            calculatedAt: string;
+            total: number;
+            works: components["schemas"]["OrganizationPathWork"][];
+        };
+        OrganizationPathStage: {
+            name: string;
+            optional: boolean;
+        };
+        OrganizationPathWork: {
+            /** Format: uuid */
+            interactionId: string;
+            title: string;
+            kindName?: string | null;
+            /** @enum {string} */
+            status: "ACTIVE" | "PAUSED" | "COMPLETED";
+            /** Format: uuid */
+            programId?: string | null;
+            programName?: string | null;
+            products: string[];
+            /** @description Этапы маршрута самой карточки по порядку */
+            stages: components["schemas"]["OrganizationPathStage"][];
+            stageName: string;
+            /** @description Номер текущего этапа в stages, с 1 */
+            stagePosition: number;
+            /** @description null у завершённой работы */
+            daysOnStage?: number | null;
+            nextAction?: string | null;
+            /** Format: date-time */
+            nextActionAt?: string | null;
+            due: components["schemas"]["ManagerWorkDue"];
+            problems: number;
+            risks: number;
+            agreementStatus?: components["schemas"]["AgreementStatus"] | null;
+            agreementNumber?: string | null;
+            /** Format: date */
+            agreementValidUntil?: string | null;
+            learning?: components["schemas"]["WorkLearning"] | null;
+            /** Format: date */
+            cycleStartsOn?: string | null;
+            previous?: components["schemas"]["CycleLink"] | null;
+            next?: components["schemas"]["CycleLink"] | null;
+            /** Format: date-time */
+            createdAt: string;
         };
         TeamsSummary: {
             /** Format: date-time */
@@ -6843,6 +7285,64 @@ export interface components {
             stuckDays: number;
             teams: components["schemas"]["TeamSummary"][];
             total: components["schemas"]["TeamSummary"];
+        };
+        LearningCoverage: {
+            /** Format: date-time */
+            calculatedAt: string;
+            sourceConfigured: boolean;
+            /** Format: int64 */
+            staleAfterHours: number;
+            expected: number;
+            fresh: number;
+            stale: number;
+            withoutObservation: number;
+            /** Format: int64 */
+            unappliedRecords?: number | null;
+            runs: components["schemas"]["LearningCoverageRun"][];
+        };
+        LearningCoverageRun: {
+            /** Format: uuid */
+            mappingId: string;
+            organizationName: string;
+            programName: string;
+            courseName: string;
+            /** Format: date */
+            runStartsOn: string;
+            /** Format: date */
+            runEndsOn: string;
+            /** Format: date-time */
+            lastObservedAt?: string | null;
+            /** @enum {string} */
+            state: "FRESH" | "STALE" | "NO_DATA";
+        };
+        PortfolioChange: {
+            /** Format: date-time */
+            calculatedAt: string;
+            /** Format: date */
+            from: string;
+            /** Format: date */
+            to: string;
+            teams: components["schemas"]["PortfolioChangeRow"][];
+            total: components["schemas"]["PortfolioChangeRow"];
+        };
+        PortfolioChangeRow: {
+            /** Format: uuid */
+            teamId?: string | null;
+            teamName?: string | null;
+            /** Format: int64 */
+            atStart: number;
+            /** Format: int64 */
+            atEnd: number;
+            /** Format: int64 */
+            stayed: number;
+            /** Format: int64 */
+            created: number;
+            /** Format: int64 */
+            resumed: number;
+            /** Format: int64 */
+            completed: number;
+            /** Format: int64 */
+            paused: number;
         };
         LearningDynamics: {
             /** Format: date-time */
@@ -6858,7 +7358,7 @@ export interface components {
             months: components["schemas"]["LearningDynamicsMonth"][];
             /** @description Линии по вузам или программам, по убыванию обучающихся в последнем месяце */
             series: components["schemas"]["LearningDynamicsSeries"][];
-            /** @description Участия в потоках с наблюдением; 0 — потоков в месяце не было, null — потоки были, но ни у одного нет наблюдения («нет данных») */
+            /** @description Участия в потоках с наблюдением; 0 — потоков в месяце не было, null — «нет данных» (потоки были, но ни у одного нет наблюдения, или месяц раньше первого потока) */
             totalParticipants: (number | null)[];
             /** @description null — ни один поток месяца не отслеживает завершение («нет данных») */
             totalCompleted: (number | null)[];
@@ -6996,7 +7496,7 @@ export interface components {
             falling: components["schemas"]["LearningTrendItem"][];
             runsWithoutData: number;
         };
-        /** @description start, end и change — по сопоставимым потокам (есть значение на начало, до начала потока — ноль); потоки без значения на начало (runsWithoutData) в них не входят, их обучающиеся на конец — endWithoutBase */
+        /** @description Разложение состава. start, end и change — по сопоставимым потокам: идут и на начало, и на конец и имеют значение на начало. Идущие потоки без значения на начало (runsWithoutData) в них не входят, их обучающиеся на конец — endWithoutBase. startedRuns и endStarted — потоки, начавшиеся внутри периода, и их обучающиеся на конец; endedRuns и startEnded — закончившиеся внутри периода и их обучающиеся на начало. В change и в рейтинги роста и падения входят только сопоставимые потоки. */
         LearningTrendItem: {
             /** Format: uuid */
             id?: string | null;
@@ -7010,6 +7510,12 @@ export interface components {
             runsWithoutData: number;
             /** Format: int64 */
             endWithoutBase: number;
+            startedRuns: number;
+            /** Format: int64 */
+            endStarted: number;
+            endedRuns: number;
+            /** Format: int64 */
+            startEnded: number;
         };
         ReminderStep: {
             /** Format: uuid */
@@ -7108,7 +7614,7 @@ export interface components {
             plannedOn: string | null;
             ownerManagerName: string | null;
         };
-        /** @description Активная работа, у которой с последней записи «Обучение преподавателей» прошло не меньше app.work.qualification-after-months месяцев, а этап app.work.qualification-stage-name ещё впереди и не отмечен. */
+        /** @description Активная работа, у которой с последней записи «Обучение преподавателей» прошло не меньше app.work.qualification-after-months месяцев, а первый этап с ролью LMS QUALIFICATION ещё впереди и не отмечен. */
         ReminderQualification: {
             /** Format: uuid */
             interactionId: string;
@@ -7131,7 +7637,7 @@ export interface components {
             /** @description Работа, поток и вид сигнала */
             id: string;
             /**
-             * @description STUDENTS_APPEARED — в идущем потоке есть обучающиеся, а текущий этап маршрута раньше этапа «Занятия»; NO_STUDENTS — поток идёт дольше app.lms-signals.no-students-after-days дней, обучающихся 0; LOW_COMPLETION — поток закрыт или до его конца не больше app.lms-signals.completion-window-days дней, отслеживание завершения включено, статус известен не меньше чем у app.lms-signals.completion-coverage-percent (70) % обучающихся, доля завершивших среди известных ниже app.lms-signals.low-completion-percent; COMPLETION_UNVERIFIED — те же условия, но статус известен у меньшей доли: «данных недостаточно, нужна проверка». Сигналы активности (поток идёт не меньше app.lms-signals.activity-grace-days дней, Moodle отдал время последнего входа в курс, наблюдение не старше SOURCES_STALE_AFTER): NOT_STARTED — ни разу не заходили больше not-started-percent % обучающихся; NO_ACTIVITY — за 7 дней не заходили ни обучающиеся, ни преподаватели; LOW_ACTIVITY — за 7 дней заходили меньше low-activity-percent %; DROPOUT — заходили раньше, но не заходят больше inactive-after-days дней, больше dropout-percent %; TEACHER_INACTIVE — у потока есть преподаватели с ролью в курсе, ни один не заходил 14 дней
+             * @description STUDENTS_APPEARED — в идущем потоке есть обучающиеся, а текущий этап маршрута раньше первого этапа с ролью LMS CLASSES («Идут занятия»); NO_STUDENTS — поток идёт дольше app.lms-signals.no-students-after-days дней, обучающихся 0; LOW_COMPLETION — поток закрыт или до его конца не больше app.lms-signals.completion-window-days дней, отслеживание завершения включено, статус известен не меньше чем у app.lms-signals.completion-coverage-percent (70) % обучающихся, доля завершивших среди известных ниже app.lms-signals.low-completion-percent; COMPLETION_UNVERIFIED — те же условия, но статус известен у меньшей доли: «данных недостаточно, нужна проверка». Сигналы активности (поток идёт не меньше app.lms-signals.activity-grace-days дней, Moodle отдал время последнего входа в курс, наблюдение не старше SOURCES_STALE_AFTER): NOT_STARTED — ни разу не заходили больше not-started-percent % обучающихся; NO_ACTIVITY — за 7 дней не заходили ни обучающиеся, ни преподаватели; LOW_ACTIVITY — за 7 дней заходили меньше low-activity-percent %; DROPOUT — заходили раньше, но не заходят больше inactive-after-days дней, больше dropout-percent %; TEACHER_INACTIVE — у потока есть преподаватели с ролью в курсе, ни один не заходил 14 дней
              * @enum {string}
              */
             type: "STUDENTS_APPEARED" | "NO_STUDENTS" | "LOW_COMPLETION" | "COMPLETION_UNVERIFIED" | "LOW_ACTIVITY" | "NOT_STARTED" | "DROPOUT" | "TEACHER_INACTIVE" | "NO_ACTIVITY";
@@ -7168,7 +7674,7 @@ export interface components {
             observedAt: string;
             /** @description Наблюдение старше SOURCES_STALE_AFTER — «данные устарели». Сигналы активности по таким данным не выдаются, остальные выдаются с этим признаком */
             stale: boolean;
-            /** @description Переход к этапу «Занятия», разрешённый маршрутом из текущего этапа; выполняется только существующим API перехода */
+            /** @description Переход к первому этапу с ролью LMS CLASSES, разрешённый маршрутом из текущего этапа; выполняется только существующим API перехода */
             action?: components["schemas"]["LmsSignalAction"] | null;
             /** @description Почему кнопки перехода нет */
             actionHint?: string | null;
@@ -7210,6 +7716,11 @@ export interface components {
             nextAction?: string | null;
             /** Format: date-time */
             nextActionAt?: string | null;
+            /**
+             * Format: uuid
+             * @description Новый вид взаимодействия; маршрут работы не меняется (мастер версий переводит только между версиями её шаблона)
+             */
+            kindId?: string;
             /** Format: uuid */
             programId?: string | null;
             productIds?: string[] | null;
@@ -7242,20 +7753,26 @@ export interface components {
             operations: components["schemas"]["InteractionStageEditOperation"][];
         };
         InteractionStageEditOperation: {
-            /** @enum {string} */
-            type: "RENAME" | "ADD_AFTER" | "MOVE_AFTER" | "DELETE";
+            /**
+             * @description SET_OPTIONAL меняет обязательность будущего этапа без событий (поля id и optional). ADD_AFTER принимает и свойства нового этапа: requiresAgreement, lmsRole, documentKinds
+             * @enum {string}
+             */
+            type: "RENAME" | "ADD_AFTER" | "MOVE_AFTER" | "DELETE" | "SET_OPTIONAL";
             /** Format: uuid */
             id?: string | null;
             /** Format: uuid */
             afterId?: string | null;
             name?: string | null;
             optional?: boolean | null;
+            /** @description Только для ADD_AFTER — «требует действующего договора» */
+            requiresAgreement?: boolean | null;
+            /** @description Только для ADD_AFTER — роль этапа для LMS */
+            lmsRole?: components["schemas"]["StageLmsRole"] | null;
+            /** @description Только для ADD_AFTER — коды обязательных видов документов */
+            documentKinds?: string[] | null;
         };
-        /**
-         * @description Вид документа; OTHER, если не указан
-         * @enum {string}
-         */
-        AttachmentKind: "CONTRACT" | "LICENSE_AGREEMENT" | "APPENDIX" | "ACT" | "SIGNED_SCAN" | "MATERIALS" | "DOCUMENTATION" | "CURRICULUM" | "QUALIFICATION" | "OTHER";
+        /** @description Код вида документа из справочника «Виды документов» (GET /api/document-kinds); OTHER, если не указан. Новый или изменённый документ — только действующий вид, иначе 400 */
+        AttachmentKind: string;
         /** @description Меняет вид документа и (или) флаг «Доступен вузу»; хотя бы одно из полей kind и partnerVisible обязательно */
         AttachmentKindUpdate: {
             version: number;
@@ -7284,6 +7801,8 @@ export interface components {
             /** @enum {string} */
             status: "QUARANTINE" | "CLEAN" | "REJECTED" | "UNVERIFIABLE";
             kind: components["schemas"]["AttachmentKind"];
+            /** @description Название вида документа по справочнику */
+            kindName: string | null;
             /** @description Номер версии документа в цепочке замен */
             revision: number;
             /** Format: uuid */
@@ -7355,6 +7874,8 @@ export interface components {
             commandId: string;
             /** Format: date-time */
             occurredAt: string;
+            /** @description Событие записано по плану ИИ-агента, который подтвердил сотрудник (ключ повтора agent-plan:<id>) */
+            preparedByAgent?: boolean;
         };
         WorkflowStageInput: {
             name: string;
@@ -7365,6 +7886,12 @@ export interface components {
              * @description Идентификатор этапа текущей версии, если этап сохраняется; новый этап — без идентификатора
              */
             id?: string | null;
+            /** @description «Требует действующего договора»; по умолчанию false */
+            requiresAgreement?: boolean | null;
+            /** @description Роль этапа для LMS; null — без связи с LMS */
+            lmsRole?: components["schemas"]["StageLmsRole"] | null;
+            /** @description Коды обязательных видов документов из справочника «Виды документов» */
+            documentKinds?: string[] | null;
         };
         WorkflowTransitionInput: {
             fromOrder: number;
@@ -7396,6 +7923,95 @@ export interface components {
             /** Format: uuid */
             toStageId: string;
             commentRequired: boolean;
+        };
+        InteractionKindRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        InteractionKind: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            description: string | null;
+            active: boolean;
+            /** @description Вид по умолчанию для новых карточек, если КАМ не выбрал вид и ни одно правило не подошло. Такой вид один и назначается явно; снять отметку можно, только назначив другой вид. */
+            defaultKind: boolean;
+            /**
+             * Format: uuid
+             * @description Общий шаблон маршрута вида; null — шаблон по умолчанию
+             */
+            templateId: string | null;
+            templateName: string | null;
+            sortOrder: number;
+            version: number;
+            /**
+             * Format: uuid
+             * @description Шаблон команды текущего руководителя или сотрудника для этого вида
+             */
+            teamTemplateId: string | null;
+            teamTemplateName: string | null;
+        };
+        InteractionKindRequest: {
+            /** @description Обязательна при изменении */
+            version?: number | null;
+            name: string;
+            description?: string | null;
+            active?: boolean | null;
+            /** @description true — сделать видом по умолчанию (должен действовать); null — не менять; false у текущего — 400 */
+            defaultKind?: boolean | null;
+            /** Format: uuid */
+            templateId?: string | null;
+            sortOrder?: number | null;
+        };
+        InteractionKindTeamTemplate: {
+            /**
+             * Format: uuid
+             * @description Шаблон команды или общий; null — вернуться к шаблону вида
+             */
+            templateId?: string | null;
+        };
+        InteractionKindRule: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            kindId: string;
+            kindName: string;
+            /** @enum {string|null} */
+            organizationType: "UNIVERSITY" | "SCHOOL" | "COLLEGE" | "OPEN_ENROLLMENT" | null;
+            /** Format: uuid */
+            programId: string | null;
+            programName: string | null;
+            /** Format: uuid */
+            productId: string | null;
+            productName: string | null;
+            priority: number;
+            version: number;
+        };
+        InteractionKindRuleRequest: {
+            version?: number | null;
+            /** Format: uuid */
+            kindId: string;
+            /** @enum {string|null} */
+            organizationType?: "UNIVERSITY" | "SCHOOL" | "COLLEGE" | "OPEN_ENROLLMENT" | null;
+            /** Format: uuid */
+            programId?: string | null;
+            /** Format: uuid */
+            productId?: string | null;
+            /** @description Меньший номер — выше приоритет; по умолчанию 100 */
+            priority?: number | null;
+        };
+        InteractionKindResolution: {
+            /** Format: uuid */
+            kindId: string;
+            kindName: string;
+            /** @enum {string} */
+            kindSource: "SELECTED" | "RULE" | "FIRST_ACTIVE";
+            /** Format: uuid */
+            templateId: string;
+            templateName: string;
+            /** @enum {string} */
+            templateSource: "TEAM_KIND" | "KIND" | "DEFAULT";
         };
         WorkflowTemplate: {
             /** Format: uuid */
@@ -7435,7 +8051,7 @@ export interface components {
             works: number | null;
         };
         /**
-         * @description SAME — тот же этап; RENAMED — тот же этап, новое название; BY_NAME — найден по названию; MANUAL — выбран вручную; REMOVED — этапа нет, работа переходит в следующий сохранившийся этап
+         * @description SAME — тот же этап; RENAMED — тот же этап, новое название; BY_NAME — найден по названию; MANUAL — выбран вручную; REMOVED — этапа нет, работа переходит в предыдущий сохранившийся этап (если его нет — в следующий)
          * @enum {string}
          */
         WorkflowStageMatch: "SAME" | "RENAMED" | "BY_NAME" | "MANUAL" | "REMOVED";
@@ -7485,7 +8101,12 @@ export interface components {
             currentStageRemoved: boolean;
             /** @description Этапы работы изменены в карточке */
             edited: boolean;
+            /** @description Изменения этапов и переходов через «; » (добавлен или убран переход «А» → «Б») */
             changes: string;
+            /** @description С этапа, на котором окажется карточка, по новой версии нельзя дойти до финального этапа; в мастере не отмечается по умолчанию */
+            noExit: boolean;
+            /** @description Текущий этап исчезает, и карточка встаёт на финальный этап; в мастере не отмечается по умолчанию */
+            landsOnFinal: boolean;
         };
         WorkflowRolloutPreview: {
             /** Format: uuid */
@@ -7516,7 +8137,7 @@ export interface components {
             teamId: string | null;
             teamName: string | null;
             active: boolean;
-            /** @description Флаг «Оператор зачисления»; только у USER и LEADER */
+            /** @description Флаг «Менеджер учебного процесса»; только у USER и LEADER */
             enrolmentOperator: boolean;
             /** @description Профиль, созданный при первом входе OIDC и ни разу не активированный администратором */
             pendingActivation: boolean;
@@ -7590,7 +8211,7 @@ export interface components {
             /** Format: uuid */
             teamId?: string | null;
             active?: boolean;
-            /** @description Назначить или снять флаг «Оператор зачисления» (400 для ADMIN и MANAGEMENT) */
+            /** @description Назначить или снять флаг «Менеджер учебного процесса» (400 для ADMIN и MANAGEMENT) */
             enrolmentOperator?: boolean;
             /**
              * Format: uuid
@@ -7755,10 +8376,13 @@ export interface components {
             /** @description Совпал ИНН; создание не блокируется */
             sameInn: boolean;
         };
+        /**
+         * @description document_kinds — справочник «Виды документов» (код нового вида назначается сервером)
+         * @enum {string}
+         */
+        CatalogKind: "directions" | "programs" | "vendors" | "products" | "document_kinds";
         /** @enum {string} */
-        CatalogKind: "directions" | "programs" | "vendors" | "products";
-        /** @enum {string} */
-        CatalogEntityType: "ORGANIZATION" | "TEAM" | "DIRECTION" | "PROGRAM" | "VENDOR" | "PRODUCT" | "AGREEMENT" | "VENDOR_CONTACT";
+        CatalogEntityType: "ORGANIZATION" | "TEAM" | "DIRECTION" | "PROGRAM" | "VENDOR" | "PRODUCT" | "AGREEMENT" | "VENDOR_CONTACT" | "DOCUMENT_KIND";
         AdminCatalogEntry: {
             /** Format: uuid */
             id: string;
@@ -7876,7 +8500,7 @@ export interface components {
             productAgreementId?: string | null;
         };
         CatalogImportMapping: {
-            /** @description Соответствие поля импорта заголовку книги. AGREEMENT требует organizationName, vendorName и productName и принимает contractNumber, licenseSigned, licenseExpiryYear, transferStatus, managerName, contactName, comment, organizationType, organizationExternalKey, vendorExternalKey, productExternalKey, agreementExternalKey, contactExternalKey, contactPosition, contactEmail, contactPhone и interactionId. Недостающие внешние ключи выводятся из нормализованных имён. DIRECTION_PROGRAM требует directionExternalKey и directionName и принимает programExternalKey, programName и programDirectionRef. VENDOR_CONTACTS требует vendorName и принимает productNames, vendorContactName, vendorContactPhone, vendorContactEmail и vendorContactChannels. */
+            /** @description Соответствие поля импорта заголовку книги. AGREEMENT требует organizationName, vendorName и productName и принимает contractNumber, licenseSigned, licenseExpiryYear, transferStatus, managerName, contactName, comment, organizationType, organizationExternalKey, vendorExternalKey, productExternalKey, agreementExternalKey, contactExternalKey, contactPosition, contactEmail, contactPhone, interactionId и programName (ИТ-программа из справочника; строки одного вуза и программы дают одно взаимодействие, без колонки organizationType тип нового вуза берётся из названия). Недостающие внешние ключи выводятся из нормализованных имён. DIRECTION_PROGRAM требует directionExternalKey и directionName и принимает programExternalKey, programName и programDirectionRef. VENDOR_CONTACTS требует vendorName и принимает productNames, vendorContactName, vendorContactPhone, vendorContactEmail и vendorContactChannels. */
             columns: {
                 [key: string]: string;
             };
@@ -7896,6 +8520,8 @@ export interface components {
         };
         CatalogImportSheet: {
             name: string;
+            /** @description Лист скрыт в книге Excel */
+            hidden: boolean;
             headers: string[];
         };
         CatalogImportInspect: {
@@ -8001,10 +8627,10 @@ export interface components {
          */
         InteractionFlag: "WAITING_UNIVERSITY" | "WAITING_RTK" | "PROBLEM" | "RISK" | "RISK_OR_PROBLEM";
         /**
-         * @description PORTFOLIO допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON; DAYS_ON_STAGE — число полных дней от последнего входа на текущий этап (от создания, если карточка ни разу не входила на него через переход) до момента формирования отчёта; LAST_EVENT_AT — последнее событие работы без автоматических записей источников (команда APPLY_SOURCE_RECORD: Moodle, сайт), null, если таких событий нет; колонки по договору показывают само значение для одного продукта и пары «продукт: значение» для нескольких. EVENTS допускает EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE, FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND допускает DIRECTION, PROGRAM, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, COMPLETION_BASIS, PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND; заголовки колонок DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков. COMPLETION_SHARE — C / (C + N) по участиям с известным статусом завершения, COMPLETION_BASIS — основание этой доли («C из C + N с известным статусом; данные по C + N из P», плюс «потоков без данных: K», если у части потоков периода нет наблюдения на дату; программа только с такими потоками — «нет данных…», без потоков в периоде — null). MARKET_VACANCIES — число открытых вакансий по ИТ-направлению программы в последнем месячном срезе периода, MARKET_TREND — изменение этого числа в процентах от последнего среза до начала периода (если его нет — от первого среза периода) до последнего среза периода; оба показателя считаются только для направлений с признаком «Учитывать спрос рынка труда», у остальных значение «не применяется», при отсутствии срезов — null («нет данных»); в общий показатель не входят. PAID_ORDERS считает различные номера оплаченных заказов, а PAID_STREAMS — различные пары «курс и поток» применённых записей paid_order сервисной организации «Открытый набор (физлица)», видимой каждому USER и LEADER; период отчёта к ним не применяется, поскольку сайт не передаёт дату оплаты. SNAPSHOT допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT. DURATION допускает TEAM, PROGRAM, STAGE, COMPLETED, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; дни — десятичные числа с одним знаком после запятой. AGREEMENTS допускает ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS, PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS. MANAGER_WORK допускает MANAGER, ORGANIZATION, PRODUCTS, PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS, NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS, LMS_LEARNING, LMS_CHECK, TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM, RISK, AGREEMENT_STATUS, AGREEMENT; с tile IDLE колонки всегда MANAGER, TEAM, ORGANIZATION, LAST_STAFF_ACTION — только для этой плитки (строка — вуз без идущего взаимодействия, LAST_STAFF_ACTION — последнее действие сотрудника по вузу, «не зафиксировано», если его нет); LMS_LEARNING и LMS_CHECK — текущие данные LMS по идущим потокам и сверка этапа с ними, AGREEMENT_STATUS и AGREEMENT — статус и номер последнего связанного договора с вузом («Нет», если договора нет).
+         * @description PORTFOLIO допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON; DAYS_ON_STAGE — число полных дней от последнего входа на текущий этап (от создания, если карточка ни разу не входила на него через переход) до момента формирования отчёта; LAST_EVENT_AT — последнее событие работы без автоматических записей источников (команда APPLY_SOURCE_RECORD: Moodle, сайт), null, если таких событий нет; колонки по договору показывают само значение для одного продукта и пары «продукт: значение» для нескольких. EVENTS допускает EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE, FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND допускает DIRECTION, PROGRAM, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, COMPLETION_BASIS, PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND; заголовки колонок DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков. COMPLETION_SHARE — C / (C + N) по участиям с известным статусом завершения, COMPLETION_BASIS — основание этой доли («C из C + N с известным статусом; данные по C + N из P», плюс «потоков без данных: K», если у части потоков периода нет наблюдения на дату; программа только с такими потоками — «нет данных…», без потоков в периоде — null). MARKET_VACANCIES — число открытых вакансий по ИТ-направлению программы в последнем месячном срезе периода, MARKET_TREND — изменение этого числа в процентах от последнего среза до начала периода (если его нет — от первого среза периода) до последнего среза периода; оба показателя считаются только для направлений с признаком «Учитывать спрос рынка труда», у остальных значение «не применяется», при отсутствии срезов — null («нет данных»); в общий показатель не входят. PAID_ORDERS считает различные номера оплаченных заказов, а PAID_STREAMS — различные пары «курс и поток» применённых записей paid_order сервисной организации «Открытый набор (физлица)», видимой каждому USER и LEADER; период отчёта к ним не применяется, поскольку сайт не передаёт дату оплаты. SNAPSHOT допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT. DURATION допускает TEAM, PROGRAM, STAGE, COMPLETED, MEDIAN_DAYS, P90_DAYS, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; дни — десятичные числа с одним знаком после запятой; MEDIAN_DAYS и P90_DAYS — медиана и 90-й процентиль (ближайший ранг) завершённых прохождений, их число — COMPLETED. AGREEMENTS допускает ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS, PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS. MANAGER_WORK допускает MANAGER, ORGANIZATION, PRODUCTS, PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS, NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS, LMS_LEARNING, LMS_CHECK, TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM, RISK, AGREEMENT_STATUS, AGREEMENT; с tile IDLE колонки всегда MANAGER, TEAM, ORGANIZATION, LAST_STAFF_ACTION — только для этой плитки (строка — вуз без идущего взаимодействия, LAST_STAFF_ACTION — последнее действие сотрудника по вузу, «не зафиксировано», если его нет); LMS_LEARNING и LMS_CHECK — текущие данные LMS по идущим потокам и сверка этапа с ними, AGREEMENT_STATUS и AGREEMENT — статус и номер последнего связанного договора с вузом («Нет», если договора нет).
          * @enum {string}
          */
-        ReportColumn: "ORGANIZATION" | "INTERACTION" | "DIRECTION" | "PROGRAM" | "PRODUCTS" | "STAGE" | "DAYS_ON_STAGE" | "WORK_STATUS" | "WAITING" | "PROBLEM" | "RISK" | "MANAGER" | "CREATED_AT" | "LAST_EVENT_AT" | "NEXT_ACTION" | "NEXT_ACTION_AT" | "EVENT_AT" | "EVENT_TYPE" | "FROM_STAGE" | "COMMENT" | "AUTHOR" | "APPLICATIONS" | "PAID_ORDERS" | "PAID_STREAMS" | "PARTICIPANTS" | "LEARNERS_COMPLETED" | "COMPLETION_SHARE" | "COMPLETION_BASIS" | "PARALLEL_RUNS" | "MARKET_VACANCIES" | "MARKET_TREND" | "VENDORS" | "CONTRACT_NUMBER" | "LICENSE_SIGNED" | "LICENSE_EXPIRY_YEAR" | "TRANSFER_STATUS" | "MATERIALS_TRANSFERRED_ON" | "TEAM" | "COMPLETED" | "AVG_DAYS" | "MAX_DAYS" | "CURRENT" | "CURRENT_MAX_DAYS" | "AGREEMENT" | "AGREEMENT_STATUS" | "AGREEMENT_TERM" | "ACTIVITY_KIND" | "ACTIVITY" | "PLANNED_VOLUME" | "ACTUAL_VOLUME" | "VOLUME_UNIT" | "PLANNED_DATES" | "ACTUAL_DATES" | "ACTIVITY_STATUS" | "WORKS" | "CONFIRMATIONS" | "CONFIRMATION_LINKS" | "STAGE_AT_START" | "STAGE_AT_END" | "STAGE_POSITION" | "TRANSITIONS" | "PERIOD_COMMENTS" | "DUE_STATE" | "OVERDUE_DAYS" | "LMS_LEARNING" | "LMS_CHECK" | "LAST_STAFF_ACTION";
+        ReportColumn: "ORGANIZATION" | "INTERACTION" | "DIRECTION" | "PROGRAM" | "PRODUCTS" | "STAGE" | "DAYS_ON_STAGE" | "WORK_STATUS" | "WAITING" | "PROBLEM" | "RISK" | "MANAGER" | "CREATED_AT" | "LAST_EVENT_AT" | "NEXT_ACTION" | "NEXT_ACTION_AT" | "EVENT_AT" | "EVENT_TYPE" | "FROM_STAGE" | "COMMENT" | "AUTHOR" | "APPLICATIONS" | "PAID_ORDERS" | "PAID_STREAMS" | "PARTICIPANTS" | "LEARNERS_COMPLETED" | "COMPLETION_SHARE" | "COMPLETION_BASIS" | "PARALLEL_RUNS" | "MARKET_VACANCIES" | "MARKET_TREND" | "VENDORS" | "CONTRACT_NUMBER" | "LICENSE_SIGNED" | "LICENSE_EXPIRY_YEAR" | "TRANSFER_STATUS" | "MATERIALS_TRANSFERRED_ON" | "TEAM" | "COMPLETED" | "MEDIAN_DAYS" | "P90_DAYS" | "AVG_DAYS" | "MAX_DAYS" | "CURRENT" | "CURRENT_MAX_DAYS" | "AGREEMENT" | "AGREEMENT_STATUS" | "AGREEMENT_TERM" | "ACTIVITY_KIND" | "ACTIVITY" | "PLANNED_VOLUME" | "ACTUAL_VOLUME" | "VOLUME_UNIT" | "PLANNED_DATES" | "ACTUAL_DATES" | "ACTIVITY_STATUS" | "WORKS" | "CONFIRMATIONS" | "CONFIRMATION_LINKS" | "STAGE_AT_START" | "STAGE_AT_END" | "STAGE_POSITION" | "TRANSITIONS" | "PERIOD_COMMENTS" | "DUE_STATE" | "OVERDUE_DAYS" | "LMS_LEARNING" | "LMS_CHECK" | "LAST_STAFF_ACTION";
         /** @description Пустой список с флагом include=false оставляет измерение без фильтрации, включая строки без значения. includeNo* добавляет к выбранным id строки без значения. managerIds и includeNoManager используют текущего ответственного организации в PORTFOLIO и DEMAND и снимок ответственного события в EVENTS. DEMAND отклоняет productIds, includeNoProduct, stages, workStatuses и flags с 400 VALIDATION_ERROR. */
         ReportFilters: {
             organizationIds?: string[];
@@ -8012,6 +8638,8 @@ export interface components {
             includeNoDirection?: boolean;
             programIds?: string[];
             includeNoProgram?: boolean;
+            /** @description Виды взаимодействия; недоступно для DEMAND и AGREEMENTS */
+            kindIds?: string[];
             productIds?: string[];
             includeNoProduct?: boolean;
             managerIds?: string[];
@@ -8159,10 +8787,10 @@ export interface components {
             transitions: number;
         };
         /**
-         * @description DEMAND суммирует заявки и принимает ORGANIZATION, DIRECTION, PROGRAM, MANAGER и MONTH (месяц подачи)
+         * @description DEMAND суммирует заявки и принимает ORGANIZATION, DIRECTION, PROGRAM, MANAGER и MONTH (месяц подачи). STAGE идёт в порядке маршрута работ выборки; при нескольких маршрутах группы — «шаблон: этап». KIND — по виду взаимодействия. MILESTONE — по вехам (роль этапа для LMS: вход в этап или его отметка выполненным), только для PORTFOLIO и SNAPSHOT и не для seriesBy; группы не взаимоисключающие, всегда три строки в порядке ролей.
          * @enum {string}
          */
-        StatisticsGroupBy: "STAGE" | "ORGANIZATION" | "DIRECTION" | "PROGRAM" | "PRODUCT" | "MANAGER" | "MONTH";
+        StatisticsGroupBy: "STAGE" | "ORGANIZATION" | "DIRECTION" | "PROGRAM" | "PRODUCT" | "MANAGER" | "MONTH" | "KIND" | "MILESTONE";
         StatisticsRequest: {
             kind: components["schemas"]["ReportKind"];
             groupBy: components["schemas"]["StatisticsGroupBy"];
@@ -8750,6 +9378,11 @@ export interface components {
             title: string;
             /** Format: uuid */
             templateId?: string | null;
+            /**
+             * Format: uuid
+             * @description Вид нового цикла; без него — вид прошлого цикла, если он действует, иначе по правилам
+             */
+            kindId?: string | null;
             /** Format: date */
             startsOn?: string | null;
             nextAction?: string | null;
@@ -8938,7 +9571,7 @@ export interface components {
             occurredAt: string;
             category: components["schemas"]["AuditCategory"];
             /** @enum {string} */
-            action: "PROFILE_CHANGED" | "ACTIVATION_REQUESTED" | "KAM_ASSIGNED" | "KAM_CHANGED" | "KAM_UNASSIGNED" | "ORGANIZATION_TEAM_CHANGED" | "AGREEMENT_PLAN_CHANGED" | "TEAM_CREATED" | "TEAM_RENAMED" | "TEAM_ARCHIVED" | "TEAM_RESTORED" | "SYNC_STARTED" | "SOURCE_SETTINGS_CHANGED" | "ATTACHMENT_DOWNLOADED" | "ATTACHMENT_PREVIEWED" | "ENROLMENT_OPERATOR_CHANGED" | "REPORT_DOWNLOADED" | "JOURNAL_EXPORTED" | "CONFIRMATIONS_DOWNLOADED" | "SUBJECT_SEARCHED" | "SUBJECT_EXPORTED" | "CONTACT_RECTIFIED" | "CONTACT_RESTRICTED" | "CONTACT_RESTRICTION_LIFTED" | "SUBJECT_ANONYMIZED" | "RETENTION_APPLIED" | "ACCOUNT_DISABLED" | "ACCOUNT_ENABLED" | "ACCOUNT_SYNC_FAILED" | "ACCOUNT_CREATED" | "ACCOUNT_PASSWORD_RESET" | "ACCOUNT_SESSIONS_ENDED" | "ACCOUNT_EMAIL_CHANGED" | "ACCOUNT_SECOND_FACTOR_RESET" | "ACCOUNT_ROLES_MIGRATED" | "ACCOUNT_ROLE_RECONCILED" | "LOGIN_SUCCEEDED" | "LOGIN_DENIED" | "LOGOUT" | "PROFILES_EXPORTED" | "CRM_EVENTS_REQUEUED" | "LEARNER_RESTRICTED" | "LEARNER_RESTRICTION_LIFTED" | "PAID_ORDERS_UPLOADED" | "LEARNERS_SYNCED" | "LEARNER_LIST_VIEWED" | "LEARNER_SEARCHED" | "LEARNER_VIEWED" | "LEARNER_FIELDS_REVEALED" | "LEARNER_CHANGED" | "LEARNER_ENROLMENTS_MOVED" | "LEARNER_TEMPLATE_PREVIEWED" | "LEARNER_TEMPLATE_IMPORTED" | "LMS_ROSTER_EXPORTED" | "LMS_ROSTER_MARKED" | "STREAM_END_DATE_CHANGED" | "TEACHER_ROSTER_EXPORTED" | "TEACHER_ROSTER_MARKED" | "AGENT_TOOL_CALLED" | "AGENT_PLAN_PREPARED" | "AGENT_PLAN_APPLIED" | "AGENT_PLAN_REJECTED" | "AGENT_PLAN_EXPIRED" | "AGENT_PLAN_STALE" | "AGENT_PLAN_FAILED" | "MAX_SETTINGS_CHANGED" | "MAX_LINK_REQUESTED" | "MAX_LINKED" | "MAX_LINK_REJECTED" | "MAX_UNLINKED" | "MAX_SESSION_STARTED" | "MAX_CHANGE" | "MAX_OUTBOX_REQUEUED" | "PARTNER_REQUEST_CREATED" | "PARTNER_REQUEST_CHANGED" | "PARTNER_RESPONSE_SUBMITTED" | "PARTNER_RESPONSE_REVIEWED" | "PARTNER_MATERIAL_RECEIVED" | "LMS_RESULTS_RECORDED" | "LMS_RECONCILED" | "LMS_API_TRANSFER" | "LMS_API_MOVE" | "LOGIN_FAILED" | "ACCOUNT_LOCKOUT_RELEASED" | "ORGANIZATION_RECORD_CHANGED" | "CATALOG_CHANGED" | "CATALOG_IMPORT_APPLIED" | "WORKFLOW_TEMPLATE_CHANGED" | "WORKFLOW_ROLLOUT_APPLIED" | "SOURCE_MAPPING_CHANGED" | "MAIL_SETTINGS_CHANGED" | "MAIL_CONNECTION_CHECKED" | "MAIL_TEST_SENT" | "MAIL_LETTER_VIEWED" | "MAIL_OUTBOX_REQUEUED" | "MAIL_OUTBOX_CANCELLED" | "MAIL_INVITATION_SENT" | "MAIL_INVITATION_REDEEMED" | "MAIL_SUBJECT_REPORT_SENT";
+            action: "PROFILE_CHANGED" | "ACTIVATION_REQUESTED" | "KAM_ASSIGNED" | "KAM_CHANGED" | "KAM_UNASSIGNED" | "ORGANIZATION_TEAM_CHANGED" | "AGREEMENT_PLAN_CHANGED" | "TEAM_CREATED" | "TEAM_RENAMED" | "TEAM_ARCHIVED" | "TEAM_RESTORED" | "SYNC_STARTED" | "SOURCE_SETTINGS_CHANGED" | "ATTACHMENT_DOWNLOADED" | "ATTACHMENT_PREVIEWED" | "ENROLMENT_OPERATOR_CHANGED" | "REPORT_DOWNLOADED" | "JOURNAL_EXPORTED" | "CONFIRMATIONS_DOWNLOADED" | "SUBJECT_SEARCHED" | "SUBJECT_EXPORTED" | "CONTACT_RECTIFIED" | "CONTACT_RESTRICTED" | "CONTACT_RESTRICTION_LIFTED" | "SUBJECT_ANONYMIZED" | "RETENTION_APPLIED" | "ACCOUNT_DISABLED" | "ACCOUNT_ENABLED" | "ACCOUNT_SYNC_FAILED" | "ACCOUNT_CREATED" | "ACCOUNT_PASSWORD_RESET" | "ACCOUNT_SESSIONS_ENDED" | "ACCOUNT_EMAIL_CHANGED" | "ACCOUNT_SECOND_FACTOR_RESET" | "ACCOUNT_ROLES_MIGRATED" | "ACCOUNT_ROLE_RECONCILED" | "LOGIN_SUCCEEDED" | "LOGIN_DENIED" | "LOGOUT" | "PROFILES_EXPORTED" | "CRM_EVENTS_REQUEUED" | "LEARNER_RESTRICTED" | "LEARNER_RESTRICTION_LIFTED" | "PAID_ORDERS_UPLOADED" | "LEARNERS_SYNCED" | "LEARNER_LIST_VIEWED" | "LEARNER_SEARCHED" | "LEARNER_VIEWED" | "LEARNER_FIELDS_REVEALED" | "LEARNER_CHANGED" | "LEARNER_ENROLMENTS_MOVED" | "LEARNER_TEMPLATE_PREVIEWED" | "LEARNER_TEMPLATE_IMPORTED" | "LMS_ROSTER_EXPORTED" | "LMS_ROSTER_MARKED" | "STREAM_END_DATE_CHANGED" | "TEACHER_ROSTER_EXPORTED" | "TEACHER_ROSTER_MARKED" | "AGENT_TOOL_CALLED" | "AGENT_PLAN_PREPARED" | "AGENT_PLAN_APPLIED" | "AGENT_PLAN_REJECTED" | "AGENT_PLAN_EXPIRED" | "AGENT_PLAN_STALE" | "AGENT_PLAN_FAILED" | "MAX_SETTINGS_CHANGED" | "MAX_LINK_REQUESTED" | "MAX_LINKED" | "MAX_LINK_REJECTED" | "MAX_UNLINKED" | "MAX_SESSION_STARTED" | "MAX_CHANGE" | "MAX_OUTBOX_REQUEUED" | "PARTNER_REQUEST_CREATED" | "PARTNER_REQUEST_CHANGED" | "PARTNER_RESPONSE_SUBMITTED" | "PARTNER_RESPONSE_REVIEWED" | "PARTNER_MATERIAL_RECEIVED" | "LMS_RESULTS_RECORDED" | "LMS_RECONCILED" | "LMS_API_TRANSFER" | "LMS_API_MOVE" | "LOGIN_FAILED" | "ACCOUNT_LOCKOUT_RELEASED" | "ORGANIZATION_RECORD_CHANGED" | "CATALOG_CHANGED" | "CATALOG_IMPORT_APPLIED" | "WORKFLOW_TEMPLATE_CHANGED" | "WORKFLOW_ROLLOUT_APPLIED" | "INTERACTION_KIND_CHANGED" | "INTERACTION_KIND_RULE_CHANGED" | "SOURCE_MAPPING_CHANGED" | "MAIL_SETTINGS_CHANGED" | "MAIL_CONNECTION_CHECKED" | "MAIL_TEST_SENT" | "MAIL_LETTER_VIEWED" | "MAIL_OUTBOX_REQUEUED" | "MAIL_OUTBOX_CANCELLED" | "MAIL_INVITATION_SENT" | "MAIL_INVITATION_REDEEMED" | "MAIL_SUBJECT_REPORT_SENT";
             actionLabel: string;
             /**
              * Format: uuid
@@ -9097,6 +9730,8 @@ export interface components {
             comment?: string | null;
         };
         AnonymizationResult: {
+            /** @description Готовые отчёты, файл которых проверить на данные субъекта не удалось: файл не удаляется, отчёт помечается «требует пересоздания» (ошибка REPORT_NEEDS_REBUILD). Удаляются (reportFilesDeleted) только отчёты, в файле которых субъект найден. */
+            reportFilesMarked: number;
             contacts: number;
             profiles: number;
             mentions: number;
@@ -9177,7 +9812,7 @@ export interface components {
             expiresAt: string;
         };
         /** @enum {string} */
-        MailTopic: "DIGEST" | "ASSIGNMENT" | "AGREEMENT" | "ISSUES" | "PARTNER_REPLIES" | "SITE_REQUEST" | "UNASSIGNED" | "WEEKLY" | "ADMIN_ALERTS";
+        MailTopic: "DIGEST" | "ASSIGNMENT" | "AGREEMENT" | "ISSUES" | "PARTNER_REPLIES" | "AGENT_PLANS" | "SITE_REQUEST" | "UNASSIGNED" | "WEEKLY" | "ADMIN_ALERTS";
         MailPreferences: {
             /** @description Почта учётной записи Keycloak; null — не указана или Keycloak недоступен */
             email?: string | null;
@@ -9243,7 +9878,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            kind: "INVITATION" | "DIGEST" | "ASSIGNMENT" | "AGREEMENT_CORRECTION" | "AGREEMENT_EXPIRY" | "ISSUE_ASSIGNED" | "ISSUE_RESOLVED" | "PARTNER_REQUEST" | "PARTNER_RETURNED" | "PARTNER_REPLY" | "SITE_REQUEST" | "ORGANIZATIONS_UNASSIGNED" | "WEEKLY_SUMMARY" | "ADMIN_SOURCE_FAILURE" | "ADMIN_PENDING_ACTIVATION" | "ADMIN_DAILY" | "TEST" | "SUBJECT_REPORT";
+            kind: "INVITATION" | "PASSWORD_RESET" | "DIGEST" | "ASSIGNMENT" | "AGREEMENT_CORRECTION" | "AGREEMENT_EXPIRY" | "ISSUE_ASSIGNED" | "ISSUE_RESOLVED" | "PARTNER_REQUEST" | "PARTNER_RETURNED" | "PARTNER_REPLY" | "SITE_REQUEST" | "AGENT_PLAN" | "ORGANIZATIONS_UNASSIGNED" | "WEEKLY_SUMMARY" | "ADMIN_SOURCE_FAILURE" | "ADMIN_PENDING_ACTIVATION" | "ADMIN_DAILY" | "TEST" | "SUBJECT_REPORT";
             kindTitle: string;
             /** @description Маска адреса; у ещё не отправленного письма сотруднику — null (адрес берётся из Keycloak при отправке) */
             recipient?: string | null;
@@ -9551,7 +10186,7 @@ export interface components {
     parameters: {
         /** @description Начало периода (по умолчанию — первое число месяца 11 месяцев назад); не больше 60 месяцев */
         LearningDynamicsFrom: string;
-        /** @description Конец периода включительно, не позже сегодняшней даты (по умолчанию — сегодня) */
+        /** @description Конец периода включительно; дата позже сегодняшней обрезается сегодняшним днём (по умолчанию — сегодня) */
         LearningDynamicsTo: string;
         LearningDynamicsOrganizations: string[];
         LearningDynamicsPrograms: string[];
@@ -10297,6 +10932,33 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getOrganizationPath: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Все взаимодействия вуза, включая завершённые, новые сверху (не больше 100; total — сколько их всего). Доступно USER по своим и замещаемым вузам, LEADER по вузам команды и MANAGEMENT по всем вузам; ADMIN и PARTNER получают 403, невидимый вуз — 404 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationPath"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     assignOrganizationOwner: {
         parameters: {
             query?: never;
@@ -10551,6 +11213,56 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getPortfolioChange: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Состав по командам и итог */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortfolioChange"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getLearningCoverage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Покрытие и потоки, требующие проверки */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningCoverage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     getWorkControl: {
         parameters: {
             query?: {
@@ -10558,6 +11270,8 @@ export interface operations {
                 directionId?: string[];
                 programId?: string[];
                 productId?: string[];
+                /** @description Вид взаимодействия */
+                kindId?: string[];
                 managerId?: string[];
                 /** @description Название этапа на конец периода (без периода — текущий этап) */
                 stage?: string[];
@@ -10594,7 +11308,7 @@ export interface operations {
             query?: {
                 /** @description Начало периода (по умолчанию — первое число месяца 11 месяцев назад); не больше 60 месяцев */
                 from?: components["parameters"]["LearningDynamicsFrom"];
-                /** @description Конец периода включительно, не позже сегодняшней даты (по умолчанию — сегодня) */
+                /** @description Конец периода включительно; дата позже сегодняшней обрезается сегодняшним днём (по умолчанию — сегодня) */
                 to?: components["parameters"]["LearningDynamicsTo"];
                 /** @description Линии графика — по вузам (по умолчанию) или по ИТ-программам */
                 seriesBy?: "ORGANIZATION" | "PROGRAM";
@@ -10628,7 +11342,7 @@ export interface operations {
                 format: "XLSX" | "PDF";
                 /** @description Начало периода (по умолчанию — первое число месяца 11 месяцев назад); не больше 60 месяцев */
                 from?: components["parameters"]["LearningDynamicsFrom"];
-                /** @description Конец периода включительно, не позже сегодняшней даты (по умолчанию — сегодня) */
+                /** @description Конец периода включительно; дата позже сегодняшней обрезается сегодняшним днём (по умолчанию — сегодня) */
                 to?: components["parameters"]["LearningDynamicsTo"];
                 organizationIds?: components["parameters"]["LearningDynamicsOrganizations"];
                 programIds?: components["parameters"]["LearningDynamicsPrograms"];
@@ -11280,7 +11994,7 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["PageSize"];
                 sort?: components["parameters"]["InteractionSort"];
-                /** @description Часть названия взаимодействия или вуза без учёта регистра */
+                /** @description Часть названия взаимодействия, вуза, ИТ-программы или продукта без учёта регистра */
                 q?: string;
                 /** @description Одна работа попадает ровно в одно из OVERDUE, NO_NEXT_STEP, THIS_WEEK, LATER — то же правило, что у «Контроля». OVERDUE — срок следующего шага прошёл, даже если текст шага не задан; TODAY — шаг и срок заданы, срок не прошёл и приходится на сегодня по Москве; THIS_WEEK — шаг и срок заданы, срок не прошёл и приходится на текущую неделю по Москве (понедельник–воскресенье), включая сегодня; LATER — шаг задан, срок после текущей недели; NO_NEXT_STEP — срок не прошёл, но нет текста шага или его срока */
                 due?: "OVERDUE" | "TODAY" | "THIS_WEEK" | "LATER" | "NO_NEXT_STEP";
@@ -11298,6 +12012,12 @@ export interface operations {
                 minDaysOnStage?: number;
                 /** @description Только работы без делового контакта дольше указанного числа суток: дата последнего контакта (а если её нет — дата создания взаимодействия) раньше, чем столько суток назад */
                 noContactDays?: number;
+                /** @description Только взаимодействия этого вида */
+                kindId?: string;
+                /** @description Только взаимодействия этой ИТ-программы */
+                programId?: string;
+                /** @description Только взаимодействия с этим продуктом */
+                productId?: string;
             };
             header?: never;
             path?: never;
@@ -13796,6 +14516,333 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    listDocumentKinds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Виды документов; «Иное» последним */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentKind"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listInteractionKinds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Действующие виды в порядке справочника */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionKind"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resolveInteractionKind: {
+        parameters: {
+            query: {
+                organizationId: string;
+                kindId?: string;
+                programId?: string;
+                productId?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Вид и шаблон, которые получит карточка */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionKindResolution"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listManagedInteractionKinds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Виды в порядке справочника */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionKind"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createInteractionKind: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InteractionKindRequest"];
+            };
+        };
+        responses: {
+            /** @description Вид добавлен */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionKind"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateInteractionKind: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InteractionKindRequest"];
+            };
+        };
+        responses: {
+            /** @description Вид изменён */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionKind"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    setInteractionKindTeamTemplate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["InteractionKindTeamTemplate"];
+            };
+        };
+        responses: {
+            /** @description Шаблон команды сохранён */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionKind"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listInteractionKindRules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Правила */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionKindRule"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createInteractionKindRule: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InteractionKindRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description Правило добавлено */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionKindRule"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteInteractionKindRule: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Правило удалено */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateInteractionKindRule: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InteractionKindRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description Правило изменено */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InteractionKindRule"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listAvailableWorkflowTemplates: {
         parameters: {
             query?: {
@@ -14261,7 +15308,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Профиль CRM обновлён; изменение роли, команды или активности увеличивает accessRevision, каждое изменение записывается в журнал профиля. Роль хранится в Keycloak: смена роли сначала назначает роль realm crm-* учётной записи клиентом crm-account-sync и снимает прежнюю, затем меняет профиль CRM; если Keycloak недоступен или служебный клиент не настроен, роль не меняется (503). Если профиль CRM после этого не сохранился (конфликт версии, ошибка проверки), роль и обязательный второй фактор в Keycloak возвращаются к сохранённым в CRM; если вернуть не удалось, у профиля roleReconcileRequired равно true, пока администратор не выполнит синхронизацию. Закрытие или открытие доступа также отключает или включает учётную запись Keycloak через Admin API; если Keycloak недоступен или подключение не настроено, изменение CRM сохраняется, accountSyncRequired равно true, а accountSyncError объясняет, почему учётная запись не была синхронизирована. Если меняется, нужен ли второй фактор (роль «Администратор» или флаг «Оператор зачисления»), CRM сразу меняет это в Keycloak; при недоступном Keycloak изменение не сохраняется (503). */
+            /** @description Профиль CRM обновлён; изменение роли, команды или активности увеличивает accessRevision, каждое изменение записывается в журнал профиля. Роль хранится в Keycloak: смена роли сначала назначает роль realm crm-* учётной записи клиентом crm-account-sync и снимает прежнюю, затем меняет профиль CRM; если Keycloak недоступен или служебный клиент не настроен, роль не меняется (503). Если профиль CRM после этого не сохранился (конфликт версии, ошибка проверки), роль и обязательный второй фактор в Keycloak возвращаются к сохранённым в CRM; если вернуть не удалось, у профиля roleReconcileRequired равно true, пока администратор не выполнит синхронизацию. Закрытие или открытие доступа также отключает или включает учётную запись Keycloak через Admin API; если Keycloak недоступен или подключение не настроено, изменение CRM сохраняется, accountSyncRequired равно true, а accountSyncError объясняет, почему учётная запись не была синхронизирована. Если меняется, нужен ли второй фактор (роль «Администратор» или флаг «Менеджер учебного процесса»), CRM сразу меняет это в Keycloak; при недоступном Keycloak изменение не сохраняется (503). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -16526,6 +17573,8 @@ export interface operations {
                 "multipart/form-data": {
                     /** Format: binary */
                     file: string;
+                    /** @description Подтверждение создать новые потоки и перенести в них уже зачисленных слушателей */
+                    confirmNewStreams?: boolean;
                 };
             };
         };
@@ -17617,6 +18666,34 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listAgentPlans: {
+        parameters: {
+            query?: {
+                kind?: components["schemas"]["AgentPlanKind"];
+                /** @description PENDING — только ожидающие (по умолчанию), ALL — и решённые */
+                status?: "PENDING" | "ALL";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Планы сотрудника */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentPlanListItem"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             500: components["responses"]["InternalError"];
         };
     };

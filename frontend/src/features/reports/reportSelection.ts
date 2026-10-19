@@ -62,6 +62,7 @@ export type ReportSelection = {
   includeNoProgram: boolean
   productIds: string[]
   includeNoProduct: boolean
+  kindIds: string[]
   managerIds: string[]
   includeNoManager: boolean
   stages: string[]
@@ -101,7 +102,7 @@ export const kindLabels: Record<ReportKind, string> = {
 export const chartKinds: readonly ReportKind[] = ['PORTFOLIO', 'EVENTS', 'SNAPSHOT', 'DEMAND']
 
 export const statisticsGroupings: readonly StatisticsGroupBy[] = [
-  'STAGE', 'ORGANIZATION', 'DIRECTION', 'PROGRAM', 'PRODUCT', 'MANAGER', 'MONTH'
+  'STAGE', 'ORGANIZATION', 'DIRECTION', 'PROGRAM', 'PRODUCT', 'KIND', 'MILESTONE', 'MANAGER', 'MONTH'
 ]
 
 export const groupingTitles: Record<StatisticsGroupBy, string> = {
@@ -110,6 +111,8 @@ export const groupingTitles: Record<StatisticsGroupBy, string> = {
   DIRECTION: 'по ИТ-направлениям',
   PROGRAM: 'по ИТ-программам',
   PRODUCT: 'по ИТ-продуктам',
+  KIND: 'по видам взаимодействия',
+  MILESTONE: 'по вехам (роль этапа для LMS)',
   MANAGER: 'по ответственным',
   MONTH: 'по месяцам'
 }
@@ -137,11 +140,13 @@ export const eventTypeTitles: Record<ReportEventType, string> = {
 const demandGroupings: readonly StatisticsGroupBy[] = ['ORGANIZATION', 'DIRECTION', 'PROGRAM', 'MANAGER', 'MONTH']
 
 export const groupingsFor = (kind: ReportKind): readonly StatisticsGroupBy[] => (
-  kind === 'AGREEMENTS' || kind === 'MANAGER_WORK' ? [] : kind === 'DEMAND' ? demandGroupings : statisticsGroupings
+  kind === 'AGREEMENTS' || kind === 'MANAGER_WORK' ? [] : kind === 'DEMAND' ? demandGroupings
+    // Вехи считаются по взаимодействиям: для событий за период они не строятся (сервер отвечает 400).
+    : kind === 'PORTFOLIO' || kind === 'SNAPSHOT' ? statisticsGroupings : statisticsGroupings.filter((groupBy) => groupBy !== 'MILESTONE')
 )
 
 export const seriesGroupingsFor = (kind: ReportKind): readonly StatisticsGroupBy[] => (
-  groupingsFor(kind).filter((groupBy) => groupBy !== 'MONTH')
+  groupingsFor(kind).filter((groupBy) => groupBy !== 'MONTH' && groupBy !== 'MILESTONE')
 )
 
 const periodBases: readonly PeriodBasis[] = ['CREATED', 'ACTIVITY', 'ACTIVE']
@@ -179,7 +184,7 @@ export const reportColumns: Record<ReportKind, readonly ReportColumn[]> = {
     'COMPLETION_BASIS', 'PARALLEL_RUNS', 'MARKET_VACANCIES', 'MARKET_TREND'
   ],
   SNAPSHOT: ['ORGANIZATION', 'INTERACTION', 'DIRECTION', 'PROGRAM', 'PRODUCTS', 'STAGE', 'MANAGER', 'CREATED_AT', 'LAST_EVENT_AT'],
-  DURATION: ['TEAM', 'PROGRAM', 'STAGE', 'COMPLETED', 'AVG_DAYS', 'MAX_DAYS', 'CURRENT', 'CURRENT_MAX_DAYS'],
+  DURATION: ['TEAM', 'PROGRAM', 'STAGE', 'COMPLETED', 'MEDIAN_DAYS', 'P90_DAYS', 'AVG_DAYS', 'MAX_DAYS', 'CURRENT', 'CURRENT_MAX_DAYS'],
   AGREEMENTS: [
     'ORGANIZATION', 'AGREEMENT', 'AGREEMENT_STATUS', 'AGREEMENT_TERM', 'ACTIVITY_KIND', 'ACTIVITY', 'PLANNED_VOLUME',
     'ACTUAL_VOLUME', 'VOLUME_UNIT', 'PLANNED_DATES', 'ACTUAL_DATES', 'MANAGER', 'ACTIVITY_STATUS', 'PARTICIPANTS', 'WORKS',
@@ -233,6 +238,8 @@ const columnTitles: Record<ReportColumn, string> = {
   ...agreementColumnTitles,
   TEAM: 'Команда',
   COMPLETED: 'Завершённых прохождений',
+  MEDIAN_DAYS: 'Медиана длительности, дн.',
+  P90_DAYS: '90-й процентиль длительности, дн.',
   AVG_DAYS: 'Средняя длительность, дн.',
   MAX_DAYS: 'Максимальная длительность, дн.',
   CURRENT: 'На этапе на конец периода',
@@ -289,6 +296,7 @@ export const defaultSelection = (today: Date = new Date(), kind: ReportKind = 'P
   includeNoProgram: false,
   productIds: [],
   includeNoProduct: false,
+  kindIds: [],
   managerIds: [],
   includeNoManager: false,
   stages: [],
@@ -364,6 +372,7 @@ export const normalizeSelection = (value: unknown, today: Date = new Date()): Re
     includeNoProgram: record.includeNoProgram === true,
     productIds: strings(record.productIds),
     includeNoProduct: record.includeNoProduct === true,
+    kindIds: strings(record.kindIds),
     managerIds: strings(record.managerIds),
     includeNoManager: record.includeNoManager === true,
     stages: strings(record.stages),
@@ -386,7 +395,7 @@ export const normalizeSelection = (value: unknown, today: Date = new Date()): Re
     },
     groupBy: oneOf(record.groupBy, statisticsGroupings, defaults.groupBy),
     chartType: oneOf(record.chartType, chartTypes, defaults.chartType),
-    seriesBy: statisticsGroupings.find((groupBy) => groupBy === record.seriesBy && groupBy !== 'MONTH') ?? null,
+    seriesBy: statisticsGroupings.find((groupBy) => groupBy === record.seriesBy && groupBy !== 'MONTH' && groupBy !== 'MILESTONE') ?? null,
     sortBy: oneOf(record.sortBy, availableDemandSorts(), defaults.sortBy)
   }
 }
@@ -419,6 +428,7 @@ export const applyDefinition = (selection: ReportSelection, definition: ReportPr
     includeNoProgram: filters.includeNoProgram ?? false,
     productIds: filters.productIds ?? [],
     includeNoProduct: filters.includeNoProduct ?? false,
+    kindIds: filters.kindIds ?? [],
     managerIds: filters.managerIds ?? [],
     includeNoManager: filters.includeNoManager ?? false,
     stages: filters.stages ?? [],
@@ -503,6 +513,8 @@ const baseRequest = (selection: ReportSelection) => {
       includeNoProgram: agreements ? false : selection.includeNoProgram,
       productIds: demand || agreements ? [] : selection.productIds,
       includeNoProduct: demand || agreements ? false : selection.includeNoProduct,
+      kindIds: demand || agreements ? [] : selection.kindIds,
+
       managerIds: selection.managerIds,
       includeNoManager: selection.includeNoManager,
       stages: demand || agreements ? [] : selection.stages,

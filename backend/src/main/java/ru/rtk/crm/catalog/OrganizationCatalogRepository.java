@@ -15,6 +15,12 @@ public class OrganizationCatalogRepository {
         this.jdbcClient = jdbcClient;
     }
 
+    // Служебная команда «Открытый набор» — та, где лежит организация физлиц (V27); вузов в ней не бывает.
+    public boolean serviceTeam(UUID teamId) {
+        return teamId != null && jdbcClient.sql("SELECT COUNT(*) FROM organizations WHERE team_id = ? AND type = 'OPEN_ENROLLMENT'")
+                .param(teamId).query(Long.class).single() > 0;
+    }
+
     public List<NameRow> findNames() {
         return jdbcClient.sql("""
                 SELECT org.id, org.name, org.type, org.status, org.team_id, team.name AS team_name, org.owner_manager_id, org.inn

@@ -13,7 +13,7 @@ import ru.rtk.crm.work.WorkService;
 
 // Сборщик уведомлений. События CRM читаются из таблиц истории с перекрытием окна: событие, записанное транзакцией,
 // которая закоммитилась позже начала прошлого прохода, не теряется, а уникальный ключ события не даёт его продублировать.
-// «Руководство» и оператор зачисления уведомлений не получают (отбор в MaxNotificationRepository).
+// «Руководство» и менеджер учебного процесса уведомлений не получают (отбор в MaxNotificationRepository).
 @Service
 @MaxEnabled
 public class MaxNotifications {
@@ -63,6 +63,15 @@ public class MaxNotifications {
         for (MaxNotificationRepository.Event event : repository.siteRequests(since)) {
             queued += enqueue("site:" + event.eventId() + ":" + event.profileId(), event, MaxMessageKind.SITE_REQUEST,
                     MaxDigestFormatter.siteRequest(event.organizationName()));
+        }
+        // Срок сообщения — срок плана: после него «Записать» уже не сработает.
+        for (MaxNotificationRepository.AgentPlanEvent plan : repository.agentPlans(since, now)) {
+            MaxMessage message = new MaxMessage(MaxDigestFormatter.agentPlan(plan.organizationName()),
+                    List.of(settings.crmLink("Открыть план", "#/agent-plans/" + plan.planId())));
+            if (outbox.enqueue("agent-plan:" + plan.planId(), plan.profileId(), plan.maxUserId(), MaxMessageKind.AGENT_PLAN,
+                    plan.organizationId(), message, plan.expiresAt())) {
+                queued++;
+            }
         }
         settingsRepository.saveCollectedUntil(now);
         return queued;

@@ -214,7 +214,7 @@ public class EnrolmentBatchService {
             }
             details = "перенос после выгрузки сверен с LMS";
         } else {
-            // Версия анкеты из запроса должна совпасть с текущей: если анкету успели снова изменить, оператор
+            // Версия анкеты из запроса должна совпасть с текущей: если анкету успели снова изменить, менеджер учебного процесса
             // подтверждает не то, что внёс в LMS.
             if (request.learnerVersion() == null || request.learnerVersion() != row.learnerVersion()) {
                 throw InteractionConflictException.learnerVersion(row.learnerVersion());
@@ -312,7 +312,7 @@ public class EnrolmentBatchService {
         EnrolmentBatchView view = view(batchId);
         auditJournalRepository.record(AuditAction.LMS_RESULTS_RECORDED, actor.id(), EnrolmentStreamService.STREAM_OBJECT_TYPE,
                 view.streamId(), view.streamTitle(), "партия: " + batchId + "; источник: "
-                        + ("PROTOCOL".equals(source) ? "протокол LMS" : "отметка оператора") + "; изменено строк: " + changed
+                        + ("PROTOCOL".equals(source) ? "протокол LMS" : "отметка менеджера учебного процесса") + "; изменено строк: " + changed
                         + "; принято: " + view.accepted() + ", ошибок: " + view.failed() + ", ожидает: " + view.pending(), requestId);
         return new BatchResultsApplied(view, changed, skipped);
     }

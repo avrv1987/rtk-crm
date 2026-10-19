@@ -17,8 +17,23 @@ public record InteractionCreateRequest(
         UUID programId,
         @Size(max = 100) List<@NotNull UUID> productIds,
         OffsetDateTime lastContactAt,
-        UUID templateId
+        UUID templateId,
+        UUID kindId
 ) {
+    public InteractionCreateRequest(
+            UUID organizationId,
+            String title,
+            String nextAction,
+            OffsetDateTime nextActionAt,
+            List<UUID> contactIds,
+            UUID programId,
+            List<UUID> productIds,
+            OffsetDateTime lastContactAt,
+            UUID templateId
+    ) {
+        this(organizationId, title, nextAction, nextActionAt, contactIds, programId, productIds, lastContactAt, templateId, null);
+    }
+
     public InteractionCreateRequest(
             UUID organizationId,
             String title,
@@ -26,7 +41,7 @@ public record InteractionCreateRequest(
             OffsetDateTime nextActionAt,
             List<UUID> contactIds
     ) {
-        this(organizationId, title, nextAction, nextActionAt, contactIds, null, List.of(), null, null);
+        this(organizationId, title, nextAction, nextActionAt, contactIds, null, List.of(), null, null, null);
     }
 
     public InteractionCreateRequest(
@@ -39,6 +54,7 @@ public record InteractionCreateRequest(
             List<UUID> productIds,
             OffsetDateTime lastContactAt
     ) {
-        this(organizationId, title, nextAction, nextActionAt, contactIds, programId, productIds, lastContactAt, null);
+        this(organizationId, title, nextAction, nextActionAt, contactIds, programId, productIds, lastContactAt, null, null);
+
     }
 }

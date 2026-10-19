@@ -11,8 +11,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -76,7 +78,11 @@ import ru.rtk.crm.mcp.McpProperties;
         ProductAgreementService.class,
         CommandIdempotencyRepository.class,
         InteractionService.class,
+        InteractionKindRepository.class,
+        InteractionKindService.class,
         ru.rtk.crm.agreement.AgreementStages.class,
+        InteractionIssueRepository.class,
+        InteractionIssueService.class,
         AgentPlanService.class,
         AgentPlanServiceTest.Configuration.class
 })
@@ -102,6 +108,9 @@ class AgentPlanServiceTest {
     private InteractionService interactionService;
 
     @Autowired
+    private InteractionIssueService interactionIssueService;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @MockitoBean
@@ -116,7 +125,8 @@ class AgentPlanServiceTest {
 
         @Bean
         McpProperties mcpProperties() {
-            return new McpProperties(true, "crm-mcp", List.of(), 60, 25, 10, 90, "crm-mcp.write", Duration.ofMinutes(20), 5, 30);
+            return new McpProperties(true, "crm-mcp", List.of(), 60, 25, 10, 90, "crm-mcp.write", Duration.ofMinutes(20), 5, 30,
+                    Map.of());
         }
     }
 
@@ -126,11 +136,206 @@ class AgentPlanServiceTest {
         InteractionServiceTest fixture = new InteractionServiceTest();
         ReflectionTestUtils.setField(fixture, "jdbcTemplate", jdbcTemplate);
         fixture.setUp();
-        for (String statement : migration().split(";")) {
-            if (!statement.isBlank()) {
-                jdbcTemplate.execute(statement);
+        for (String file : List.of("V46__agent_change_plans.sql", "V57__agent_plan_kinds.sql")) {
+            for (String statement : migration(file).split(";")) {
+                if (!statement.isBlank()) {
+                    jdbcTemplate.execute(statement);
+                }
             }
         }
+        // Ответственными за проблему могут быть сотрудники команды вуза: КАМ и руководитель команды А.
+        jdbcTemplate.update("UPDATE crm_user_profiles SET team_id = ?, role = 'USER' WHERE id = ?", TEAM_A, MANAGER_A);
+        jdbcTemplate.update("UPDATE crm_user_profiles SET team_id = ?, role = 'LEADER' WHERE id = ?", TEAM_A, LEADER_A);
+        jdbcTemplate.update("UPDATE crm_user_profiles SET team_id = ?, role = 'USER' WHERE id = ?", TEAM_B, MANAGER_B);
+    }
+
+    @Test
+    void stageTransitionIsAppliedByTheOwnerWithRationaleEvidenceAndAgentMark() {
+        Interaction interaction = createInteraction("transition");
+        UUID ownEvent = interactionService.events(kam, interaction.id()).getFirst().id();
+
+        AgentPlanService.Prepared prepared = agentPlanService.prepareTransition(kam, "crm-mcp-client", interaction.id(),
+                "уточнение актуальности", "Вуз подтвердил интерес на встрече", "Назначить встречу", NEW_DUE,
+                List.of(ownEvent, UUID.randomUUID()), "r");
+
+        AgentPlan plan = prepared.plan();
+        assertThat(plan.kind()).isEqualTo(AgentPlanService.Kind.STAGE_TRANSITION);
+        assertThat(prepared.droppedEvidence()).isEqualTo(1);
+        assertThat(prepared.warnings()).isEmpty();
+        assertUnchanged(interaction);
+        AgentPlanScreen screen = agentPlanService.screen(kam, plan.id(), "r");
+        assertThat(screen.stageName()).isEqualTo("Поиск контакта");
+        assertThat(screen.stagePosition()).isEqualTo(1);
+        assertThat(screen.toStageName()).isEqualTo("Уточнение актуальности");
+        assertThat(screen.toStagePosition()).isEqualTo(2);
+        assertThat(screen.evidence()).extracting(AgentPlanService.Evidence::id).containsExactly(ownEvent);
+
+        AgentPlan applied = agentPlanService.apply(kam, plan.id(), "apply");
+
+        assertThat(applied.state()).isEqualTo(AgentPlan.State.APPLIED);
+        assertThat(agentPlanService.apply(kam, plan.id(), "again")).isEqualTo(applied);
+        Interaction after = interactionService.get(kam, interaction.id());
+        assertThat(after.currentStageName()).isEqualTo("Уточнение актуальности");
+        assertThat(after.nextAction()).isEqualTo("Назначить встречу");
+        List<InteractionEvent> events = interactionService.events(kam, interaction.id());
+        assertThat(events).hasSize(2);
+        assertThat(events.getLast()).satisfies(event -> {
+            assertThat(event.type()).isEqualTo(InteractionEventType.TRANSITIONED);
+            assertThat(event.comment()).isEqualTo("Вуз подтвердил интерес на встрече");
+            assertThat(event.commandId()).isEqualTo(applied.commandId());
+            assertThat(event.actorProfileId()).isEqualTo(MANAGER_A);
+            assertThat(event.preparedByAgent()).isTrue();
+        });
+        assertThat(events.getFirst().preparedByAgent()).isFalse();
+
+        // Возврат разрешён маршрутом, но помечается, а обоснование становится причиной возврата.
+        AgentPlanService.Prepared back = agentPlanService.prepareTransition(kam, "c", interaction.id(), "Поиск контакта",
+                "Контакт ушёл из вуза", null, null, null, "r");
+        assertThat(back.warnings()).containsExactly("BACKWARD");
+        assertThat(agentPlanService.apply(kam, back.plan().id(), "back").state()).isEqualTo(AgentPlan.State.APPLIED);
+        assertThat(interactionService.get(kam, interaction.id()).nextAction()).isEqualTo("Назначить встречу");
+        assertThat(interactionService.events(kam, interaction.id()).getLast().comment()).isEqualTo("Контакт ушёл из вуза");
+    }
+
+    @Test
+    void transitionOutsideTheRouteIsRefusedAndRouteChangeBeforeApplyFails() {
+        Interaction interaction = createInteraction("route");
+
+        assertThatThrownBy(() -> agentPlanService.prepareTransition(kam, "c", interaction.id(), "Подписание", "Подписали",
+                null, null, null, "r")).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("toStage"));
+        assertThatThrownBy(() -> agentPlanService.prepareTransition(kam, "c", interaction.id(), "Уточнение актуальности", " ",
+                null, null, null, "r")).isInstanceOf(InteractionValidationException.class);
+        assertThatThrownBy(() -> agentPlanService.prepareTransition(kam, "c", interaction.id(), "Уточнение актуальности", "Да",
+                "Шаг без срока", null, null, "r")).isInstanceOf(InteractionValidationException.class);
+        CrmProfile management = new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0);
+        assertThatThrownBy(() -> agentPlanService.prepareTransition(management, "c", interaction.id(), "Уточнение актуальности",
+                "Да", null, null, null, "r")).isInstanceOf(ContactInteractionMutationAccessDeniedException.class);
+        assertThatThrownBy(() -> agentPlanService.prepareTransition(otherKam, "c", interaction.id(), "Уточнение актуальности",
+                "Да", null, null, null, "r")).isInstanceOf(InteractionNotFoundException.class);
+        AgentPlan plan = agentPlanService.prepareTransition(kam, "c", interaction.id(), "Уточнение актуальности", "Да",
+                null, null, null, "r").plan();
+        // Администратор убрал переход из маршрута карточки, версия карточки при этом не менялась.
+        jdbcTemplate.update("DELETE FROM interaction_stage_transitions WHERE interaction_id = ?", interaction.id());
+
+        AgentPlan result = agentPlanService.apply(kam, plan.id(), "r");
+
+        assertThat(result.state()).isEqualTo(AgentPlan.State.FAILED);
+        assertThat(result.errorCode()).isEqualTo("VALIDATION_FAILED");
+        assertUnchanged(interaction);
+    }
+
+    @Test
+    void issueIsCreatedOnlyAfterApplyAndResponsibleIsCheckedAgain() {
+        Interaction interaction = createInteraction("issue");
+
+        assertThatThrownBy(() -> agentPlanService.prepareIssue(kam, "c", interaction.id(), InteractionIssueKind.RISK, "Нет лицензии",
+                InteractionRiskLevel.HIGH, MANAGER_B, LocalDate.now().plusDays(3), "r"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("responsibleId"));
+        assertThatThrownBy(() -> agentPlanService.prepareIssue(kam, "c", interaction.id(), InteractionIssueKind.RISK, "Нет лицензии",
+                null, LEADER_A, LocalDate.now().plusDays(3), "r")).isInstanceOf(InteractionValidationException.class);
+        AgentPlan plan = agentPlanService.prepareIssue(kam, "c", interaction.id(), InteractionIssueKind.RISK, "Нет лицензии у вендора",
+                InteractionRiskLevel.HIGH, LEADER_A, LocalDate.now().plusDays(3), "r").plan();
+        assertThat(interactionIssueService.list(kam, interaction.id()).items()).isEmpty();
+        assertThat(agentPlanService.screen(kam, plan.id(), "r").responsibleName()).isEqualTo("Вера Ковалёва");
+
+        AgentPlan applied = agentPlanService.apply(kam, plan.id(), "apply");
+
+        assertThat(applied.state()).isEqualTo(AgentPlan.State.APPLIED);
+        assertThat(interactionIssueService.list(kam, interaction.id()).items()).singleElement().satisfies(issue -> {
+            assertThat(issue.description()).isEqualTo("Нет лицензии у вендора");
+            assertThat(issue.responsibleId()).isEqualTo(LEADER_A);
+            assertThat(issue.createdBy()).isEqualTo(MANAGER_A);
+        });
+
+        // Ответственный ушёл в другую команду до «Записать»: команда отказывает, запись не появляется.
+        AgentPlan second = agentPlanService.prepareIssue(kam, "c", interaction.id(), InteractionIssueKind.PROBLEM, "Нет подписанта",
+                null, LEADER_A, LocalDate.now(), "r").plan();
+        jdbcTemplate.update("UPDATE crm_user_profiles SET team_id = ? WHERE id = ?", TEAM_B, LEADER_A);
+        AgentPlan failed = agentPlanService.apply(kam, second.id(), "r");
+        assertThat(failed.state()).isEqualTo(AgentPlan.State.FAILED);
+        assertThat(interactionIssueService.list(kam, interaction.id()).items()).hasSize(1);
+    }
+
+    @Test
+    void issueResolutionDoesNotOverwriteAHumanDecision() {
+        Interaction interaction = createInteraction("resolve");
+        Interaction withIssue = interactionIssueService.create(kam, interaction.id(), new InteractionIssueRequest(interaction.version(),
+                InteractionIssueKind.PROBLEM, "Нет доступа к LMS", null, MANAGER_A, null), "issue-create");
+        UUID issueId = interactionIssueService.list(kam, interaction.id()).items().getFirst().id();
+        AgentPlan plan = agentPlanService.prepareIssueResolution(kam, "c", interaction.id(), issueId, "Доступ выдали", "r").plan();
+        interactionIssueService.resolve(kam, interaction.id(), issueId, new InteractionIssueResolution(withIssue.version(),
+                "Решил сам сотрудник"), "human-resolve");
+
+        AgentPlan result = agentPlanService.apply(kam, plan.id(), "r");
+
+        assertThat(result.state()).isIn(AgentPlan.State.STALE, AgentPlan.State.FAILED);
+        assertThat(interactionIssueService.list(kam, interaction.id()).items().getFirst().resolution()).isEqualTo("Решил сам сотрудник");
+        assertThatThrownBy(() -> agentPlanService.prepareIssueResolution(kam, "c", interaction.id(), issueId, "Ещё раз", "r"))
+                .isInstanceOf(InteractionValidationException.class);
+        assertThatThrownBy(() -> agentPlanService.prepareIssueResolution(kam, "c", interaction.id(), UUID.randomUUID(), "Нет", "r"))
+                .isInstanceOf(InteractionIssueNotFoundException.class);
+    }
+
+    @Test
+    void pauseWithReturnDateAndResumeAreAppliedOneByOne() {
+        Interaction interaction = createInteraction("pause");
+        LocalDate resumeOn = LocalDate.now(InteractionIssueService.ZONE).plusDays(30);
+
+        assertThatThrownBy(() -> agentPlanService.preparePause(kam, "c", interaction.id(), "Каникулы",
+                LocalDate.now(InteractionIssueService.ZONE), "r")).isInstanceOf(InteractionValidationException.class);
+        assertThatThrownBy(() -> agentPlanService.prepareResume(kam, "c", interaction.id(), "Вернулись", "r"))
+                .isInstanceOf(InteractionValidationException.class);
+        AgentPlan pause = agentPlanService.preparePause(kam, "c", interaction.id(), "Каникулы до февраля", resumeOn, "r").plan();
+        AgentPlanScreen screen = agentPlanService.screen(kam, pause.id(), "r");
+        assertThat(screen.currentStatus()).isEqualTo(InteractionWorkStatus.ACTIVE);
+        assertThat(screen.workStatus()).isEqualTo(InteractionWorkStatus.PAUSED);
+        assertThat(screen.resumeActionAt().toLocalDate()).isEqualTo(resumeOn);
+
+        assertThat(agentPlanService.apply(kam, pause.id(), "r").state()).isEqualTo(AgentPlan.State.APPLIED);
+        Interaction paused = interactionService.get(kam, interaction.id());
+        assertThat(paused.marks().status()).isEqualTo(InteractionWorkStatus.PAUSED);
+        assertThat(paused.nextActionAt()).isEqualTo(screen.resumeActionAt());
+
+        AgentPlan resume = agentPlanService.prepareResume(kam, "c", interaction.id(), "Вуз вернулся раньше", "r").plan();
+        assertThat(agentPlanService.apply(kam, resume.id(), "r").state()).isEqualTo(AgentPlan.State.APPLIED);
+        assertThat(interactionService.get(kam, interaction.id()).marks().status()).isEqualTo(InteractionWorkStatus.ACTIVE);
+        assertThat(interactionService.events(kam, interaction.id())).filteredOn(InteractionEvent::preparedByAgent).hasSize(2);
+    }
+
+    @Test
+    void tableChecksKeepEachKindComplete() {
+        Interaction interaction = createInteraction("checks");
+        String insert = """
+                INSERT INTO agent_change_plans (id, requester_profile_id, interaction_id, stage_id, expected_version, note_text,
+                    state, created_at, expires_at, kind, work_status, resume_on)
+                VALUES (?, ?, ?, ?, 0, 'Причина', 'PENDING', ?, ?, 'STATUS_CHANGE', ?, ?)
+                """;
+        OffsetDateTime now = OffsetDateTime.now();
+        // Завершение агенту недоступно, а пауза без даты возврата не записывается даже в обход сервиса.
+        for (Object[] row : List.<Object[]>of(new Object[]{"COMPLETED", null}, new Object[]{"PAUSED", null})) {
+            assertThatThrownBy(() -> jdbcTemplate.update(insert, UUID.randomUUID(), MANAGER_A, interaction.id(),
+                    interaction.currentStageId(), now, now.plusMinutes(20), row[0], row[1]))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        }
+        assertThat(count()).isZero();
+    }
+
+    @Test
+    void listShowsOnlyOwnPlansAndMarksExpiredOnes() {
+        Interaction interaction = createInteraction("list");
+        AgentPlan note = prepare(interaction, "Итог");
+        AgentPlan pause = agentPlanService.preparePause(kam, "c", interaction.id(), "Каникулы",
+                LocalDate.now(InteractionIssueService.ZONE).plusDays(5), "r").plan();
+        jdbcTemplate.update("UPDATE agent_change_plans SET created_at = ?, expires_at = ? WHERE id = ?",
+                OffsetDateTime.now().minusHours(2), OffsetDateTime.now().minusHours(1), note.id());
+
+        assertThat(agentPlanService.list(kam, null, true)).extracting(AgentPlanService.AgentPlanListItem::id).containsExactly(pause.id());
+        assertThat(agentPlanService.list(kam, null, false)).extracting(AgentPlanService.AgentPlanListItem::status)
+                .containsExactlyInAnyOrder(AgentPlan.State.PENDING, AgentPlan.State.EXPIRED);
+        assertThat(agentPlanService.list(kam, AgentPlanService.Kind.NOTE_UPDATE, false)).hasSize(1);
+        assertThat(agentPlanService.list(leader, null, false)).isEmpty();
+        assertThat(agentPlanService.list(otherKam, null, false)).isEmpty();
     }
 
     @Test
@@ -257,7 +462,10 @@ class AgentPlanServiceTest {
                 new InteractionCommentRequest(interaction.version(), interaction.currentStageId(), "Сотрудник уже записал итог",
                         List.of(), new InteractionNextStep("Шаг сотрудника", DUE.plusDays(1))),
                 "human-comment");
-        assertThat(agentPlanService.screen(kam, plan.id(), "r").cardChanged()).isTrue();
+        // З-3 (2.5): план по изменённой карточке — STALE в списке, в колокольчик (только ждущие) не попадает.
+        assertThat(agentPlanService.list(kam, null, true)).extracting(AgentPlanService.AgentPlanListItem::id).doesNotContain(plan.id());
+        assertThat(agentPlanService.list(kam, null, false)).filteredOn(item -> item.id().equals(plan.id())).singleElement()
+                .satisfies(item -> assertThat(item.status()).isEqualTo(AgentPlan.State.STALE));
 
         AgentPlan result = agentPlanService.apply(kam, plan.id(), "request-stale");
 
@@ -270,6 +478,25 @@ class AgentPlanServiceTest {
                 .doesNotContain("Итог от агента");
         verify(auditJournalRepository).record(eq(AuditAction.AGENT_PLAN_STALE), eq(MANAGER_A), eq("INTERACTION"),
                 eq(interaction.id()), any(), argThat(details -> details.contains("VERSION_CONFLICT")), eq("request-stale"));
+        // Экран и чтение плана отдают STALE, а не PENDING; карточка по-прежнему помечена изменённой.
+        AgentPlanScreen screen = agentPlanService.screen(kam, plan.id(), "r");
+        assertThat(screen.status()).isEqualTo(AgentPlan.State.STALE);
+        assertThat(screen.cardChanged()).isTrue();
+    }
+
+    @Test
+    void readingAPlanForAChangedCardClosesItAsStale() {
+        Interaction interaction = createInteraction("read-stale");
+        AgentPlan plan = prepare(interaction, "Итог от агента");
+        interactionService.comment(kam, interaction.id(),
+                new InteractionCommentRequest(interaction.version(), interaction.currentStageId(), "Сотрудник записал своё",
+                        List.of(), new InteractionNextStep("Шаг сотрудника", DUE.plusDays(1))),
+                "human-comment-read");
+
+        AgentPlan read = agentPlanService.get(kam, plan.id(), "read-stale");
+
+        assertThat(read.state()).isEqualTo(AgentPlan.State.STALE);
+        assertThat(read.errorCode()).isEqualTo("VERSION_CONFLICT");
     }
 
     @Test
@@ -403,8 +630,8 @@ class AgentPlanServiceTest {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM agent_change_plans", Integer.class);
     }
 
-    private static String migration() throws IOException {
-        try (InputStream input = AgentPlanServiceTest.class.getResourceAsStream("/db/migration/V46__agent_change_plans.sql")) {
+    private static String migration(String file) throws IOException {
+        try (InputStream input = AgentPlanServiceTest.class.getResourceAsStream("/db/migration/" + file)) {
             return new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
     }

@@ -181,6 +181,21 @@ class LmsSignalServiceTest {
     }
 
     @Test
+    void classesStageIsFoundByLmsRoleEvenWhenRenamed() {
+        UUID work = insertWork(UNIVERSITY_A, "Переименованный маршрут", 3);
+        insertRun(UNIVERSITY_A, today.minusDays(5), today.plusDays(30), 6, 3, today);
+        // Этап занятий переименован, роль осталась: сигнал и переход к занятиям работают по роли.
+        jdbcTemplate.update("UPDATE interaction_stages SET name = 'Лекции и практика' WHERE id = ?", stageId(work, 10));
+        assertThat(service.list(kamA).items()).singleElement().satisfies(signal -> {
+            assertThat(signal.type()).isEqualTo(LmsSignalType.STUDENTS_APPEARED);
+            assertThat(signal.message()).contains("«Лекции и практика»");
+        });
+        // Этап с названием «Занятия», но без роли с LMS не связан: сравнивать текущий этап не с чем, сигнала нет.
+        jdbcTemplate.update("UPDATE interaction_stages SET name = 'Занятия', lms_role = NULL WHERE id = ?", stageId(work, 10));
+        assertThat(service.list(kamA).items()).isEmpty();
+    }
+
+    @Test
     void scopeFollowsRolesAndManagementOnlyReads() {
         UUID workA = insertWork(UNIVERSITY_A, "Работа А", 3);
         UUID workB = insertWork(UNIVERSITY_B, "Работа Б", 3);
@@ -306,7 +321,7 @@ class LmsSignalServiceTest {
                 .as("observation two days old: no activity signals")
                 .isEmpty();
         assertThat(LmsSignalService.types(activitySource(start, end, 6, 1, stalled, today.minusDays(1)), noon,
-                new LmsSignalProperties("Занятия", 14, 50, 7, 7, 40, 50, 25, 14, Duration.ofHours(3), null)))
+                new LmsSignalProperties(14, 50, 7, 7, 40, 50, 25, 14, Duration.ofHours(3), null)))
                 .as("threshold is configurable")
                 .isEmpty();
         assertThat(LmsSignalService.types(source(2, 10, start, end, today.minusDays(2), 5, null), noon, PROPERTIES))
@@ -468,7 +483,7 @@ class LmsSignalServiceTest {
         assertThat(LmsSignalService.title(LmsSignalType.COMPLETION_UNVERIFIED))
                 .isEqualTo("Данных о завершении недостаточно, нужна проверка");
         assertThat(LmsSignalType.COMPLETION_UNVERIFIED.activity()).isFalse();
-        LmsSignalProperties strict = new LmsSignalProperties("Занятия", 14, 50, 7, 7, 40, 50, 25, 14, null, 10);
+        LmsSignalProperties strict = new LmsSignalProperties(14, 50, 7, 7, 40, 50, 25, 14, null, 10);
         assertThat(LmsSignalService.types(coverageSource(start, end, 100, 4, 16),
                 today.atTime(12, 0).atZone(WorkProperties.ZONE).toOffsetDateTime(), strict))
                 .as("the coverage threshold is configurable: 20 known of 100 is enough at 10 %")
@@ -532,6 +547,7 @@ class LmsSignalServiceTest {
             jdbcTemplate.update("INSERT INTO interaction_stages (id, interaction_id, stage_order, name) VALUES (?, ?, ?, ?)",
                     UUID.randomUUID(), id, order, order == 10 ? "Занятия" : "Этап " + order);
         }
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.markLegacyStages(jdbcTemplate);
         jdbcTemplate.update("""
                 INSERT INTO interactions (id, organization_id, title, current_stage_id, program_id, work_status)
                 VALUES (?, ?, ?, ?, ?, 'ACTIVE')
@@ -571,6 +587,7 @@ class LmsSignalServiceTest {
     }
 
     private void createSchema() {
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.create(jdbcTemplate);
         List.of(
                 """
                 CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, 
@@ -600,13 +617,13 @@ class LmsSignalServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, 
+                CREATE TABLE IF NOT EXISTS interactions (interaction_kind_id UUID, workflow_template_id UUID, workflow_version INTEGER, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL,
                     current_stage_id UUID NOT NULL, program_id UUID, work_status VARCHAR(16) NOT NULL
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
+                CREATE TABLE IF NOT EXISTS interaction_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), template_stage_id UUID, 
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL, name VARCHAR(200) NOT NULL
                 )
                 """,

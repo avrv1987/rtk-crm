@@ -184,36 +184,42 @@ test('режим «За период» живёт в адресе и уходи�
 
 // П17: сопоставимые потоки и потоки без базы сравнения не складываются в одно «было → стало».
 test('строка тренда разделяет сопоставимые потоки и новые без базы', () => {
-  const total = { start: 10, end: 12, change: 2, runsWithoutData: 1, endWithoutBase: 20 }
+  const total = { start: 10, end: 12, change: 2, runsWithoutData: 1, endWithoutBase: 20, startedRuns: 0, endStarted: 0, endedRuns: 0, startEnded: 0 }
   assert.equal(trendLine({ total }, 90), 'Обучающиеся за 90 дней, сопоставимые потоки: 10 → 12, +2; новые потоки без базы сравнения: 20')
   assert.equal(trendLine({ total: { ...total, runsWithoutData: 0, endWithoutBase: 0 } }, 90),
     'Обучающиеся за 90 дней, сопоставимые потоки: 10 → 12, +2')
 })
 
-test('«Показать списком» переносит вуз, менеджера, этап и плитку, остальное называет', () => {
-  const filters = { ...emptyControlFilters, organizationId: ['o1'], managerId: ['m1'], stage: ['Пилот'] }
-  const href = controlListHref(filters, { tile: 'OVERDUE', stuckDays: 30 })
-  const params = new URLSearchParams(queryOf(href))
-  assert.ok(href.startsWith('#/control?'))
-  assert.equal(params.get('view'), 'list')
-  assert.equal(params.get('organization'), 'o1')
-  assert.equal(params.get('responsible'), 'm1')
-  assert.equal(params.get('stage'), 'Пилот')
-  assert.equal(params.get('due'), 'OVERDUE')
-  assert.equal(params.get('skipped'), null)
-  assert.equal(new URLSearchParams(queryOf(controlListHref(emptyControlFilters, { tile: 'ISSUES', stuckDays: 30 }))).get('flag'), 'RISK_OR_PROBLEM')
-  assert.equal(new URLSearchParams(queryOf(controlListHref(emptyControlFilters, { tile: 'STUCK', stuckDays: 14 }))).get('minDaysOnStage'), '14')
-  assert.equal(new URLSearchParams(queryOf(controlListHref(emptyControlFilters, { tile: 'UNASSIGNED', stuckDays: 30 }))).get('responsible'), 'UNASSIGNED')
+// А08: начавшийся поток — не рост, закончившийся по плану — не падение; они показаны как изменение состава.
+test('строка тренда отдельно называет начавшиеся и закончившиеся потоки', () => {
+  const total = { start: 10, end: 12, change: 2, runsWithoutData: 0, endWithoutBase: 0, startedRuns: 2, endStarted: 30, endedRuns: 1, startEnded: 8 }
+  assert.equal(trendLine({ total }, 90),
+    'Обучающиеся за 90 дней, сопоставимые потоки: 10 → 12, +2; начались потоки (2): +30; закончились потоки (1): −8')
+})
 
-  const lossy = controlListHref(
-    { ...emptyControlFilters, productId: ['p1'], organizationId: ['o1', 'o2'], from: '2026-10-01', to: '2026-10-18' },
-    { tile: 'LMS', stuckDays: 30 }
-  )
-  assert.equal(new URLSearchParams(queryOf(lossy)).get('organization'), null)
-  assert.equal(
-    skippedNotice(queryOf(lossy)),
-    'Не перенесено из «Контроля»: несколько вузов, продукт, период, плитка — на этом экране такого отбора нет.'
-  )
+test('«Показать списком» переносит все отборы, плитку, порог, команду и период', () => {
+  const filters = {
+    ...emptyControlFilters,
+    organizationId: ['o1', 'o2'],
+    managerId: ['m1', 'UNASSIGNED'],
+    stage: ['Пилот', 'Занятия'],
+    programId: ['g1'],
+    productId: ['p1'],
+    directionId: ['d1'],
+    kindId: ['k1', 'k2'],
+    from: '2026-10-01',
+    to: '2026-10-18',
+    change: 'MOVED' as const,
+    mode: 'PERIOD' as const
+  }
+  const view = { tile: 'STUCK' as const, stuckDays: 14, team: 'team-a' }
+  const href = controlListHref(filters, view)
+  assert.ok(href.startsWith('#/control?'))
+  const linked = controlStateFromHash(href)
+  assert.ok(linked !== null, 'список — тот же экран «Контроля», а не другой раздел')
+  assert.deepEqual(linked.filters, filters)
+  assert.deepEqual(linked.view, { ...view, display: 'list' })
+  assert.equal(new URLSearchParams(queryOf(href)).get('skipped'), null)
   assert.equal(skippedNotice('view=list'), null)
 })
 
@@ -288,7 +294,7 @@ test('под плиткой итог менеджера «всего» оста�
 })
 
 test('дополнительные блоки «Контроля» подписаны областью, временем и тем, что фильтры к ним не применяются', () => {
-  assert.equal(controlMoreScope(true), 'По всем командам, фильтры, плитки и период выше не применяются. Сигналы LMS — действующие сейчас; обучающиеся — сегодня против 90 дней назад; подписания — текущий квартал.')
+  assert.equal(controlMoreScope(true), 'По всем командам, фильтры, плитки и период выше не применяются. Сигналы LMS — действующие сейчас; обучающиеся и активные взаимодействия — сегодня против 90 дней назад; данные обучения — по идущим потокам; подписания — текущий квартал.')
   assert.match(controlMoreScope(false), /^По всей команде, фильтры, плитки и период выше не применяются\./)
   assert.doesNotMatch(controlMoreScope(false), /подписания/)
 })

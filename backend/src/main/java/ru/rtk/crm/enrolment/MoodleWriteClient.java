@@ -36,7 +36,8 @@ public class MoodleWriteClient {
         this.objectMapper = objectMapper;
     }
 
-    record MoodleUser(long id, String username, String firstName, String lastName, String email) {
+    // Набор полей зависит от прав токена: на настоящем Moodle токен записи может отдавать только id, username и fullname.
+    record MoodleUser(long id, String username, String firstName, String lastName, String fullName, String email) {
         @Override
         public String toString() {
             return "MoodleUser[id=" + id + ", masked]";
@@ -49,7 +50,7 @@ public class MoodleWriteClient {
         if (body.isArray()) {
             for (JsonNode user : body) {
                 users.add(new MoodleUser(user.path("id").asLong(), user.path("username").asText(null), user.path("firstname").asText(null),
-                        user.path("lastname").asText(null), user.path("email").asText(null)));
+                        user.path("lastname").asText(null), user.path("fullname").asText(null), user.path("email").asText(null)));
             }
         }
         return users;
@@ -69,11 +70,6 @@ public class MoodleWriteClient {
             throw MoodleWriteException.invalid("Moodle не вернул идентификатор созданного пользователя");
         }
         return id;
-    }
-
-    void updateNames(MoodleWriteTarget target, long userId, String firstName, String lastName) {
-        call(target, "core_user_update_users", Map.of("users[0][id]", Long.toString(userId), "users[0][firstname]", firstName,
-                "users[0][lastname]", lastName));
     }
 
     void enrol(MoodleWriteTarget target, long userId, long courseId) {

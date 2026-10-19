@@ -9,6 +9,7 @@ import ru.rtk.crm.access.UserRole;
 // привязано ли к вузу, который должен оставаться видимым получателю.
 public enum MailKind {
     INVITATION("Приглашение: вход в CRM", null, EnumSet.allOf(UserRole.class), false),
+    PASSWORD_RESET("Новый пароль: вход в CRM", null, EnumSet.allOf(UserRole.class), false),
     DIGEST("Утренняя сводка", MailTopic.DIGEST, null, false),
     ASSIGNMENT("Назначен вуз", MailTopic.ASSIGNMENT, null, true),
     AGREEMENT_CORRECTION("Договор вернули на доработку", MailTopic.AGREEMENT, null, true),
@@ -19,6 +20,7 @@ public enum MailKind {
     PARTNER_RETURNED("Ответ возвращён на доработку", null, EnumSet.of(UserRole.PARTNER), true),
     PARTNER_REPLY("Ответ координатора вуза", MailTopic.PARTNER_REPLIES, null, true),
     SITE_REQUEST("Новая заявка с сайта", MailTopic.SITE_REQUEST, null, true),
+    AGENT_PLAN("План ИИ-агента ждёт подтверждения", MailTopic.AGENT_PLANS, null, true),
     ORGANIZATIONS_UNASSIGNED("Вузы остались без КАМ", MailTopic.UNASSIGNED, null, false),
     WEEKLY_SUMMARY("Недельная сводка", MailTopic.WEEKLY, null, false),
     ADMIN_SOURCE_FAILURE("Сбой источника данных", MailTopic.ADMIN_ALERTS, null, false),

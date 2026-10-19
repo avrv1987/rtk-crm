@@ -3,7 +3,7 @@ import type { Modules } from '../../shared/modules'
 
 type Profile = { role: string; enrolmentOperator: boolean }
 
-/** Пункт «Уведомления на почту» — при включённом модуле всем сотрудникам, кроме представителя вуза и оператора зачисления. */
+/** Пункт «Уведомления на почту» — при включённом модуле всем сотрудникам, кроме представителя вуза и менеджера учебного процесса. */
 export const mailPreferencesAvailable = (profile: Profile, modules: Modules): boolean => (
   modules.mail === true && profile.role !== 'PARTNER' && !profile.enrolmentOperator
 )

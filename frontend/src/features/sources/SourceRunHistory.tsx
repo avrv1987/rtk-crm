@@ -28,7 +28,7 @@ const triggerLabels: Record<NonNullable<SyncRun['trigger']>, string> = {
   SCHEDULE: 'по расписанию',
   CARD: 'из карточки',
   BOOTSTRAP: 'первая загрузка при старте',
-  UPLOAD: 'загрузка файла оплат оператором зачисления'
+  UPLOAD: 'загрузка файла оплат менеджером учебного процесса'
 }
 
 export const SourceRunHistory = ({ source, onSessionExpired, onProfileUnavailable }: SourceRunHistoryProps) => {

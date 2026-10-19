@@ -42,7 +42,7 @@ public class MaxSessionService {
     }
 
     // Вход: подпись и свежесть initData → подтверждённая активная связь → активный профиль КАМ или руководителя.
-    // Администратор, «Руководство», представитель вуза и оператор зачисления сеанс не получают.
+    // Администратор, «Руководство», представитель вуза и менеджер учебного процесса сеанс не получают.
     @Transactional
     public Started start(String initData, String requestId) {
         String token = settings.token().orElseThrow(MaxException::notConfigured);
@@ -66,7 +66,7 @@ public class MaxSessionService {
     }
 
     // Проверка на каждом запросе. Сеанс закрывается, если истёк срок или простой, профиль заблокирован, сменилась
-    // роль, команда или флаг оператора (access_revision), связь MAX отключена или бот остановлен.
+    // роль, команда или флаг менеджера учебного процесса (access_revision), связь MAX отключена или бот остановлен.
     @Transactional
     public Optional<CrmProfile> authenticate(String token) {
         String hash = MaxCodes.sha256(token);

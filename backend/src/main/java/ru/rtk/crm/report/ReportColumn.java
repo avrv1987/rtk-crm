@@ -46,6 +46,8 @@ public enum ReportColumn {
     TEAM("Команда", null, false, 22, ReportRow::teamName),
     LAST_STAFF_ACTION("Последнее действие сотрудника по вузу", null, "не зафиксировано", 20, ReportRow::lastEventAt),
     COMPLETED("Завершённых прохождений", 14, ReportRow::completedCount),
+    MEDIAN_DAYS("Медиана длительности, дн.", 14, ReportRow::medianDays),
+    P90_DAYS("90-й процентиль длительности, дн.", 14, ReportRow::p90Days),
     AVG_DAYS("Средняя длительность, дн.", 14, ReportRow::averageDays),
     MAX_DAYS("Максимальная длительность, дн.", 14, ReportRow::maxDays),
     CURRENT("На этапе на конец периода", 14, ReportRow::currentCount),

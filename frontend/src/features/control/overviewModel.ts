@@ -1,4 +1,4 @@
-import type { TeamsSummary, WorkControl, WorkControlItem } from '../../shared/api/client'
+import type { LearningCoverage, PortfolioChangeRow, TeamsSummary, WorkControl, WorkControlItem } from '../../shared/api/client'
 import { shiftCalendarDate } from '../../shared/format/datetime.ts'
 import type { AgreementRegistryRow } from '../agreements/agreementsApi'
 import { registryTileCounts } from '../agreements/agreementModel.ts'
@@ -43,10 +43,18 @@ export const nbsp = String.fromCharCode(160)
 
 const percent = (share: Share) => Math.round(share.count * 100 / share.base)
 
+// При базе меньше 10 процент скачет от одного случая («1 из 3» — 33 %) и читается как вывод, поэтому показываем
+// только числа (разбор §5.3, А08).
+export const minPercentBase = 10
+
 // «8 из 80 активных (10 %)»: абсолютное число всегда рядом со знаменателем, доля без знаменателя не показывается.
-export const shareText = (share: Share, of: string) => (
-  share.base === 0 ? `${share.count} — ${of}: нет` : `${share.count} из ${share.base} ${of} (${percent(share)}${nbsp}%)`
-)
+export const shareText = (share: Share, of: string) => {
+  if (share.base === 0) {
+    return `${share.count} — ${of}: нет`
+  }
+  const text = `${share.count} из ${share.base} ${of}`
+  return share.base < minPercentBase ? text : `${text} (${percent(share)}${nbsp}%)`
+}
 
 const signed = (value: number) => (value > 0 ? `+${value}` : value < 0 ? `−${Math.abs(value)}` : '0')
 
@@ -58,7 +66,32 @@ export const changeText = ({ current, previous }: Change) => {
   if (current === previous) {
     return 'без изменений'
   }
+  if (previous < minPercentBase) {
+    return signed(current - previous)
+  }
   return `${signed(current - previous)} (${signed(Math.round((current - previous) * 100 / previous))}${nbsp}%)`
+}
+
+// Баланс состава (разбор §7.3): «было → стало» и из чего сложилась разница. Без процентов: это разложение, а не темп.
+export const portfolioParts = (row: PortfolioChangeRow) => [
+  `остались ${row.stayed}`,
+  ...(row.created > 0 ? [`новые +${row.created}`] : []),
+  ...(row.resumed > 0 ? [`возобновлены +${row.resumed}`] : []),
+  ...(row.completed > 0 ? [`завершены −${row.completed}`] : []),
+  ...(row.paused > 0 ? [`приостановлены −${row.paused}`] : [])
+]
+
+export const portfolioText = (row: PortfolioChangeRow) => `${row.atStart} → ${row.atEnd}: ${portfolioParts(row).join(', ')}`
+
+// Индикатор доверия к данным обучения (разбор §5.4): знаменатель — идущие сопоставленные потоки, а не пришедшие данные.
+export const coverageText = (coverage: LearningCoverage) => {
+  if (coverage.expected === 0) {
+    return 'Данные обучения: идущих сопоставленных потоков нет'
+  }
+  const toCheck = coverage.stale + coverage.withoutObservation
+  return `Данные обучения доступны для ${coverage.fresh} из ${coverage.expected} идущих потоков`
+    + (toCheck > 0 ? `; ${toCheck} требуют проверки` : '')
+    + (coverage.sourceConfigured ? '' : '; Moodle не подключён, свежесть не проверяется')
 }
 
 // Окно сравнения — последние N дней по сегодня и N дней перед ними: окна одной длины, поэтому числа сопоставимы.

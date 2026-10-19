@@ -285,6 +285,28 @@ class OrganizationCatalogServiceTest {
                 .isEqualTo(OrganizationStatus.ARCHIVED);
     }
 
+    // Н-7 (2.5): менеджер учебного процесса служебной команды «Открытый набор» вуз не заводит — иначе вуз попал бы в
+    // команду физлиц, а сам он стал бы КАМ. Обычный КАМ с флагом заводит, как раньше.
+    @Test
+    void serviceTeamMemberCannotCreateOrganization() {
+        UUID serviceTeam = UUID.randomUUID();
+        UUID operator = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO teams (id, name, archived) VALUES (?, 'Открытый набор', FALSE)", serviceTeam);
+        insertProfile(operator, "Менеджер УП", "USER", serviceTeam);
+        jdbcTemplate.update("""
+                INSERT INTO organizations (id, name, type, team_id, version, updated_at)
+                VALUES (?, 'Открытый набор (физлица)', 'OPEN_ENROLLMENT', ?, 0, CURRENT_TIMESTAMP)
+                """, UUID.randomUUID(), serviceTeam);
+        long before = count("organizations");
+
+        assertThatThrownBy(() -> service.create(new CrmProfile(operator, UserRole.USER, serviceTeam, 0),
+                request("Вуз от менеджера УП", OrganizationType.UNIVERSITY, null, null, null), "service-team", REQUEST_ID))
+                .isInstanceOf(CatalogChangeAccessDeniedException.class);
+        assertThat(count("organizations")).isEqualTo(before);
+        assertThat(organizationCatalogRepository.serviceTeam(serviceTeam)).isTrue();
+        assertThat(organizationCatalogRepository.serviceTeam(TEAM_A)).isFalse();
+    }
+
     private static OrganizationDetailsRequest request(String name, OrganizationType type, String city, String website, String inn) {
         return new OrganizationDetailsRequest(name, type, city, website, inn, null, null);
     }

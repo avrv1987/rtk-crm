@@ -43,6 +43,7 @@ import { ProfileMenu, SessionScreen } from '../features/session/SessionScreen'
 import { ReminderCenter } from '../features/work/ReminderCenter'
 import { WorkScreen } from '../features/work/WorkScreen'
 import { getModules, setModules } from '../shared/modules'
+import { ActionMenu } from '../shared/ui/ActionMenu'
 import { HintButton } from '../shared/ui/HintButton'
 import { SupportDetails } from '../shared/ui/SupportDetails'
 
@@ -60,6 +61,7 @@ const NavIcon = ({ href }: { href: string }) => {
     '#/organizations': 'M3 21h18M5 21V9l7-5 7 5v12M10 21v-6h4v6',
     '#/agreements': 'M7 3h7l4 4v14H7zM14 3v4h4M10 12h5M10 16h5',
     '#/reports': 'M5 20V10M12 20V4M19 20v-7',
+    more: 'M5 12h.01M12 12h.01M19 12h.01',
     '#/enrolment': 'M17 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7M21 20v-2a3.5 3.5 0 0 0-3-3.4M16 4.2a3.5 3.5 0 0 1 0 6.6'
   }
   return (
@@ -97,7 +99,7 @@ export const App = () => {
     if (state.kind !== 'profile' || invitationToken(window.location.hash) !== null) {
       return
     }
-    const sections = sectionsFor(state.profile.role, state.profile.enrolmentOperator, getModules())
+    const sections = sectionsFor(state.profile.role, state.profile.enrolmentOperator, getModules(), state.profile.enrolmentOnly)
     const target = canonicalAddress(route, sections)
     if (target !== null) {
       window.history.replaceState(null, '', target)
@@ -190,8 +192,11 @@ export const App = () => {
     }
   }
 
+  // Истёкший сеанс объясняется словами (Н-14, 2.5): черновики остаются во вкладке и вернутся после входа.
+  const [sessionExpired, setSessionExpired] = useState(false)
   const handleSessionExpired = useCallback(() => {
     activeProfileId.current = null
+    setSessionExpired(true)
     setState({ kind: 'anonymous' })
   }, [])
 
@@ -204,10 +209,18 @@ export const App = () => {
     setState({ kind: 'forbidden', requestId, pending: false })
   }, [])
 
-  // Ссылка из письма-приглашения открывается и без входа, и в чужой сессии: пароль получает тот, у кого письмо.
+  // Ссылка из письма-приглашения открывается без входа. Если в браузере уже есть сессия сотрудника, экран просит выйти и
+  // ссылку не гасит.
   const inviteToken = invitationToken(hash)
   if (inviteToken !== null) {
-    return <InvitationScreen token={inviteToken} />
+    return (
+      <InvitationScreen
+        token={inviteToken}
+        sessionChecking={state.kind === 'loading'}
+        signedInAs={state.kind === 'profile' ? state.profile.displayName : null}
+        onSignOut={() => void logout()}
+      />
+    )
   }
   if (state.kind === 'loading') {
     return <SessionScreen title="Проверяем сессию" />
@@ -234,7 +247,10 @@ export const App = () => {
   }
   if (state.kind === 'anonymous') {
     return (
-      <LandingPage onLogin={() => apiClient.login()} />
+      <LandingPage
+        onLogin={() => apiClient.login()}
+        notice={sessionExpired ? 'Сеанс истёк. Войдите снова — вы вернётесь на тот же экран, несохранённый текст восстановится.' : null}
+      />
     )
   }
   if (state.kind === 'forbidden') {
@@ -268,9 +284,9 @@ export const App = () => {
   }
   const { profile } = state
   const modules = getModules()
-  const sections = sectionsFor(profile.role, profile.enrolmentOperator, modules)
+  const sections = sectionsFor(profile.role, profile.enrolmentOperator, modules, profile.enrolmentOnly)
   const section = sections.find((item) => item === route.section) ?? sections[0]
-  const nav = navFor(profile.role, profile.enrolmentOperator, modules)
+  const nav = navFor(profile.role, profile.enrolmentOperator, modules, profile.enrolmentOnly)
   const workTab = activeWorkTab(section)
   const workTabs = workTab === null ? [] : workTabsFor(profile.role)
   const title = sectionTitle(section, profile.role)
@@ -383,6 +399,7 @@ export const App = () => {
               key={routePulse}
               role={profile.role}
               initialQuery={route.query}
+              unknownAddress={route.organizationId !== undefined && route.organizationId.length > 0}
               onSessionExpired={handleSessionExpired}
               onProfileUnavailable={handleProfileUnavailable}
             />
@@ -427,6 +444,17 @@ export const App = () => {
                 </a>
               </li>
             ))}
+            {/* Разделы без места в нижнем меню (у руководителя — «Настройки команды») доступны через «Ещё»: в меню
+                профиля их на телефоне не искали (4.12). */}
+            {nav.some((item) => !item.phone) && (
+              <li className="app-tabbar__more">
+                <ActionMenu
+                  label="Ещё разделы"
+                  toggle={<><NavIcon href="more" /><span>Ещё</span></>}
+                  items={nav.filter((item) => !item.phone).map((item) => ({ label: item.label, href: item.href }))}
+                />
+              </li>
+            )}
           </ul>
         </nav>
       )}

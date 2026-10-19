@@ -2,12 +2,12 @@ package ru.rtk.crm.enrolment;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -34,6 +34,13 @@ import ru.rtk.crm.source.SourceSettingsService;
 @Service
 public class MoodleTransferService {
     private static final Logger LOGGER = LoggerFactory.getLogger(MoodleTransferService.class);
+    static final String SHARED_EMAIL = "Одна почта у нескольких слушателей: для Moodle нужна отдельная почта у каждого, "
+            + "исправьте почту в анкете";
+    // Moodle требует фамилию и имя; прежде вместо пустого поля уходил «-», и в Moodle появлялся пользователь «-».
+    static final String NO_LAST_NAME = "Нет фамилии: заполните фамилию в анкете — Moodle не создаёт пользователя без неё";
+    static final String NO_FIRST_NAME = "Нет имени: заполните имя в анкете — Moodle не создаёт пользователя без него";
+    static final String NAME_NOT_CHECKED = "найдена учётная запись Moodle с этой почтой; Moodle не сообщил имя, поэтому оно "
+            + "не сверено — проверьте имя пользователя в Moodle";
 
     private final EnrolmentAccess enrolmentAccess;
     private final EnrolmentBatchRepository batchRepository;
@@ -82,12 +89,14 @@ public class MoodleTransferService {
         }
         batchRepository.lock(batchId).orElseThrow(() -> new EnrolmentNotFoundException("Партия для LMS не найдена"));
         EnrolmentBatchRepository.BatchRow batch = batchRepository.find(batchId).orElseThrow();
-        List<EnrolmentBatchRepository.ItemRow> items = batchRepository.findItems(batchId).stream()
+        List<EnrolmentBatchRepository.ItemRow> allItems = batchRepository.findItems(batchId);
+        List<EnrolmentBatchRepository.ItemRow> items = allItems.stream()
                 .filter(item -> item.result() != BatchItemResult.ACCEPTED)
                 .toList();
-        Map<UUID, Learner> learners = learnerService.findAll(items.stream().map(EnrolmentBatchRepository.ItemRow::learnerId).distinct()
+        Map<UUID, Learner> learners = learnerService.findAll(allItems.stream().map(EnrolmentBatchRepository.ItemRow::learnerId).distinct()
                         .toList()).stream()
                 .collect(Collectors.toMap(Learner::id, Function.identity()));
+        Set<String> sharedEmails = sharedEmails(allItems, learners);
         OffsetDateTime now = OffsetDateTime.now();
         Course course;
         try {
@@ -99,6 +108,7 @@ public class MoodleTransferService {
             return finish(actor, batchId, reservation, items.size(), 0, items.size(), 0, null, requestId);
         }
         Map<EnrolmentBatchRepository.ItemRow, Long> enrolled = new LinkedHashMap<>();
+        Map<EnrolmentBatchRepository.ItemRow, String> notes = new LinkedHashMap<>();
         int failed = 0;
         int calls = 0;
         String stopped = null;
@@ -106,7 +116,10 @@ public class MoodleTransferService {
             Learner learner = learners.get(item.learnerId());
             String problem = learner == null || learner.status() != PersonalDataStatus.ACTIVE
                     ? "Анкета недоступна для передачи: обработка ограничена, анкета обезличена или объединена"
-                    : learner.profile().email() == null ? "Нет почты: логин Moodle не сформировать" : null;
+                    : learner.profile().email() == null ? "Нет почты: логин Moodle не сформировать"
+                    : sharedEmails.contains(emailKey(learner.profile().email())) ? SHARED_EMAIL
+                    : blank(learner.profile().lastName()) ? NO_LAST_NAME
+                    : blank(learner.profile().firstName()) ? NO_FIRST_NAME : null;
             if (problem != null) {
                 batchRepository.recordResult(item.id(), BatchItemResult.FAILED, problem, "API", actor.id(), now);
                 failed++;
@@ -116,6 +129,9 @@ public class MoodleTransferService {
             try {
                 Counted<Long> user = ensureUser(target, profile);
                 calls += user.calls();
+                if (user.note() != null) {
+                    notes.put(item, user.note());
+                }
                 client.enrol(target, user.value(), course.courseId());
                 calls++;
                 if (course.groupId() != null) {
@@ -130,7 +146,7 @@ public class MoodleTransferService {
                 }
                 batchRepository.recordResult(item.id(), BatchItemResult.FAILED, limit(exception.getMessage()), "API", actor.id(), now);
                 failed++;
-            } catch (TooManyUsers exception) {
+            } catch (TooManyUsers | OtherPersonAccount exception) {
                 batchRepository.recordResult(item.id(), BatchItemResult.FAILED, exception.getMessage(), "API", actor.id(), now);
                 failed++;
             }
@@ -145,7 +161,7 @@ public class MoodleTransferService {
                 for (Map.Entry<EnrolmentBatchRepository.ItemRow, Long> entry : enrolled.entrySet()) {
                     EnrolmentBatchRepository.ItemRow item = entry.getKey();
                     if (onCourse.contains(entry.getValue())) {
-                        batchRepository.recordResult(item.id(), BatchItemResult.ACCEPTED, null, "API", actor.id(), now);
+                        batchRepository.recordResult(item.id(), BatchItemResult.ACCEPTED, notes.get(item), "API", actor.id(), now);
                         enrolmentRepository.markAccepted(item.enrolmentId(), batchId, batch.streamId(), item.learnerVersion(), now);
                         accepted++;
                     } else {
@@ -240,17 +256,64 @@ public class MoodleTransferService {
         if (users.size() > 1) {
             throw new TooManyUsers();
         }
-        String firstName = nonBlank(profile.firstName());
-        String lastName = nonBlank(profile.lastName());
+        String firstName = profile.firstName().strip();
+        String lastName = profile.lastName().strip();
         if (users.isEmpty()) {
-            return new Counted<>(client.createUser(target, email, firstName, lastName, email), 2);
+            return new Counted<>(client.createUser(target, email, firstName, lastName, email), 2, null);
         }
+        // Чужую учётную запись не переименовываем и не зачисляем: при несовпадении имени это может быть другой человек
+        // (родитель, однофамилец по общей почте), и тихая замена имени отдала бы его учётную запись слушателю.
         MoodleWriteClient.MoodleUser user = users.getFirst();
-        if (!Objects.equals(user.firstName(), firstName) || !Objects.equals(user.lastName(), lastName)) {
-            client.updateNames(target, user.id(), firstName, lastName);
-            return new Counted<>(user.id(), 2);
+        if (user.firstName() != null || user.lastName() != null) {
+            if (!sameName(user.firstName(), firstName) || !sameName(user.lastName(), lastName)) {
+                throw new OtherPersonAccount();
+            }
+            return new Counted<>(user.id(), 1, null);
         }
-        return new Counted<>(user.id(), 1);
+        // Токен записи на настоящем Moodle часто отдаёт только fullname. Порядок слов в нём задаёт настройка
+        // fullnamedisplay, поэтому сравниваем набор слов; отчество допускаем, если сайт его показывает.
+        if (!blank(user.fullName())) {
+            List<String> moodle = words(user.fullName());
+            if (!moodle.equals(words(firstName + " " + lastName))
+                    && !moodle.equals(words(firstName + " " + lastName + " " + (profile.middleName() == null ? "" : profile.middleName())))) {
+                throw new OtherPersonAccount();
+            }
+            return new Counted<>(user.id(), 1, null);
+        }
+        // Имени в ответе нет совсем (токен без права видеть имена): блокировать нельзя — иначе ни один существующий
+        // пользователь не пройдёт, а переименовывать вслепую нельзя тем более. Принимаем совпадение по почте и
+        // оставляем пометку в протоколе строки, чтобы оператор мог сверить имя в Moodle.
+        return new Counted<>(user.id(), 1, NAME_NOT_CHECKED);
+    }
+
+    private static List<String> words(String value) {
+        return Arrays.stream(normalizedName(value).split("\\s+")).filter(word -> !word.isEmpty()).sorted().toList();
+    }
+
+    private static boolean blank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    // Почта — логин Moodle, поэтому одна почта у разных слушателей партии дала бы одну учётную запись на двоих.
+    // Принятые строки тоже учитываются: их учётная запись уже занята.
+    private static Set<String> sharedEmails(List<EnrolmentBatchRepository.ItemRow> items, Map<UUID, Learner> learners) {
+        Map<String, Set<UUID>> byEmail = new LinkedHashMap<>();
+        for (EnrolmentBatchRepository.ItemRow item : items) {
+            Learner learner = learners.get(item.learnerId());
+            if (learner != null && learner.profile().email() != null) {
+                byEmail.computeIfAbsent(emailKey(learner.profile().email()), ignored -> new LinkedHashSet<>()).add(learner.id());
+            }
+        }
+        return byEmail.entrySet().stream().filter(entry -> entry.getValue().size() > 1).map(Map.Entry::getKey)
+                .collect(Collectors.toSet());
+    }
+
+    private static boolean sameName(String moodle, String crm) {
+        return normalizedName(moodle).equals(normalizedName(crm));
+    }
+
+    private static String normalizedName(String value) {
+        return value == null ? "" : value.strip().toLowerCase(Locale.ROOT).replace('ё', 'е');
     }
 
     private MoodleWriteTarget requireTarget() {
@@ -286,7 +349,8 @@ public class MoodleTransferService {
             }
         }
         if (courses.isEmpty()) {
-            throw new CourseMissing("Нет курса Moodle для потока: сопоставьте курс программы потока в источниках");
+            throw new CourseMissing("Нет курса Moodle для потока: курс программы не сопоставлен. Анкета тут ни при чём — обратитесь"
+                    + " к администратору: «Администрирование → Источники данных → Сопоставления»");
         }
         if (courses.size() > 1) {
             throw new CourseMissing("Для потока сопоставлено несколько курсов Moodle: оставьте один или передайте файлом");
@@ -300,10 +364,6 @@ public class MoodleTransferService {
         return email.strip().toLowerCase(Locale.ROOT);
     }
 
-    private static String nonBlank(String value) {
-        return value == null || value.isBlank() ? "-" : value.strip();
-    }
-
     private static String limit(String message) {
         return message.length() > 500 ? message.substring(0, 500) : message;
     }
@@ -311,12 +371,20 @@ public class MoodleTransferService {
     record Course(long courseId, Long groupId) {
     }
 
-    private record Counted<T>(T value, int calls) {
+    private record Counted<T>(T value, int calls, String note) {
     }
 
     private static final class CourseMissing extends RuntimeException {
         CourseMissing(String message) {
             super(message, null, false, false);
+        }
+    }
+
+    private static final class OtherPersonAccount extends RuntimeException {
+        OtherPersonAccount() {
+            super("В Moodle уже есть учётная запись с этой почтой на другое имя; CRM её не переименовывает. Если это тот же "
+                    + "слушатель — исправьте имя в Moodle или в анкете и повторите; если другой человек — укажите в анкете "
+                    + "отдельную почту", null, false, false);
         }
     }
 

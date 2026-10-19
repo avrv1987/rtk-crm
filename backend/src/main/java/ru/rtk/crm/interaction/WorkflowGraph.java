@@ -115,6 +115,43 @@ final class WorkflowGraph {
                 );
             }
         }
+        // Обратный обход от финального этапа: цикл без выхода («Б» ↔ «В») проходит обе проверки выше, но КАМ, попав
+        // в него, уже не дойдёт до конца маршрута. Поэтому финал должен быть достижим из каждого этапа.
+        List<InteractionStage> stuck = stagesWithoutPathToFinal(ordered, transitions);
+        if (!stuck.isEmpty()) {
+            throw new InteractionValidationException(
+                    field,
+                    (stuck.size() == 1 ? "С этапа " : "С этапов ")
+                            + stuck.stream().map(stage -> "«" + stage.name() + "»").collect(java.util.stream.Collectors.joining(", "))
+                            + " нельзя дойти до финального этапа «" + ordered.getLast().name() + "»: добавьте переход вперёд"
+            );
+        }
+    }
+
+    // Этапы, из которых по переходам нельзя попасть в последний этап маршрута (по порядку). Используется и в проверке
+    // шаблона, и в предпросмотре перевода карточек на версию, сохранённую до этого правила.
+    static List<InteractionStage> stagesWithoutPathToFinal(
+            List<InteractionStage> stages,
+            List<InteractionStageTransition> transitions
+    ) {
+        List<InteractionStage> ordered = ordered(stages);
+        if (ordered.isEmpty()) {
+            return List.of();
+        }
+        Map<UUID, List<UUID>> incoming = new HashMap<>();
+        for (InteractionStageTransition transition : transitions) {
+            incoming.computeIfAbsent(transition.toStageId(), ignored -> new ArrayList<>()).add(transition.fromStageId());
+        }
+        Set<UUID> leadsToFinal = new HashSet<>();
+        ArrayDeque<UUID> pending = new ArrayDeque<>();
+        pending.add(ordered.getLast().id());
+        while (!pending.isEmpty()) {
+            UUID stageId = pending.removeFirst();
+            if (leadsToFinal.add(stageId)) {
+                pending.addAll(incoming.getOrDefault(stageId, List.of()));
+            }
+        }
+        return ordered.stream().filter(stage -> !leadsToFinal.contains(stage.id())).toList();
     }
 
     // Удаляемый этап «стягивается»: каждый путь «A → удаляемый → B» заменяется прямым A → B, комментарий на нём

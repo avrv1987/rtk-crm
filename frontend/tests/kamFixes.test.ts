@@ -101,11 +101,14 @@ test('переход вперёд и возврат — разные списк�
 test('подсказка подписания меняется после подписания договора', () => {
   const draft = { number: 'Д-1', status: 'REVIEW' as const, concludedOn: null, validUntil: null, statusChangedAt: '2026-10-01T10:00:00Z' }
   const signed = { ...draft, status: 'ACTIVE' as const, concludedOn: '2026-10-10', validUntil: '2027-10-10' }
-  assert.equal(signingRuleHint('SIGNING', [draft], '2026-10-18'), 'Этап завершится, когда договор будет подписан.')
-  assert.equal(signingRuleHint('SIGNING', [draft, signed], '2026-10-18'), 'Договор подписан: этап «Подписание» можно завершить.')
-  assert.equal(signingRuleHint(null, [signed], '2026-10-18'), null)
-  assert.equal(signingRuleHint(null, [], '2026-10-18'), 'Этап «Подписание» завершится только с подписанным договором.')
-  assert.equal(signingRuleHint('SIGNING', [{ ...signed, validUntil: '2026-10-01' }], '2026-10-18'), 'Этап завершится, когда договор будет подписан.')
+  assert.equal(signingRuleHint('SIGNING', { agreements: [draft] }, '2026-10-18'), 'Дальше этапа можно пройти, когда у вуза будет действующий договор.')
+  assert.equal(signingRuleHint('SIGNING', { agreements: [draft, signed] }, '2026-10-18'), 'Договор с вузом действует: дальше этапа можно пройти.')
+  assert.equal(signingRuleHint('SIGNING', { agreements: [], activeAgreementNumber: 'Д-7' }, '2026-10-18'),
+    'Договор с вузом действует (№ Д-7): дальше этапа можно пройти.')
+  assert.equal(signingRuleHint(null, { agreements: [signed] }, '2026-10-18'), null)
+  assert.match(signingRuleHint(null, { agreements: [] }, '2026-10-18') ?? '', /требует действующего договора/)
+  assert.equal(signingRuleHint('SIGNING', { agreements: [{ ...signed, validUntil: '2026-10-01' }] }, '2026-10-18'),
+    'Дальше этапа можно пройти, когда у вуза будет действующий договор.')
 })
 
 test('описание задачи отчёта следует за выбранным периодом', () => {

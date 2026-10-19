@@ -66,7 +66,7 @@ public class EnrolmentBatchRepository {
                 .optional();
     }
 
-    // Блокировка партии упорядочивает запись результатов: два оператора, отмечающие одну партию, не теряют
+    // Блокировка партии упорядочивает запись результатов: два менеджера учебного процесса, отмечающие одну партию, не теряют
     // обновления друг друга, а принятая строка не перезаписывается.
     Optional<UUID> lock(UUID batchId) {
         return jdbcClient.sql("SELECT id FROM enrolment_batches WHERE id = :id FOR UPDATE")

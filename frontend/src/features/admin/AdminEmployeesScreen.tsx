@@ -314,7 +314,7 @@ export const AdminEmployeesScreen = ({
           после первого входа появляется в списке «Ожидают активации». Закрытие доступа сразу отключает учётную запись в Keycloak,
           открытие — включает; если Keycloak недоступен, профиль помечается «требует синхронизации» с причиной.
           Роль сотрудника хранится в Keycloak. Смена роли здесь сразу назначает роль в Keycloak; роль, изменённую в консоли
-          Keycloak, CRM применяет при следующем входе сотрудника. Команду и флаг «Оператор зачисления» ведёт CRM. В Keycloak
+          Keycloak, CRM применяет при следующем входе сотрудника. Команду и флаг «Менеджер учебного процесса» ведёт CRM. В Keycloak
           можно завести и свою роль, например «Отдел развития», включив в неё одну из ролей CRM — подробнее в справке.
           Пароль и второй фактор другого администратора здесь не сбрасываются: он меняет их сам в Keycloak.
         </HintButton>
@@ -406,7 +406,7 @@ export const AdminEmployeesScreen = ({
                               <span className={`admin-table__sub${source === 'из Keycloak' ? '' : ' admin-table__sub--warning'}`}>{source}</span>
                             )}
                             {getModules().enrolment && profile.enrolmentOperator && (
-                              <span className="admin-table__sub">Оператор зачисления</span>
+                              <span className="admin-table__sub">Менеджер учебного процесса</span>
                             )}
                           </span>
                         </td>

@@ -30,6 +30,7 @@ import ru.rtk.crm.report.ReportJobRepository.StoredJob;
 public class ReportJobService {
     private static final Logger log = LoggerFactory.getLogger(ReportJobService.class);
     private static final int RECENT_JOBS_LIMIT = 20;
+    static final int MAX_UNFINISHED_PER_USER = 5;
     private static final DateTimeFormatter FILE_DATE = DateTimeFormatter.ISO_LOCAL_DATE;
 
     private final ReportService reportService;
@@ -88,9 +89,13 @@ public class ReportJobService {
         if (existing.isPresent()) {
             return replay(existing.get(), fingerprint);
         }
+        // Квота на пользователя (2.5): одна учётка не должна занимать все слоты и очередь, которые общие для всех.
         UUID jobId = UUID.randomUUID();
         try {
-            repository.insert(jobId, profile, key, fingerprint, requestJson, normalized, OffsetDateTime.now());
+            if (!repository.insertWithinQuota(jobId, profile, key, fingerprint, requestJson, normalized, OffsetDateTime.now(),
+                    MAX_UNFINISHED_PER_USER)) {
+                throw ReportException.userQuota(MAX_UNFINISHED_PER_USER);
+            }
         } catch (DuplicateKeyException exception) {
             // Две одновременные отправки с одним ключом: вторая вставка нарушает уникальность и получает задание первой.
             return replay(repository.findByIdempotencyKey(profile.id(), key).orElseThrow(() -> exception), fingerprint);

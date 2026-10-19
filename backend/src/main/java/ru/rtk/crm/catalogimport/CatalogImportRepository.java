@@ -133,6 +133,18 @@ public class CatalogImportRepository {
                 .optional();
     }
 
+    public Optional<UUID> findLatestApplyJobId(UUID importId) {
+        return jdbcClient.sql("""
+                SELECT id FROM catalog_import_jobs
+                WHERE import_id = :importId AND action = 'APPLY'
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """)
+                .param("importId", importId)
+                .query(UUID.class)
+                .optional();
+    }
+
     public boolean markApplied(UUID importId, int expectedVersion, OffsetDateTime now) {
         return jdbcClient.sql("""
                 UPDATE catalog_imports
@@ -535,6 +547,13 @@ public class CatalogImportRepository {
                 .param("value", id == null ? externalKey : id)
                 .query(this::mapAgreement)
                 .optional();
+    }
+
+    public List<UUID> findActiveProgramIdsByName(String name) {
+        return jdbcClient.sql("SELECT id FROM programs WHERE archived = FALSE AND LOWER(name) = LOWER(:name)")
+                .param("name", name.strip())
+                .query(UUID.class)
+                .list();
     }
 
     public List<UUID> findInteractionIdsWithProduct(UUID organizationId, UUID productId) {

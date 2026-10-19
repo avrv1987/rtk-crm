@@ -64,6 +64,17 @@ public class PaidOrderEnrolment {
         return new LearnerIntake(0, 1, 1, 0, 0, 0, contactsDiffer);
     }
 
+    // Перенос уже зачисленного слушателя в поток, которого ещё нет, — почти всегда опечатка в номере потока. Такой
+    // перенос из файла выполняется только после явного подтверждения; пусто — переносом в новый поток заявка не является.
+    @Transactional(readOnly = true)
+    public Optional<String> transferIntoNewStream(String orderNumber, String courseKey, int streamNo) {
+        if (enrolmentRepository.streamExists(courseKey, streamNo)) {
+            return Optional.empty();
+        }
+        return enrolmentRepository.findByOrderNumber(orderNumber)
+                .map(enrolment -> "«" + enrolment.courseName() + "», поток " + enrolment.streamNo());
+    }
+
     public void journalUpload(UUID actorId, PaidOrderUpload upload, String requestId) {
         auditJournalRepository.record(AuditAction.PAID_ORDERS_UPLOADED, actorId, RUN_OBJECT_TYPE, upload.runId(),
                 "Сайт: загрузка файла оплат",
@@ -78,7 +89,7 @@ public class PaidOrderEnrolment {
 
     // Известная оплата пришла снова, возможно, уже с другим потоком (заказ перенесли). Если слушатель уже
     // записан на новый поток, старое зачисление удаляется, иначе переносится. Признак «после передачи в LMS»
-    // нужен оператору: слушателя, уже выгруженного в LMS, придётся перенести там вручную.
+    // нужен менеджеру учебного процесса: слушателя, уже выгруженного в LMS, придётся перенести там вручную.
     private LearnerIntake acceptKnown(
             LearnerEnrolment enrolment,
             EnrolmentStream stream,
@@ -91,9 +102,9 @@ public class PaidOrderEnrolment {
         if (enrolment.streamId().equals(stream.id())) {
             return new LearnerIntake(0, 1, 0, 0, 0, 0, contactsDiffer);
         }
-        int afterLms = enrolment.lmsExportedAt() == null ? 0 : 1;
+        int afterLms = reachedLms(enrolment) ? 1 : 0;
         String reconcile = afterLms == 0 ? null : "Перенос из потока «" + enrolment.courseName() + ", поток " + enrolment.streamNo()
-                + "» после выгрузки в LMS: уберите слушателя с прежнего курса в LMS и проверьте новый";
+                + "» после передачи в LMS: уберите слушателя с прежнего курса в LMS и проверьте новый";
         if (enrolmentRepository.enrolled(learner.id(), stream.id())) {
             enrolmentRepository.delete(enrolment.id());
             if (reconcile != null) {
@@ -105,6 +116,13 @@ public class PaidOrderEnrolment {
         return new LearnerIntake(0, 1, 0, 0, 1, afterLms, contactsDiffer);
     }
 
+    // «Файл сформирован» ещё не значит, что слушатель есть в LMS: сверка нужна, только если LMS строку приняла или
+    // партию передали и результат ещё неизвестен. Отказ LMS (например, «нет курса Moodle») сверки не требует.
+    static boolean reachedLms(LearnerEnrolment enrolment) {
+        return enrolment.lmsTransferredAt() != null
+                || enrolment.lmsSentAt() != null && enrolment.lmsResult() != BatchItemResult.FAILED;
+    }
+
     // Совпадают только активные анкеты: ограниченную или обезличенную анкету оплата не оживляет и не меняет.
     private Optional<Learner> match(PaidOrder order) {
         return learnerService.findByContacts(order.email(), order.phone()).stream()
@@ -113,7 +131,7 @@ public class PaidOrderEnrolment {
                 .findFirst();
     }
 
-    // Оплата только дополняет пустые поля анкеты и никогда не перезаписывает введённые оператором значения;
+    // Оплата только дополняет пустые поля анкеты и никогда не перезаписывает введённые менеджером учебного процесса значения;
     // расхождение телефона или почты не правится, а считается в итоге для проверки оператором.
     private boolean complete(Learner learner, PaidOrder order, UUID actorId) {
         if (learner.status() != PersonalDataStatus.ACTIVE) {

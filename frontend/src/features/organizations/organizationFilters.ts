@@ -43,3 +43,15 @@ export const queryFromFilters = (filters: ListFilters) => {
   }
   return params.toString()
 }
+
+// Повтор помогает только при сбое связи или сервера. Неверный адрес (400) и недоступный вуз (404) повтором не
+// исправить — кнопка «Повторить» там лишь вводила в заблуждение.
+export const organizationLoadFailure = (status: number | undefined): { text: string; retry: boolean } => {
+  if (status === 400) {
+    return { text: 'Адрес карточки вуза неверный: такого вуза нет. Вернитесь к списку вузов.', retry: false }
+  }
+  if (status === 404) {
+    return { text: 'Вуз не найден или недоступен вам: возможно, его передали другому КАМ или в другую команду. Вернитесь к списку вузов.', retry: false }
+  }
+  return { text: 'Не удалось открыть карточку вуза. Обновите список или повторите попытку.', retry: true }
+}

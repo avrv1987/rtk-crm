@@ -210,3 +210,13 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+
+.partner-request__hint {
+  color: var(--color-text-muted, #6b7280);
+  font-size: 0.875rem;
+}
+
+.partner-request__error {
+  color: var(--color-danger, #b91c1c);
+  font-size: 0.875rem;
+}

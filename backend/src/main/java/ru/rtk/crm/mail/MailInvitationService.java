@@ -12,6 +12,7 @@ import ru.rtk.crm.access.KeycloakAccountClient;
 import ru.rtk.crm.access.TemporaryPassword;
 import ru.rtk.crm.audit.AuditAction;
 import ru.rtk.crm.audit.AuditJournalRepository;
+import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.mail.MailRepository.Invitation;
 import ru.rtk.crm.mail.MailRepository.NewLetter;
 import ru.rtk.crm.mail.MailRepository.Recipient;
@@ -55,18 +56,31 @@ public class MailInvitationService {
     // Вызывается внутри транзакции создания учётки или сброса пароля: откат команды откатывает и приглашение.
     @Transactional
     public Optional<String> invite(UUID actorId, UUID profileId, String login, String knownEmail, boolean newAccount, String requestId) {
+        // Ссылка на пароль администратора дала бы войти от его имени — как и сброс пароля администратора из CRM.
+        // Новая учётка администратора — исключение: её только что создал сам вызывающий.
+        if (!newAccount && repository.recipient(profileId).filter(recipient -> "ADMIN".equals(recipient.role())).isPresent()) {
+            throw new InteractionValidationException("id", "Ссылка на новый пароль администратору из CRM не выдаётся: администратор"
+                    + " меняет пароль сам в личном кабинете Keycloak, а если доступ утерян — администратор Keycloak в консоли");
+        }
+        // В режиме заглушки письмо никто не получит, а ссылку из журнала администратору не показывают: пароль выдаётся
+        // на экране, как без модуля почты.
+        if (repository.settings().mode() == MailRepository.MailMode.STUB) {
+            return Optional.empty();
+        }
         String email = knownEmail != null && !knownEmail.isBlank() ? knownEmail : outbox.email(profileId).orElse(null);
         if (email == null) {
             return Optional.empty();
         }
         OffsetDateTime now = OffsetDateTime.now();
         OffsetDateTime expiresAt = now.plus(properties.invitationTtl());
-        String token = MailCodes.token();
         UUID invitationId = UUID.randomUUID();
         repository.closeOpenInvitations(profileId, now);
-        repository.insertInvitation(invitationId, MailCodes.sha256(token), profileId, now, expiresAt);
-        Letter letter = templates.invitation(login, properties.crmUrl("#/invite/" + token), properties.invitationTtl(), newAccount);
-        outbox.enqueue(new NewLetter(MailOutbox.INVITATION_KEY + invitationId, MailKind.INVITATION, profileId, null, null,
+        // Действующий токен в очереди и журнале не хранится вовсе: в письме — заглушка ссылки, а токен создаётся в
+        // момент отправки (MailOutbox.send), и в базу попадает только его хэш. Пока письмо не ушло, ссылки нет ни у кого.
+        repository.insertInvitation(invitationId, MailCodes.sha256(MailCodes.token()), profileId, now, expiresAt);
+        Letter letter = templates.invitation(login, properties.crmUrl(MailOutbox.HIDDEN_INVITE_LINK), properties.invitationTtl(), newAccount);
+        MailKind kind = newAccount ? MailKind.INVITATION : MailKind.PASSWORD_RESET;
+        outbox.enqueue(new NewLetter(MailOutbox.INVITATION_KEY + invitationId, kind, profileId, null, null,
                 letter.subject(), letter.text(), letter.html(), null, null, null), expiresAt);
         auditJournalRepository.record(AuditAction.MAIL_INVITATION_SENT, actorId, "PROFILE", profileId, null,
                 newAccount ? "ссылка на вход отправлена на почту учётной записи" : "ссылка на новый пароль отправлена на почту учётной записи",

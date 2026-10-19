@@ -332,6 +332,97 @@ class PartnerCabinetHttpTest {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM partner_request_responses", Integer.class)).isZero();
     }
 
+    // Н-13 (КАМ): вопрос координатора не запирает готовый ответ.
+    @Test
+    void coordinatorAnswersWhileOwnQuestionWaitsForClarification() throws Exception {
+        String requestId = createRequest(KAM_A, COORDINATOR, List.of()).path("id").asText();
+        respond(PARTNER_A, requestId, 0, "Что именно нужно?", null, "q-1", "QUESTION").andExpect(status().isCreated());
+        respond(PARTNER_A, requestId, 1, "Пришлю всё сразу: Иванов, Петров", null, "a-1").andExpect(status().isCreated());
+        assertThat(jdbcTemplate.queryForObject("SELECT status FROM partner_requests WHERE id = ?", String.class, UUID.fromString(requestId)))
+                .isEqualTo("RESPONDED");
+    }
+
+    // 4.7 (руководство, 2.5): запрет записи для «Руководства» — 403 раньше проверки тела запроса.
+    @Test
+    void managementGetsForbiddenBeforeBodyValidation() throws Exception {
+        mockMvc.perform(post("/api/organizations/{id}/contacts", ORGANIZATION_A).with(login(MANAGEMENT)).with(csrf())
+                        .header("Idempotency-Key", "management-contact").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\" \",\"email\":\"не почта\"}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/interactions/{id}/comments", WORK_A).with(login(MANAGEMENT)).with(csrf())
+                        .header("Idempotency-Key", "management-comment").contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+        // w48: переход, создание взаимодействия и назначение ответственного — тоже 403, а не 400 за пустое тело.
+        mockMvc.perform(post("/api/interactions/{id}/transitions", WORK_A).with(login(MANAGEMENT)).with(csrf())
+                        .header("Idempotency-Key", "management-transition").contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/interactions").with(login(MANAGEMENT)).with(csrf())
+                        .header("Idempotency-Key", "management-create").contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/organizations/{id}/assignment", ORGANIZATION_A).with(login(MANAGEMENT)).with(csrf())
+                        .header("Idempotency-Key", "management-assign").contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+        // КАМ по-прежнему получает 400 за неполное тело: проверка прав его не задевает.
+        mockMvc.perform(post("/api/interactions/{id}/transitions", WORK_A).with(login(KAM_A)).with(csrf())
+                        .header("Idempotency-Key", "kam-transition-empty").contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    // Н-15 (2.5): несуществующая дата и значение не того типа — ошибка на поле, а не на «body»; длина — без «от 0».
+    @Test
+    void unreadableValuesAreReportedOnTheirFields() throws Exception {
+        mockMvc.perform(post("/api/interactions").with(login(KAM_A)).with(csrf())
+                        .header("Idempotency-Key", "kam-bad-date").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"organizationId\":\"" + ORGANIZATION_A + "\",\"title\":\"Т\",\"nextActionAt\":\"2027-02-29T10:00:00+03:00\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.nextActionAt").value(containsString("такой даты нет")))
+                .andExpect(jsonPath("$.fieldErrors.body").doesNotExist());
+        mockMvc.perform(post("/api/interactions").with(login(KAM_A)).with(csrf())
+                        .header("Idempotency-Key", "kam-bad-uuid").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"organizationId\":\"не-id\",\"title\":\"Т\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.organizationId").value("Значение в неверном формате"));
+        mockMvc.perform(post("/api/interactions").with(login(KAM_A)).with(csrf())
+                        .header("Idempotency-Key", "kam-long-title").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"organizationId\":\"" + ORGANIZATION_A + "\",\"title\":\"" + "я".repeat(201) + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.title").value(containsString("не больше 200")));
+    }
+
+    // Н-9 и Н-6 (КАМ): закрытие доступа отменяет открытые запросы с причиной; смена почты контакта меняет почту учётки.
+    @Test
+    void closingAccessCancelsOpenRequestsAndContactEmailFollowsToTheAccount() throws Exception {
+        UUID subjectProfile = jdbcTemplate.queryForObject(
+                "SELECT id FROM crm_user_profiles WHERE partner_contact_id = ?", UUID.class, COORDINATOR);
+        String subject = jdbcTemplate.queryForObject("SELECT subject FROM crm_user_profiles WHERE id = ?", String.class, subjectProfile);
+        int version = jdbcTemplate.queryForObject("SELECT version FROM contacts WHERE id = ?", Integer.class, COORDINATOR);
+        mockMvc.perform(patch("/api/organizations/{id}/contacts/{contactId}", ORGANIZATION_A, COORDINATOR)
+                        .with(login(KAM_A)).with(csrf()).header("Idempotency-Key", "contact-email")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":" + version + ",\"name\":\"Координатор\",\"email\":\"new-coordinator@example.test\"}"))
+                .andExpect(status().isOk());
+        verify(keycloakAccountClient).changeEmail(subject, "new-coordinator@example.test");
+        mockMvc.perform(patch("/api/organizations/{id}/contacts/{contactId}", ORGANIZATION_A, COORDINATOR)
+                        .with(login(KAM_A)).with(csrf()).header("Idempotency-Key", "contact-email-bad")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":" + (version + 1) + ",\"name\":\"Координатор\",\"email\":\"иван@почта.рф\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.email").value(containsString("латиницей")));
+
+        String requestId = createRequest(KAM_A, COORDINATOR, List.of()).path("id").asText();
+        mockMvc.perform(delete("/api/organizations/{id}/contacts/{contactId}/partner-access", ORGANIZATION_A, COORDINATOR)
+                        .with(login(KAM_A)).with(csrf()))
+                .andExpect(status().isOk());
+        assertThat(jdbcTemplate.queryForMap("SELECT status, cancel_reason FROM partner_requests WHERE id = ?", UUID.fromString(requestId)))
+                .containsEntry("STATUS", "CANCELLED")
+                .hasEntrySatisfying("CANCEL_REASON", reason -> assertThat((String) reason).contains("Доступ координатора"));
+    }
+
     // P-09: подтверждение относится к версии файла; новая версия приходит неподтверждённой.
     @Test
     void receiptConfirmsOneFileVersionAndNewVersionIsNotConfirmed() throws Exception {
@@ -870,6 +961,7 @@ class PartnerCabinetHttpTest {
     }
 
     private void createSchema() {
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.create(jdbcTemplate);
         String[] statements = {
                 """
                 CREATE TABLE IF NOT EXISTS teams (
@@ -960,7 +1052,7 @@ class PartnerCabinetHttpTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, 
+                CREATE TABLE IF NOT EXISTS interactions (interaction_kind_id UUID, workflow_template_id UUID, workflow_version INTEGER, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL, current_stage_id UUID NOT NULL,
                     next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE, program_id UUID,
                     work_status VARCHAR(16) NOT NULL, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL,
@@ -968,7 +1060,7 @@ class PartnerCabinetHttpTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
+                CREATE TABLE IF NOT EXISTS interaction_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), template_stage_id UUID, 
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL, name VARCHAR(200) NOT NULL
                 )
                 """,

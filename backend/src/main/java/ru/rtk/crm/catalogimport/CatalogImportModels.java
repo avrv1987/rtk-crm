@@ -53,7 +53,11 @@ record CatalogImportRowTarget(
 record CatalogImportInspectResponse(List<CatalogImportSheet> sheets) {
 }
 
-record CatalogImportSheet(String name, List<String> headers) {
+// hidden — лист скрыт в книге: его легко выбрать по ошибке, поэтому в списке он помечается (Н-19, 2.5).
+record CatalogImportSheet(String name, List<String> headers, boolean hidden) {
+    CatalogImportSheet(String name, List<String> headers) {
+        this(name, headers, false);
+    }
 }
 
 record CatalogImportPreviewResponse(UUID jobId, UUID importId) {

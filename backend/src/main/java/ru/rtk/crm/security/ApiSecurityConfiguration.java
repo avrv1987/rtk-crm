@@ -1,5 +1,6 @@
 package ru.rtk.crm.security;
 
+import java.time.Clock;
 import java.time.Duration;
 
 import jakarta.servlet.DispatcherType;
@@ -9,6 +10,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication.Type;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.oauth2.client.oidc.authentication.OidcIdTokenDecoderFactory;
@@ -22,6 +24,7 @@ import org.springframework.security.oauth2.jwt.JwtDecoderFactory;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
@@ -38,6 +41,26 @@ public class ApiSecurityConfiguration {
     @Bean
     RequestIdFilter requestIdFilter() {
         return new RequestIdFilter();
+    }
+
+    // Значения по умолчанию рассчитаны на нагрузочный тест (50 сессий, опрос отчётов раз в 300 мс) с запасом;
+    // расчёт — в разделе устойчивости технической документации. 0 выключает ограничение.
+    @Bean
+    ApiRateLimitFilter apiRateLimitFilter(
+            ApiErrorWriter apiErrorWriter,
+            @Value("${app.api-rate-limit.per-minute:1800}") int perMinute,
+            @Value("${app.api-rate-limit.anonymous-per-minute:600}") int anonymousPerMinute
+    ) {
+        return new ApiRateLimitFilter(apiErrorWriter, perMinute, anonymousPerMinute, Clock.systemUTC());
+    }
+
+    // Фильтр работает только внутри цепочки безопасности, где уже известен вошедший пользователь; без этого Spring Boot
+    // поставил бы его ещё и в общую цепочку сервлета, до проверки входа.
+    @Bean
+    FilterRegistrationBean<ApiRateLimitFilter> apiRateLimitFilterRegistration(ApiRateLimitFilter filter) {
+        FilterRegistrationBean<ApiRateLimitFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
     }
 
     @Configuration
@@ -62,12 +85,13 @@ public class ApiSecurityConfiguration {
                 JsonAuthenticationEntryPoint authenticationEntryPoint,
                 JsonAccessDeniedHandler accessDeniedHandler,
                 RequestIdFilter requestIdFilter,
+                ApiRateLimitFilter apiRateLimitFilter,
                 KeycloakLogoutSuccessHandler logoutSuccessHandler,
                 CrmProfileRegistrationSuccessHandler loginSuccessHandler,
                 ClientRegistrationRepository clientRegistrationRepository,
                 @Value("${app.session.absolute-timeout}") Duration sessionAbsoluteTimeout
         ) throws Exception {
-            configureApiSecurity(http, authenticationEntryPoint, accessDeniedHandler, requestIdFilter);
+            configureApiSecurity(http, authenticationEntryPoint, accessDeniedHandler, requestIdFilter, apiRateLimitFilter);
             DefaultOAuth2AuthorizationRequestResolver authorizationRequestResolver =
                     new DefaultOAuth2AuthorizationRequestResolver(clientRegistrationRepository, "/api/auth/authorization");
             // PKCE привязывает код авторизации к конкретному входу в браузере: перехваченный в редиректе код без
@@ -103,9 +127,10 @@ public class ApiSecurityConfiguration {
                 HttpSecurity http,
                 JsonAuthenticationEntryPoint authenticationEntryPoint,
                 JsonAccessDeniedHandler accessDeniedHandler,
-                RequestIdFilter requestIdFilter
+                RequestIdFilter requestIdFilter,
+                ApiRateLimitFilter apiRateLimitFilter
         ) throws Exception {
-            configureApiSecurity(http, authenticationEntryPoint, accessDeniedHandler, requestIdFilter);
+            configureApiSecurity(http, authenticationEntryPoint, accessDeniedHandler, requestIdFilter, apiRateLimitFilter);
             return http.build();
         }
     }
@@ -114,7 +139,8 @@ public class ApiSecurityConfiguration {
             HttpSecurity http,
             JsonAuthenticationEntryPoint authenticationEntryPoint,
             AccessDeniedHandler accessDeniedHandler,
-            RequestIdFilter requestIdFilter
+            RequestIdFilter requestIdFilter,
+            ApiRateLimitFilter apiRateLimitFilter
     ) throws Exception {
         // CSRF по схеме «двойная отправка»: токен лежит в cookie XSRF-TOKEN, доступной скрипту интерфейса, и
         // возвращается заголовком X-CSRF-TOKEN. Чужой сайт не может прочитать cookie и подставить заголовок.
@@ -130,6 +156,7 @@ public class ApiSecurityConfiguration {
                         // а доступ даёт только одноразовый токен в адресе.
                         .ignoringRequestMatchers(MAIL_INVITATION_MATCHER))
                 .addFilterBefore(requestIdFilter, SecurityContextHolderFilter.class)
+                .addFilterAfter(apiRateLimitFilter, AnonymousAuthenticationFilter.class)
                 .authorizeHttpRequests(authorize -> authorize
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()

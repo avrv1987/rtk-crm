@@ -44,6 +44,15 @@ public class ReportException extends RuntimeException {
         );
     }
 
+    // Тот же код, что у переполнения общей очереди: клиенту одинаково — подождать, пока освободится; текст — про своё.
+    public static ReportException userQuota(int limit) {
+        return new ReportException(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "REPORT_CAPACITY_EXCEEDED",
+                "У вас уже строятся " + limit + " файлов отчётов; дождитесь их готовности и повторите"
+        );
+    }
+
     public static ReportException rowLimit(int maxRows) {
         return new ReportException(
                 HttpStatus.UNPROCESSABLE_ENTITY,

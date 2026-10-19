@@ -135,7 +135,7 @@ public class AdminCrmProfileService {
         );
         if (!command.changesAnything()) {
             throw new InteractionValidationException(
-                    "body", "Укажите хотя бы одно изменение: имя, роль, команду, активность или флаг «Оператор зачисления»"
+                    "body", "Укажите хотя бы одно изменение: имя, роль, команду, активность или флаг «Менеджер учебного процесса»"
             );
         }
         // Администратор не меняет доступ себе: иначе одним действием можно потерять права и остаться без
@@ -309,7 +309,7 @@ public class AdminCrmProfileService {
         ProfileState next = command.applyTo(previous);
         if (Boolean.TRUE.equals(command.enrolmentOperator()) && !next.enrolmentOperator()) {
             throw new InteractionValidationException(
-                    "enrolmentOperator", "Флаг «Оператор зачисления» доступен только КАМ и руководителю"
+                    "enrolmentOperator", "Флаг «Менеджер учебного процесса» доступен только КАМ и руководителю"
             );
         }
         if (next.equals(previous)) {
@@ -405,7 +405,7 @@ public class AdminCrmProfileService {
         ProfileState previous = ProfileState.of(target);
         boolean teamRole = role == UserRole.USER || role == UserRole.LEADER;
         // Роль из Keycloak не даёт команду: КАМ и руководитель без команды деактивируются и возвращаются в очередь
-        // активации, флаг «Оператор зачисления» сохраняется только у ролей, которым он положен.
+        // активации, флаг «Менеджер учебного процесса» сохраняется только у ролей, которым он положен.
         ProfileState next = new ProfileState(
                 previous.displayName(),
                 role,

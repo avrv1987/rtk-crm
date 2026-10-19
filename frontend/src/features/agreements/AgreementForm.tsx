@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { todayInMoscow } from '../../shared/format/datetime'
 import {
   agreementsApi,
   formatDate,
@@ -168,7 +169,7 @@ export const AgreementForm = ({
             type="date"
             value={concludedOn}
             required={creating && signed}
-            max={validUntil || undefined}
+            max={validUntil !== '' && validUntil < todayInMoscow() ? validUntil : todayInMoscow()}
             onChange={(event) => setConcludedOn(event.target.value)}
           />
         </label>

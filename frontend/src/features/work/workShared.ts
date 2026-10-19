@@ -27,7 +27,10 @@ export const commandErrorText = (error: unknown, action: string) => {
   if (error instanceof ApiError && error.status === 409) {
     return typeof error.currentVersion === 'number'
       ? 'Данные уже изменили. Обновите страницу и повторите действие.'
-      : 'Команда не выполнена из-за конфликта. Обновите страницу и решите, повторять ли действие.'
+      // Конфликт состояния (например, «Взаимодействие завершено…») сервер объясняет сам — его текст точнее общего.
+      : error.message.trim().length > 0
+        ? `Не удалось ${action}: ${error.message}`
+        : 'Команда не выполнена из-за конфликта. Обновите страницу и решите, повторять ли действие.'
   }
   if (error instanceof ApiError) {
     const reason = Object.values(error.fieldErrors ?? {})[0] ?? error.message

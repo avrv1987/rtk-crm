@@ -48,7 +48,8 @@ public class WorkControlApiController {
                 managers.contains(UNASSIGNED),
                 values(params, "stage"),
                 null
-        ).withChange(change(params)).withManagerAt(managerAt(params));
+        ).withChange(change(params)).withManagerAt(managerAt(params)).withKinds(ids(params, "kindId"));
+
         return workControlService.control(
                 currentProfileService.requireActiveProfile(user),
                 filters,

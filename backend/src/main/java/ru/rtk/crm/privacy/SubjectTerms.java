@@ -172,6 +172,15 @@ final class SubjectTerms {
         return match(filePhraseList(), column);
     }
 
+    // Встречается ли субъект в тексте готового отчёта: ФИО целиком, полная почта или телефон — те же признаки, что и
+    // при замене, чтобы «найдено в отчёте» и «заменено в базе» означали одно и то же.
+    boolean foundIn(String text) {
+        if (text == null || text.isEmpty()) {
+            return false;
+        }
+        return patterns(namePhrases.values()).stream().anyMatch(pattern -> pattern.matcher(text).find());
+    }
+
     String replace(String text, String marker) {
         return apply(text, marker, patterns(namePhrases.values()));
     }

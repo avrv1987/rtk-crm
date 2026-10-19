@@ -164,6 +164,26 @@ public class PartnerAccessRepository {
                 .update();
     }
 
+    // Запросы, на которые координатор без доступа ответить уже не сможет. RESPONDED не трогается: ответ уже у КАМ.
+    public UUID contactOf(UUID profileId) {
+        return jdbcClient.sql("SELECT partner_contact_id FROM crm_user_profiles WHERE id = :id")
+                .param("id", profileId)
+                .query(UUID.class)
+                .single();
+    }
+
+    public int cancelOpenRequests(UUID contactId, String reason, OffsetDateTime now) {
+        return jdbcClient.sql("""
+                UPDATE partner_requests
+                SET status = 'CANCELLED', cancel_reason = :reason, version = version + 1, updated_at = :now
+                WHERE contact_id = :contactId AND status IN ('AWAITING_RESPONSE', 'CLARIFICATION_NEEDED', 'RETURNED')
+                """)
+                .param("contactId", contactId)
+                .param("reason", reason)
+                .param("now", now)
+                .update();
+    }
+
     public void markIdpEnabled(UUID profileId, boolean enabled) {
         jdbcClient.sql("UPDATE crm_user_profiles SET idp_enabled = :enabled WHERE id = :profileId")
                 .param("profileId", profileId)

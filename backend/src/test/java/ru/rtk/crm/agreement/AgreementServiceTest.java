@@ -361,6 +361,26 @@ class AgreementServiceTest {
                 + "\"Курсы повышения квалификации\";\"01.03.2026 – 30.03.2026\"");
     }
 
+    // Н-1 (КАМ, 2.5): «Действует» с датой подписания в будущем не создаётся и не правится; годы-опечатки отклоняются.
+    @Test
+    void signedAgreementCannotHaveFutureSigningDateOrTypoYears() {
+        LocalDate tomorrow = LocalDate.now(AgreementService.ZONE).plusDays(1);
+        assertThatThrownBy(() -> agreementService.create(managerA, ORGANIZATION_A, new AgreementRequest(
+                null, "F/2030", tomorrow, tomorrow.plusYears(1), null, null, AgreementStatus.ACTIVE, null,
+                null, null, null, null, null, null, null, null
+        ), "future-signed", "req")).isInstanceOfSatisfying(InteractionValidationException.class,
+                exception -> assertThat(exception.field()).isEqualTo("concludedOn"));
+        assertThatThrownBy(() -> agreementService.create(managerA, ORGANIZATION_A, new AgreementRequest(
+                null, "Y/0001", LocalDate.parse("0001-01-01"), LocalDate.parse("9999-12-31"), null, null, AgreementStatus.DRAFT, null,
+                null, null, null, null, null, null, null, null
+        ), "typo-years", "req")).isInstanceOf(InteractionValidationException.class);
+        Agreement draft = agreementService.create(managerA, ORGANIZATION_A, new AgreementRequest(
+                null, "D/2026", tomorrow, null, null, null, AgreementStatus.DRAFT, null,
+                null, null, null, null, null, null, null, null
+        ), "draft-future", "req");
+        assertThat(draft.concludedOn()).isEqualTo(tomorrow);
+    }
+
     @Test
     void agreementReportShowsPlanFactConfirmationsAndLearningAggregatesWithinScopeAndPeriod() {
         Agreement agreement = agreementService.create(managerA, ORGANIZATION_A, agreementRequest(null, "7/2026"), "create-1", "req");
@@ -762,10 +782,11 @@ class AgreementServiceTest {
                         + " (?, ?, 5, 'Подписание договора', ?), (?, ?, 6, 'Передача материалов', NULL)",
                 exchange, INTERACTION_A, "Корректировка документов", signingStage, INTERACTION_A,
                 UUID.fromString("00000000-0000-0000-0000-000000000816"), transfer, INTERACTION_A);
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.markLegacyStages(jdbc);
         List<ru.rtk.crm.interaction.InteractionStage> stages = List.of(
                 new ru.rtk.crm.interaction.InteractionStage(STAGE_A, "Обмен документами", 3, false),
                 new ru.rtk.crm.interaction.InteractionStage(exchange, "Корректировка документов", 4, true),
-                new ru.rtk.crm.interaction.InteractionStage(signingStage, "Подписание договора", 5, false),
+                new ru.rtk.crm.interaction.InteractionStage(signingStage, "Подписание договора", 5, false, true, null, List.of()),
                 new ru.rtk.crm.interaction.InteractionStage(transfer, "Передача материалов", 6, false)
         );
 
@@ -808,11 +829,13 @@ class AgreementServiceTest {
         assertThatThrownBy(() -> agreementStages.requireSignedToComplete(INTERACTION_A, stages.get(2)))
                 .isInstanceOf(InteractionValidationException.class);
         jdbc.update("UPDATE agreements SET status = 'COMPLETED' WHERE id = ?", draft.id());
-        agreementStages.requireSignedToLeave(INTERACTION_A, stages, stages.get(2), stages.get(3));
+        // Решение владельца 19.10: нужен действующий договор, «Завершён» больше не засчитывается.
+        assertThatThrownBy(() -> agreementStages.requireSignedToLeave(INTERACTION_A, stages, stages.get(2), stages.get(3)))
+                .isInstanceOf(InteractionValidationException.class);
         jdbc.update("UPDATE agreements SET status = 'ACTIVE', valid_until = NULL WHERE id = ?", draft.id());
 
         jdbc.update("UPDATE agreements SET status = 'DRAFT' WHERE id = ?", draft.id());
-        new AgreementStages(org.springframework.jdbc.core.simple.JdbcClient.create(jdbc), false, List.of(), List.of(), List.of("Подписание"))
+        new AgreementStages(org.springframework.jdbc.core.simple.JdbcClient.create(jdbc), false, List.of(), List.of())
                 .requireSignedToLeave(INTERACTION_A, stages, stages.get(2), stages.get(3));
         assertThat(agreementService.workAgreements(managerA, INTERACTION_A).agreements()).singleElement()
                 .satisfies(summary -> assertThat(summary.number()).isEqualTo("Д-7"));
@@ -1097,6 +1120,7 @@ class AgreementServiceTest {
     }
 
     private void createSchema() {
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.create(jdbc);
         jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id UUID PRIMARY KEY, category VARCHAR(32) NOT NULL, action VARCHAR(64) NOT NULL, actor_profile_id UUID,
@@ -1174,7 +1198,7 @@ class AgreementServiceTest {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (interaction_kind_id UUID, workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
                     title VARCHAR(200) NOT NULL,
@@ -1184,7 +1208,7 @@ class AgreementServiceTest {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
+                CREATE TABLE IF NOT EXISTS interaction_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), template_stage_id UUID, 
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
                     stage_order INTEGER NOT NULL,

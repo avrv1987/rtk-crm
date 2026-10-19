@@ -152,7 +152,7 @@ class ApiSecurityHttpTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
                 .andExpect(jsonPath("$.message").value("Проверьте введённые данные"))
                 .andExpect(jsonPath("$.fieldErrors.name").value("Заполните поле"))
-                .andExpect(jsonPath("$.fieldErrors.email").value("Укажите адрес электронной почты в формате name@example.ru"));
+                .andExpect(jsonPath("$.fieldErrors.email").value("Укажите почту латиницей в виде name@example.ru"));
     }
 
     @Test

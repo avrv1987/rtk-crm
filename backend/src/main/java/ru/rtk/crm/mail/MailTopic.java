@@ -14,6 +14,7 @@ public enum MailTopic {
     ISSUES("Меня назначили ответственным за риск или проблему, по моей проблеме приняли решение",
             EnumSet.of(UserRole.USER, UserRole.LEADER)),
     PARTNER_REPLIES("Ответ координатора вуза на запрос", EnumSet.of(UserRole.USER, UserRole.LEADER)),
+    AGENT_PLANS("ИИ-агент подготовил план, который ждёт моего подтверждения в CRM", EnumSet.of(UserRole.USER, UserRole.LEADER)),
     SITE_REQUEST("Новая заявка с сайта по вузу команды", EnumSet.of(UserRole.LEADER)),
     UNASSIGNED("Вузы команды остались без КАМ", EnumSet.of(UserRole.LEADER)),
     WEEKLY("Недельная сводка по командам по понедельникам", EnumSet.of(UserRole.LEADER, UserRole.MANAGEMENT)),

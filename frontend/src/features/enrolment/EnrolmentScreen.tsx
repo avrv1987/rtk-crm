@@ -38,7 +38,7 @@ export const EnrolmentScreen = ({ onSessionExpired, onProfileUnavailable }: Enro
     return (
       <section className="enrolment" aria-label="Зачисление">
         <p role="alert">
-          {blocked === 'FORBIDDEN' ? 'Недостаточно прав: раздел доступен только оператору зачисления.' : 'Раздел недоступен.'}
+          {blocked === 'FORBIDDEN' ? 'Недостаточно прав: раздел доступен только менеджеру учебного процесса.' : 'Раздел недоступен.'}
         </p>
       </section>
     )

@@ -24,6 +24,7 @@ export const emptyControlFilters: ControlFilters = {
   directionId: [],
   programId: [],
   productId: [],
+  kindId: [],
   managerId: [],
   stage: [],
   from: '',
@@ -92,6 +93,7 @@ export const controlFiltersFromQuery = (query: string): ControlFilters => {
     directionId: params.getAll('direction'),
     programId: params.getAll('program'),
     productId: params.getAll('product'),
+    kindId: params.getAll('kind'),
     managerId: params.getAll('manager'),
     stage: params.getAll('stage'),
     from: date('from'),
@@ -102,12 +104,23 @@ export const controlFiltersFromQuery = (query: string): ControlFilters => {
   }
 }
 
+// Даты адреса, которые разбор отбросил (например, 2026-02-30): экран говорит, что отбор по ним не применён, а не
+// молча показывает другой период (4.9).
+export const invalidQueryDates = (query: string): { name: 'from' | 'to'; value: string }[] => {
+  const params = new URLSearchParams(query)
+  return (['from', 'to'] as const).flatMap((name) => {
+    const value = params.get(name) ?? ''
+    return value !== '' && !isRealDate(value) ? [{ name, value }] : []
+  })
+}
+
 // Порядок параметров фиксирован: один и тот же отбор всегда даёт один и тот же адрес. Это обратная
 // операция к controlFiltersFromQuery; адрес можно сохранить в закладках или отправить коллеге.
 export const controlQueryFromFilters = (filters: ControlFilters): string => {
   const params = new URLSearchParams()
   const lists: [string, string[]][] = [
     ['product', filters.productId],
+    ['kind', filters.kindId],
     ['program', filters.programId],
     ['direction', filters.directionId],
     ['organization', filters.organizationId],
@@ -134,6 +147,7 @@ export const hasPeriod = (filters: ControlFilters) => filters.from !== '' || fil
 
 export const activeControlFilterCount = (filters: ControlFilters) => [
   filters.productId.length > 0,
+  filters.kindId.length > 0,
   filters.programId.length > 0,
   filters.directionId.length > 0,
   filters.organizationId.length > 0,
@@ -177,11 +191,13 @@ export const changeNotes = (item: Pick<WorkControlItem, 'created' | 'completed' 
 
 const signedNumber = (value: number) => (value > 0 ? `+${value}` : value < 0 ? `−${Math.abs(value)}` : '0')
 
-// Тренд в строке «Ещё»: сопоставимые потоки и потоки без базы сравнения — разные совокупности, в одно «было → стало»
-// их не складываем («10 → 32 (+2)» читалось бы как рост на 22).
+// Тренд в строке «Ещё»: сопоставимые потоки, потоки без базы сравнения, начавшиеся и закончившиеся — разные
+// совокупности, в одно «было → стало» их не складываем («10 → 32 (+2)» читалось бы как рост на 22).
 export const trendLine = (trend: Pick<LearningTrend, 'total'>, days: number) => (
   `Обучающиеся за ${days} дней, сопоставимые потоки: ${trend.total.start} → ${trend.total.end}, ${signedNumber(trend.total.change)}`
   + (trend.total.runsWithoutData > 0 ? `; новые потоки без базы сравнения: ${trend.total.endWithoutBase}` : '')
+  + (trend.total.startedRuns > 0 ? `; начались потоки (${trend.total.startedRuns}): +${trend.total.endStarted}` : '')
+  + (trend.total.endedRuns > 0 ? `; закончились потоки (${trend.total.endedRuns}): −${trend.total.startEnded}` : '')
 )
 
 export const learningText = (learning: WorkLearning | null | undefined): string => {
@@ -237,6 +253,7 @@ export const toExportRequest = (
     directionIds: filters.directionId,
     programIds: filters.programId,
     productIds: filters.productId,
+    kindIds: filters.kindId,
     managerIds: filters.managerId.filter((id) => id !== managerUnassigned),
     includeNoManager: filters.managerId.includes(managerUnassigned),
     stages: filters.stage,
@@ -263,7 +280,8 @@ export const trendDays = 90
 // Блоки запрашиваются отдельно от матрицы и без её фильтров: подпись называет область и время каждого числа.
 export const controlMoreScope = (management: boolean) => (
   `${management ? 'По всем командам' : 'По всей команде'}, фильтры, плитки и период выше не применяются. `
-  + `Сигналы LMS — действующие сейчас; обучающиеся — сегодня против ${trendDays} дней назад`
+  + `Сигналы LMS — действующие сейчас; обучающиеся и активные взаимодействия — сегодня против ${trendDays} дней назад;`
+  + ' данные обучения — по идущим потокам'
   + `${management ? '; подписания — текущий квартал' : ''}.`
 )
 
@@ -276,17 +294,23 @@ export type ControlView = {
   stuckDays: number
   // Команда из сводки «Руководства»: число в строке команды открывает её строки (отбор на экране, как плитка).
   team?: string | null
+  // Вид доски: по менеджерам (по умолчанию), матрица «программа × этап» или одним списком — над теми же строками.
+  display?: 'managers' | 'stages' | 'list'
 }
+
+const displays: readonly NonNullable<ControlView['display']>[] = ['stages', 'list']
 
 export const controlViewFromQuery = (query: string): ControlView => {
   const params = new URLSearchParams(query)
   const tile = params.get('tile') ?? ''
   const stuck = Number(params.get('stuck') ?? '')
   const team = params.get('team') ?? ''
+  const display = displays.find((value) => value === params.get('display'))
   return {
     tile: controlTileKeys.find((key) => key === tile) ?? null,
     stuckDays: Number.isInteger(stuck) && stuck > 0 && stuck <= 3650 ? stuck : defaultStuckDays,
-    ...(team === '' ? {} : { team })
+    ...(team === '' ? {} : { team }),
+    ...(display === undefined ? {} : { display })
   }
 }
 
@@ -302,6 +326,9 @@ export const controlQuery = (filters: ControlFilters, view: ControlView): string
   }
   if (view.team !== undefined && view.team !== null) {
     params.set('team', view.team)
+  }
+  if (view.display !== undefined && view.display !== 'managers') {
+    params.set('display', view.display)
   }
   return params.toString()
 }
@@ -461,6 +488,7 @@ export const sortedManagers = (managers: WorkControlManager[]) => (
 
 export const panelFilterCount = (filters: ControlFilters) => [
   filters.productId,
+  filters.kindId,
   filters.programId,
   filters.directionId,
   filters.organizationId,
@@ -468,18 +496,9 @@ export const panelFilterCount = (filters: ControlFilters) => [
   filters.stage
 ].filter((values) => values.length > 0).length
 
-// Переходы из «Контроля» в список и в отчёт «Работа менеджеров» переносят отборы. У списка отбор одиночный и нет
-// продукта, программы, направления и периода; отчёт не знает плиток. Что не перенеслось, целевой экран называет по
-// параметру skipped, чтобы пользователь не принял неполную выборку за ту же самую.
+// Отчёт «Работа менеджеров» плиток не знает: плитку, не перенесённую в отчёт, он называет по параметру skipped, чтобы
+// пользователь не принял неполную выборку за ту же самую.
 const skippedLabels: Record<string, string> = {
-  product: 'продукт',
-  program: 'ИТ-программа',
-  direction: 'ИТ-направление',
-  organizations: 'несколько вузов',
-  managers: 'несколько менеджеров',
-  stages: 'несколько этапов',
-  period: 'период',
-  change: 'изменения за период',
   tile: 'плитка'
 }
 
@@ -490,56 +509,11 @@ const withSkipped = (params: URLSearchParams, skipped: string[]) => {
   return params.toString()
 }
 
-export const controlListHref = (filters: ControlFilters, view: ControlView): string => {
-  const params = new URLSearchParams({ view: 'list' })
-  const skipped: string[] = []
-  const single = (values: string[], name: string, many: string) => {
-    if (values.length === 1) {
-      params.set(name, values[0])
-    } else if (values.length > 1) {
-      skipped.push(many)
-    }
-  }
-  single(filters.organizationId, 'organization', 'organizations')
-  single(filters.managerId, 'responsible', 'managers')
-  single(filters.stage, 'stage', 'stages')
-  const unsupported: [string, boolean][] = [
-    ['product', filters.productId.length > 0],
-    ['program', filters.programId.length > 0],
-    ['direction', filters.directionId.length > 0],
-    ['period', hasPeriod(filters)],
-    ['change', filters.change !== '']
-  ]
-  unsupported.filter(([, active]) => active).forEach(([key]) => skipped.push(key))
-  switch (view.tile) {
-    case 'OVERDUE':
-    case 'THIS_WEEK':
-    case 'NO_NEXT_STEP':
-      params.set('due', view.tile)
-      break
-    case 'ISSUES':
-      params.set('flag', 'RISK_OR_PROBLEM')
-      break
-    case 'STUCK':
-      params.set('minDaysOnStage', String(view.stuckDays))
-      break
-    case 'UNASSIGNED':
-      if (params.has('responsible') || skipped.includes('managers')) {
-        skipped.push('tile')
-      } else {
-        params.set('responsible', managerUnassigned)
-      }
-      break
-    case 'AGREEMENT':
-    case 'LMS':
-    case 'IDLE':
-      skipped.push('tile')
-      break
-    case null:
-      break
-  }
-  return `#/control?${withSkipped(params, skipped)}`
-}
+// «Показать списком» — тот же экран и те же строки одной таблицей: переносятся все отборы, плитка, порог, команда и
+// период, потому что список строится из того же ответа, что и вид по менеджерам.
+export const controlListHref = (filters: ControlFilters, view: ControlView): string => (
+  `#/control?${controlQuery(filters, { ...view, display: 'list' })}`
+)
 
 export const controlReportHref = (filters: ControlFilters, view: ControlView): string => {
   const params = new URLSearchParams(controlQueryFromFilters(filters))
@@ -573,6 +547,8 @@ export const reportSelectionFromControl = (selection: ReportSelection, query: st
     includeNoProgram: false,
     productIds: filters.productId,
     includeNoProduct: false,
+    kindIds: filters.kindId,
+
     managerIds: filters.managerId.filter((id) => id !== managerUnassigned),
     includeNoManager: filters.managerId.includes(managerUnassigned),
     stages: filters.stage,

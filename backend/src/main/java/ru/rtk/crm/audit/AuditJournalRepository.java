@@ -3,6 +3,7 @@ package ru.rtk.crm.audit;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -51,8 +52,8 @@ public class AuditJournalRepository {
                        CASE WHEN e.previous_active <> e.active
                             THEN CASE WHEN e.active THEN 'доступ открыт' ELSE 'доступ закрыт' END END,
                        CASE WHEN e.previous_enrolment_operator <> e.enrolment_operator
-                            THEN CASE WHEN e.enrolment_operator THEN 'флаг «Оператор зачисления» назначен'
-                                      ELSE 'флаг «Оператор зачисления» снят' END END),
+                            THEN CASE WHEN e.enrolment_operator THEN 'флаг «Менеджер учебного процесса» назначен'
+                                      ELSE 'флаг «Менеджер учебного процесса» снят' END END),
                    e.request_id
             FROM crm_profile_events e
             JOIN crm_user_profiles p ON p.id = e.profile_id
@@ -133,7 +134,30 @@ public class AuditJournalRepository {
             String details,
             String requestId
     ) {
-        record(action, actorProfileId, objectType, objectId, objectName, details, requestId, OffsetDateTime.now());
+        record(action, actorProfileId, objectType, objectId, objectName, details, requestId, afterLast(objectType, objectId));
+    }
+
+    // История объекта читается по времени, а id случайный: два события в один шаг часов (на Windows около
+    // миллисекунды), например просмотр и правка карточки, вставали в случайном порядке. Поэтому время события
+    // строго больше прежнего у того же объекта — тот же приём, что в AgreementRepository.insertStatusEvent. Ищутся только записи не раньше текущего момента:
+    // это короткий участок индекса по времени, а не перебор всей истории объекта.
+    private OffsetDateTime afterLast(String objectType, UUID objectId) {
+        // База хранит микросекунды с округлением: сравнивается уже усечённое, то есть записываемое значение.
+        OffsetDateTime candidate = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS);
+        if (objectType == null || objectId == null) {
+            return candidate;
+        }
+        OffsetDateTime last = jdbcClient.sql("""
+                        SELECT MAX(occurred_at) FROM audit_events
+                        WHERE occurred_at >= :candidate AND object_type = :objectType AND object_id = :objectId
+                        """)
+                .param("candidate", candidate)
+                .param("objectType", objectType)
+                .param("objectId", objectId)
+                .query(OffsetDateTime.class)
+                .optional()
+                .orElse(null);
+        return last != null ? last.plus(1, ChronoUnit.MICROS) : candidate;
     }
 
     public boolean recorded(AuditAction action, String requestId) {

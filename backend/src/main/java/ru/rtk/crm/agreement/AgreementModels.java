@@ -310,8 +310,13 @@ public final class AgreementModels {
             UUID organizationId,
             boolean signingRuleEnabled,
             List<WorkStage> stages,
-            List<AgreementSummary> agreements
+            List<AgreementSummary> agreements,
+            String activeAgreementNumber
     ) {
+        public WorkAgreements(UUID interactionId, UUID organizationId, boolean signingRuleEnabled, List<WorkStage> stages,
+                              List<AgreementSummary> agreements) {
+            this(interactionId, organizationId, signingRuleEnabled, stages, agreements, null);
+        }
     }
 
     public record WorkStage(UUID stageId, String name, StageRole role) {

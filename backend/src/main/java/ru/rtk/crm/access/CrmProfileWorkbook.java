@@ -21,7 +21,7 @@ import ru.rtk.crm.report.ExcelReportWriter;
 @Component
 public class CrmProfileWorkbook {
     private static final List<String> HEADERS = List.of(
-            "Сотрудник", "Логин", "Роль", "Роль в Keycloak", "Команда или вуз", "Состояние", "Оператор зачисления",
+            "Сотрудник", "Логин", "Роль", "Роль в Keycloak", "Команда или вуз", "Состояние", "Менеджер учебного процесса",
             "Синхронизация с Keycloak", "Последний вход (МСК)"
     );
     private static final int[] WIDTHS = {34, 20, 20, 20, 30, 20, 20, 30, 20};

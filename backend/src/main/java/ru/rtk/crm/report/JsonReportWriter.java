@@ -84,8 +84,9 @@ public class JsonReportWriter {
                             || request.columns().contains(column)) && document.countWithout(column) > 0)
                     .toList());
         } else if (duration) {
-            quality.put("noData", Stream.of(ReportColumn.AVG_DAYS, ReportColumn.MAX_DAYS, ReportColumn.CURRENT_MAX_DAYS)
-                    .filter(column -> document.countWithout(column) > 0)
+            quality.put("noData", Stream.of(ReportColumn.MEDIAN_DAYS, ReportColumn.P90_DAYS, ReportColumn.AVG_DAYS, ReportColumn.MAX_DAYS,
+                            ReportColumn.CURRENT_MAX_DAYS)
+                    .filter(column -> request.columns().contains(column) && document.countWithout(column) > 0)
                     .toList());
         } else if (!agreements) {
             quality.put("withoutProducts", document.countWithout(ReportColumn.PRODUCTS));

@@ -30,6 +30,7 @@ import { periodOnKindChange, periodPresets } from './reportPeriods'
 import { reportTaskFor, taskMethod, taskSelection } from './reportTasks'
 import { applyDefinition, chartKinds, groupingsFor, normalizeSelection, type ReportSelection } from './reportSelection'
 import { SavedReportsList, useSavedReports } from './SavedReports'
+import { interactionKindsApi } from '../interactions/interactionKinds'
 import './reports.css'
 import './reportsLayout.css'
 
@@ -83,6 +84,21 @@ const withKnownFilters = (selection: ReportSelection, options: FilterOptions): R
   agreement: { ...selection.agreement, vendorIds: known(selection.agreement.vendorIds, options.vendors) }
 })
 
+// Отборы сохранённого отчёта, которых больше нет (КАМ ушёл, вуз передан, программа удалена): отчёт строится без них,
+// и пользователь должен это видеть (№3, 2.5), иначе «Фильтры: не заданы» выглядит как полный отчёт по отборам.
+const droppedFilters = (selection: ReportSelection, options: FilterOptions): string[] => {
+  const lost = (ids: string[], list: FilterOption[]) => ids.length - known(ids, list).length
+  return ([
+    ['вуз', lost(selection.organizationIds, options.organizations)],
+    ['направление', lost(selection.directionIds, options.directions)],
+    ['программа', lost(selection.programIds, options.programs)],
+    ['продукт', lost(selection.productIds, options.products)],
+    ['КАМ', lost(selection.managerIds, options.managers)],
+    ['этап', lost(selection.stages, options.stages)],
+    ['вендор', lost(selection.agreement.vendorIds, options.vendors)]
+  ] as const).filter(([, count]) => count > 0).map(([label, count]) => `${label} (${count})`)
+}
+
 export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, onProfileUnavailable }: ReportsScreenProps) => {
   const found = reportViews.find((item) => item === view) ?? null
   const current = found === 'kam-review' && role === 'USER' ? null : found
@@ -123,14 +139,15 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
   const loadOptions = useCallback(async () => {
     setOptionsState({ kind: 'loading' })
     try {
-      const [organizations, directions, programs, products, managers, stages, vendors] = await Promise.all([
+      const [organizations, directions, programs, products, managers, stages, vendors, kinds] = await Promise.all([
         loadAllPages((page) => apiClient.listOrganizations({ page, size: 100, sort: 'name,asc', status: 'ALL' })),
         loadAllPages((page) => apiClient.listDirections({ page, size: 100, state: 'ALL' })),
         loadAllPages((page) => apiClient.listPrograms({ page, size: 100, state: 'ALL' })),
         loadAllPages((page) => apiClient.listProducts({ page, size: 100, state: 'ALL' })),
         apiClient.listReportManagers(),
         apiClient.listReportStages(),
-        listReportVendors()
+        listReportVendors(),
+        interactionKindsApi.available()
       ])
       const options: FilterOptions = {
         organizations: organizations.map((organization) => ({
@@ -142,6 +159,8 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
         directions: catalogOptions(directions),
         programs: catalogOptions(programs),
         products: catalogOptions(products),
+        kinds: kinds.map((kind) => ({ id: kind.id, label: kind.name })),
+
         managers: managers.map((manager) => ({
           id: manager.id,
           label: manager.active ? manager.displayName : `${manager.displayName} (неактивен)`
@@ -309,7 +328,12 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
 
   const openSavedReport = (report: SavedReport) => {
     const restored = applyDefinition(selection, report.definition)
+    const dropped = optionsState.kind === 'ready' ? droppedFilters(restored, optionsState.options) : []
     setSelection(optionsState.kind === 'ready' ? withKnownFilters(restored, optionsState.options) : restored)
+    if (dropped.length > 0) {
+      setToast(`В сохранённом отчёте «${report.name}» отборы больше недоступны: ${dropped.join(', ')}. Отчёт и выгрузка построены без них;`
+        + ' сохраните отчёт заново, чтобы обновить отборы.')
+    }
     setCurrentReportId(report.id)
     setAutoRun(true)
     window.location.hash = `#/reports/${kindViews[restored.kind]}`

@@ -144,10 +144,14 @@ class CatalogImportWorkbookReaderTest {
         Workbook workbook = new XSSFWorkbook();
         header(workbook.createSheet("Справочник"), 0, "Код", "Код");
         header(workbook.createSheet("Каталог"), 0, "Название ВУЗа", "ПО");
+        header(workbook.createSheet("Старый"), 0, "Название ВУЗа", "ПО");
+        workbook.setSheetHidden(2, true);
 
         CatalogImportInspectResponse inspected = reader.inspect(file(workbook, "catalog.xlsx"));
 
-        assertThat(inspected.sheets()).singleElement().satisfies(value -> assertThat(value.name()).isEqualTo("Каталог"));
+        // Н-19 (2.5): скрытый лист предлагается, но помечен.
+        assertThat(inspected.sheets()).extracting(CatalogImportSheet::name, CatalogImportSheet::hidden)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("Каталог", false), org.assertj.core.groups.Tuple.tuple("Старый", true));
     }
 
     @Test

@@ -129,6 +129,21 @@ public class EnrolmentRepository {
                 .optional();
     }
 
+    Optional<LearnerEnrolment> findByOrderNumber(String orderNumber) {
+        return jdbcClient.sql(ENROLMENT_SELECT + " WHERE r.source = 'WEBSITE' AND r.external_id = :orderNumber")
+                .param("orderNumber", orderNumber)
+                .query(this::mapEnrolment)
+                .list().stream().findFirst();
+    }
+
+    boolean streamExists(String courseKey, int streamNo) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM enrolment_streams WHERE course_key = :courseKey AND stream_no = :streamNo")
+                .param("courseKey", courseKey)
+                .param("streamNo", streamNo)
+                .query(Long.class)
+                .single() > 0;
+    }
+
     boolean enrolled(UUID learnerId, UUID streamId) {
         return jdbcClient.sql("SELECT COUNT(*) FROM learner_enrolments WHERE learner_id = :learnerId AND stream_id = :streamId")
                 .param("learnerId", learnerId)
@@ -138,7 +153,7 @@ public class EnrolmentRepository {
     }
 
     // Перенос после выгрузки не обнуляет историю молча: строки прежних партий остаются, а зачисление получает
-    // причину сверки, пока оператор не исправит LMS и не отметит сверку.
+    // причину сверки, пока менеджер учебного процесса не исправит LMS и не отметит сверку.
     void moveToStream(UUID enrolmentId, UUID streamId, OffsetDateTime now, String reconcileReason) {
         jdbcClient.sql("""
                 UPDATE learner_enrolments

@@ -28,6 +28,8 @@ import './agreements.css'
 type AgreementRegistryProps = {
   role: Me['role']
   initialQuery?: string
+  /** Адрес вида #/agreements/<что-то>: у реестра нет страниц договоров, такой адрес неверный или устарел. */
+  unknownAddress?: boolean
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
@@ -55,7 +57,7 @@ const loadOrganizations = async () => {
 
 const rowHref = (row: AgreementRegistryRow) => `#/organizations/${row.organizationId}?agreement=${row.id}`
 
-export const AgreementRegistry = ({ role, initialQuery = '', onSessionExpired, onProfileUnavailable }: AgreementRegistryProps) => {
+export const AgreementRegistry = ({ role, initialQuery = '', unknownAddress = false, onSessionExpired, onProfileUnavailable }: AgreementRegistryProps) => {
   const handleAccessError = useAccessErrorHandler(onSessionExpired, onProfileUnavailable)
   const [filters, setFilters] = useState<RegistryFilters>(() => registryFiltersFromQuery(initialQuery, todayInMoscow()))
   const [options, setOptions] = useState<Options | null>(null)
@@ -155,6 +157,11 @@ export const AgreementRegistry = ({ role, initialQuery = '', onSessionExpired, o
 
   return (
     <section className="agreement-registry" aria-labelledby="agreement-registry-title" aria-busy={state.kind === 'loading'}>
+      {unknownAddress && (
+        <p className="notice" role="note">
+          Договора по этому адресу нет: адрес неверный или устарел. Открыт реестр — найдите договор в нём или в карточке вуза.
+        </p>
+      )}
       <div className="agreement-registry__head">
         <h2 id="agreement-registry-title" className="visually-hidden">Реестр договоров с вузами</h2>
         <HintButton label="Что в реестре">

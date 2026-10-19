@@ -22,7 +22,7 @@ public class MailEventRepository {
         this.jdbcClient = jdbcClient;
     }
 
-    // Получатель — действующий профиль с ролью темы; оператор зачисления событий по вузам не получает, как и в MAX.
+    // Получатель — действующий профиль с ролью темы; менеджер учебного процесса событий по вузам не получает, как и в MAX.
     // Роли подставляются из перечисления, а не из ввода, поэтому склейка строки здесь безопасна.
     static String recipient(String alias, String column, MailTopic topic) {
         return " JOIN crm_user_profiles " + alias + " ON " + alias + ".id = " + column + " AND " + allowed(alias, topic) + " ";
@@ -134,6 +134,22 @@ public class MailEventRepository {
                 .list();
     }
 
+    // План ИИ-агента ждёт подтверждения — тому, для кого он подготовлен. Уже решённые и истёкшие планы не уведомляются.
+    public List<AgentPlanEvent> agentPlans(OffsetDateTime since, OffsetDateTime now) {
+        return jdbcClient.sql("""
+                SELECT ap.id AS plan_id, i.organization_id, o.name AS organization_name, p.id AS profile_id, ap.expires_at
+                FROM agent_change_plans ap
+                JOIN interactions i ON i.id = ap.interaction_id
+                JOIN organizations o ON o.id = i.organization_id
+                """ + recipient("p", "ap.requester_profile_id", MailTopic.AGENT_PLANS) + """
+                WHERE ap.created_at > :since AND ap.state = 'PENDING' AND ap.expires_at > :now
+                """)
+                .param("since", since)
+                .param("now", now)
+                .query(AgentPlanEvent.class)
+                .list();
+    }
+
     // Снятие КАМ при блокировке, смене роли или команды. Все вузы одного действия администратора записаны одной
     // командой (command_id) в одной транзакции, поэтому руководитель получает одно письмо на действие.
     public List<UnassignedEvent> unassigned(OffsetDateTime since) {
@@ -221,6 +237,9 @@ public class MailEventRepository {
             String riskLevel,
             LocalDate dueOn
     ) {
+    }
+
+    public record AgentPlanEvent(UUID planId, UUID organizationId, String organizationName, UUID profileId, OffsetDateTime expiresAt) {
     }
 
     public record UnassignedEvent(UUID commandId, String reason, String previousOwner, String organizationName, UUID profileId) {

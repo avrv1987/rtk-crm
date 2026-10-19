@@ -87,7 +87,7 @@
       <documentation>Плановая и ручная синхронизация сайта (предложенный контракт CRM, включая ответ-массив «Данные оплат» — paid_order) и Moodle (REST, только чтение); заявки и снимки обучения попадают в существующий или новый workflow, оплаты — в конвейер источников без ПДн. Разбор администратором («Записи для разбора», сохранённые сопоставления), строка состояния и «Обновить данные источников» в карточке. Интеграции проверены на демонстрационных источниках; подключение настоящих систем выполняется адресом и токеном. API: /api/admin/sources/*, /api/source-records, /api/interactions/{id}/sources/refresh.</documentation>
     </element>
     <element xsi:type="archimate:ApplicationService" name="Управление доступом: вход, профили, роли, области данных" id="id-703ffc83dc69207ec10cd74d1822cf30">
-      <documentation>Вход через Keycloak (OIDC), серверная сессия, профили CRM и их активация, область данных по команде и назначению. Изменение ролей, команд, активности и флага «Оператор зачисления» из интерфейса «Администрирование → Профили CRM»; роль MANAGEMENT («Руководство») — только чтение всех вузов.</documentation>
+      <documentation>Вход через Keycloak (OIDC), серверная сессия, профили CRM и их активация, область данных по команде и назначению. Изменение ролей, команд, активности и флага «Менеджер учебного процесса» из интерфейса «Администрирование → Профили CRM»; роль MANAGEMENT («Руководство») — только чтение всех вузов.</documentation>
     </element>
     <element xsi:type="archimate:ApplicationComponent" name="React SPA (frontend)" id="id-0661e41f1204337d87bbddebe7ec4410">
       <documentation>React 19.3, TypeScript, Vite 8.3. Разделы в адресе после #, типы API генерируются из openapi.yaml.</documentation>
@@ -135,7 +135,7 @@
       <property key="Пакет" value="ru.rtk.crm.bootstrap"/>
     </element>
     <element xsi:type="archimate:ApplicationComponent" name="source: источники — сайт, Moodle, оплаты, рынок труда, CRM заказчика" id="id-c9b8bb8787c1a799745f97d6185bbdb2">
-      <documentation>Синхронизация сайта (предложенный формат обмена) и Moodle (Web Services REST, только чтение); sources, sync_runs, source_records, source_mappings, learning_snapshots. Оплаты paid_order из файла оператора зачисления или ответа сайта-массивом регистрируются тем же конвейером без ПДн; ФИО, телефон и email уходят напрямую в модуль «Слушатели». Граница адаптера: SiteApiClient/SiteRecord/SiteRecordApplier и MoodleClient изолируют HTTP-вызовы источников от остального кода; переключение на реальные системы — адресом, токеном и списком курсов.</documentation>
+      <documentation>Синхронизация сайта (предложенный формат обмена) и Moodle (Web Services REST, только чтение); sources, sync_runs, source_records, source_mappings, learning_snapshots. Оплаты paid_order из файла менеджера учебного процесса или ответа сайта-массивом регистрируются тем же конвейером без ПДн; ФИО, телефон и email уходят напрямую в модуль «Слушатели». Граница адаптера: SiteApiClient/SiteRecord/SiteRecordApplier и MoodleClient изолируют HTTP-вызовы источников от остального кода; переключение на реальные системы — адресом, токеном и списком курсов.</documentation>
       <property key="Исходный код" value="backend/src/main/java/ru/rtk/crm/source"/>
       <property key="Пакет" value="ru.rtk.crm.source"/>
     </element>
@@ -198,7 +198,7 @@
       <property key="Пакет" value="ru.rtk.crm.training"/>
     </element>
     <element xsi:type="archimate:ApplicationComponent" name="enrolment: модуль «Слушатели» — анкеты, шифрование, файл LMS" id="id-9d6be51936524024b5bff7b5bfcdc373">
-      <documentation>Анкета слушателя (30 полей), разбор оплат paid_order, защищённое хранение анкет, файл «Загрузка пользователей» для LMS, журнал категории LEARNER; единственная точка входа ПДн слушателей — флаг «Оператор зачисления».</documentation>
+      <documentation>Анкета слушателя (30 полей), разбор оплат paid_order, защищённое хранение анкет, файл «Загрузка пользователей» для LMS, журнал категории LEARNER; единственная точка входа ПДн слушателей — флаг «Менеджер учебного процесса».</documentation>
       <property key="Исходный код" value="backend/src/main/java/ru/rtk/crm/enrolment"/>
       <property key="Пакет" value="ru.rtk.crm.enrolment"/>
     </element>
@@ -224,13 +224,13 @@
       <documentation>Справочник вендоров дополнен контактами (ФИО, телефон, email, канал связи, архив), общее правило ключа вендора для импорта и ручного ввода, контакт виден у продукта в карточке и в форме «Договор и лицензия». API: /api/admin/catalogs/vendors/{vendorId}/contacts.</documentation>
     </element>
     <element xsi:type="archimate:ApplicationService" name="Модуль «Слушатели»: анкеты, шифрование, файл для LMS" id="id-dbbbf24248f0438f90581c36b11b5cc2">
-      <documentation>Анкета слушателя из 30 полей шаблона «Загрузка пользователей», поля хранятся в защищённом виде, поиск не раскрывает значений; поток = курс + номер; файл для LMS формируется из анкет потока; действия пишутся в журнал категории LEARNER; доступ — только у профиля с флагом «Оператор зачисления». API: /api/enrolment/*.</documentation>
+      <documentation>Анкета слушателя из 30 полей шаблона «Загрузка пользователей», поля хранятся в защищённом виде, поиск не раскрывает значений; поток = курс + номер; файл для LMS формируется из анкет потока; действия пишутся в журнал категории LEARNER; доступ — только у профиля с флагом «Менеджер учебного процесса». API: /api/enrolment/*.</documentation>
     </element>
     <element xsi:type="archimate:DataObject" name="Анкеты слушателей (зашифрованное хранилище)" id="id-5edbf9a4cee54b26a6987d584557a6f8">
       <documentation>Таблица learners: поля анкеты хранятся в защищённом виде, состояние обработки данных (активна, ограничена, обезличена). Дамп БД без ключа не раскрывает значений.</documentation>
     </element>
     <element xsi:type="archimate:DataObject" name="Файл «Загрузка пользователей» (LMS, 30 колонок)" id="id-453288b35f9b43eaa72c36e3e60c34c3">
-      <documentation>XLSX по шаблону организатора, формируется из анкет потока (LmsRosterWorkbookWriter), одна строка на слушателя; загружается в LMS оператором вне CRM, обратной записи в Moodle нет.</documentation>
+      <documentation>XLSX по шаблону организатора, формируется из анкет потока (LmsRosterWorkbookWriter), одна строка на слушателя; загружается в LMS менеджером учебного процесса вне CRM, обратной записи в Moodle нет.</documentation>
     </element>
     <element xsi:type="archimate:ApplicationComponent" name="work: «Контроль», «Моя работа», пульт команды, заместители" id="id-24d90fd1e7540d04edcb158e39a92119">
       <documentation>Матрица менеджер — вуз — работа (GET /api/work/control), показатели команды, сводка по командам, напоминания, заместители.</documentation>
@@ -618,7 +618,7 @@
     <element xsi:type="archimate:ServingRelationship" id="id-7026d267b6d7489ea04cee211fd2a050" source="id-dbbbf24248f0438f90581c36b11b5cc2" target="id-63e6b9acc9e88f5046c4675d2458c6be"/>
     <element xsi:type="archimate:FlowRelationship" id="id-4268c978675044a08a673f185cf1e1ea" name="категория LEARNER" source="id-9d6be51936524024b5bff7b5bfcdc373" target="id-5cfa910d8c3941ebb5ed89f1ae5f3a71"/>
     <element xsi:type="archimate:FlowRelationship" id="id-8ed8346b454f40fa818d73f916ca76d3" name="субъект ПДн, сроки хранения" source="id-9d6be51936524024b5bff7b5bfcdc373" target="id-c7de9545896c4dafaa3fadfbaed4452c"/>
-    <element xsi:type="archimate:ServingRelationship" id="id-c23074eb5d934e8d96eb17eaff6069c1" name="флаг «Оператор зачисления»" source="id-703ffc83dc69207ec10cd74d1822cf30" target="id-9d6be51936524024b5bff7b5bfcdc373"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-c23074eb5d934e8d96eb17eaff6069c1" name="флаг «Менеджер учебного процесса»" source="id-703ffc83dc69207ec10cd74d1822cf30" target="id-9d6be51936524024b5bff7b5bfcdc373"/>
     <element xsi:type="archimate:CompositionRelationship" id="id-84c5275710684693bba2ade4a0350705" source="id-a67a8627a1e31d06bb361e4b61a16daa" target="id-41d8631c7dd14014aae80ef7f426459e"/>
     <element xsi:type="archimate:RealizationRelationship" id="id-83e7f78df8084e659dee02609a48a865" source="id-41d8631c7dd14014aae80ef7f426459e" target="id-5f94bcd224424839a8f4b5f27e882e23"/>
     <element xsi:type="archimate:ServingRelationship" id="id-df89f67943b94df19acf94c2e9a4ca8a" source="id-5f94bcd224424839a8f4b5f27e882e23" target="id-93d0b56fa9e79c03605b5a9cf294256e"/>
@@ -1573,5 +1573,5 @@
       </child>
     </element>
   </folder>
-  <purpose>Модель архитектуры CRM ИТ Школы РТК для сопроводительной документации: функциональная архитектура, компонентная архитектура, развёртывание, а также соглашения, вендоры, оплаты, флаг «Оператор зачисления» и модуль «Слушатели» (хранилище, процессы, API, экран «Зачисление»).</purpose>
+  <purpose>Модель архитектуры CRM ИТ Школы РТК для сопроводительной документации: функциональная архитектура, компонентная архитектура, развёртывание, а также соглашения, вендоры, оплаты, флаг «Менеджер учебного процесса» и модуль «Слушатели» (хранилище, процессы, API, экран «Зачисление»).</purpose>
 </archimate:model>

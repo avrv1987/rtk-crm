@@ -202,6 +202,11 @@ class WorkControlTest {
         );
         assertThat(scheduled.status()).isEqualTo(OrganizationDeputy.Status.SCHEDULED);
         assertThat(organizationRepository.findVisibleById(kamC, UNIVERSITY_A)).isEmpty();
+        // Н-8 (руководитель, 2.5): запланированное замещение названо запланированным, а не «текущим».
+        assertThatThrownBy(() -> organizationDeputyService.assign(leaderA, UNIVERSITY_A,
+                new OrganizationDeputyRequest(KAM_C, today, today.plusDays(1)), "deputy-urgent"))
+                .isInstanceOfSatisfying(InteractionValidationException.class,
+                        error -> assertThat(error.getMessage()).contains("запланировано", "ещё не началось"));
     }
 
     @Test
@@ -220,6 +225,7 @@ class WorkControlTest {
         assertRejected(new OrganizationDeputyRequest(KAM_B, today, today), UNIVERSITY_A, "deputyProfileId");
         assertRejected(new OrganizationDeputyRequest(KAM_A, today, today), UNIVERSITY_A, "deputyProfileId");
         assertRejected(new OrganizationDeputyRequest(KAM_C, today, today.minusDays(1)), UNIVERSITY_A, "endsOn");
+        assertRejected(new OrganizationDeputyRequest(KAM_C, today.plusYears(36), today.plusYears(36).plusDays(7)), UNIVERSITY_A, "startsOn");
         assertRejected(new OrganizationDeputyRequest(KAM_C, today.minusDays(3), today.minusDays(1)), UNIVERSITY_A, "endsOn");
         assertRejected(new OrganizationDeputyRequest(KAM_C, today, today.plusDays(400)), UNIVERSITY_A, "endsOn");
         assertRejected(new OrganizationDeputyRequest(KAM_C, today, today), UNIVERSITY_C, "deputyProfileId");
@@ -374,6 +380,7 @@ class WorkControlTest {
                 INSERT INTO interaction_stages (id, interaction_id, stage_order, name)
                 SELECT current_stage_id, id, 0, ? FROM interactions WHERE id = ?
                 """, name, interactionId);
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.markLegacyStages(jdbcTemplate);
     }
 
     private UUID linkAgreement(UUID interactionId, String status, OffsetDateTime statusChangedAt) {
@@ -756,7 +763,7 @@ class WorkControlTest {
         });
         assertThat(result.skipped()).singleElement().satisfies(skipped -> {
             assertThat(skipped.organizationId()).isEqualTo(covered);
-            assertThat(skipped.reason()).contains("уже есть заместитель");
+            assertThat(skipped.reason()).containsAnyOf("уже есть заместитель", "запланировано замещение");
         });
         assertThat(organizationRepository.findVisibleById(kamC, UNIVERSITY_A)).isPresent();
         assertThat(organizationRepository.findVisibleById(kamC, archived)).isEmpty();
@@ -818,6 +825,43 @@ class WorkControlTest {
                 });
     }
 
+    @Test
+    void portfolioChangeRestoresStatusAtBothEndsFromStatusEvents() {
+        LocalDate to = LocalDate.now(WorkProperties.ZONE).minusDays(1);
+        LocalDate from = to.minusDays(29);
+        OffsetDateTime before = from.minusDays(10).atStartOfDay(WorkProperties.ZONE).toOffsetDateTime();
+        OffsetDateTime inside = from.plusDays(5).atStartOfDay(WorkProperties.ZONE).toOffsetDateTime();
+        OffsetDateTime after = to.plusDays(1).atStartOfDay(WorkProperties.ZONE).toOffsetDateTime().plusHours(1);
+        insertInteraction(UNIVERSITY_A, "Осталась", null, null, before, "ACTIVE");
+        insertInteraction(UNIVERSITY_A, "Новая", null, null, inside, "ACTIVE");
+        statusChange(insertInteraction(UNIVERSITY_A, "Завершена в периоде", null, null, before, "COMPLETED"), inside, "COMPLETED");
+        // Приостановлена уже после периода: на его конец ещё активна, сегодняшний статус на прошлое не переносится.
+        statusChange(insertInteraction(UNIVERSITY_A, "Пауза после периода", null, null, before, "PAUSED"), after, "PAUSED");
+        UUID resumed = insertInteraction(UNIVERSITY_B, "Возобновлена", null, null, before.minusDays(5), "ACTIVE");
+        statusChange(resumed, before, "PAUSED");
+        statusChange(resumed, inside, "ACTIVE");
+
+        PortfolioChange all = workService.portfolioChange(management, from, to);
+        PortfolioChange own = workService.portfolioChange(leaderA, from, to);
+
+        assertThat(all.total()).extracting(PortfolioChange.Row::atStart, PortfolioChange.Row::atEnd, PortfolioChange.Row::stayed,
+                        PortfolioChange.Row::created, PortfolioChange.Row::resumed, PortfolioChange.Row::completed,
+                        PortfolioChange.Row::paused)
+                .containsExactly(3L, 4L, 2L, 1L, 1L, 1L, 0L);
+        assertThat(own.teams()).extracting(PortfolioChange.Row::teamName).containsExactly("Команда А");
+        assertThat(own.total().resumed()).isZero();
+        assertThatThrownBy(() -> workService.portfolioChange(kamA, from, to)).isInstanceOf(WorkAccessDeniedException.class);
+        assertThatThrownBy(() -> workService.portfolioChange(management, to, from)).isInstanceOf(InteractionValidationException.class);
+        assertThatThrownBy(() -> workService.portfolioChange(management, null, to)).isInstanceOf(InteractionValidationException.class);
+    }
+
+    private void statusChange(UUID interactionId, OffsetDateTime occurredAt, String statusAfter) {
+        jdbcTemplate.update("""
+                INSERT INTO interaction_events (id, interaction_id, type, version, occurred_at, work_status_after)
+                VALUES (?, ?, 'STATUS_CHANGED', 1, ?, ?)
+                """, UUID.randomUUID(), interactionId, occurredAt, statusAfter);
+    }
+
     private UUID insertInteraction(
             UUID organizationId,
             String title,
@@ -849,6 +893,7 @@ class WorkControlTest {
                 jdbcTemplate.update("UPDATE interactions SET current_stage_id = ? WHERE id = ?", stageId, id);
             }
         }
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.markLegacyStages(jdbcTemplate);
         for (LocalDate date : trainedOn) {
             jdbcTemplate.update("INSERT INTO teacher_trainings (id, interaction_id, trained_on) VALUES (?, ?, ?)",
                     UUID.randomUUID(), id, date);
@@ -895,10 +940,14 @@ class WorkControlTest {
     }
 
     private void insertTraining(UUID interactionId, OffsetDateTime occurredAt) {
+        // Напоминания смотрят на роль этапа LMS, поэтому событие ведёт в настоящий этап с ролью QUALIFICATION.
+        UUID stageId = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO interaction_stages (id, interaction_id, stage_order, name, lms_role)"
+                + " VALUES (?, ?, 99, 'Повышение квалификации', 'QUALIFICATION')", stageId, interactionId);
         jdbcTemplate.update("""
                 INSERT INTO interaction_events (id, interaction_id, type, to_stage_id, to_stage_name_snapshot, version, occurred_at)
                 VALUES (?, ?, 'TRANSITIONED', ?, 'Повышение квалификации', 1, ?)
-                """, UUID.randomUUID(), interactionId, UUID.randomUUID(), occurredAt);
+                """, UUID.randomUUID(), interactionId, stageId, occurredAt);
     }
 
     private void insertLearning(UUID organizationId, Long groupId, int participants, int teachers, LocalDate runStartsOn) {
@@ -968,6 +1017,7 @@ class WorkControlTest {
     }
 
     private void createSchema() {
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.create(jdbcTemplate);
         List.of(
                 "CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL)",
                 """
@@ -1027,7 +1077,7 @@ class WorkControlTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (interaction_kind_id UUID, workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL,
                     current_stage_id UUID NOT NULL, next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL, work_status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE'
@@ -1080,7 +1130,7 @@ class WorkControlTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_stages (
+                CREATE TABLE IF NOT EXISTS interaction_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL, name VARCHAR(200) NOT NULL,
                     template_stage_id UUID
                 )
@@ -1120,8 +1170,7 @@ class WorkControlTest {
 
         @Bean
         WorkProperties workProperties() {
-            return new WorkProperties(30, 7, 1, List.of("Обучение преподавателей", "Повышение квалификации"), 3, 90, 50,
-                    "Повышение квалификации", 12, 90);
+            return new WorkProperties(30, 7, 1, 3, 90, 50, 12, 90);
         }
     }
 }

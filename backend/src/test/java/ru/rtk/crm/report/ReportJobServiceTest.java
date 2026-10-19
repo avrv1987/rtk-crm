@@ -227,8 +227,11 @@ class ReportJobServiceTest {
              Workbook workbook = WorkbookFactory.create(input)) {
             Sheet sheet = workbook.getSheetAt(0);
             int header = sheet.getLastRowNum() - 10;
-            assertThat(sheet.getRow(header).getCell(4).getStringCellValue()).isEqualTo("Средняя длительность, дн.");
+            assertThat(sheet.getRow(header).getCell(4).getStringCellValue()).isEqualTo("Медиана длительности, дн.");
+            assertThat(sheet.getRow(header).getCell(5).getStringCellValue()).isEqualTo("90-й процентиль длительности, дн.");
+            assertThat(sheet.getRow(header).getCell(6).getStringCellValue()).isEqualTo("Средняя длительность, дн.");
             assertThat(sheet.getRow(header + 1).getCell(4).getNumericCellValue()).isEqualTo(26.1);
+            assertThat(sheet.getRow(header + 1).getCell(6).getNumericCellValue()).isEqualTo(26.1);
             assertThat(sheet.getRow(header + 3).getCell(4).getStringCellValue()).isEqualTo("нет данных");
         }
 
@@ -333,6 +336,60 @@ class ReportJobServiceTest {
                 .isInstanceOfSatisfying(ReportException.class,
                         exception -> assertThat(exception.code()).isEqualTo("REPORT_CAPACITY_EXCEEDED"));
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM report_jobs", Integer.class)).isZero();
+    }
+
+    // 2.5: одна учётка не занимает все слоты — больше пяти незавершённых заданий на пользователя не принимается.
+    @Test
+    void oneUserCannotHoldMoreThanFiveUnfinishedJobs() {
+        ReportJobService idle = new ReportJobService(reportService, reportJobRepository, new ReportJobExecutor(reportProperties) {
+            @Override
+            public void execute(Runnable task) {
+            }
+        }, reportStorage, excelWriter, pdfWriter, jsonWriter, chartWriter, reportProperties, objectMapper);
+        for (int index = 0; index < ReportJobService.MAX_UNFINISHED_PER_USER; index++) {
+            idle.submit(MANAGER_A_PROFILE, request(ReportFormat.XLSX), "quota-" + index);
+        }
+        assertThatThrownBy(() -> idle.submit(MANAGER_A_PROFILE, request(ReportFormat.XLSX), "quota-extra"))
+                .isInstanceOfSatisfying(ReportException.class, exception -> {
+                    assertThat(exception.code()).isEqualTo("REPORT_CAPACITY_EXCEEDED");
+                    assertThat(exception.getMessage()).contains("У вас уже строятся 5");
+                });
+    }
+
+    // Н-РТ-1 (2.5): при одновременной отправке десяти заказов квота не превышается — принято ровно пять.
+    @Test
+    void concurrentSubmissionsDoNotExceedUserQuota() throws Exception {
+        ReportJobService idle = new ReportJobService(reportService, reportJobRepository, new ReportJobExecutor(reportProperties) {
+            @Override
+            public void execute(Runnable task) {
+            }
+        }, reportStorage, excelWriter, pdfWriter, jsonWriter, chartWriter, reportProperties, objectMapper);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(10);
+        try {
+            java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+            List<java.util.concurrent.Future<Boolean>> results = new java.util.ArrayList<>();
+            for (int index = 0; index < 10; index++) {
+                String key = "race-" + index;
+                results.add(pool.submit(() -> {
+                    start.await();
+                    try {
+                        idle.submit(MANAGER_A_PROFILE, request(ReportFormat.XLSX), key);
+                        return true;
+                    } catch (ReportException exception) {
+                        return false;
+                    }
+                }));
+            }
+            start.countDown();
+            int accepted = 0;
+            for (java.util.concurrent.Future<Boolean> result : results) {
+                accepted += result.get() ? 1 : 0;
+            }
+            assertThat(accepted).isEqualTo(ReportJobService.MAX_UNFINISHED_PER_USER);
+            assertThat(reportJobRepository.countUnfinished(MANAGER_A_PROFILE.id())).isEqualTo(ReportJobService.MAX_UNFINISHED_PER_USER);
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test

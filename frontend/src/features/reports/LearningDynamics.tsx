@@ -39,6 +39,10 @@ const metricTitles: Record<Metric, string> = { participants: 'Обучающие
 const seriesTitles: Record<SeriesBy, string> = { ORGANIZATION: 'по вузам', PROGRAM: 'по ИТ-программам' }
 const monthLabel = (key: string) => `${key.slice(5, 7)}.${key.slice(2, 4)}`
 const cell = (value: number | null | undefined) => (value === null || value === undefined ? 'нет данных' : value.toLocaleString('ru-RU'))
+// Пустой месяц без потоков без данных — раньше первого потока: сервер отдаёт null вместо нуля, реестра плановых потоков нет.
+const monthCell = (value: number | null | undefined, runsWithoutData: number) => (
+  (value === null || value === undefined) && runsWithoutData === 0 ? 'данных недостаточно' : cell(value)
+)
 
 const DynamicsChart = ({ result, metric }: { result: LearningDynamics; metric: Metric }) => {
   const id = useId()
@@ -64,7 +68,7 @@ const DynamicsChart = ({ result, metric }: { result: LearningDynamics; metric: M
       <figcaption>
         <strong>{title}</strong>
         <ul className="reports__notes">
-          <li>Шкала начинается с нуля; месяц без потоков — ноль, поток без наблюдения — «нет данных», такая точка не рисуется.</li>
+          <li>Шкала начинается с нуля; месяц без потоков — ноль, поток без наблюдения — «нет данных», месяц раньше первого потока — «данных недостаточно»; такие точки не рисуются.</li>
           {metric === 'completed' && <li>«Нет данных» — Moodle не отслеживает завершение, такие точки не рисуются.</li>}
           {result.series.length > maxLines && (
             <li>{`Показаны ${maxLines} линий с наибольшим числом обучающихся в последнем месяце из ${result.series.length}; остальные — в таблице строк и в файле.`}</li>
@@ -131,10 +135,10 @@ const DynamicsChart = ({ result, metric }: { result: LearningDynamics; metric: M
             {result.months.map((month, index) => (
               <tr key={month.key}>
                 <th scope="row">{month.label}</th>
-                {lines.map((line) => <td key={line.key}>{cell(line.values[index])}</td>)}
+                {lines.map((line) => <td key={line.key}>{metric === 'participants' ? monthCell(line.values[index], result.totalRunsWithoutData[index]) : cell(line.values[index])}</td>)}
                 <td>
                   {metric === 'participants'
-                    ? cell(result.totalParticipants[index])
+                    ? monthCell(result.totalParticipants[index], result.totalRunsWithoutData[index])
                     : completionBasis(result.totalCompleted[index], result.totalKnown[index], result.totalParticipants[index])}
                   {result.totalRunsWithoutData[index] > 0 && ` (потоков без данных: ${result.totalRunsWithoutData[index]})`}
                 </td>

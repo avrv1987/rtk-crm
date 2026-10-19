@@ -31,9 +31,10 @@ test('«Контроль» на телефоне: не меньше двух к�
   assert.match(file('frontend/src/features/control/control.css'), /minmax\(min\(8rem, calc\(\(100% - var\(--space-1\)\) \/ 2\)\), 1fr\)/)
 })
 
-test('«Новый сотрудник» при включённой почте говорит о ссылке, а после приглашения — кнопка «Готово»', () => {
+// w48 (Н-А6): о ссылке форма говорит только в режиме SMTP — в режиме заглушки пароль показывается на экране.
+test('«Новый сотрудник» при почте через SMTP говорит о ссылке, а после приглашения — кнопка «Готово»', () => {
   const dialog = file('frontend/src/features/admin/EmployeeAccountDialog.tsx')
-  assert.match(dialog, /getModules\(\)\.mail\n\s+\? 'CRM создаст учётную запись Keycloak и активный профиль и отправит на почту сотрудника одноразовую ссылку/)
+  assert.match(dialog, /sendsLinks === 'SMTP'\n\s+\? 'CRM создаст учётную запись Keycloak и активный профиль и отправит на почту сотрудника одноразовую ссылку/)
   assert.match(dialog, /temporaryPassword === null && result\.credentials\.invitationSentTo \? 'Готово' : 'Я передал пароль, закрыть'/)
 })
 

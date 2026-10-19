@@ -82,8 +82,10 @@ public class AdminCatalogRepository {
     }
 
     public void insert(CatalogKind kind, UUID id, String name, UUID parentId, OffsetDateTime now) {
-        String parentColumn = kind.hasParent() ? ", " + kind.parentColumn() : "";
-        String parentValue = kind.hasParent() ? ", :parentId" : "";
+        // У вида документа есть код: он хранится в документах и этапах. У новых видов код — идентификатор без дефисов.
+        boolean documentKind = kind == CatalogKind.DOCUMENT_KINDS;
+        String parentColumn = kind.hasParent() ? ", " + kind.parentColumn() : documentKind ? ", code" : "";
+        String parentValue = kind.hasParent() ? ", :parentId" : documentKind ? ", :code" : "";
         jdbcClient.sql("""
                 INSERT INTO %s (id, name, archived, version, created_at, updated_at%s)
                 VALUES (:id, :name, FALSE, 0, :now, :now%s)
@@ -91,6 +93,7 @@ public class AdminCatalogRepository {
                 .param("id", id)
                 .param("name", name)
                 .param("parentId", parentId)
+                .param("code", id.toString().replace("-", ""))
                 .param("now", now)
                 .update();
     }

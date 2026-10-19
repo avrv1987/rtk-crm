@@ -26,10 +26,13 @@ import { AssignDialog, IdleOrganizations } from './ControlIdle'
 import { ControlNoContact } from './ControlNoContact'
 import { AgreementsInProgress, ControlMatrix, UnassignedOrganizations, type MatrixOpenState } from './ControlMatrix'
 import { ControlMore } from './ControlMore'
+import { ControlRows, CycleStageMatrix } from './ControlCycleViews'
+import { cellFilters, displayOptions, unassignedByWork, unassignedFor } from './cycleModel'
 import {
   activeControlFilterCount,
   changeOptions,
   controlFiltersFromQuery,
+  invalidQueryDates,
   controlListHref,
   controlReportHref,
   controlQuery,
@@ -47,7 +50,6 @@ import {
   modeOptions,
   type ControlMode,
   panelFilterCount,
-  skippedNotice,
   stuckDayOptions,
   teamControl,
   tileCounts,
@@ -124,9 +126,12 @@ const periodText = (from: string, to: string) => (
   `${from === '' ? 'с начала' : `с ${formatCalendarDate(from)}`} ${to === '' ? 'по сегодня' : `по ${formatCalendarDate(to)}`}`
 )
 
-// Подпись правила владельца рядом с итогами: по ней видно, чей КАМ в строках и в выгрузке.
+// Подпись правила владельца рядом с итогами: по ней видно, чей КАМ в строках и в выгрузке. Команда, программа и
+// продукт истории не имеют, поэтому за прошлый период названы текущими (разбор А05).
 const managerBasis = (mode: ControlMode, to: string, today: string) => (
-  mode === 'PERIOD' && to !== '' && to < today ? `КАМ на ${formatCalendarDate(to)}` : 'КАМ текущий'
+  mode === 'PERIOD' && to !== '' && to < today
+    ? `КАМ на ${formatCalendarDate(to)}; команда, программа и продукт — текущие`
+    : 'КАМ текущий'
 )
 
 const isListQuery = (query: string) => new URLSearchParams(query).get('view') === 'list'
@@ -153,7 +158,6 @@ export const ControlScreen = (props: ControlScreenProps) => (
 )
 
 const ControlList = ({ role, initialQuery, refreshSignal, onSessionExpired, onProfileUnavailable }: ControlScreenProps) => {
-  const [notice] = useState(() => skippedNotice(initialQuery))
   return (
     <section className="control" aria-label="Контроль списком">
       <div className="control-toolbar">
@@ -162,7 +166,6 @@ const ControlList = ({ role, initialQuery, refreshSignal, onSessionExpired, onPr
         </HintButton>
         <ActionMenu label={terms.moreActions} items={[{ label: 'Показать по менеджерам', href: '#/control' }]} />
       </div>
-      {notice !== null && <p className="notice" role="status">{notice}</p>}
       <WorkList
         role={role}
         path="control"
@@ -179,6 +182,7 @@ const ControlList = ({ role, initialQuery, refreshSignal, onSessionExpired, onPr
 const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionExpired, onProfileUnavailable }: ControlScreenProps) => {
   const [filters, setFilters] = useState<ControlFilters>(() => controlFiltersFromQuery(initialQuery))
   const [view, setView] = useState<ControlView>(() => controlViewFromQuery(initialQuery))
+  const [badDates] = useState(() => invalidQueryDates(initialQuery))
   const [dataState, setDataState] = useState<DataState>({ kind: 'loading' })
   const [optionsState, setOptionsState] = useState<OptionsState>({ kind: 'loading' })
   const [summary, setSummary] = useState<TeamsSummary | null>(null)
@@ -236,6 +240,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
         directionId: known(current.directionId, options.directions),
         programId: known(current.programId, options.programs),
         productId: known(current.productId, options.products),
+        kindId: known(current.kindId, options.kinds),
         managerId: current.managerId.filter((id) => id === managerUnassigned || options.managers.some((option) => option.id === id)),
         stage: known(current.stage, options.stages)
       }))
@@ -410,9 +415,15 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
   const inTile = shown === null ? null : tileShownCount(shown, view.tile)
   const today = todayInMoscow()
   const choice = customPeriod ? 'CUSTOM' : periodChoice(filters.from, filters.to, today)
-  const unassignedOrganizations = options?.organizationList.filter((item) => (
-    item.requiresAssignment && item.status !== 'ARCHIVED' && (teamName === null || item.teamId === view.team)
-  )) ?? []
+  // Вузы без КАМ с учётом команды, вуза и (через строки) программы, продукта, направления, вида и этапа.
+  const unassignedOrganizations = options === null ? [] : unassignedFor(options.organizationList, control, filters, view.team)
+  // Число с сервера — по всем вузам области; при любом отборе берётся длина отобранного списка.
+  const unassignedNumber = teamName !== null || unassignedByWork(filters) || filters.organizationId.length > 0
+    ? unassignedOrganizations.length
+    : unassignedCount ?? unassignedOrganizations.length
+  const display = view.display ?? 'managers'
+  const periodEnd = filters.to !== '' && filters.to < today ? formatCalendarDate(filters.to) : null
+  const kindNames = (ids: string[]) => labelsOf(ids, options?.kinds ?? [], 'вид').join(', ')
   // Список вузов без КАМ — сегодняшний; с периодом его нет: плитка тогда считает по строкам периода.
   const showUnassigned = unassignedOrganizations.length > 0 && (view.tile === null || view.tile === 'UNASSIGNED') && filters.managerId.length === 0
     && !withPeriod
@@ -435,7 +446,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
   const unassignedTile: StatTile<TileKey> | null = counts === null || control === null ? null : {
     key: 'UNASSIGNED',
     label: periodMode ? `${tileLabels.UNASSIGNED} на ${formatCalendarDate(filters.to)}` : tileLabels.UNASSIGNED,
-    value: withPeriod ? unassignedInRows(control) : teamName !== null ? unassignedOrganizations.length : unassignedCount ?? unassignedOrganizations.length,
+    value: withPeriod ? unassignedInRows(control) : unassignedNumber,
     tone: 'danger'
   }
   const stateTiles: StatTile<TileKey>[] = counts === null ? [] : [
@@ -459,7 +470,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
   ] : []
 
   const chips: ActiveChip[] = []
-  const listChips = (key: 'productId' | 'programId' | 'directionId' | 'organizationId' | 'managerId' | 'stage', label: string, optionList: { id: string; label: string }[]) => {
+  const listChips = (key: 'productId' | 'kindId' | 'programId' | 'directionId' | 'organizationId' | 'managerId' | 'stage', label: string, optionList: { id: string; label: string }[]) => {
     const values = filters[key]
     labelsOf(values, optionList, 'выбранное ранее').forEach((text, index) => chips.push({
       key: `${key}:${values[index]}`,
@@ -468,6 +479,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
     }))
   }
   listChips('productId', 'Продукт', options?.products ?? [])
+  listChips('kindId', 'Вид взаимодействия', options?.kinds ?? [])
   listChips('programId', 'ИТ-программа', options?.programs ?? [])
   listChips('directionId', 'ИТ-направление', options?.directions ?? [])
   listChips('organizationId', 'Вуз', options?.organizations ?? [])
@@ -497,7 +509,9 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
       { label: `${terms.export} PDF`, onSelect: () => void exportFile('PDF') },
       { label: 'Все форматы — в отчёте', href: controlReportHref(filters, view) }
     ] : [{ label: 'Выгрузка — без отбора команды', onSelect: () => setView((current) => ({ ...current, team: null })) }]),
-    { label: 'Показать списком', href: controlListHref(filters, view), separated: true },
+    display === 'list'
+      ? { label: 'Показать по менеджерам', onSelect: () => setView((current) => ({ ...current, display: 'managers' })), separated: true }
+      : { label: 'Показать списком', href: controlListHref(filters, view), separated: true },
     { label: 'Развернуть всех', onSelect: () => setAll(true) },
     { label: 'Свернуть всех', onSelect: () => setAll(false) }
   ]
@@ -557,6 +571,12 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
         </div>
       )}
 
+      {badDates.filter((bad) => filters[bad.name] === '').map((bad) => (
+        <p key={bad.name} className="notice" role="note">
+          {bad.name === 'from' ? 'Дата начала' : 'Дата окончания'} периода в адресе «{bad.value}» не распознана или такой даты нет —
+          отбор по ней не применён. Задайте период в фильтрах.
+        </p>
+      ))}
       <FilterPanel open={panelOpen} onClose={() => setPanelOpen(false)} onReset={resetAll}>
         {optionsState.kind === 'loading' && <p className="control-muted" role="status">Загружаем списки…</p>}
         {optionsState.kind === 'failed' && (
@@ -568,6 +588,8 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
         {options !== null && (
           <>
             <CheckList label="Продукт" options={options.products} selected={filters.productId} onChange={(ids) => update({ productId: ids })} />
+            <CheckList label="Вид взаимодействия" options={options.kinds} selected={filters.kindId} onChange={(ids) => update({ kindId: ids })} />
+
             <CheckList label="ИТ-программа" options={options.programs} selected={filters.programId} onChange={(ids) => update({ programId: ids })} />
             <CheckList label="ИТ-направление" options={options.directions} selected={filters.directionId} onChange={(ids) => update({ directionId: ids })} />
             <CheckList label="Вуз" options={options.organizations} selected={filters.organizationId} onChange={(ids) => update({ organizationId: ids })} />
@@ -605,17 +627,47 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
       {dataState.kind === 'loading' && <p className="control-muted" role="status">Собираем данные…</p>}
       {dataState.kind === 'failed' && (
         <div className="notice notice--error" role="alert">
-          <p>Не удалось собрать данные «Контроля».</p>
+          {/* 400 — ошибка в отборах (например, конец периода раньше начала): показываем причину, «Повторить» не поможет. */}
+          {dataState.error instanceof ApiError && dataState.error.status === 400
+            ? <p>{Object.values(dataState.error.fieldErrors ?? {})[0] ?? dataState.error.message}</p>
+            : <p>Не удалось собрать данные «Контроля».</p>}
           {dataState.error instanceof ApiError && <SupportDetails requestId={dataState.error.requestId} code={dataState.error.code} />}
-          <button type="button" onClick={() => void load(filters)}>{terms.retry}</button>
+          {!(dataState.error instanceof ApiError && dataState.error.status === 400) && (
+            <button type="button" onClick={() => void load(filters)}>{terms.retry}</button>
+          )}
         </div>
       )}
       {shown !== null && control !== null && (
+        <div className="control-display">
+          <Segmented
+            label="Вид"
+            options={displayOptions}
+            value={display}
+            onChange={(value) => setView((current) => ({ ...current, display: value }))}
+          />
+        </div>
+      )}
+      {shown !== null && control !== null && display === 'stages' && (
+        <div className="control-board" aria-busy={dataState.kind === 'ready' && dataState.refreshing}>
+          <CycleStageMatrix
+            control={shown}
+            stuckDays={view.stuckDays}
+            periodEnd={periodEnd}
+            kindNames={kindNames}
+            compact={compact}
+            onPick={(axis, rowId, stage, route, severalRoutes) => {
+              setFilters((current) => cellFilters(current, axis, rowId, stage, route, severalRoutes))
+              setView((current) => ({ ...current, display: 'list' }))
+            }}
+          />
+        </div>
+      )}
+      {shown !== null && control !== null && display !== 'stages' && (
         <div className="control-board" aria-busy={dataState.kind === 'ready' && dataState.refreshing}>
           {showUnassigned && view.tile !== 'IDLE' && (
             <UnassignedOrganizations
               organizations={unassignedOrganizations}
-              count={teamName !== null ? unassignedOrganizations.length : unassignedCount ?? unassignedOrganizations.length}
+              count={unassignedNumber}
               assignHref={assignHref}
               open={open}
               onAssign={onAssign}
@@ -626,7 +678,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
           {view.tile === 'IDLE' && !showIdle && <p className="control-empty">Вузов без работы нет.</p>}
           {view.tile === 'IDLE' ? null : view.tile === 'UNASSIGNED' && shown.teams.length === 0
             ? <p className="control-empty">Взаимодействий у вузов без КАМ нет.</p>
-            : (
+            : display === 'list' ? <ControlRows control={shown} withPeriod={withPeriod} byTeams={control.byTeams} /> : (
               <ControlMatrix
                 control={shown}
                 full={view.tile === null ? undefined : control}

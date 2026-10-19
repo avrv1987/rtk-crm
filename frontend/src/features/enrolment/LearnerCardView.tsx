@@ -1,4 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { useLeaveWarning } from '../../shared/ui/useLeaveWarning'
 import {
   ApiError,
   apiClient,
@@ -91,6 +92,9 @@ const LearnerGroupCard = ({
   const [saveError, setSaveError] = useState<SaveError | null>(null)
   const [versionConflict, setVersionConflict] = useState(false)
   const editKeyRef = useRef<string | null>(null)
+  const editStartRef = useRef<Record<string, string> | null>(null)
+  const dirty = editDraft !== null && config.fields.some((code) => (editDraft[code] ?? '') !== (editStartRef.current?.[code] ?? ''))
+  useLeaveWarning(dirty, `Изменения в группе «${learnerFieldGroupLabels[config.group]}» не сохранены. Уйти без сохранения?`)
 
   const reveal = async (): Promise<Record<string, string> | null> => {
     setRevealBusy(true)
@@ -118,7 +122,9 @@ const LearnerGroupCard = ({
     editKeyRef.current = null
     setSaveError(null)
     setVersionConflict(false)
-    setEditDraft(Object.fromEntries(config.fields.map((code) => [code, revealedNow[code] ?? ''])))
+    const initial = Object.fromEntries(config.fields.map((code) => [code, revealedNow[code] ?? '']))
+    editStartRef.current = initial
+    setEditDraft(initial)
   }
 
   const setDraftValue = (code: LearnerFieldCode, value: string) => {

@@ -170,8 +170,8 @@ public class MaxLinkRepository {
                 .update();
     }
 
-    // Получатель для отправки и входа: активный профиль КАМ или руководителя без флага оператора зачисления.
-    // «Руководство», администратор, представитель вуза и оператор зачисления канал MAX не получают.
+    // Получатель для отправки и входа: активный профиль КАМ или руководителя без флага менеджера учебного процесса.
+    // «Руководство», администратор, представитель вуза и менеджер учебного процесса канал MAX не получают.
     public Optional<CrmProfile> findChannelProfile(UUID profileId) {
         return jdbcClient.sql("""
                 SELECT id, role, team_id, access_revision
@@ -222,6 +222,8 @@ public class MaxLinkRepository {
                 case ASSIGNMENT -> notifyAssignment;
                 case AGREEMENT_CORRECTION, AGREEMENT_EXPIRY -> notifyAgreement;
                 case SITE_REQUEST -> notifySiteRequest;
+                // План ИИ-агента готовится по просьбе самого сотрудника: как ответ бота, отдельной настройкой не отключается.
+                case AGENT_PLAN -> true;
             };
         }
     }

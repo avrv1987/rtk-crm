@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.UUID;
 
 import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
-import ru.rtk.crm.attachment.AttachmentKind;
 import ru.rtk.crm.catalog.OrganizationType;
 import ru.rtk.crm.interaction.InteractionWorkStatus;
 
@@ -72,7 +71,8 @@ public final class PartnerModels {
             UUID workId,
             String workTitle,
             String name,
-            AttachmentKind kind,
+            String kind,
+            String kindName,
             String mediaType,
             long sizeBytes,
             boolean downloadable,
@@ -82,7 +82,7 @@ public final class PartnerModels {
             OffsetDateTime receivedAt
     ) {
         PartnerDocument withReceivedAt(OffsetDateTime value) {
-            return new PartnerDocument(id, workId, workTitle, name, kind, mediaType, sizeBytes, downloadable, createdAt, revision, replaced,
+            return new PartnerDocument(id, workId, workTitle, name, kind, kindName, mediaType, sizeBytes, downloadable, createdAt, revision, replaced,
                     value);
         }
     }

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { apiClient, isAccessDenied, type ReminderDigest } from '../../shared/api/client'
+import { apiClient, isAccessDenied, type AgentPlanListItem, type ReminderDigest } from '../../shared/api/client'
 import { getModules } from '../../shared/modules'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { kindLabels } from '../agentPlans/agentPlan'
 import { listPartnerReviewQueue, type PartnerReviewItem } from '../partner/partnerApi'
 import { partnerRequestStatusLabels } from '../partner/partnerRequestModel'
 import { type AccessHandlers, formatDate, formatDateTime, handledAccessError, requestIdOf, todayIso } from './workShared'
@@ -75,6 +76,7 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
   const [open, setOpen] = useState(false)
   const [fresh, setFresh] = useState(false)
   const [partnerReview, setPartnerReview] = useState<PartnerReviewItem[]>([])
+  const [agentPlans, setAgentPlans] = useState<AgentPlanListItem[]>([])
   const rootRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -99,6 +101,16 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
             }
           })
           .catch(() => setPartnerReview([]))
+      }
+      // Планы ИИ-агента, ждущие подтверждения, — тоже отдельно и только при включённом MCP.
+      if (getModules().mcp) {
+        apiClient.listAgentPlans()
+          .then((items) => {
+            if (version === requestVersion.current) {
+              setAgentPlans(items)
+            }
+          })
+          .catch(() => setAgentPlans([]))
       }
     } catch (error) {
       if (version !== requestVersion.current || handledAccessError(error, { onSessionExpired, onProfileUnavailable }) || isAccessDenied(error)) {
@@ -176,6 +188,7 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
 
   const overdue = state.kind === 'ready' ? state.digest.overdueTotal : null
   const partnerWaiting = partnerReview.length
+  const plansWaiting = agentPlans.length
   // Сигнал руководителю: вузы остались без КАМ после блокировки, их нужно назначить.
   const unassigned = state.kind === 'ready' ? state.digest.unassignedAfterBlock.length : 0
 
@@ -187,7 +200,7 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
         className={`reminder-center__open${fresh ? ' reminder-center__open--fresh' : ''}`}
         aria-expanded={open}
         aria-controls={`${titleId}-panel`}
-        aria-label={`Напоминания${overdue === null ? '' : `, просрочено шагов: ${overdue}`}${partnerWaiting > 0 ? `, ответов вузов ждут проверки: ${partnerWaiting}` : ''}${unassigned > 0 ? `, вузов без КАМ после блокировки: ${unassigned}` : ''}${fresh ? ', новая сводка на сегодня' : ''}`}
+        aria-label={`Напоминания${overdue === null ? '' : `, просрочено шагов: ${overdue}`}${partnerWaiting > 0 ? `, ответов вузов ждут проверки: ${partnerWaiting}` : ''}${plansWaiting > 0 ? `, планов ИИ-агента ждут подтверждения: ${plansWaiting}` : ''}${unassigned > 0 ? `, вузов без КАМ после блокировки: ${unassigned}` : ''}${fresh ? ', новая сводка на сегодня' : ''}`}
         title="Напоминания"
         data-overdue={overdue ?? undefined}
         onClick={() => open ? closePanel() : openPanel()}
@@ -197,7 +210,7 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
           <path d="M10 21h4" />
         </svg>
         {overdue !== null && overdue > 0 && <span className="reminder-center__badge" aria-hidden="true">{overdue}</span>}
-        {(fresh || partnerWaiting > 0 || unassigned > 0) && overdue === 0 && <span className="reminder-center__dot" aria-hidden="true" />}
+        {(fresh || partnerWaiting > 0 || plansWaiting > 0 || unassigned > 0) && overdue === 0 && <span className="reminder-center__dot" aria-hidden="true" />}
       </button>
       <div
         id={`${titleId}-panel`}
@@ -248,6 +261,21 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
                     </li>
                   ))}
                 </ul>
+              </section>
+            )}
+            {plansWaiting > 0 && (
+              <section aria-labelledby={`${titleId}-agent-plans`}>
+                <h3 id={`${titleId}-agent-plans`}>Планы ИИ-агента ждут подтверждения</h3>
+                <ul className="reminder-center__list">
+                  {agentPlans.map((plan) => (
+                    <li key={plan.id}>
+                      <a href={`#/agent-plans/${plan.id}`}>{kindLabels[plan.kind]}</a>
+                      <span>{plan.organizationName} · {plan.interactionTitle}</span>
+                      <span className="status status--planned">Действует до {formatDateTime(plan.expiresAt)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <a href="#/agent-plans">Все планы</a>
               </section>
             )}
             {state.digest.unassignedAfterBlock.length > 0 && (

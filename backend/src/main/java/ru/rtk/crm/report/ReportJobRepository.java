@@ -10,6 +10,7 @@ import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
 
@@ -25,6 +26,19 @@ public class ReportJobRepository {
 
     public ReportJobRepository(JdbcClient jdbcClient) {
         this.jdbcClient = jdbcClient;
+    }
+
+    // Квота незавершённых заданий: подсчёт и вставка под блокировкой строки профиля. Без неё одновременные заказы
+    // одного пользователя видели одинаковый счётчик и проходили сверх квоты.
+    @Transactional
+    public boolean insertWithinQuota(UUID jobId, CrmProfile owner, String idempotencyKey, String requestFingerprint, String requestJson,
+                                     ReportRequest request, OffsetDateTime createdAt, int maxUnfinished) {
+        jdbcClient.sql("SELECT id FROM crm_user_profiles WHERE id = :owner FOR UPDATE").param("owner", owner.id()).query(UUID.class).optional();
+        if (countUnfinished(owner.id()) >= maxUnfinished) {
+            return false;
+        }
+        insert(jobId, owner, idempotencyKey, requestFingerprint, requestJson, request, createdAt);
+        return true;
     }
 
     public void insert(
@@ -178,6 +192,13 @@ public class ReportJobRepository {
                 .param("finishedAt", OffsetDateTime.now())
                 .param("createdBefore", createdBefore)
                 .update();
+    }
+
+    public int countUnfinished(UUID ownerProfileId) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM report_jobs WHERE owner_profile_id = :owner AND status IN ('PENDING', 'RUNNING')")
+                .param("owner", ownerProfileId)
+                .query(Integer.class)
+                .single();
     }
 
     public void delete(UUID jobId) {

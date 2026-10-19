@@ -5,14 +5,17 @@ import {
   type InteractionListItem,
   type InteractionWorkStatusFilter,
   type Me,
+  type CatalogLookup,
   type Organization,
   type ReportManagerOption
 } from '../../shared/api/client'
+import { catalogGroups } from '../../shared/catalogGroups'
 import { FilterButton, FilterPanel } from '../../shared/ui/FilterPanel'
 import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { FilterChips, type ActiveChip } from '../control/FilterFields'
 import { InteractionMarkBadges } from '../interactions/InteractionMarkBadges'
+import { interactionKindsApi, type InteractionKind } from '../interactions/interactionKinds'
 import { issuesHref } from '../issues/issueModel'
 import {
   activeFilterCount,
@@ -53,7 +56,15 @@ type ListState =
 
 type OptionsState =
   | { kind: 'loading' }
-  | { kind: 'ready'; stages: string[]; organizations: Organization[]; managers: ReportManagerOption[] }
+  | {
+    kind: 'ready'
+    stages: string[]
+    organizations: Organization[]
+    managers: ReportManagerOption[]
+    kinds: InteractionKind[]
+    programs: CatalogLookup[]
+    products: CatalogLookup[]
+  }
   | { kind: 'failed'; error: unknown }
 
 const pageSize = 25
@@ -140,6 +151,9 @@ export const WorkList = ({ role, path, initialQuery, refreshSignal, title, onTot
         q: current.q,
         due: current.due || undefined,
         stage: current.stage,
+        kindId: current.kindId || undefined,
+        programId: current.programId || undefined,
+        productId: current.productId || undefined,
         flag: current.flag || undefined,
         licenseExpiresBy: current.licenseExpiresBy === '' ? undefined : Number(current.licenseExpiresBy),
         responsible: current.responsible || undefined,
@@ -172,12 +186,15 @@ export const WorkList = ({ role, path, initialQuery, refreshSignal, title, onTot
   const loadOptions = useCallback(async () => {
     setOptionsState({ kind: 'loading' })
     try {
-      const [stages, organizations, managers] = await Promise.all([
+      const [stages, organizations, managers, kinds, programs, products] = await Promise.all([
         apiClient.listReportStages(),
         loadAllPages((page) => apiClient.listOrganizations({ page, size: 100, sort: 'name,asc' })),
-        seesTeamWork ? apiClient.listReportManagers() : Promise.resolve([])
+        seesTeamWork ? apiClient.listReportManagers() : Promise.resolve([]),
+        interactionKindsApi.available(),
+        loadAllPages((page) => apiClient.listPrograms({ page, size: 100, state: 'ALL' })),
+        loadAllPages((page) => apiClient.listProducts({ page, size: 100, state: 'ALL' }))
       ])
-      setOptionsState({ kind: 'ready', stages, organizations, managers })
+      setOptionsState({ kind: 'ready', stages, organizations, managers, kinds, programs, products })
     } catch (error) {
       if (!handleAccessError(error)) {
         setOptionsState({ kind: 'failed', error })
@@ -254,6 +271,9 @@ export const WorkList = ({ role, path, initialQuery, refreshSignal, title, onTot
   const now = Date.now()
   const organizationOptions = optionsState.kind === 'ready' ? optionsState.organizations : []
   const stageOptions = optionsState.kind === 'ready' ? optionsState.stages : []
+  const kindOptions = optionsState.kind === 'ready' ? optionsState.kinds : []
+  const programOptions = optionsState.kind === 'ready' ? optionsState.programs : []
+  const productOptions = optionsState.kind === 'ready' ? optionsState.products : []
   const managerOptions = optionsState.kind === 'ready' ? optionsState.managers : []
   const stageDays = filters.minDaysOnStage === null || stageDayOptions.includes(filters.minDaysOnStage)
     ? stageDayOptions
@@ -263,6 +283,21 @@ export const WorkList = ({ role, path, initialQuery, refreshSignal, title, onTot
   const chips: ActiveChip[] = [
     filters.due !== '' && { key: 'due', label: `Срок: ${dueOptions.find((option) => option.value === filters.due)?.label ?? ''}`, onRemove: () => changeFilter({ due: '' }) },
     filters.stage !== '' && { key: 'stage', label: `Этап: ${filters.stage}`, onRemove: () => changeFilter({ stage: '' }) },
+    filters.kindId !== '' && {
+      key: 'kind',
+      label: `Вид: ${kindOptions.find((kind) => kind.id === filters.kindId)?.name ?? 'выбранный ранее вид'}`,
+      onRemove: () => changeFilter({ kindId: '' })
+    },
+    filters.programId !== '' && {
+      key: 'program',
+      label: `ИТ-программа: ${programOptions.find((item) => item.id === filters.programId)?.name ?? 'выбранная ранее программа'}`,
+      onRemove: () => changeFilter({ programId: '' })
+    },
+    filters.productId !== '' && {
+      key: 'product',
+      label: `Продукт: ${productOptions.find((item) => item.id === filters.productId)?.name ?? 'выбранный ранее продукт'}`,
+      onRemove: () => changeFilter({ productId: '' })
+    },
     filters.organizationId !== '' && {
       key: 'organization',
       label: `Вуз: ${organizationOptions.find((item) => item.id === filters.organizationId)?.name ?? 'выбранный ранее вуз'}`,
@@ -300,7 +335,7 @@ export const WorkList = ({ role, path, initialQuery, refreshSignal, title, onTot
 
       <form className="work-filters" role="search" aria-label="Поиск и фильтры взаимодействий" onSubmit={(event) => event.preventDefault()}>
         <label className="work-filters__search">
-          Поиск по названию взаимодействия или вуза
+          Поиск по названию взаимодействия, вуза, программы или продукта
           <input type="search" value={searchText} maxLength={200} onChange={(event) => setSearchText(event.target.value)} />
         </label>
         <FilterButton count={activeFilterCount(filters)} onClick={() => setPanelOpen(true)} />
@@ -333,6 +368,56 @@ export const WorkList = ({ role, path, initialQuery, refreshSignal, title, onTot
             <option value="">Все этапы</option>
             {filters.stage.length > 0 && !stageOptions.includes(filters.stage) && <option value={filters.stage}>{filters.stage}</option>}
             {stageOptions.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+          </select>
+        </label>
+        <label>
+          Вид взаимодействия
+          <select
+            value={filters.kindId}
+            disabled={optionsState.kind !== 'ready' && filters.kindId.length === 0}
+            onChange={(event) => changeFilter({ kindId: event.target.value })}
+          >
+            <option value="">Все виды</option>
+            {filters.kindId.length > 0 && !kindOptions.some((kind) => kind.id === filters.kindId) && (
+              <option value={filters.kindId}>Выбранный ранее вид</option>
+            )}
+            {kindOptions.map((kind) => <option key={kind.id} value={kind.id}>{kind.name}</option>)}
+          </select>
+        </label>
+        <label>
+          ИТ-программа
+          <select
+            value={filters.programId}
+            disabled={optionsState.kind !== 'ready' && filters.programId.length === 0}
+            onChange={(event) => changeFilter({ programId: event.target.value })}
+          >
+            <option value="">Все программы</option>
+            {filters.programId.length > 0 && !programOptions.some((item) => item.id === filters.programId) && (
+              <option value={filters.programId}>Выбранная ранее программа</option>
+            )}
+            {catalogGroups(programOptions, 'Без направления').map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.items.map((item) => <option key={item.id} value={item.id}>{item.archived ? `${item.name} (архив)` : item.name}</option>)}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+        <label>
+          Продукт
+          <select
+            value={filters.productId}
+            disabled={optionsState.kind !== 'ready' && filters.productId.length === 0}
+            onChange={(event) => changeFilter({ productId: event.target.value })}
+          >
+            <option value="">Все продукты</option>
+            {filters.productId.length > 0 && !productOptions.some((item) => item.id === filters.productId) && (
+              <option value={filters.productId}>Выбранный ранее продукт</option>
+            )}
+            {catalogGroups(productOptions, 'Без вендора').map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.items.map((item) => <option key={item.id} value={item.id}>{item.archived ? `${item.name} (архив)` : item.name}</option>)}
+              </optgroup>
+            ))}
           </select>
         </label>
         <label>
@@ -460,9 +545,12 @@ export const WorkList = ({ role, path, initialQuery, refreshSignal, title, onTot
                     <a className="work-item__title" href={`#/organizations/${item.organizationId}/${item.id}`}>{item.title}</a>
                     <a className="work-item__organization" href={`#/organizations/${item.organizationId}`}>{item.organizationName}</a>
                     <InteractionMarkBadges marks={item.marks} issuesHref={issuesHref(item.organizationId, item.id)} />
+                    {item.missingDocuments && <span className="status status--missing">Нет документов этапа</span>}
                     <span className="work-item__meta">
                       {`Последнее событие: ${item.lastEventAt === null ? 'событий нет' : `${formatDateTime(item.lastEventAt)}, ${eventTypeLabel(item.lastEventType)}`}`}
+                      {item.kindName ? ` · ${item.kindName}` : ''}
                       {` · Программа: ${item.programName ?? 'не указана'}`}
+
                       {!seesTeamWork && item.deputyManagerName !== null && ` · КАМ: ${ownerLabel(item)}`}
                     </span>
                   </td>

@@ -11,7 +11,14 @@ import type { Interaction, InteractionStage, LearningSnapshot, TeacherTraining }
 
 const today = '2026-09-28'
 
-const stage = (id: string, name: string, order: number): InteractionStage => ({ id, name, order, optional: false })
+// Роль для LMS — как у базового маршрута после V59; подсказки смотрят на роль, а не на название.
+const roleOf = (name: string): InteractionStage['lmsRole'] => (
+  name === 'Обучение преподавателей' ? 'TEACHER_TRAINING' : name === 'Повышение квалификации' ? 'QUALIFICATION'
+    : name === 'Занятия' ? 'CLASSES' : null
+)
+const stage = (id: string, name: string, order: number, lmsRole = roleOf(name)): InteractionStage => (
+  { id, name, order, optional: false, requiresAgreement: false, lmsRole, documentKinds: [] }
+)
 
 const interaction = (overrides: {
   currentStageId: string
@@ -171,18 +178,28 @@ test('подсказка этапа 9 отмечает, что часть пре
   assert.equal(findLmsStageSuggestion(work, [snapshot({ participants: 4, completed: 4 })], today)?.partial, false)
 })
 
-test('редактор шаблонов предупреждает о переименованном или удалённом этапе из правил LMS', () => {
+test('редактор шаблонов предупреждает только об «Актуализации программы»: остальные этапы LMS ищутся по роли', () => {
   const before = ['Переговоры', 'Занятия', 'Обучение преподавателей', 'Актуализация программы']
   assert.equal(lmsStageWarning(before, before), null)
-  assert.equal(lmsStageWarning(before, [...before, 'Новый этап']), null)
-  assert.equal(lmsStageWarning(['Переговоры'], ['Переговоры 2']), null)
-  const renamed = lmsStageWarning(before, ['Переговоры', 'Учёба', 'Обучение преподавателей', 'Актуализация программы'])
-  assert.match(renamed ?? '', /этап «Занятия» — сигнал «В LMS появились обучающиеся»/)
-  assert.doesNotMatch(renamed ?? '', /Обучение преподавателей»/)
+  assert.equal(lmsStageWarning(before, ['Переговоры', 'Учёба', 'Курс ППС', 'Актуализация программы']), null,
+    'переименование этапов с ролью LMS ничего не ломает')
   const removed = lmsStageWarning(before, ['Переговоры', 'Занятия'])
-  assert.match(removed ?? '', /«Обучение преподавателей»/)
   assert.match(removed ?? '', /«Актуализация программы»/)
-  assert.equal(lmsStageWarning([' Занятия '], ['Занятия']), null)
+  assert.doesNotMatch(removed ?? '', /«Занятия»/)
+  assert.equal(lmsStageWarning([' Актуализация программы '], ['Актуализация программы']), null)
+})
+
+test('роль LMS работает и при переименованном этапе, а этап без роли не предлагается', () => {
+  const renamedStages = [
+    stage('s1', 'Сопровождение внедрения', 7),
+    stage('s2', 'Курс для преподавателей вуза', 8, 'TEACHER_TRAINING'),
+    stage('s4', 'Ежегодное повышение', 12, 'QUALIFICATION')
+  ]
+  const renamed = interaction({ stages: renamedStages, currentStageId: 's1' })
+  assert.equal(findLmsStageSuggestion(renamed, [snapshot({ participants: 2, completed: 1 })], today)?.stage.id, 's2')
+  const noRoles = interaction({ stages: renamedStages.map((item) => ({ ...item, lmsRole: null })), currentStageId: 's1' })
+  assert.equal(findLmsStageSuggestion(noRoles, [snapshot({ participants: 2, completed: 1 })], today), null,
+    'название «Обучение преподавателей» без роли больше не ищется')
 })
 
 const fakeApi = (options: { failStage?: number; completedOnServer?: boolean }) => {

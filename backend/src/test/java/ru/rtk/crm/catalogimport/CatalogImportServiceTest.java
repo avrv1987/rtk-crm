@@ -71,6 +71,8 @@ import ru.rtk.crm.interaction.WorkflowTemplateRepository;
         AttachmentRepository.class,
         CommandIdempotencyRepository.class,
         InteractionService.class,
+        ru.rtk.crm.interaction.InteractionKindRepository.class,
+        ru.rtk.crm.interaction.InteractionKindService.class,
         ru.rtk.crm.agreement.AgreementStages.class,
         VendorContactImport.class,
         ru.rtk.crm.audit.AuditJournalRepository.class,
@@ -159,12 +161,13 @@ class CatalogImportServiceTest {
                 .containsEntry("managerName", "Иван Петров")
                 .containsEntry("organizationName", "Университет Альфа")
                 .containsEntry("licenseSigned", "да")
-                .containsEntry("interaction", "Новое взаимодействие «Платформа» по базовому процессу");
+                .containsEntry("interaction", "Новое взаимодействие «Лицензии и передача ПО (из реестра)» по базовому процессу");
         assertThat(row(preview, 2).newValues().values()).noneMatch(value -> value.matches(".*[0-9a-f]{8}-[0-9a-f]{4}-.*"));
         assertThat(row(preview, 3).fieldErrors()).containsOnlyKeys("licenseExpiryYear");
         assertThat(row(preview, 4).fieldErrors().get("managerName")).contains("Найдено 2 активных КАМ");
         assertThat(row(preview, 5).fieldErrors().get("contractNumber")).isEqualTo("Этот договор уже указан в строке 2");
-        assertThat(row(preview, 6).newValues()).containsEntry("interaction", "Взаимодействие, создаваемое строкой 2");
+        assertThat(row(preview, 6).newValues())
+                .containsEntry("interaction", "Взаимодействие, создаваемое строкой 2; ПО «Платформа» добавится в него");
 
         applyEligible(preview);
 
@@ -272,7 +275,8 @@ class CatalogImportServiceTest {
         assertThat(count("organizations")).isEqualTo(2);
         assertThat(count("vendors")).isEqualTo(2);
         assertThat(count("products")).isEqualTo(3);
-        assertThat(count("interactions")).isEqualTo(3);
+        // П. 15 (2.5): одна карточка на вуз и программу, продукты строк — её списком.
+        assertThat(count("interactions")).isEqualTo(2);
         assertThat(count("product_agreements")).isEqualTo(3);
         assertThat(count("contacts")).isEqualTo(2);
         assertThat(preview(template, tzColumns(), Map.of()).rows())
@@ -381,6 +385,42 @@ class CatalogImportServiceTest {
         assertThat(count("product_agreements")).isEqualTo(1);
     }
 
+    // П. 15 (2.5): колонка «ИТ-программа» даёт программу новой карточке и делит строки вуза на карточки по программам;
+    // тип новой организации без колонки «Тип» берётся из названия; неизвестная программа — ошибка строки.
+    @Test
+    void programColumnGroupsRowsAndTypeFollowsTheName() throws IOException {
+        UUID direction = UUID.randomUUID();
+        UUID analytics = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO directions (id, name, archived, version) VALUES (?, 'Данные', FALSE, 0)", direction);
+        jdbcTemplate.update("INSERT INTO programs (id, direction_id, name, archived, version) VALUES (?, ?, 'Анализ данных', FALSE, 0)",
+                analytics, direction);
+        List<String> headers = new java.util.ArrayList<>(TZ_HEADERS);
+        headers.add("ИТ-программа");
+        byte[] file = workbook(headers, List.of(
+                List.of("Колледж связи № 1", "Вендор Один", "Платформа", "", "", "", "", "Иван Петров", "", "", "анализ данных"),
+                List.of("Колледж связи № 1", "Вендор Один", "Аналитика", "", "", "", "", "", "", "", "Анализ данных"),
+                List.of("Колледж связи № 1", "Вендор Один", "Хранилище", "", "", "", "", "", "", "", ""),
+                List.of("Колледж связи № 1", "Вендор Один", "Шлюз", "", "", "", "", "", "", "", "Нет такой")
+        ));
+        Map<String, String> columns = tzColumns();
+        columns.put("programName", "ИТ-программа");
+
+        CatalogImportView preview = preview(file, columns, Map.of());
+
+        assertThat(row(preview, 5).fieldErrors().get("programName")).contains("не найдена в справочнике");
+        assertThat(row(preview, 2).newValues()).containsEntry("organizationType", "колледж")
+                .containsEntry("interaction", "Новое взаимодействие «анализ данных» по базовому процессу");
+        applyEligible(preview);
+        assertThat(jdbcTemplate.queryForObject("SELECT type FROM organizations", String.class)).isEqualTo("COLLEGE");
+        assertThat(jdbcTemplate.queryForList("SELECT program_id FROM interactions", UUID.class)).containsExactlyInAnyOrder(analytics, null);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM product_agreements pa JOIN interactions i ON i.id = pa.interaction_id WHERE i.program_id = ?
+                """, Long.class, analytics)).isEqualTo(2L);
+        assertThat(CatalogImportService.typeByName("МБОУ Лицей № 2")).isEqualTo("SCHOOL");
+        assertThat(CatalogImportService.typeByName("Техникум СПО")).isEqualTo("COLLEGE");
+        assertThat(CatalogImportService.typeByName("Спортивный университет")).isEqualTo("UNIVERSITY");
+    }
+
     @Test
     void newUniversityRowsShareTheManagerAndEveryProductIsLinked() throws IOException {
         byte[] file = workbook(TZ_HEADERS, List.of(
@@ -397,7 +437,7 @@ class CatalogImportServiceTest {
         assertThat(count("organizations")).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject("SELECT owner_manager_id FROM organizations", UUID.class)).isEqualTo(IVAN);
         assertThat(count("products")).isEqualTo(2);
-        assertThat(count("interactions")).isEqualTo(2);
+        assertThat(count("interactions")).isEqualTo(1);
         assertThat(jdbcTemplate.queryForList("SELECT contract_number FROM product_agreements", String.class))
                 .containsExactlyInAnyOrder(null, "Д-001");
         assertThat(preview(file, tzColumns(), Map.of()).rows())
@@ -549,8 +589,12 @@ class CatalogImportServiceTest {
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
                         assertThat(exception.field()).isEqualTo("archiveAgreementIds"));
 
-        service.apply(admin, missing.id(), new CatalogImportApplyRequest(missing.version(), List.of(), List.of(agreementId)),
-                "archive-missing");
+        CatalogImportApplyResponse first = service.apply(admin, missing.id(),
+                new CatalogImportApplyRequest(missing.version(), List.of(), List.of(agreementId)), "archive-missing");
+        // Н-4 (2.5): второе «Применить» того же предпросмотра с новым ключом возвращает тот же итог, а не «Импорт уже изменили».
+        assertThat(service.apply(admin, missing.id(),
+                new CatalogImportApplyRequest(missing.version(), List.of(), List.of(agreementId)), "archive-missing-again"))
+                .isEqualTo(first);
         assertThat(jdbcTemplate.queryForMap(
                 "SELECT category, object_name, details FROM audit_events WHERE action = 'CATALOG_IMPORT_APPLIED' AND object_id = ?",
                 missing.id()))
@@ -843,6 +887,7 @@ class CatalogImportServiceTest {
     }
 
     private void createSchema() {
+        ru.rtk.crm.interaction.InteractionKindTestSchema.create(jdbcTemplate);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id UUID PRIMARY KEY, category VARCHAR(32) NOT NULL, action VARCHAR(64) NOT NULL, actor_profile_id UUID,
@@ -946,7 +991,7 @@ class CatalogImportServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (interaction_kind_id UUID, workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500),
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL,
                     current_stage_id UUID NOT NULL, next_action VARCHAR(500), next_action_at TIMESTAMP WITH TIME ZONE,
@@ -964,7 +1009,7 @@ class CatalogImportServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
+                CREATE TABLE IF NOT EXISTS interaction_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), template_stage_id UUID, 
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL,
                     name VARCHAR(200) NOT NULL, optional BOOLEAN NOT NULL
                 )
@@ -996,7 +1041,7 @@ class CatalogImportServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS workflow_template_stages (
+                CREATE TABLE IF NOT EXISTS workflow_template_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
                     id UUID PRIMARY KEY, template_id UUID NOT NULL, stage_order INTEGER NOT NULL,
                     name VARCHAR(200) NOT NULL, optional BOOLEAN NOT NULL
                 )

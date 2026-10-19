@@ -2,6 +2,7 @@ package ru.rtk.crm.mail;
 
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,6 +26,7 @@ import ru.rtk.crm.work.WorkModels.TeamsSummary;
 public class MailTemplates {
     static final int LIST_LINES = 10;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
     static final String SETTINGS_HASH = "#/mail-settings";
 
     private final MailProperties properties;
@@ -112,6 +114,15 @@ public class MailTemplates {
                 List.of("Координатор вуза «" + organization + "» ответил на запрос.",
                         "Ответ — в карточке взаимодействия, во вкладке «Запросы вузу»."),
                 "Открыть в CRM", organizationHash(organizationId) + "/" + interactionId, true);
+    }
+
+    // Без текста плана: в нём могут быть ПДн, а сам план сотрудник смотрит в CRM.
+    Letter agentPlan(String organization, UUID planId, OffsetDateTime expiresAt) {
+        return letter("План ИИ-агента ждёт подтверждения: «" + organization + "»",
+                List.of("ИИ-агент подготовил план по вузу «" + organization + "». Данные CRM не изменены.",
+                        "Проверьте план в CRM и нажмите «Записать» или «Отклонить». План действует до "
+                                + TIME.format(expiresAt.atZoneSameInstant(MailProperties.ZONE)) + " (Москва)."),
+                "Открыть план", "#/agent-plans/" + planId, true);
     }
 
     Letter siteRequest(String organization, UUID organizationId) {

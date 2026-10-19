@@ -137,6 +137,35 @@ class MailNotificationsTest {
     }
 
     // Заявка неизвестного вуза: запись создана давно и ждала сопоставления, письмо уходит после применения и один раз.
+    // План ИИ-агента: письмо тому, для кого план, без текста плана, со сроком письма до срока плана; решённый, истёкший
+    // и план сотрудника, отключившего тему, письма не дают.
+    @Test
+    void pendingAgentPlanIsLetteredToItsOwnerOnceWithoutItsText() {
+        UUID interaction = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO interactions (id, organization_id) VALUES (?, ?)", interaction, ORGANIZATION);
+        OffsetDateTime now = OffsetDateTime.now();
+        UUID plan = agentPlan(KAM, interaction, "PENDING", now, now.plusMinutes(20));
+        agentPlan(KAM, interaction, "APPLIED", now, now.plusMinutes(20));
+        agentPlan(KAM, interaction, "PENDING", now.minusMinutes(5), now.minusMinutes(1));
+        agentPlan(KAM_2, interaction, "PENDING", now, now.plusMinutes(20));
+        jdbcTemplate.update("INSERT INTO mail_preferences (profile_id, topic) VALUES (?, 'AGENT_PLANS')", KAM_2);
+
+        assertThat(notifications.collectEvents()).isEqualTo(1);
+        assertThat(notifications.collectEvents()).isZero();
+        assertThat(subjects(KAM)).containsExactly("План ИИ-агента ждёт подтверждения: «Колледж связи»");
+        assertThat(subjects(KAM_2)).isEmpty();
+        assertThat(text(KAM, "AGENT_PLAN")).contains("https://crm.test/#/agent-plans/" + plan, "Данные CRM не изменены");
+        assertThat(jdbcTemplate.queryForObject("SELECT expires_at FROM mail_outbox WHERE profile_id = ?", OffsetDateTime.class, KAM))
+                .isEqualTo(jdbcTemplate.queryForObject("SELECT expires_at FROM agent_change_plans WHERE id = ?", OffsetDateTime.class, plan));
+    }
+
+    private UUID agentPlan(UUID profile, UUID interaction, String state, OffsetDateTime createdAt, OffsetDateTime expiresAt) {
+        UUID id = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO agent_change_plans (id, requester_profile_id, interaction_id, state, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+                id, profile, interaction, state, createdAt, expiresAt);
+        return id;
+    }
+
     @Test
     void siteRequestMappedLaterIsLetteredOnceAfterApplying() {
         UUID record = UUID.randomUUID();

@@ -21,12 +21,18 @@ import com.sun.net.httpserver.HttpServer;
 final class MoodleStub {
     private final HttpServer server;
     private final Map<String, Long> users = new ConcurrentHashMap<>();
+    private final Map<String, String[]> names = new ConcurrentHashMap<>();
     private final Map<Long, Set<Long>> enrolments = new ConcurrentHashMap<>();
     private final Set<String> rejected = ConcurrentHashMap.newKeySet();
     private final Map<String, Integer> calls = new ConcurrentHashMap<>();
     private final List<String> bodies = new CopyOnWriteArrayList<>();
     private final AtomicLong ids = new AtomicLong(1000);
     private boolean stopped;
+    private UserFields userFields = UserFields.PARTS;
+
+    // Какие поля имени отдаёт core_user_get_users_by_field. Настоящий Moodle с токеном записи отдаёт только fullname
+    // (id, username, fullname), а то и ни одного поля имени — заглушка должна уметь и так.
+    enum UserFields { PARTS, FULLNAME_ONLY, NONE }
 
     private MoodleStub(HttpServer server) {
         this.server = server;
@@ -52,8 +58,13 @@ final class MoodleStub {
         return "http://127.0.0.1:" + server.getAddress().getPort();
     }
 
-    void existing(String email, long id) {
+    void existing(String email, long id, String firstName, String lastName) {
         users.put(email, id);
+        names.put(email, new String[] {firstName, lastName});
+    }
+
+    void userFields(UserFields fields) {
+        userFields = fields;
     }
 
     void rejectCreate(String email) {
@@ -91,7 +102,13 @@ final class MoodleStub {
         return switch (function) {
             case "core_user_get_users_by_field" -> {
                 Long id = users.get(form.get("values[0]"));
-                yield id == null ? "[]" : "[{\"id\":" + id + ",\"username\":\"u\",\"firstname\":\"\",\"lastname\":\"\",\"email\":\"e\"}]";
+                String[] name = names.getOrDefault(form.get("values[0]"), new String[] {"", ""});
+                String fields = switch (userFields) {
+                    case PARTS -> ",\"firstname\":\"" + name[0] + "\",\"lastname\":\"" + name[1] + "\",\"email\":\"e\"";
+                    case FULLNAME_ONLY -> ",\"fullname\":\"" + name[0] + " " + name[1] + "\"";
+                    case NONE -> "";
+                };
+                yield id == null ? "[]" : "[{\"id\":" + id + ",\"username\":\"u\"" + fields + "}]";
             }
             case "core_user_create_users" -> {
                 String email = form.get("users[0][email]");
@@ -100,6 +117,7 @@ final class MoodleStub {
                 }
                 long id = ids.incrementAndGet();
                 users.put(email, id);
+                names.put(email, new String[] {form.get("users[0][firstname]"), form.get("users[0][lastname]")});
                 yield "[{\"id\":" + id + ",\"username\":\"" + form.get("users[0][username]") + "\"}]";
             }
             case "core_user_update_users", "core_group_add_group_members" -> "null";

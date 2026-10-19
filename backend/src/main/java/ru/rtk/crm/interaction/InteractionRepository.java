@@ -34,9 +34,11 @@ public class InteractionRepository {
                    e.to_stage_id, e.to_stage_name_snapshot, %s AS comment,
                    e.plan_changed, e.next_action, e.next_action_at,
                    e.actor_profile_id, actor.display_name AS actor_display_name,
-                   e.owner_manager_id_snapshot, e.version, e.occurred_at
+                   e.owner_manager_id_snapshot, e.version, e.occurred_at,
+                   CASE WHEN agent_command.idempotency_key LIKE 'agent-plan:%%' THEN TRUE ELSE FALSE END AS prepared_by_agent
             FROM interaction_events e
             JOIN crm_user_profiles actor ON actor.id = e.actor_profile_id
+            LEFT JOIN command_idempotency_records agent_command ON agent_command.id = e.command_id
             """.formatted(EVENT_COMMENT);
 
     public static final String STAGE_ENTERED_AT = """
@@ -99,18 +101,21 @@ public class InteractionRepository {
                        i.version, i.created_by, i.created_at, i.updated_at, i.next_step_partner_visible,
                        i.work_status, i.work_status_reason, i.waiting_on, i.waiting_note,
                        %s,
+                       i.interaction_kind_id, kind.name AS kind_name,
                        o.name AS organization_name, program.name AS program_name,
                        owner_profile.display_name AS owner_manager_name,
                        %s AS last_event_type,
                        %s AS last_event_at,
                        %s AS stage_entered_at,
                        (SELECT deputy.deputy_display_name %s) AS deputy_manager_name,
-                       (SELECT deputy.ends_on %s) AS deputy_ends_on
+                       (SELECT deputy.ends_on %s) AS deputy_ends_on,
+                       CASE WHEN %s THEN 1 ELSE 0 END AS missing_documents
                 FROM interactions i
                 JOIN interaction_stages current_stage
                   ON current_stage.id = i.current_stage_id AND current_stage.interaction_id = i.id
                 JOIN organizations o ON o.id = i.organization_id
                 LEFT JOIN programs program ON program.id = i.program_id
+                LEFT JOIN interaction_kinds kind ON kind.id = i.interaction_kind_id
                 LEFT JOIN crm_user_profiles owner_profile ON owner_profile.id = o.owner_manager_id
                 WHERE %s
                 ORDER BY %s
@@ -122,6 +127,7 @@ public class InteractionRepository {
                         STAGE_ENTERED_AT,
                         OrganizationRepository.activeDeputy("o"),
                         OrganizationRepository.activeDeputy("o"),
+                        missingDocumentsCondition("i"),
                         selection.where(),
                         query.sort().orderBy()
                 ))
@@ -137,7 +143,10 @@ public class InteractionRepository {
                         resultSet.getObject("last_event_at", OffsetDateTime.class),
                         resultSet.getObject("stage_entered_at", OffsetDateTime.class),
                         resultSet.getString("deputy_manager_name"),
-                        resultSet.getObject("deputy_ends_on", LocalDate.class)
+                        resultSet.getObject("deputy_ends_on", LocalDate.class),
+                        resultSet.getObject("interaction_kind_id", UUID.class),
+                        resultSet.getString("kind_name"),
+                        resultSet.getInt("missing_documents") == 1
                 ))
                 .list();
     }
@@ -166,9 +175,26 @@ public class InteractionRepository {
             parameters.put("organizationId", filter.organizationId());
         }
         if (filter.search() != null) {
-            conditions.add("(LOWER(i.title) LIKE :search %1$s OR LOWER(o.name) LIKE :search %1$s)"
+            // КАМ ищет и по названию программы или продукта: «мои взаимодействия по SIEM».
+            conditions.add("""
+                    (LOWER(i.title) LIKE :search %1$s OR LOWER(o.name) LIKE :search %1$s
+                     OR EXISTS (SELECT 1 FROM programs sp WHERE sp.id = i.program_id AND LOWER(sp.name) LIKE :search %1$s)
+                     OR EXISTS (SELECT 1 FROM product_agreements spa JOIN products sr ON sr.id = spa.product_id
+                                WHERE spa.interaction_id = i.id AND LOWER(sr.name) LIKE :search %1$s))"""
                     .formatted(SearchPattern.LIKE_ESCAPE));
             parameters.put("search", SearchPattern.contains(filter.search()));
+        }
+        if (filter.kindId() != null) {
+            conditions.add("i.interaction_kind_id = :kindId");
+            parameters.put("kindId", filter.kindId());
+        }
+        if (filter.programId() != null) {
+            conditions.add("i.program_id = :filterProgramId");
+            parameters.put("filterProgramId", filter.programId());
+        }
+        if (filter.productId() != null) {
+            conditions.add("EXISTS (SELECT 1 FROM product_agreements fpa WHERE fpa.interaction_id = i.id AND fpa.product_id = :filterProductId)");
+            parameters.put("filterProductId", filter.productId());
         }
         if (filter.stage() != null) {
             conditions.add("current_stage.name = :stage");
@@ -222,18 +248,20 @@ public class InteractionRepository {
             OffsetDateTime nextActionAt,
             UUID programId,
             OffsetDateTime lastContactAt,
+            UUID kindId,
             UUID createdBy,
             OffsetDateTime now
     ) {
         jdbcClient.sql("""
                 INSERT INTO interactions (
                     id, organization_id, title, current_stage_id, next_action, next_action_at, program_id, last_contact_at,
-                    version, created_by, created_at, updated_at
+                    interaction_kind_id, version, created_by, created_at, updated_at
                 ) VALUES (
                     :id, :organizationId, :title, :currentStageId, :nextAction, :nextActionAt, :programId, :lastContactAt,
-                    0, :createdBy, :createdAt, :updatedAt
+                    :kindId, 0, :createdBy, :createdAt, :updatedAt
                 )
                 """)
+                .param("kindId", kindId)
                 .param("id", interactionId)
                 .param("organizationId", organizationId)
                 .param("title", title)
@@ -250,15 +278,35 @@ public class InteractionRepository {
 
     public void insertStages(UUID interactionId, List<InteractionStage> stages) {
         for (InteractionStage stage : stages) {
+            insertStage(interactionId, stage, stage.order());
+        }
+    }
+
+    private void insertStage(UUID interactionId, InteractionStage stage, int order) {
+        jdbcClient.sql("""
+                INSERT INTO interaction_stages (id, interaction_id, stage_order, name, optional, requires_agreement, lms_role)
+                VALUES (:id, :interactionId, :stageOrder, :name, :optional, :requiresAgreement, :lmsRole)
+                """)
+                .param("id", stage.id())
+                .param("interactionId", interactionId)
+                .param("stageOrder", order)
+                .param("name", stage.name())
+                .param("optional", stage.optional())
+                .param("requiresAgreement", stage.requiresAgreement())
+                .param("lmsRole", stage.lmsRole() == null ? null : stage.lmsRole().name())
+                .update();
+        insertStageDocuments(interactionId, stage);
+    }
+
+    private void insertStageDocuments(UUID interactionId, InteractionStage stage) {
+        for (String kind : stage.documentKinds()) {
             jdbcClient.sql("""
-                    INSERT INTO interaction_stages (id, interaction_id, stage_order, name, optional)
-                    VALUES (:id, :interactionId, :stageOrder, :name, :optional)
+                    INSERT INTO interaction_stage_documents (interaction_id, stage_id, kind_code)
+                    VALUES (:interactionId, :stageId, :kind)
                     """)
-                    .param("id", stage.id())
                     .param("interactionId", interactionId)
-                    .param("stageOrder", stage.order())
-                    .param("name", stage.name())
-                    .param("optional", stage.optional())
+                    .param("stageId", stage.id())
+                    .param("kind", kind)
                     .update();
         }
     }
@@ -282,6 +330,26 @@ public class InteractionRepository {
                 .param("stageId", stageId)
                 .param("templateStageId", templateStageId)
                 .update());
+    }
+
+    public Optional<InteractionKindModels.InteractionKindRef> findKind(UUID interactionId) {
+        return jdbcClient.sql("""
+                SELECT k.id, k.name
+                FROM interactions i
+                JOIN interaction_kinds k ON k.id = i.interaction_kind_id
+                WHERE i.id = :interactionId
+                """)
+                .param("interactionId", interactionId)
+                .query((resultSet, rowNumber) -> new InteractionKindModels.InteractionKindRef(
+                        resultSet.getObject("id", UUID.class), resultSet.getString("name")))
+                .optional();
+    }
+
+    public void updateKind(UUID interactionId, UUID kindId) {
+        jdbcClient.sql("UPDATE interactions SET interaction_kind_id = :kindId WHERE id = :interactionId")
+                .param("interactionId", interactionId)
+                .param("kindId", kindId)
+                .update();
     }
 
     public Optional<InteractionRoute> findRoute(UUID interactionId) {
@@ -334,20 +402,73 @@ public class InteractionRepository {
         }
     }
 
-    public List<InteractionStage> findStages(UUID interactionId) {
+    // Документ «приложен», если к этому этапу загружен не удалённый документ того же вида, кроме отклонённого
+    // антивирусом: файл на проверке или с непроверенным результатом всё равно приложен КАМ. То же условие — в
+    // сигнале «нет документов» (missingDocumentsCondition).
+    public List<Interaction.StageDocument> findDocumentChecklist(UUID interactionId, UUID stageId) {
         return jdbcClient.sql("""
-                SELECT id, name, stage_order, optional
+                SELECT d.kind_code, k.name,
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM attachments a
+                           WHERE a.interaction_id = d.interaction_id AND a.stage_id = d.stage_id AND a.kind = d.kind_code
+                             AND a.deleted_at IS NULL AND a.status <> 'REJECTED'
+                       ) THEN 1 ELSE 0 END AS attached
+                FROM interaction_stage_documents d
+                JOIN document_kinds k ON k.code = d.kind_code
+                WHERE d.interaction_id = :interactionId AND d.stage_id = :stageId
+                ORDER BY k.name, d.kind_code
+                """)
+                .param("interactionId", interactionId)
+                .param("stageId", stageId)
+                .query((resultSet, rowNumber) -> new Interaction.StageDocument(
+                        resultSet.getString("kind_code"), resultSet.getString("name"), resultSet.getInt("attached") == 1))
+                .list();
+    }
+
+    public Set<String> findDocumentKindCodes() {
+        return new HashSet<>(jdbcClient.sql("SELECT code FROM document_kinds").query(String.class).list());
+    }
+
+    /** SQL-условие «на текущем этапе работы {alias} не хватает обязательного документа» — как в findDocumentChecklist. */
+    public static String missingDocumentsCondition(String alias) {
+        return "EXISTS (SELECT 1 FROM interaction_stage_documents md WHERE md.interaction_id = " + alias + ".id"
+                + " AND md.stage_id = " + alias + ".current_stage_id AND NOT EXISTS (SELECT 1 FROM attachments ma"
+                + " WHERE ma.interaction_id = md.interaction_id AND ma.stage_id = md.stage_id AND ma.kind = md.kind_code"
+                + " AND ma.deleted_at IS NULL AND ma.status <> 'REJECTED'))";
+    }
+
+    public List<InteractionStage> findStages(UUID interactionId) {
+        Map<UUID, List<String>> documents = new HashMap<>();
+        jdbcClient.sql("""
+                SELECT stage_id, kind_code FROM interaction_stage_documents
+                WHERE interaction_id = :interactionId
+                ORDER BY kind_code
+                """)
+                .param("interactionId", interactionId)
+                .query((ResultSet resultSet) -> {
+                    documents.computeIfAbsent(resultSet.getObject("stage_id", UUID.class), ignored -> new ArrayList<>())
+                            .add(resultSet.getString("kind_code"));
+                });
+        return jdbcClient.sql("""
+                SELECT id, name, stage_order, optional, requires_agreement, lms_role
                 FROM interaction_stages
                 WHERE interaction_id = :interactionId
                 ORDER BY stage_order ASC
                 """)
                 .param("interactionId", interactionId)
-                .query((resultSet, rowNumber) -> new InteractionStage(
-                        resultSet.getObject("id", UUID.class),
-                        resultSet.getString("name"),
-                        resultSet.getInt("stage_order"),
-                        resultSet.getBoolean("optional")
-                ))
+                .query((resultSet, rowNumber) -> {
+                    UUID id = resultSet.getObject("id", UUID.class);
+                    String role = resultSet.getString("lms_role");
+                    return new InteractionStage(
+                            id,
+                            resultSet.getString("name"),
+                            resultSet.getInt("stage_order"),
+                            resultSet.getBoolean("optional"),
+                            resultSet.getBoolean("requires_agreement"),
+                            role == null ? null : StageLmsRole.valueOf(role),
+                            documents.get(id)
+                    );
+                })
                 .list();
     }
 
@@ -417,6 +538,11 @@ public class InteractionRepository {
         jdbcClient.sql("DELETE FROM interaction_stage_transitions WHERE interaction_id = :interactionId")
                 .param("interactionId", interactionId)
                 .update();
+        // Обязательные документы этапов пишутся заново целиком: так перевод на версию и правка этапов не оставляют
+        // перечней удалённых этапов и прежних перечней сохранённых.
+        jdbcClient.sql("DELETE FROM interaction_stage_documents WHERE interaction_id = :interactionId")
+                .param("interactionId", interactionId)
+                .update();
 
         // Порядок записи важен: сначала удаляются лишние этапы, затем порядок всех этапов сдвигается далеко в
         // сторону (+10000), а новые вставляются с запасом (+20000) и лишь затем получают итоговые номера.
@@ -443,22 +569,14 @@ public class InteractionRepository {
                 .collect(java.util.stream.Collectors.toSet());
         for (InteractionStage stage : stages) {
             if (!previousIds.contains(stage.id())) {
-                jdbcClient.sql("""
-                        INSERT INTO interaction_stages (id, interaction_id, stage_order, name, optional)
-                        VALUES (:id, :interactionId, :stageOrder, :name, :optional)
-                        """)
-                        .param("id", stage.id())
-                        .param("interactionId", interactionId)
-                        .param("stageOrder", 20000 + stage.order())
-                        .param("name", stage.name())
-                        .param("optional", stage.optional())
-                        .update();
+                insertStage(interactionId, stage.withDocumentKinds(List.of()), 20000 + stage.order());
             }
         }
         for (InteractionStage stage : stages) {
             jdbcClient.sql("""
                     UPDATE interaction_stages
-                    SET stage_order = :stageOrder, name = :name, optional = :optional
+                    SET stage_order = :stageOrder, name = :name, optional = :optional,
+                        requires_agreement = :requiresAgreement, lms_role = :lmsRole
                     WHERE id = :stageId AND interaction_id = :interactionId
                     """)
                     .param("stageId", stage.id())
@@ -466,7 +584,10 @@ public class InteractionRepository {
                     .param("stageOrder", stage.order())
                     .param("name", stage.name())
                     .param("optional", stage.optional())
+                    .param("requiresAgreement", stage.requiresAgreement())
+                    .param("lmsRole", stage.lmsRole() == null ? null : stage.lmsRole().name())
                     .update();
+            insertStageDocuments(interactionId, stage);
         }
         insertTransitions(interactionId, transitions);
     }
@@ -984,7 +1105,8 @@ public class InteractionRepository {
                 resultSet.getString("actor_display_name"),
                 resultSet.getObject("owner_manager_id_snapshot", UUID.class),
                 resultSet.getInt("version"),
-                resultSet.getObject("occurred_at", OffsetDateTime.class)
+                resultSet.getObject("occurred_at", OffsetDateTime.class),
+                resultSet.getBoolean("prepared_by_agent")
         );
     }
 
@@ -1000,11 +1122,15 @@ public class InteractionRepository {
             OffsetDateTime lastEventAt,
             OffsetDateTime stageEnteredAt,
             String deputyManagerName,
-            LocalDate deputyEndsOn
+            LocalDate deputyEndsOn,
+            UUID kindId,
+            String kindName,
+            boolean missingDocuments
     ) {
     }
 
     record InteractionRow(
+
             UUID id,
             UUID organizationId,
             String title,

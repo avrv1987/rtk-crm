@@ -62,7 +62,7 @@ export const JobProgress = ({ job }: { job: ReportJob }) => (
     {!isFinished(job) && (
       <progress className="report-job__progress" max={100} value={job.progress} aria-label={`Готовность файла: ${job.progress}%`} />
     )}
-    {job.status === 'FAILED' && job.error && (
+    {job.error && (
       <>
         <span className="report-job__error">{job.error.message}</span>
         <SupportDetails code={job.error.code} />

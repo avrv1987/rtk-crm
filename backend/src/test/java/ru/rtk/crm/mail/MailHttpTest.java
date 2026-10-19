@@ -98,6 +98,15 @@ class MailHttpTest {
     @Autowired
     private MailTemplates templates;
 
+    @Autowired
+    private MailRepository repository;
+
+    @Autowired
+    private ru.rtk.crm.audit.AuditJournalRepository auditJournal;
+
+    @Autowired
+    private MailInvitationService invitations;
+
     @MockitoBean
     private KeycloakAccountClient keycloakAccountClient;
 
@@ -302,6 +311,31 @@ class MailHttpTest {
         assertThat(reason("h")).contains("заблокирован");
     }
 
+    // Часы Windows идут шагами около миллисекунды, а база округляет время до микросекунд вверх. Время, записанное
+    // для сравнения, не должно после округления оказаться позже того же момента часов: иначе проход отправщика сразу
+    // после «Повторить» не видел письма, закрытая ссылка ещё открывалась, а два события журнала менялись местами.
+    @Test
+    void timesWrittenForComparisonAreNotRoundedIntoTheFuture() {
+        OffsetDateTime tick = OffsetDateTime.now().withNano(123_456_700);
+        outbox.toProfile("retry:tick", MailKind.ASSIGNMENT, KAM, ORGANIZATION, templates.test());
+        UUID letter = repository.findByKey("retry:tick").orElseThrow().id();
+        jdbcTemplate.update("UPDATE mail_outbox SET status = 'ERROR' WHERE id = ?", letter);
+        assertThat(repository.retry(letter, tick)).isTrue();
+        assertThat(repository.findDue(tick, 10)).extracting(MailRepository.OutboxRow::id).containsExactly(letter);
+
+        UUID invitation = UUID.randomUUID();
+        repository.insertInvitation(invitation, "hash-tick", KAM, tick.minusMinutes(1), tick.plusDays(1));
+        repository.closeOpenInvitations(KAM, tick);
+        assertThat(repository.invitationOpen(invitation, tick)).isFalse();
+
+        for (int index = 0; index < 20; index++) {
+            auditJournal.record(ru.rtk.crm.audit.AuditAction.MAIL_INVITATION_SENT, ADMIN, "PROFILE", KAM, null, "событие " + index, "rq-" + index);
+        }
+        assertThat(auditJournal.findByObject("PROFILE", KAM, 50)).extracting(ru.rtk.crm.audit.AuditEntry::details)
+                .containsExactlyElementsOf(java.util.stream.IntStream.iterate(19, index -> index - 1).limit(20)
+                        .mapToObj(index -> "событие " + index).toList());
+    }
+
     @Test
     void sameEventIsQueuedOnce() {
         assertThat(outbox.toProfile("assign:x", MailKind.ASSIGNMENT, KAM, ORGANIZATION, templates.test())).isTrue();
@@ -311,61 +345,160 @@ class MailHttpTest {
 
     @Test
     void newEmployeeGetsLinkInsteadOfPasswordOnScreenAndTheLinkWorksOnce(CapturedOutput output) throws Exception {
-        when(keycloakAccountClient.createEmployeeUser(eq("petrova"), eq("petrova@example.test"), anyString(), anyString(), anyString()))
-                .thenReturn("kc-petrova");
-        String body = mockMvc.perform(post("/api/admin/crm-profiles").with(login(ADMIN)).with(csrf())
-                        .header("Idempotency-Key", "create-1").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"displayName\":\"Петрова Анна\",\"login\":\"petrova\",\"email\":\"petrova@example.test\",\"role\":\"USER\",\"teamId\":\""
-                                + TEAM + "\"}"))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.temporaryPassword").doesNotExist())
-                .andExpect(jsonPath("$.invitationSentTo").value("p***@example.test"))
-                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        assertThat(body).doesNotContain("petrova@example.test");
-        assertThat(jdbcTemplate.queryForObject("SELECT details FROM audit_events WHERE action = 'ACCOUNT_CREATED'", String.class))
-                .contains("приглашение отправлено");
+        GreenMail server = smtpServer();
+        try {
+            when(keycloakAccountClient.createEmployeeUser(eq("petrova"), eq("petrova@example.test"), anyString(), anyString(), anyString()))
+                    .thenReturn("kc-petrova");
+            String body = mockMvc.perform(post("/api/admin/crm-profiles").with(login(ADMIN)).with(csrf())
+                            .header("Idempotency-Key", "create-1").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"displayName\":\"Петрова Анна\",\"login\":\"petrova\",\"email\":\"petrova@example.test\",\"role\":\"USER\",\"teamId\":\""
+                                    + TEAM + "\"}"))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.temporaryPassword").doesNotExist())
+                    .andExpect(jsonPath("$.invitationSentTo").value("p***@example.test"))
+                    .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+            assertThat(body).doesNotContain("petrova@example.test");
+            assertThat(jdbcTemplate.queryForObject("SELECT details FROM audit_events WHERE action = 'ACCOUNT_CREATED'", String.class))
+                    .contains("приглашение отправлено");
 
-        String text = jdbcTemplate.queryForObject("SELECT body_text FROM mail_outbox WHERE kind = 'INVITATION'", String.class);
-        assertThat(text).contains("Логин: petrova", "https://crm.test/#/invite/").doesNotContain("Пароль:");
-        Matcher matcher = INVITE.matcher(text);
-        assertThat(matcher.find()).isTrue();
-        String token = matcher.group(1);
-        assertThat(jdbcTemplate.queryForObject("SELECT token_hash FROM mail_invitations", String.class)).isNotEqualTo(token);
-        assertThat(outbox.sendBatch()).isEqualTo(1);
+            // Н-1: до отправки в очереди только заглушка ссылки — действующего токена нет ни в базе, ни у администратора.
+            String queued = jdbcTemplate.queryForObject("SELECT body_text || body_html FROM mail_outbox WHERE kind = 'INVITATION'", String.class);
+            assertThat(queued).contains("Логин: petrova", "https://crm.test/#/invite/***").doesNotContain("Пароль:");
+            assertThat(INVITE.matcher(queued).find()).isFalse();
+            assertThat(outbox.sendBatch()).isEqualTo(1);
+            String token = token(received(server, 0));
+            assertThat(jdbcTemplate.queryForObject("SELECT token_hash FROM mail_invitations", String.class))
+                    .isEqualTo(MailCodes.sha256(token));
+            assertNoTokenVisibleToAdministrator(token);
 
-        String redeemed = mockMvc.perform(redeem(token))
-                .andExpect(status().isOk())
-                .andExpect(header().string("Cache-Control", containsString("no-store")))
-                .andExpect(jsonPath("$.login").value("petrova"))
-                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        String password = objectMapper.readTree(redeemed).path("temporaryPassword").asText();
-        assertThat(password).hasSize(16);
-        verify(keycloakAccountClient).resetTemporaryPassword("kc-petrova", password);
-        mockMvc.perform(redeem(token))
-                .andExpect(status().isGone())
-                .andExpect(jsonPath("$.code").value("MAIL_INVITATION_USED"));
-        mockMvc.perform(redeem("unknown-token"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("MAIL_INVITATION_INVALID"));
-        assertThat(jdbcTemplate.queryForList("SELECT action FROM audit_events", String.class))
-                .contains("MAIL_INVITATION_SENT", "MAIL_INVITATION_REDEEMED");
-        assertThat(output.getAll()).doesNotContain(password).doesNotContain(token);
+            String redeemed = mockMvc.perform(redeem(token))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("Cache-Control", containsString("no-store")))
+                    .andExpect(jsonPath("$.login").value("petrova"))
+                    .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+            String password = objectMapper.readTree(redeemed).path("temporaryPassword").asText();
+            assertThat(password).hasSize(16);
+            verify(keycloakAccountClient).resetTemporaryPassword("kc-petrova", password);
+            mockMvc.perform(redeem(token))
+                    .andExpect(status().isGone())
+                    .andExpect(jsonPath("$.code").value("MAIL_INVITATION_USED"));
+            mockMvc.perform(redeem("unknown-token"))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.code").value("MAIL_INVITATION_INVALID"));
+            assertThat(jdbcTemplate.queryForList("SELECT action FROM audit_events", String.class))
+                    .contains("MAIL_INVITATION_SENT", "MAIL_INVITATION_REDEEMED");
+            assertThat(output.getAll()).doesNotContain(password).doesNotContain(token);
+        } finally {
+            server.stop();
+        }
     }
 
     @Test
     void passwordResetSendsNewLinkAndOldLinkStopsWorking() throws Exception {
+        GreenMail server = smtpServer();
+        try {
+            mockMvc.perform(post("/api/admin/crm-profiles/{id}/account-password-reset", KAM).with(login(ADMIN)).with(csrf())
+                            .header("Idempotency-Key", "reset-1"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.temporaryPassword").doesNotExist())
+                    .andExpect(jsonPath("$.invitationSentTo").value("a***@example.test"));
+            outbox.sendBatch();
+            String first = token(received(server, 0));
+            mockMvc.perform(post("/api/admin/crm-profiles/{id}/account-password-reset", KAM).with(login(ADMIN)).with(csrf())
+                    .header("Idempotency-Key", "reset-2")).andExpect(status().isOk());
+            mockMvc.perform(redeem(first)).andExpect(status().isGone());
+            outbox.sendBatch();
+            assertThat(jdbcTemplate.queryForList("SELECT status FROM mail_outbox WHERE kind = 'PASSWORD_RESET' ORDER BY created_at", String.class))
+                    .containsExactlyInAnyOrder("SENT", "SENT");
+            // Н-10 (w44): письмо сброса пароля — свой вид в журнале почты, а не «Приглашение»; токен в нём скрыт так же.
+
+            // Повторная отправка письма администратором: адресат получает новую ссылку, прежняя перестаёт работать,
+            // а у администратора в журнале по-прежнему только заглушка.
+            String second = token(received(server, 1));
+            String id = jdbcTemplate.queryForObject(
+                    "SELECT CAST(o.id AS VARCHAR) FROM mail_outbox o JOIN mail_invitations i ON o.event_key = 'invitation:' || CAST(i.id AS VARCHAR)"
+                            + " WHERE i.redeemed_at IS NULL AND i.expires_at > CURRENT_TIMESTAMP", String.class);
+            jdbcTemplate.update("UPDATE mail_outbox SET status = 'ERROR' WHERE id = CAST(? AS UUID)", id);
+            mockMvc.perform(post("/api/mail/admin/outbox/{id}/retry", id).with(login(ADMIN)).with(csrf())).andExpect(status().isOk());
+            outbox.sendBatch();
+            String third = token(received(server, 2));
+            assertThat(third).isNotEqualTo(second);
+            mockMvc.perform(redeem(second)).andExpect(status().isNotFound());
+            assertNoTokenVisibleToAdministrator(third);
+            mockMvc.perform(redeem(third)).andExpect(status().isOk());
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    void stubModeGivesPasswordOnScreenAndAdministratorNeverGetsAnInvitationLink() throws Exception {
         mockMvc.perform(post("/api/admin/crm-profiles/{id}/account-password-reset", KAM).with(login(ADMIN)).with(csrf())
-                        .header("Idempotency-Key", "reset-1"))
+                        .header("Idempotency-Key", "reset-stub"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.temporaryPassword").doesNotExist())
-                .andExpect(jsonPath("$.invitationSentTo").value("a***@example.test"));
-        String first = token(jdbcTemplate.queryForObject("SELECT body_text FROM mail_outbox WHERE kind = 'INVITATION'", String.class));
-        mockMvc.perform(post("/api/admin/crm-profiles/{id}/account-password-reset", KAM).with(login(ADMIN)).with(csrf())
-                .header("Idempotency-Key", "reset-2")).andExpect(status().isOk());
-        mockMvc.perform(redeem(first)).andExpect(status().isGone());
-        outbox.sendBatch();
-        assertThat(jdbcTemplate.queryForList("SELECT status FROM mail_outbox WHERE kind = 'INVITATION' ORDER BY created_at", String.class))
-                .containsExactlyInAnyOrder("DROPPED", "SENT");
+                .andExpect(jsonPath("$.temporaryPassword").exists())
+                .andExpect(jsonPath("$.invitationSentTo").doesNotExist());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM mail_outbox WHERE kind IN ('INVITATION', 'PASSWORD_RESET')", Integer.class)).isZero();
+        // Н-5: адрес отправителя по умолчанию не мешает сохранить другие настройки, а новый неверный адрес отклоняется.
+        mockMvc.perform(put("/api/mail/admin/settings").with(login(ADMIN)).with(csrf()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"mode\":\"STUB\",\"fromAddress\":\"CRM@localhost\",\"fromName\":\"CRM\"}")).andExpect(status().isOk());
+        mockMvc.perform(put("/api/mail/admin/settings").with(login(ADMIN)).with(csrf()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"mode\":\"STUB\",\"fromAddress\":\"other@localhost\",\"fromName\":\"CRM\"}"))
+                .andExpect(status().isBadRequest());
+        // Письма до 2.5 хранили токен в тексте: при показе он скрывается.
+        assertThat(MailOutbox.hideInvitationToken("Получить пароль: https://crm.test/#/invite/AbCdEf_-0123456789xyz"))
+                .isEqualTo("Получить пароль: https://crm.test/#/invite/***");
+        // Ссылку на новый пароль администратора не выдаёт и сам сервис приглашений.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> invitations.invite(ADMIN, ADMIN, "admin", "a@example.test", false, "rq"))
+                .isInstanceOf(ru.rtk.crm.interaction.InteractionValidationException.class);
+    }
+
+    private void assertNoTokenVisibleToAdministrator(String token) throws Exception {
+        String journal = mockMvc.perform(get("/api/mail/admin/outbox").with(login(ADMIN)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(journal).doesNotContain(token);
+        for (String id : jdbcTemplate.queryForList("SELECT CAST(id AS VARCHAR) FROM mail_outbox WHERE kind IN ('INVITATION', 'PASSWORD_RESET')", String.class)) {
+            String view = mockMvc.perform(get("/api/mail/admin/outbox/{id}", id).with(login(ADMIN)))
+                    .andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+            assertThat(view).doesNotContain(token).contains("#/invite/***");
+        }
+        String stored = String.join("", jdbcTemplate.queryForList(
+                "SELECT COALESCE(mime_message, '') || body_text || COALESCE(body_html, '') FROM mail_outbox", String.class));
+        assertThat(stored.replaceAll("=\\r?\\n", "")).doesNotContain(token);
+    }
+
+    private GreenMail smtpServer() throws Exception {
+        GreenMail server = new GreenMail(ServerSetupTest.SMTP.dynamicPort());
+        server.start();
+        server.setUser("crm@example.test", "smtp-user", "invite-smtp-pass");
+        mockMvc.perform(put("/api/mail/admin/settings").with(login(ADMIN)).with(csrf())
+                .contentType(MediaType.APPLICATION_JSON).content(smtpSettings(server.getSmtp().getPort(), "invite-smtp-pass"))).andExpect(status().isOk());
+        return server;
+    }
+
+    private static String received(GreenMail server, int index) throws Exception {
+        // Ожидание — страховка на случай доставки в потоке GreenMail. Настоящая причина прежних падений — время
+        // повтора, округлённое базой вверх (см. timesWrittenForComparisonAreNotRoundedIntoTheFuture).
+        server.waitForIncomingEmail(5000, index + 1);
+        MimeMessage[] messages = server.getReceivedMessages();
+        assertThat(messages.length).isGreaterThan(index);
+        return plainText(messages[index]);
+    }
+
+    private static String plainText(jakarta.mail.Part part) throws Exception {
+        if (part.isMimeType("text/plain")) {
+            return (String) part.getContent();
+        }
+        if (part.isMimeType("multipart/*")) {
+            jakarta.mail.Multipart multipart = (jakarta.mail.Multipart) part.getContent();
+            StringBuilder text = new StringBuilder();
+            for (int index = 0; index < multipart.getCount(); index++) {
+                text.append(plainText(multipart.getBodyPart(index)));
+            }
+            return text.toString();
+        }
+        return "";
     }
 
     @Test

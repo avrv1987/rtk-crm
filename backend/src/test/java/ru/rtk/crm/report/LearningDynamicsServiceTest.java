@@ -91,14 +91,15 @@ class LearningDynamicsServiceTest {
                 tuple("2026-01", LocalDate.parse("2026-01-31")), tuple("2026-02", LocalDate.parse("2026-02-28")),
                 tuple("2026-03", LocalDate.parse("2026-03-31")), tuple("2026-04", LocalDate.parse("2026-04-30")),
                 tuple("2026-05", LocalDate.parse("2026-05-31")), tuple("2026-06", TO));
-        assertThat(leader.totalParticipants()).containsExactly(0L, 10L, 12L, 12L, 12L, 7L);
+        // Н-5 (2.5): январь раньше первого потока — «нет данных», а не ноль.
+        assertThat(leader.totalParticipants()).containsExactly(null, 10L, 12L, 12L, 12L, 7L);
         assertThat(leader.totalCompleted()).containsExactly(null, 0L, 2L, 2L, 9L, null);
         assertThat(leader.totalRunsWithoutData()).containsExactly(0L, 0L, 0L, 1L, 1L, 0L);
         // П15: поток «Института без КАМ» идёт с апреля, а первое наблюдение — в июне: апрель и май — «нет данных», не ноль.
         assertThat(leader.series()).extracting(LearningDynamics.Series::label, LearningDynamics.Series::participants)
                 .containsExactly(
-                        tuple("Институт без КАМ", java.util.Arrays.asList(0L, 0L, 0L, null, null, 7L)),
-                        tuple("Университет «Альфа»", List.of(0L, 10L, 12L, 12L, 12L, 0L)));
+                        tuple("Институт без КАМ", java.util.Arrays.asList(null, null, null, null, null, 7L)),
+                        tuple("Университет «Альфа»", java.util.Arrays.asList(null, 10L, 12L, 12L, 12L, 0L)));
         assertThat(leader.rows()).extracting(LearningDynamics.Row::month, LearningDynamics.Row::organizationName,
                         LearningDynamics.Row::runs, LearningDynamics.Row::runsWithoutData, LearningDynamics.Row::participants,
                         LearningDynamics.Row::completed, LearningDynamics.Row::completionPercent)
@@ -114,14 +115,14 @@ class LearningDynamicsServiceTest {
         LearningDynamics byProgram = service.dynamics(MANAGER_B_PROFILE, FROM, TO, SeriesBy.PROGRAM, null, null);
         assertThat(byProgram.series()).singleElement().satisfies(series -> {
             assertThat(series.label()).isEqualTo("Анализ данных");
-            assertThat(series.participants()).containsExactly(0L, 0L, 8L, 5L, 5L, 5L);
+            assertThat(series.participants()).containsExactly(null, null, 8L, 5L, 5L, 5L);
             assertThat(series.completed()).containsOnlyNulls();
         });
         assertThat(service.dynamics(MANAGER_A_PROFILE, FROM, TO, null, List.of(ORGANIZATION_B), null).rows()).isEmpty();
         assertThat(service.dynamics(LEADER_A_PROFILE, FROM, TO, null, null, List.of(PROGRAM_DATA)).rows()).isEmpty();
         assertThat(service.dynamics(ADMIN_PROFILE, FROM, TO, null, null, null)).satisfies(empty -> {
             assertThat(empty.rows()).isEmpty();
-            assertThat(empty.totalParticipants()).containsOnly(0L);
+            assertThat(empty.totalParticipants()).containsOnlyNulls();
         });
         assertThat(leader.notes()).anyMatch(note -> note.contains("действовавшему на конец последнего дня месяца"));
     }
@@ -197,8 +198,11 @@ class LearningDynamicsServiceTest {
         LocalDate today = LocalDate.now(ReportRequest.ZONE);
         assertThat(service.dynamics(LEADER_A_PROFILE, null, null, null, null, null).months()).hasSize(12)
                 .last().satisfies(month -> assertThat(month.asOf()).isEqualTo(today));
-        assertThatThrownBy(() -> service.dynamics(LEADER_A_PROFILE, null, today.plusDays(1), null, null, null))
-                .isInstanceOfSatisfying(InteractionValidationException.class, error -> assertThat(error.field()).isEqualTo("to"));
+        // Д-1 (2.5): готовый период «Этот год» кончается в будущем — отчёт строится по сегодняшний день, а не отказывает.
+        LearningDynamics year = service.dynamics(LEADER_A_PROFILE, today.withDayOfYear(1), today.withMonth(12).withDayOfMonth(31),
+                null, null, null);
+        assertThat(year.to()).isEqualTo(today);
+        assertThat(year.months()).last().satisfies(month -> assertThat(month.asOf()).isEqualTo(today));
         assertThatThrownBy(() -> service.dynamics(LEADER_A_PROFILE, TO, FROM, null, null, null))
                 .isInstanceOfSatisfying(InteractionValidationException.class, error -> assertThat(error.field()).isEqualTo("to"));
         assertThatThrownBy(() -> service.dynamics(LEADER_A_PROFILE, TO.minusMonths(LearningDynamicsService.MAX_MONTHS), TO,

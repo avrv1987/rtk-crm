@@ -303,7 +303,7 @@ public class LearnerWorkbookReader {
             if (value == null || value.isBlank()) {
                 return null;
             }
-            return Gender.fromTitle(value).orElseGet(() -> fail(LearnerField.GENDER, "Пол: выберите «М» или «Ж»"));
+            return Gender.fromTitle(value).orElseGet(() -> fail(LearnerField.GENDER, "Пол: «М» или «Ж» (также «мужской», «женский»)"));
         }
 
         private Education education() {

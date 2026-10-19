@@ -766,6 +766,50 @@ class PersonalDataServiceTest {
         assertThat(Files.exists(reportProperties.storageRoot().resolve(managementKey.toString()))).isFalse();
     }
 
+    // Н-2 (2.5): отчёт «Руководства» удаляется, только если субъект есть в самом файле. Отчёт без субъекта и диаграмма
+    // без ФИО остаются; файл, который не удалось прочитать, помечается «требует пересоздания» и не удаляется.
+    @Test
+    void anonymizationDeletesOnlyReportsThatReallyContainTheSubject() throws IOException {
+        UUID unrelated = UUID.randomUUID();
+        UUID unrelatedKey = UUID.randomUUID();
+        UUID chart = UUID.randomUUID();
+        UUID chartKey = UUID.randomUUID();
+        UUID unreadable = UUID.randomUUID();
+        UUID unreadableKey = UUID.randomUUID();
+        UUID xlsx = UUID.randomUUID();
+        UUID xlsxKey = UUID.randomUUID();
+        report(unrelated, unrelatedKey, NOW.minusHours(2), UUID.randomUUID(), "MANAGEMENT", null, "EVENTS", "JSON", null,
+                "[{\"contact\":\"Ирина Другая\"}]");
+        report(chart, chartKey, NOW.minusHours(2), UUID.randomUUID(), "MANAGEMENT", null, "PORTFOLIO", "PNG", "STAGE", "png");
+        report(unreadable, unreadableKey, NOW.minusHours(2), UUID.randomUUID(), "MANAGEMENT", null, "EVENTS", "XLSX", null, "не xlsx");
+        try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+             java.io.OutputStream out = Files.newOutputStream(reportProperties.storageRoot().resolve(xlsxKey.toString()))) {
+            workbook.createSheet("Отчёт").createRow(0).createCell(0).setCellValue("Встреча: " + SUBJECT_NAME);
+            workbook.write(out);
+        }
+        jdbcTemplate.update("""
+                INSERT INTO report_jobs (id, owner_profile_id, owner_role, owner_team_id, kind, status, result_storage_key, finished_at, format)
+                VALUES (?, ?, 'MANAGEMENT', NULL, 'EVENTS', 'SUCCEEDED', ?, ?, 'XLSX')
+                """, xlsx, UUID.randomUUID(), xlsxKey, NOW.minusHours(2));
+
+        AnonymizationResult preview = personalDataService.previewAnonymization(
+                administrator, request(null, List.of(SUBJECT), List.of(), List.of(), List.of()));
+        AnonymizationResult result = personalDataService.anonymize(
+                administrator, request(null, List.of(SUBJECT), List.of(), List.of(), List.of()), "anonymize-n2", "rq-n2");
+
+        assertThat(result.reportFilesDeleted()).isEqualTo(3).isEqualTo(preview.reportFilesDeleted());
+        assertThat(result.reportFilesMarked()).isEqualTo(1).isEqualTo(preview.reportFilesMarked());
+        assertThat(jdbcTemplate.queryForList("SELECT id FROM report_jobs WHERE error_code = 'REPORT_RESULT_EXPIRED'", UUID.class))
+                .containsExactlyInAnyOrder(OLD_REPORT, FRESH_REPORT, xlsx);
+        assertThat(jdbcTemplate.queryForMap("SELECT error_code, result_storage_key FROM report_jobs WHERE id = ?", unreadable))
+                .containsEntry("ERROR_CODE", "REPORT_NEEDS_REBUILD")
+                .containsEntry("RESULT_STORAGE_KEY", unreadableKey);
+        assertThat(jdbcTemplate.queryForList("SELECT id FROM report_jobs WHERE error_code IS NULL", UUID.class))
+                .containsExactlyInAnyOrder(unrelated, chart);
+        assertThat(Files.exists(reportProperties.storageRoot().resolve(unrelatedKey.toString()))).isTrue();
+        assertThat(Files.exists(reportProperties.storageRoot().resolve(xlsxKey.toString()))).isFalse();
+    }
+
     // Д-6: «Ограничить обработку» и «Обезличить» без основания не выполняются; основание и комментарий — в журнале.
     @Test
     void restrictionAndAnonymizationRequireReasonAndExportRequiresExactIdentifiers() {
@@ -933,11 +977,18 @@ class PersonalDataServiceTest {
 
     private void report(UUID id, UUID storageKey, OffsetDateTime finishedAt, UUID owner, String role, UUID team, String kind)
             throws IOException {
-        Files.writeString(reportProperties.storageRoot().resolve(storageKey.toString()), "report");
+        report(id, storageKey, finishedAt, owner, role, team, kind, "JSON", null,
+                "[{\"contact\":\"" + SUBJECT_NAME + "\",\"email\":\"" + SUBJECT_EMAIL + "\"}]");
+    }
+
+    private void report(UUID id, UUID storageKey, OffsetDateTime finishedAt, UUID owner, String role, UUID team, String kind,
+                        String format, String groupBy, String content) throws IOException {
+        Files.writeString(reportProperties.storageRoot().resolve(storageKey.toString()), content);
         jdbcTemplate.update("""
-                INSERT INTO report_jobs (id, owner_profile_id, owner_role, owner_team_id, kind, status, result_storage_key, finished_at)
-                VALUES (?, ?, ?, ?, ?, 'SUCCEEDED', ?, ?)
-                """, id, owner, role, team, kind, storageKey, finishedAt);
+                INSERT INTO report_jobs (id, owner_profile_id, owner_role, owner_team_id, kind, status, result_storage_key, finished_at,
+                                         format, group_by)
+                VALUES (?, ?, ?, ?, ?, 'SUCCEEDED', ?, ?, ?, ?)
+                """, id, owner, role, team, kind, storageKey, finishedAt, format, groupBy);
     }
 
     private String fileName(UUID attachmentId) {
@@ -945,6 +996,7 @@ class PersonalDataServiceTest {
     }
 
     private void createSchema() {
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.create(jdbcTemplate);
         for (String statement : List.of(
                 """
                 CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
@@ -982,7 +1034,7 @@ class PersonalDataServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (interaction_kind_id UUID, workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL, next_action VARCHAR(500),
                     version INTEGER NOT NULL, created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
@@ -1035,7 +1087,7 @@ class PersonalDataServiceTest {
                     id UUID PRIMARY KEY, owner_profile_id UUID NOT NULL, owner_role VARCHAR(16) NOT NULL, owner_team_id UUID,
                     kind VARCHAR(16) NOT NULL, status VARCHAR(16) NOT NULL, result_storage_key UUID, error_code VARCHAR(64),
                     error_message VARCHAR(500), finished_at TIMESTAMP WITH TIME ZONE, format VARCHAR(8), row_count INTEGER,
-                    result_file_name VARCHAR(255)
+                    result_file_name VARCHAR(255), group_by VARCHAR(16)
                 )
                 """,
                 """

@@ -83,6 +83,18 @@ class WorkControlHttpTest {
     }
 
     @Test
+    void organizationPathIsClosedForAdminAndPartnerAndChecksTheIdentifier() throws Exception {
+        for (UserRole role : List.of(UserRole.ADMIN, UserRole.PARTNER)) {
+            when(currentProfileService.requireActiveProfile(any())).thenReturn(new CrmProfile(MANAGER, role, TEAM, 0));
+            mockMvc.perform(get("/api/organizations/" + UUID.randomUUID() + "/path").with(oidcLogin()))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        }
+        mockMvc.perform(get("/api/organizations/не-идентификатор/path").with(oidcLogin())).andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/organizations/" + UUID.randomUUID() + "/path")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void anonymousRequestIsRejected() throws Exception {
         mockMvc.perform(get("/api/work/control")).andExpect(status().isUnauthorized());
     }

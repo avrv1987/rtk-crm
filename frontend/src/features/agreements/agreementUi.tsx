@@ -109,7 +109,8 @@ export const CommandError = ({ error, fallback, onRetry, retryLabel = 'Повт�
       <p>{errorMessage(error, fallback)}</p>
       {fieldErrors.length > 0 && (
         <ul>
-          {fieldErrors.map(([field, text]) => <li key={field}>{fieldLabels[field] ?? field}: {text}</li>)}
+          {/* Техническое имя поля (priority, body) пользователю ничего не говорит: без подписи показываем только текст. */}
+          {fieldErrors.map(([field, text]) => <li key={field}>{fieldLabels[field] === undefined ? text : `${fieldLabels[field]}: ${text}`}</li>)}
         </ul>
       )}
       {error instanceof ApiError && <SupportDetails requestId={error.requestId} code={error.code} />}
@@ -135,7 +136,7 @@ type TermMarkProps = {
 export const AgreementTermMark = ({ agreement, noticeDays }: TermMarkProps) => {
   const term = agreementTerm(agreement, todayInMoscow(), noticeDays)
   if (term === 'expired') {
-    return <span className="status status--overdue">срок истёк</span>
+    return <span className="status status--overdue agreement-term">срок истёк</span>
   }
-  return term === 'expiring' ? <span className="status status--missing">до {formatDate(agreement.validUntil)}</span> : null
+  return term === 'expiring' ? <span className="status status--missing agreement-term">до {formatDate(agreement.validUntil)}</span> : null
 }

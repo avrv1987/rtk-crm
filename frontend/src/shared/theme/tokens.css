@@ -158,7 +158,8 @@ a:focus-visible {
 
 h1 {
   margin: 0 0 var(--space-4);
-  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  /* Нижняя граница 1.5rem: на ширине 320 «Администрирование» в 1.75rem не помещалось и рвалось на «…ани / е». */
+  font-size: clamp(1.5rem, 4vw, 2.5rem);
   line-height: 1.15;
   overflow-wrap: anywhere;
 }
@@ -649,6 +650,20 @@ input[type='radio'] {
   margin: var(--space-2) 0 0;
   padding: 0;
   list-style: none;
+}
+
+/* Дата договора в узкой колонке не рвётся посреди числа («03.11.202 / 6»). */
+.agreement-term {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+/* Подпись группы (вендор) занимает всю строку сетки продуктов. */
+.interaction-catalog-picker__group {
+  grid-column: 1 / -1;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
 }
 
 .interaction-catalog-picker label {
@@ -2627,6 +2642,22 @@ button.segmented__option[aria-pressed="true"] {
   background: var(--color-danger-surface);
 }
 
+/* Полнота данных обучения на «Обзоре»: карточка во всю ширину сетки, список потоков на проверку */
+.admin-overview__card--wide {
+  grid-column: 1 / -1;
+}
+
+.admin-overview__hint {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+}
+
+.admin-overview__runs {
+  margin: 0;
+  padding-left: var(--space-4);
+  overflow-wrap: anywhere;
+}
+
 /* Отметка резервной копии на «Обзоре», вход в систему и передача вузов в карточке сотрудника */
 .admin-overview__warning {
   color: var(--color-warning);
@@ -2707,6 +2738,29 @@ button.segmented__option[aria-pressed="true"] {
 
   .app-tabbar a[aria-current="page"] {
     color: var(--color-action);
+  }
+
+  .app-tabbar__more .action-menu,
+  .app-tabbar__more .action-menu__toggle {
+    width: 100%;
+  }
+
+  .app-tabbar__more .action-menu__toggle {
+    display: grid;
+    justify-items: center;
+    gap: 2px;
+    height: calc(var(--space-14) - 1px);
+    border: 0;
+    padding: 6px 0 0;
+    color: var(--color-text-muted);
+    background: none;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+  }
+
+  .app-tabbar__more .action-menu__popup {
+    top: auto;
+    bottom: calc(100% + var(--space-1));
   }
 
   .app-shell--tabbar .reminder-center__panel {

@@ -99,6 +99,9 @@ class AdminCatalogServiceTest {
         assertThat(product.parentName()).isEqualTo("UAT Вендор");
         assertThat(catalogRepository.findProducts(CatalogQuery.from(0, 25), CatalogEntryState.ACTIVE).items())
                 .extracting(CatalogLookup::name).contains("UAT Продукт");
+        // П. 16 (2.5): список продуктов для форм несёт вендора — по нему форма группирует продукты.
+        assertThat(catalogRepository.findProducts(CatalogQuery.from(0, 25), CatalogEntryState.ACTIVE).items())
+                .filteredOn(item -> item.name().equals("UAT Продукт")).extracting(CatalogLookup::groupName).containsExactly("UAT Вендор");
         assertThatThrownBy(() -> service.create(admin, CatalogKind.VENDORS, new CatalogEntryRequest("uat вендор", null, null, null),
                 "vendor-duplicate", REQUEST_ID))
                 .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
@@ -113,6 +116,30 @@ class AdminCatalogServiceTest {
         assertThat(catalogChangeEventRepository.findPage(null, 0, 10).items())
                 .extracting(CatalogChangeEvent::entityType)
                 .containsExactlyInAnyOrder(CatalogEntityType.VENDOR, CatalogEntityType.PRODUCT);
+    }
+
+    // Справочник «Виды документов» ведёт только администратор; новый вид получает код и сразу доступен для выбора,
+    // вид в архиве для новых документов не предлагается.
+    @Test
+    void onlyAdministratorMaintainsDocumentKinds() {
+        AdminCatalogEntry kind = service.create(admin, CatalogKind.DOCUMENT_KINDS, new CatalogEntryRequest("Справка о практике", null, null, null),
+                "kind-create", REQUEST_ID);
+        ru.rtk.crm.attachment.DocumentKinds kinds = new ru.rtk.crm.attachment.DocumentKinds(
+                org.springframework.jdbc.core.simple.JdbcClient.create(jdbcTemplate));
+        assertThat(kinds.findAll()).filteredOn(item -> item.name().equals("Справка о практике")).singleElement()
+                .satisfies(item -> assertThat(item.code()).hasSize(32).isEqualTo(kind.id().toString().replace("-", "")));
+        assertThat(kinds.findAll().getLast().code()).as("«Иное» — последним").isEqualTo("OTHER");
+        assertThatThrownBy(() -> service.create(admin, CatalogKind.DOCUMENT_KINDS, new CatalogEntryRequest("договор", null, null, null),
+                "kind-duplicate", REQUEST_ID)).hasMessageContaining("«Договор» уже есть");
+        assertThatThrownBy(() -> service.create(leader, CatalogKind.DOCUMENT_KINDS, new CatalogEntryRequest("Чужой", null, null, null),
+                "kind-leader", REQUEST_ID)).isInstanceOf(AdminCrmProfileAccessDeniedException.class);
+        service.update(admin, CatalogKind.DOCUMENT_KINDS, kind.id(), new CatalogEntryRequest(null, null, true, 0), "kind-archive", REQUEST_ID);
+        assertThat(kinds.findAll()).filteredOn(ru.rtk.crm.attachment.DocumentKinds.DocumentKind::archived)
+                .extracting(ru.rtk.crm.attachment.DocumentKinds.DocumentKind::name).containsExactly("Справка о практике");
+        assertThat(kinds.normalizeRequired(java.util.List.of("ACT", "ACT", kind.id().toString().replace("-", "")), "stages"))
+                .as("вид в архиве остаётся допустимым в сохранённом перечне этапа, повторы убираются").hasSize(2);
+        assertThat(catalogChangeEventRepository.findPage(CatalogEntityType.DOCUMENT_KIND, 0, 10).items())
+                .extracting(CatalogChangeEvent::action).containsExactlyInAnyOrder(CatalogChangeAction.CREATE, CatalogChangeAction.ARCHIVE);
     }
 
     @Test
@@ -333,8 +360,10 @@ class AdminCatalogServiceTest {
                 )
                 """,
                 "CREATE TABLE IF NOT EXISTS catalog_name_locks (entity_type VARCHAR(16) PRIMARY KEY)",
-                "MERGE INTO catalog_name_locks KEY (entity_type) VALUES ('ORGANIZATION'), ('DIRECTION'), ('PROGRAM'), ('VENDOR'), ('PRODUCT')"
+                "MERGE INTO catalog_name_locks KEY (entity_type) VALUES ('ORGANIZATION'), ('DIRECTION'), ('PROGRAM'), ('VENDOR'), ('PRODUCT'),"
+                        + " ('DOCUMENT_KIND')"
         ).forEach(jdbcTemplate::execute);
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.create(jdbcTemplate);
     }
 
     @TestConfiguration(proxyBeanMethods = false)

@@ -49,6 +49,7 @@ import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionRepository;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.web.InputRules;
 import ru.rtk.crm.mail.MailNotifications;
 import ru.rtk.crm.partner.PartnerAccessRepository.ManagedOrganization;
 import ru.rtk.crm.partner.PartnerRequestModels.PartnerMaterialReceipt;
@@ -78,7 +79,9 @@ public class PartnerRequestService {
     private static final int MESSAGE_LIMIT = 4000;
     private static final int CLARIFICATION_LIMIT = 2000;
     private static final int REVIEW_LIMIT = 50;
-    private static final Set<PartnerRequestStatus> ANSWERABLE = Set.of(PartnerRequestStatus.AWAITING_RESPONSE, PartnerRequestStatus.RETURNED);
+    // Пока школа не уточнила, координатор может и ответить сам: вопрос не должен запирать уже готовый ответ.
+    private static final Set<PartnerRequestStatus> ANSWERABLE = Set.of(
+            PartnerRequestStatus.AWAITING_RESPONSE, PartnerRequestStatus.RETURNED, PartnerRequestStatus.CLARIFICATION_NEEDED);
     private static final Set<PartnerRequestStatus> CLOSED = Set.of(PartnerRequestStatus.ACCEPTED, PartnerRequestStatus.CANCELLED);
 
     private final PartnerRequestRepository repository;
@@ -139,6 +142,7 @@ public class PartnerRequestService {
         if (request.dueOn() != null && request.dueOn().isBefore(LocalDate.now(PartnerCabinetService.MOSCOW))) {
             throw new InteractionValidationException("dueOn", "Срок ответа уже прошёл");
         }
+        InputRules.requireDateWithin(request.dueOn(), "dueOn", LocalDate.now(PartnerCabinetService.MOSCOW), 0, 5);
         if (request.contactId() == null) {
             throw new InteractionValidationException("contactId", "Выберите координатора вуза");
         }
@@ -376,7 +380,7 @@ public class PartnerRequestService {
         if (!ANSWERABLE.contains(request.status())) {
             throw InteractionConflictException.stateConflict(request.status() == PartnerRequestStatus.RESPONDED
                     ? "Ответ уже передан и ждёт проверки школой"
-                    : "Запрос закрыт или ждёт уточнения от школы");
+                    : "Запрос закрыт: ответить на него уже нельзя");
         }
         OffsetDateTime now = OffsetDateTime.now();
         Attachment attachment = null;

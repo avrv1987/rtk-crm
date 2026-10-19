@@ -28,7 +28,7 @@ public class TrainingRepository {
     }
 
     List<TeacherTraining> findTrainings(UUID interactionId) {
-        return jdbcClient.sql(TRAINING_SELECT + "WHERE t.interaction_id = :interactionId ORDER BY t.trained_on DESC, t.created_at DESC")
+        return jdbcClient.sql(TRAINING_SELECT + "WHERE t.interaction_id = :interactionId ORDER BY t.trained_on DESC, t.created_at DESC, t.id DESC")
                 .param("interactionId", interactionId)
                 .query(this::mapTraining)
                 .list();
@@ -66,14 +66,14 @@ public class TrainingRepository {
                 .update();
     }
 
-    Optional<LocalDate> findCycleStart(UUID interactionId) {
+    public Optional<LocalDate> findCycleStart(UUID interactionId) {
         return jdbcClient.sql("SELECT starts_on FROM interaction_cycles WHERE interaction_id = :interactionId")
                 .param("interactionId", interactionId)
                 .query(LocalDate.class)
                 .optional();
     }
 
-    Optional<CycleLink> findPrevious(UUID interactionId) {
+    public Optional<CycleLink> findPrevious(UUID interactionId) {
         return jdbcClient.sql("""
                 SELECT i.id, i.title, previous_cycle.starts_on, i.created_at
                 FROM interaction_cycles c
@@ -86,7 +86,7 @@ public class TrainingRepository {
                 .optional();
     }
 
-    Optional<CycleLink> findNext(UUID interactionId) {
+    public Optional<CycleLink> findNext(UUID interactionId) {
         return jdbcClient.sql("""
                 SELECT i.id, i.title, c.starts_on, i.created_at
                 FROM interaction_cycles c

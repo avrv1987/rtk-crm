@@ -296,11 +296,11 @@ const EditorForm = ({
             disabled={saving || !operatorAllowed(draft.role)}
             onChange={(event) => change({ enrolmentOperator: event.target.checked })}
           />
-          Оператор зачисления: загрузка оплат и данные слушателей
+          Менеджер учебного процесса: загрузка оплат и данные слушателей
         </label>
       )}
       {getModules().enrolment && !operatorAllowed(draft.role) && (
-        <p className="admin-form__hint admin-form__wide">Флаг «Оператор зачисления» доступен только КАМ и руководителю команды.</p>
+        <p className="admin-form__hint admin-form__wide">Флаг «Менеджер учебного процесса» доступен только КАМ и руководителю команды.</p>
       )}
       {isCurrentProfile && (
         <p className="admin-form__hint admin-form__wide">Свою роль, команду и доступ изменить нельзя — это делает другой администратор.</p>

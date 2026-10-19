@@ -92,7 +92,10 @@ public class MailSettingsService {
             throw new InteractionValidationException("username", "Логин SMTP — до 255 символов в одну строку");
         }
         String fromAddress = blankToNull(request.fromAddress());
-        if (fromAddress == null || fromAddress.length() > 254 || !EMAIL.matcher(fromAddress).matches()) {
+        // Прежний адрес принимается как есть: значение по умолчанию crm@localhost не проходит проверку формы, и иначе
+        // настройки нельзя было бы сохранить, не трогая поле.
+        boolean sameAddress = fromAddress != null && fromAddress.equalsIgnoreCase(current.fromAddress());
+        if (fromAddress == null || fromAddress.length() > 254 || !sameAddress && !EMAIL.matcher(fromAddress).matches()) {
             throw new InteractionValidationException("fromAddress", "Укажите адрес отправителя в виде crm@example.ru");
         }
         String fromName = blankToNull(request.fromName());
@@ -262,7 +265,7 @@ public class MailSettingsService {
         return preferences(actor);
     }
 
-    // Оператор зачисления писем по вузам не получает, как и в MAX; представитель вуза тем не настраивает.
+    // Менеджер учебного процесса писем по вузам не получает, как и в MAX; представитель вуза тем не настраивает.
     private Set<MailTopic> availableTopics(CrmProfile actor) {
         boolean operator = repository.recipient(actor.id()).map(MailRepository.Recipient::enrolmentOperator).orElse(false);
         Set<MailTopic> topics = EnumSet.noneOf(MailTopic.class);

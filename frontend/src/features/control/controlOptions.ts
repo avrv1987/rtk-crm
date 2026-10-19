@@ -1,12 +1,14 @@
 import { apiClient, type Organization } from '../../shared/api/client'
 import { organizationTypeLabels } from '../organizations/OrganizationForm'
 import type { FilterOption } from '../reports/ReportControls'
+import { interactionKindsApi } from '../interactions/interactionKinds'
 
 export type ControlOptions = {
   organizations: FilterOption[]
   directions: FilterOption[]
   programs: FilterOption[]
   products: FilterOption[]
+  kinds: FilterOption[]
   managers: FilterOption[]
   activeManagers: FilterOption[]
   stages: FilterOption[]
@@ -29,13 +31,14 @@ const catalogOptions = (items: { id: string; name: string; archived: boolean }[]
 )
 
 export const loadControlOptions = async (): Promise<ControlOptions> => {
-  const [organizations, directions, programs, products, managers, stages] = await Promise.all([
+  const [organizations, directions, programs, products, managers, stages, kinds] = await Promise.all([
     loadAllPages((page) => apiClient.listOrganizations({ page, size: 100, sort: 'name,asc', status: 'ALL' })),
     loadAllPages((page) => apiClient.listDirections({ page, size: 100, state: 'ALL' })),
     loadAllPages((page) => apiClient.listPrograms({ page, size: 100, state: 'ALL' })),
     loadAllPages((page) => apiClient.listProducts({ page, size: 100, state: 'ALL' })),
     apiClient.listReportManagers(),
-    apiClient.listReportStages()
+    apiClient.listReportStages(),
+    interactionKindsApi.available()
   ])
   return {
     organizations: organizations.map((organization) => ({
@@ -47,6 +50,8 @@ export const loadControlOptions = async (): Promise<ControlOptions> => {
     directions: catalogOptions(directions),
     programs: catalogOptions(programs),
     products: catalogOptions(products),
+    kinds: kinds.map((kind) => ({ id: kind.id, label: kind.name })),
+
     managers: managers.map((manager) => ({
       id: manager.id,
       label: manager.active ? manager.displayName : `${manager.displayName} (неактивен)`

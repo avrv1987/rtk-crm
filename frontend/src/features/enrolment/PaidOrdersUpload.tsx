@@ -48,6 +48,7 @@ const Protocol = ({ result, uploadedAt }: { result: PaidOrderUploadResult; uploa
       </div>
       <div><dt>Изменились курс или поток</dt><dd>{result.updated}</dd></div>
       <div><dt>Без изменений</dt><dd>{result.skipped}</dd></div>
+      {(result.duplicatesInFile ?? 0) > 0 && <div><dt>Повторов заявки в файле</dt><dd>{result.duplicatesInFile}</dd></div>}
       <div><dt>Курс не сопоставлен с программой</dt><dd>{result.needsMapping}</dd></div>
       <div><dt>Не приняты</dt><dd>{result.failed}</dd></div>
       <div><dt>Новых слушателей</dt><dd>{result.learners.newLearners}</dd></div>
@@ -70,9 +71,16 @@ const Protocol = ({ result, uploadedAt }: { result: PaidOrderUploadResult; uploa
         У {result.learners.contactsDiffer} {learnersGenitive(result.learners.contactsDiffer)} контакты в оплате отличаются от анкеты: анкета не перезаписана.
       </p>
     )}
+    {result.heldStreamTransfers > 0 && (
+      <p className="notice" role="alert">
+        {result.heldStreamTransfers} {result.heldStreamTransfers === 1 ? 'заявка переносит' : 'заявок переносят'} уже зачисленного
+        слушателя в поток, которого ещё нет. Перенос не выполнен: проверьте номер потока в файле. Если поток действительно
+        новый, нажмите «Создать новые потоки и перенести».
+      </p>
+    )}
     {result.learners.movedAfterLms > 0 && (
       <p className="notice" role="status">
-        {learnersMoved(result.learners.movedAfterLms)} в другой поток после выгрузки в LMS: исключите их из прежнего потока в LMS вручную.
+        {learnersMoved(result.learners.movedAfterLms)} в другой поток после выгрузки в LMS: перенесите их в LMS — кнопкой «Перенести в Moodle» в очереди «Что обработать», если включена передача через Moodle, иначе вручную.
       </p>
     )}
     {result.streams.length > 0 && (
@@ -106,7 +114,7 @@ const Protocol = ({ result, uploadedAt }: { result: PaidOrderUploadResult; uploa
             <li key={`${issue.position}-${index}`} className={issue.warning ? 'enrolment__issue--warning' : undefined}>
               {issue.orderNumber ? `Заявка ${issue.orderNumber}` : `Элемент ${issue.position} (номера заявки нет)`}
               {issue.field === null ? '' : `, поле «${issue.field}»`}: {issue.message}
-              {issue.warning ? ' (запись принята)' : ''}
+              {issue.warning && !issue.message.includes('запись принята') ? ' (запись принята)' : ''}
             </li>
           ))}
         </ul>
@@ -148,16 +156,17 @@ export const PaidOrdersUpload = ({ onUploaded, onAccessError }: PaidOrdersUpload
     setState({ kind: 'idle' })
   }
 
-  const upload = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  // confirmNewStreams — повтор того же файла с подтверждением новых потоков: новая команда, свой ключ.
+  const upload = async (event: FormEvent<HTMLFormElement> | null, confirmNewStreams = false) => {
+    event?.preventDefault()
     if (file === null || state.kind === 'uploading') {
       return
     }
-    const key = idempotencyKey ?? createIdempotencyKey()
+    const key = confirmNewStreams ? createIdempotencyKey() : idempotencyKey ?? createIdempotencyKey()
     setIdempotencyKey(key)
     setState({ kind: 'uploading' })
     try {
-      const result = await apiClient.uploadPaidOrders(file, key)
+      const result = await apiClient.uploadPaidOrders(file, key, confirmNewStreams)
       setState({ kind: 'done', result })
       onUploaded()
     } catch (error) {
@@ -202,6 +211,11 @@ export const PaidOrdersUpload = ({ onUploaded, onAccessError }: PaidOrdersUpload
       )}
 
       {state.kind === 'done' && <Protocol result={state.result} uploadedAt={null} />}
+      {state.kind === 'done' && state.result.heldStreamTransfers > 0 && file !== null && (
+        <button type="button" className="button--secondary" onClick={() => void upload(null, true)}>
+          Создать новые потоки и перенести
+        </button>
+      )}
       {state.kind === 'idle' && last !== null && <Protocol result={last.protocol} uploadedAt={last.uploadedAt} />}
     </section>
   )

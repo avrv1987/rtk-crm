@@ -90,6 +90,9 @@ const MailAdminContent = (handlers: SessionHandlers) => {
 
   const smtp = draft.mode === 'SMTP'
   const set = (patch: Partial<MailDraft>) => setDraft({ ...draft, ...patch })
+  // SMTP сохраняется без проверки подключения (проверка — отдельной кнопкой): при опечатке все письма, в том числе
+  // приглашения, уйдут в ошибку. Предупреждаем до сохранения (Н-6).
+  const smtpUnchecked = smtp && settings?.mode !== 'SMTP'
 
   return (
     <section className="mail-admin" aria-labelledby="mail-admin-title">
@@ -182,6 +185,12 @@ const MailAdminContent = (handlers: SessionHandlers) => {
         )}
         {!settings.encryptionAvailable && (
           <p role="alert">Ключ шифрования SOURCES_SETTINGS_KEY не задан: пароль SMTP сохранить нельзя.</p>
+        )}
+        {smtpUnchecked && (
+          <p className="notice" role="note">
+            Подключение к SMTP проверяется отдельно: после сохранения сразу нажмите «Проверить подключение». При ошибке в настройках
+            все письма, в том числе приглашения сотрудникам, уйдут в «ошибку».
+          </p>
         )}
         <div className="mail-admin__actions">
           <button type="submit" disabled={busy}>Сохранить</button>

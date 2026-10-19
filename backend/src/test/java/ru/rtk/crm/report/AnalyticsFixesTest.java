@@ -1,6 +1,7 @@
 package ru.rtk.crm.report;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static ru.rtk.crm.report.ReportTestData.INTERACTION_TWO_PRODUCTS;
 import static ru.rtk.crm.report.ReportTestData.INTERACTION_UNASSIGNED;
@@ -40,6 +41,7 @@ import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.module.ModuleProperties;
 import ru.rtk.crm.work.LearningTrend;
 import ru.rtk.crm.work.LearningTrendService;
+import ru.rtk.crm.work.WorkControlModels;
 import ru.rtk.crm.work.WorkControlModels.Control;
 import ru.rtk.crm.work.WorkControlService;
 import ru.rtk.crm.work.WorkRepository;
@@ -149,12 +151,12 @@ class AnalyticsFixesTest {
         assertThat(workRepository.countOrganizationsByTeam(scope, TODAY).stream()
                 .filter(team -> team.teamId().equals(TEAM_A)).findFirst().orElseThrow().participants()).isEqualTo(allStreams);
         LearningTrend.Item trend = trendService.trend(LEADER_A_PROFILE, 30).total();
-        assertThat(trend.end() + trend.endWithoutBase()).isEqualTo(onToday);
+        assertThat(trend.end() + trend.endWithoutBase() + trend.endStarted()).isEqualTo(onToday);
 
         jdbcTemplate.update("UPDATE organizations SET status = 'ARCHIVED' WHERE id = ?", ORGANIZATION_A);
         assertThat(participants(request(ReportKind.DEMAND, null, null))).isZero();
         LearningTrend.Item archived = trendService.trend(LEADER_A_PROFILE, 30).total();
-        assertThat(archived.end() + archived.endWithoutBase()).isZero();
+        assertThat(archived.end() + archived.endWithoutBase() + archived.endStarted()).isZero();
         assertThat(workRepository.countOrganizationsByTeam(scope, TODAY).stream()
                 .filter(team -> team.teamId().equals(TEAM_A)).findFirst().orElseThrow().participants()).isZero();
     }
@@ -203,8 +205,141 @@ class AnalyticsFixesTest {
                 .extracting(StatisticsResult.Item::label, StatisticsResult.Item::count).containsExactly(tuple("Встреча", 1L));
     }
 
+    // Две версии маршрута в выборке: этапы идут по шаблону самих работ, группами «шаблон: этап», одноимённые этапы разных
+    // маршрутов не сливаются; длительность тоже считается по маршрутам. Вид взаимодействия отбирает и группирует строки.
+    @Test
+    void twoRoutesAreGroupedByTemplateAndKindsFilterAndGroupWorks() {
+        UUID main = routeTemplate("Основной", "Поиск контакта", "Уточнение актуальности", "Встреча", "Подписание");
+        UUID courses = routeTemplate("ПК", "Поиск контакта", "Курс");
+        jdbcTemplate.update("UPDATE interactions SET workflow_template_id = ? WHERE id IN (?, ?)", main, INTERACTION_TWO_PRODUCTS,
+                INTERACTION_WITHOUT_LINKS);
+        jdbcTemplate.update("UPDATE interactions SET workflow_template_id = ? WHERE id = ?", courses, INTERACTION_UNASSIGNED);
+        ru.rtk.crm.interaction.InteractionKindTestSchema.create(jdbcTemplate);
+        UUID courseKind = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO interaction_kinds (id, name, sort_order) VALUES (?, 'Повышение квалификации', 1)", courseKind);
+        jdbcTemplate.update("UPDATE interactions SET interaction_kind_id = ?", ru.rtk.crm.interaction.InteractionKindTestSchema.BASE_KIND);
+        jdbcTemplate.update("UPDATE interactions SET interaction_kind_id = ? WHERE id = ?", courseKind, INTERACTION_UNASSIGNED);
+
+        StatisticsResult byStage = reportService.statistics(LEADER_A_PROFILE, new StatisticsRequest(ReportKind.PORTFOLIO,
+                StatisticsGroupBy.STAGE, null, null, null, ReportFilters.none(), null, null));
+
+        assertThat(byStage.items()).extracting(StatisticsResult.Item::label, StatisticsResult.Item::count).containsExactly(
+                tuple("Основной: Поиск контакта", 1L), tuple("Основной: Уточнение актуальности", 0L), tuple("Основной: Встреча", 1L),
+                tuple("Основной: Подписание", 0L), tuple("ПК: Поиск контакта", 1L), tuple("ПК: Курс", 0L),
+                tuple("ПК: Уточнение актуальности", 0L), tuple("ПК: Встреча", 0L));
+        assertThat(reportService.document(LEADER_A_PROFILE, request(ReportKind.DURATION, SEPTEMBER_FIRST, SEPTEMBER_LAST)).rows())
+                .extracting(ReportRow::stageName)
+                .contains("Основной: Поиск контакта", "ПК: Поиск контакта")
+                .doesNotContain("Поиск контакта");
+
+        StatisticsResult byKind = reportService.statistics(LEADER_A_PROFILE, new StatisticsRequest(ReportKind.PORTFOLIO,
+                StatisticsGroupBy.KIND, null, null, null, ReportFilters.none(), null, null));
+        assertThat(byKind.items()).extracting(StatisticsResult.Item::label, StatisticsResult.Item::count)
+                .containsExactly(tuple("Взаимодействие по ИТ-программе", 2L), tuple("Повышение квалификации", 1L));
+        ReportFilters onlyCourses = ReportFilters.none().withKinds(List.of(courseKind));
+        assertThat(reportService.preview(LEADER_A_PROFILE, new ReportRequest(ReportKind.PORTFOLIO, null, null, null, onlyCourses, null,
+                ReportFormat.XLSX, null, null), 0, 50).total()).isEqualTo(1);
+        assertThat(workControlService.control(LEADER_A_PROFILE, onlyCourses, null, null).total().works()).isEqualTo(1);
+        assertThat(reportService.statistics(LEADER_A_PROFILE, new StatisticsRequest(ReportKind.PORTFOLIO, StatisticsGroupBy.STAGE,
+                null, null, null, onlyCourses, null, null)).items())
+                .extracting(StatisticsResult.Item::label)
+                .startsWith("Поиск контакта", "Курс");
+    }
+
+    // Матрица «программа × этап» на «Контроле» считается из строк /api/work/control по их маршруту и этапу. Она должна
+    // совпадать с диаграммой «Портфель по этапам» для идущих взаимодействий: те же маршруты, тот же порядок этапов, те же
+    // числа — и без отбора, и с отбором по программе.
+    @Test
+    void controlStageMatrixMatchesPortfolioByStageForEveryRouteAndProgram() {
+        UUID main = routeTemplate("Основной", "Поиск контакта", "Уточнение актуальности", "Встреча", "Подписание");
+        UUID courses = routeTemplate("ПК", "Поиск контакта", "Курс");
+        jdbcTemplate.update("UPDATE interactions SET workflow_template_id = ? WHERE id IN (?, ?)", main, INTERACTION_TWO_PRODUCTS,
+                INTERACTION_WITHOUT_LINKS);
+        jdbcTemplate.update("UPDATE interactions SET workflow_template_id = ? WHERE id = ?", courses, INTERACTION_UNASSIGNED);
+
+        for (List<UUID> programs : List.of(List.<UUID>of(), List.of(PROGRAM))) {
+            ReportFilters control = new ReportFilters(List.of(), List.of(), false, programs, false, List.of(), false, List.of(), false,
+                    List.of(), null);
+            ReportFilters portfolio = new ReportFilters(List.of(), List.of(), false, programs, false, List.of(), false, List.of(), false,
+                    List.of(), null, List.of(ru.rtk.crm.interaction.InteractionWorkStatus.ACTIVE), List.of(), ReportAgreementFilters.none(),
+                    List.of(), null, null);
+            Control matrix = workControlService.control(LEADER_A_PROFILE, control, null, null);
+            List<WorkControlModels.WorkItem> rows = matrix.teams().stream()
+                    .flatMap(team -> team.managers().stream()).flatMap(manager -> manager.works().stream()).toList();
+            boolean several = matrix.routes().size() > 1;
+            List<String> labels = new ArrayList<>();
+            List<Long> counts = new ArrayList<>();
+            matrix.routes().forEach(route -> route.stages().forEach(stage -> {
+                labels.add(several ? route.templateName() + ": " + stage : stage);
+                counts.add(rows.stream().filter(row -> java.util.Objects.equals(row.routeId(), route.templateId())
+                        && stage.equals(row.stageAtEnd())).count());
+            }));
+
+            StatisticsResult byStage = reportService.statistics(LEADER_A_PROFILE, new StatisticsRequest(ReportKind.PORTFOLIO,
+                    StatisticsGroupBy.STAGE, null, null, null, portfolio, null, null));
+
+            assertThat(rows).as("строки есть в обоих вариантах отбора").isNotEmpty();
+            assertThat(byStage.items()).extracting(StatisticsResult.Item::label).containsExactlyElementsOf(labels);
+            assertThat(byStage.items()).extracting(StatisticsResult.Item::count).containsExactlyElementsOf(counts);
+            assertThat(counts.stream().mapToLong(Long::longValue).sum()).isEqualTo(matrix.total().works());
+        }
+    }
+
+    // М08: вехи одинаковы для разных маршрутов — считаются по роли этапа для LMS, а не по названию и номеру этапа.
+    @Test
+    void milestonesCountInteractionsThatReachedTheLmsRoleOnAnyRoute() {
+        OffsetDateTime entered = OffsetDateTime.parse("2026-09-10T10:00:00+03:00");
+        UUID lectures = milestoneStage(INTERACTION_WITHOUT_LINKS, "Лекции", "CLASSES");
+        event(INTERACTION_WITHOUT_LINKS, lectures, "TRANSITIONED", entered);
+        UUID course = milestoneStage(INTERACTION_UNASSIGNED, "Курс ППС", "TEACHER_TRAINING");
+        UUID mark = event(INTERACTION_UNASSIGNED, course, "STAGE_COMPLETED", entered);
+        jdbcTemplate.update("INSERT INTO interaction_stage_completions (interaction_id, stage_id, completed_on, event_id) VALUES (?, ?, ?, ?)",
+                INTERACTION_UNASSIGNED, course, entered.toLocalDate(), mark);
+        UUID notReached = milestoneStage(INTERACTION_TWO_PRODUCTS, "Повышение", "QUALIFICATION");
+        assertThat(notReached).isNotNull();
+
+        StatisticsResult now = reportService.statistics(LEADER_A_PROFILE, new StatisticsRequest(ReportKind.PORTFOLIO,
+                StatisticsGroupBy.MILESTONE, null, null, null, ReportFilters.none(), null, null));
+        assertThat(now.items()).extracting(StatisticsResult.Item::label, StatisticsResult.Item::count).containsExactly(
+                tuple("Обучение преподавателей", 1L), tuple("Идут занятия", 1L), tuple("Повышение квалификации", 0L));
+        assertThat(now.unknownCount()).as("без вех — «Не указано»").isEqualTo(now.total() - 2);
+        assertThat(now.notes()).anyMatch(note -> note.startsWith("Веха — вход в этап с ролью LMS"));
+
+        StatisticsResult before = reportService.statistics(LEADER_A_PROFILE, new StatisticsRequest(ReportKind.SNAPSHOT,
+                StatisticsGroupBy.MILESTONE, null, null, null, ReportFilters.none(), entered.toLocalDate().minusDays(1), null));
+        assertThat(before.items()).extracting(StatisticsResult.Item::count).as("на дату до входа вех ещё нет").containsOnly(0L);
+        assertThatThrownBy(() -> reportService.statistics(LEADER_A_PROFILE, new StatisticsRequest(ReportKind.EVENTS,
+                StatisticsGroupBy.MILESTONE, SEPTEMBER_FIRST, SEPTEMBER_LAST, null, ReportFilters.none(), null, null)))
+                .isInstanceOf(ru.rtk.crm.interaction.InteractionValidationException.class);
+    }
+
+    private UUID milestoneStage(UUID interactionId, String name, String role) {
+        UUID stage = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO interaction_stages (id, interaction_id, stage_order, name, lms_role) VALUES (?, ?, 50, ?, ?)",
+                stage, interactionId, name, role);
+        return stage;
+    }
+
+    private UUID event(UUID interactionId, UUID stageId, String type, OffsetDateTime occurredAt) {
+        UUID id = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO interaction_events (id, interaction_id, type, stage_id, stage_name_snapshot, actor_profile_id,"
+                + " version, occurred_at) VALUES (?, ?, ?, ?, 'этап', ?, 90, ?)", id, interactionId, type, stageId, MANAGER_A, occurredAt);
+        return id;
+    }
+
+    private UUID routeTemplate(String name, String... stages) {
+        UUID template = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO workflow_templates (id, name, default_template) VALUES (?, ?, FALSE)", template, name);
+        for (int order = 0; order < stages.length; order++) {
+            jdbcTemplate.update("INSERT INTO workflow_template_stages (id, template_id, stage_order, name) VALUES (?, ?, ?, ?)",
+                    UUID.randomUUID(), template, order, stages[order]);
+        }
+        return template;
+    }
+
     @Test
     void monthlyLinesKeepFiveLargestAndMergeTheRestIntoOthers() throws Exception {
+
         List<StatisticsResult.Series> series = new ArrayList<>();
         for (int index = 1; index <= 8; index++) {
             series.add(new StatisticsResult.Series("s" + index, "Вуз " + index, false, List.of((long) (10 - index), 1L)));
@@ -334,6 +469,22 @@ class AnalyticsFixesTest {
             assertThat(reportService.preview(LEADER_A_PROFILE, request, 0, 10).notes())
                     .as(kind.name()).allSatisfy(note -> assertThat(note.length()).isLessThanOrEqualTo(420));
         }
+    }
+
+    // А05: в отчётах о прошлом программа, продукты и команда — текущие; колонка и примечание это называют.
+    @Test
+    void pastReportsLabelCurrentFieldsAndPortfolioDoesNot() {
+        ReportPreview snapshot = reportService.preview(LEADER_A_PROFILE, request(ReportKind.SNAPSHOT), 0, 10);
+        assertThat(snapshot.columns()).extracting(ReportColumnView::title).contains("ИТ-программа (текущая)", "ИТ-продукты (текущие)");
+        assertThat(snapshot.notes()).anyMatch(note -> note.startsWith("Время полей: на дату — этап и ответственный"));
+
+        ReportPreview pastWork = reportService.preview(LEADER_A_PROFILE, managerWork(SEPTEMBER_FIRST, SEPTEMBER_LAST), 0, 10);
+        assertThat(pastWork.columns()).extracting(ReportColumnView::title).contains("ИТ-программа (текущая)", "Менеджер на конец периода");
+        assertThat(pastWork.notes()).anyMatch(note -> note.startsWith("Время полей: на конец периода"));
+
+        ReportPreview portfolio = reportService.preview(LEADER_A_PROFILE, request(ReportKind.PORTFOLIO), 0, 10);
+        assertThat(portfolio.columns()).extracting(ReportColumnView::title).contains("ИТ-программа");
+        assertThat(portfolio.notes()).noneMatch(note -> note.startsWith("Время полей"));
     }
 
     private void addMonthlyWork(int index) {

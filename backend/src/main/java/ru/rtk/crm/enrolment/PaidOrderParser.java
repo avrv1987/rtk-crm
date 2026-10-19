@@ -26,7 +26,7 @@ public class PaidOrderParser {
     static final String MIDDLE_NAME = "Отчество";
     static final String PHONE = "Телефон";
     static final String EMAIL = "Email";
-    static final String STREAM_NUMBER = "Номер потока";
+    public static final String STREAM_NUMBER = "Номер потока";
     static final String PERSONAL_WARNING = "; поле не сохранено";
     private static final Pattern ORDER_NUMBER_FORM = Pattern.compile("ORD-\\d+-[A-Z0-9]+");
 
@@ -51,7 +51,8 @@ public class PaidOrderParser {
             int position = index + 1;
             JsonNode item = root.get(index);
             int issuesBefore = issues.size();
-            if (item.isNull()) {
+            // Пустой объект {} — такой же пустой элемент, как null (Н-21): в протоколе он считается в «пустых», а не в ошибках.
+            if (item.isNull() || item.isObject() && item.isEmpty()) {
                 emptyElements++;
                 issues.add(new PaidOrderIssue(position, null, "Пустой элемент пропущен"));
             } else if (!item.isObject()) {
@@ -62,7 +63,7 @@ public class PaidOrderParser {
                     byNumber.computeIfAbsent(order.orderNumber(), key -> new ArrayList<>()).add(new Candidate(position, order));
                 }
             }
-            // Оператор ищет запись в файле по номеру заявки, а не по номеру элемента массива.
+            // Менеджер учебного процесса ищет запись в файле по номеру заявки, а не по номеру элемента массива.
             String number = orderNumberOf(item);
             for (int issue = issuesBefore; number != null && issue < issues.size(); issue++) {
                 issues.set(issue, issues.get(issue).withOrderNumber(number));
@@ -108,9 +109,9 @@ public class PaidOrderParser {
         String orderNumber = text(item, ORDER_NUMBER, 100, true, position, found);
         String course = text(item, COURSE, 300, true, position, found);
         int personalFrom = found.size();
-        String lastName = text(item, LAST_NAME, 100, true, position, found);
-        String firstName = text(item, FIRST_NAME, 100, true, position, found);
-        String middleName = text(item, MIDDLE_NAME, 100, false, position, found);
+        String lastName = name(item, LAST_NAME, true, position, found);
+        String firstName = name(item, FIRST_NAME, true, position, found);
+        String middleName = name(item, MIDDLE_NAME, false, position, found);
         String phoneText = text(item, PHONE, 50, true, position, found);
         String phone = phoneText == null ? null : LearnerRules.normalizePhone(phoneText);
         if (phoneText != null && phone == null) {
@@ -136,6 +137,17 @@ public class PaidOrderParser {
         }
         String version = CommandFingerprint.of(objectMapper, List.of(course, streamNumber));
         return new PaidOrder(orderNumber, course, streamNumber, lastName, firstName, middleName, phone, email, version);
+    }
+
+    // ФИО проверяется тем же правилом, что и анкета (LearnerRules.isName): иначе принятая из файла фамилия потом не даёт
+    // сохранить ни одной группы анкеты. Неверное имя — предупреждение, поле не сохраняется, как почта и телефон.
+    private static String name(JsonNode item, String field, boolean required, int position, List<PaidOrderIssue> issues) {
+        String text = text(item, field, LearnerRules.MAX_NAME_LENGTH, required, position, issues);
+        if (text != null && !LearnerRules.isName(text)) {
+            issues.add(new PaidOrderIssue(position, field, "Поле «" + field + "»: допустимы буквы, пробел, дефис, апостроф и точка"));
+            return null;
+        }
+        return text;
     }
 
     private static String text(

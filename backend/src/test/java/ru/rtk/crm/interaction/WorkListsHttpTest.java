@@ -52,6 +52,10 @@ import ru.rtk.crm.catalog.OrganizationType;
 @AutoConfigureMockMvc
 @ActiveProfiles("oidc")
 class WorkListsHttpTest {
+    // П. 12 (2.5): отборы «ИТ-программа» и «Продукт» в «Моей работе».
+    private static final UUID PROGRAM_FILTER = UUID.fromString("00000000-0000-4000-8000-0000000000a1");
+    private static final UUID PRODUCT_FILTER = UUID.fromString("00000000-0000-4000-8000-0000000000a2");
+
     private static final UUID TEAM_A = UUID.fromString("00000000-0000-0000-0000-000000000001");
     private static final UUID ORGANIZATION_A = UUID.fromString("00000000-0000-0000-0000-000000000101");
     private static final CrmProfile PROFILE = new CrmProfile(
@@ -121,6 +125,8 @@ class WorkListsHttpTest {
                 changedAt,
                 changedAt,
                 null,
+                null,
+                null,
                 null
         );
         when(interactionService.list(any(), any(), any())).thenReturn(new InteractionPage(List.of(summary), 1, 10, 11));
@@ -132,6 +138,8 @@ class WorkListsHttpTest {
                         .param("stage", "Первичный контакт")
                         .param("status", "PAUSED")
                         .param("flag", "WAITING_UNIVERSITY")
+                        .param("programId", PROGRAM_FILTER.toString())
+                        .param("productId", PRODUCT_FILTER.toString())
                         .param("sort", "nextActionAt,asc")
                         .param("page", "1")
                         .param("size", "10"))
@@ -159,8 +167,10 @@ class WorkListsHttpTest {
                         null,
                         false,
                         null,
-                        null
+                        null,
+                        null, PROGRAM_FILTER, PRODUCT_FILTER
                 )),
+
                 eq(new InteractionQuery(1, 10, InteractionSort.NEXT_ACTION_AT_ASC))
         );
     }
@@ -174,12 +184,12 @@ class WorkListsHttpTest {
 
         verify(interactionService).list(
                 eq(PROFILE),
-                eq(new InteractionFilter(null, null, null, null, InteractionWorkStatus.ACTIVE, null, null, null, false, null, null)),
+                eq(new InteractionFilter(null, null, null, null, InteractionWorkStatus.ACTIVE, null, null, null, false, null, null, null, null, null)),
                 any()
         );
         verify(interactionService).list(
                 eq(PROFILE),
-                eq(new InteractionFilter(null, null, null, null, null, null, null, null, false, null, null)),
+                eq(new InteractionFilter(null, null, null, null, null, null, null, null, false, null, null, null, null, null)),
                 any()
         );
     }
@@ -204,12 +214,12 @@ class WorkListsHttpTest {
 
         verify(interactionService).list(
                 eq(PROFILE),
-                eq(new InteractionFilter(null, null, null, null, null, null, null, null, true, 30, 45)),
+                eq(new InteractionFilter(null, null, null, null, null, null, null, null, true, 30, 45, null, null, null)),
                 eq(new InteractionQuery(0, 25, InteractionSort.UPDATED_DESC))
         );
         verify(interactionService).list(
                 eq(PROFILE),
-                eq(new InteractionFilter(null, null, null, null, InteractionWorkStatus.COMPLETED, null, null, responsible, false, null, null)),
+                eq(new InteractionFilter(null, null, null, null, InteractionWorkStatus.COMPLETED, null, null, responsible, false, null, null, null, null, null)),
                 eq(new InteractionQuery(0, 25, InteractionSort.UPDATED_DESC))
         );
     }

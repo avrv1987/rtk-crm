@@ -297,10 +297,11 @@ public class PersonalDataRepository {
         return expired;
     }
 
-    // Готовые отчёты, где могли оказаться данные субъекта: виды с текстами и ФИО (не «Востребованность»
+    // Кандидаты — готовые отчёты, где могли оказаться данные субъекта: виды с текстами и ФИО (не «Востребованность»
     // и не «Длительность») у тех, кто видел его вузы, — «Руководство», команды этих вузов, в том числе прежние,
     // и отчёты самого сотрудника. Отчёты других команд и администраторов (они не видят работу с вузами) не трогаются.
-    List<StoredFile> findSubjectReports(List<UUID> organizationIds, List<UUID> profileIds) {
+    // Удалять ли кандидата, решает проверка содержимого файла (ReportContentScanner).
+    List<SubjectReport> findSubjectReports(List<UUID> organizationIds, List<UUID> profileIds) {
         List<UUID> teams = new ArrayList<>();
         if (!organizationIds.isEmpty()) {
             teams.addAll(jdbcClient.sql("""
@@ -328,7 +329,7 @@ public class PersonalDataRepository {
             owners.add("owner_profile_id IN (:profiles)");
         }
         JdbcClient.StatementSpec select = jdbcClient.sql("""
-                SELECT id, result_storage_key
+                SELECT id, result_storage_key, format, group_by
                 FROM report_jobs
                 WHERE status = 'SUCCEEDED' AND result_storage_key IS NOT NULL AND kind NOT IN (:safeKinds)
                   AND (%s)
@@ -341,7 +342,21 @@ public class PersonalDataRepository {
         if (!profileIds.isEmpty()) {
             select.param("profiles", profileIds);
         }
-        return select.query(this::mapReportFile).list();
+        return select.query((resultSet, row) -> new SubjectReport(mapReportFile(resultSet, row), resultSet.getString("format"),
+                resultSet.getString("group_by"))).list();
+    }
+
+    // Файл остаётся, но в списке выгрузок отчёт помечен: проверить его на данные субъекта не удалось.
+    boolean markReportForRebuild(StoredFile report, String message) {
+        return jdbcClient.sql("""
+                UPDATE report_jobs
+                SET error_code = 'REPORT_NEEDS_REBUILD', error_message = :message
+                WHERE id = :jobId AND result_storage_key = :storageKey
+                """)
+                .param("jobId", report.id())
+                .param("storageKey", report.storageKey())
+                .param("message", message)
+                .update() == 1;
     }
 
     // Условие по ключу файла: параллельное скачивание или повторный запуск не удалят файл дважды.
@@ -444,6 +459,9 @@ public class PersonalDataRepository {
     }
 
     private record StoredText(UUID id, String text) {
+    }
+
+    record SubjectReport(StoredFile file, String format, String groupBy) {
     }
 
     record StoredFile(UUID id, UUID storageKey) {

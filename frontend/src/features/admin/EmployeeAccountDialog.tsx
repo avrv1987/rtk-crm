@@ -1,5 +1,5 @@
 import { getModules } from '../../shared/modules'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import {
   ApiError,
   apiClient,
@@ -127,6 +127,24 @@ export const EmployeeAccountDialog = ({
   const [error, setError] = useState<unknown>()
   const [result, setResult] = useState<Result | null>(null)
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null)
+  // Ссылку на пароль сервер шлёт только в режиме SMTP; в режиме заглушки пароль показывается на экране (Н-А6). Пока
+  // режим не известен (загрузка, нет права читать настройки), текст говорит об обоих случаях.
+  const [mailMode, setMailMode] = useState<'SMTP' | 'STUB' | null>(null)
+  useEffect(() => {
+    if (!getModules().mail) {
+      return
+    }
+    let active = true
+    apiClient.getMailSettings().then((settings) => {
+      if (active) {
+        setMailMode(settings.mode === 'SMTP' ? 'SMTP' : 'STUB')
+      }
+    }, () => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
+  const sendsLinks = getModules().mail ? mailMode : 'STUB'
 
   const close = () => {
     setDraft(emptyDraft)
@@ -235,9 +253,11 @@ export const EmployeeAccountDialog = ({
       return (
         <form className="admin-profile-form employee-account__form" onSubmit={(event) => void run(event)}>
           <p className="admin-profile-form__hint">
-            {getModules().mail
+            {sendsLinks === 'SMTP'
               ? 'CRM создаст учётную запись Keycloak и активный профиль и отправит на почту сотрудника одноразовую ссылку на временный пароль; ссылка действует 72 часа. На экране пароль не показывается.'
-              : 'CRM создаст учётную запись Keycloak и активный профиль, выдаст временный пароль — он будет показан один раз. Писем система не отправляет.'}
+              : sendsLinks === 'STUB'
+                ? 'CRM создаст учётную запись Keycloak и активный профиль, выдаст временный пароль — он будет показан один раз. Писем с паролем система не отправляет.'
+                : 'CRM создаст учётную запись Keycloak и активный профиль. Если почта работает через SMTP, сотрудник получит одноразовую ссылку на временный пароль; в режиме заглушки пароль будет показан один раз на экране.'}
           </p>
           <label>
             ФИО *
@@ -302,7 +322,7 @@ export const EmployeeAccountDialog = ({
           </label>
           <p className="admin-profile-form__hint">
             {getModules().partner && 'Координатору вуза доступ открывают в карточке вуза, во вкладке «Контакты». '}
-            {getModules().enrolment && 'Флаг «Оператор зачисления» ставят после заведения кнопкой «Изменить».'}
+            {getModules().enrolment && 'Флаг «Менеджер учебного процесса» ставят после заведения кнопкой «Изменить».'}
           </p>
           {renderError()}
           {renderActions('Завести сотрудника', incomplete)}
@@ -357,9 +377,11 @@ export const EmployeeAccountDialog = ({
       <form className="employee-account__form" onSubmit={(event) => void run(event)}>
         <p>
           {action.kind === 'reset'
-            ? `Сотрудник «${name}» получит новый временный пароль, прежний перестанет действовать. ${getModules().mail
+            ? `Сотрудник «${name}» получит новый временный пароль, прежний перестанет действовать. ${sendsLinks === 'SMTP'
               ? 'Ссылка на пароль уйдёт на почту сотрудника; если почты в учётной записи нет, пароль будет показан один раз.'
-              : 'Пароль будет показан один раз.'} При входе Keycloak попросит задать свой. Действующие сеансы не завершаются — при подозрении на утечку завершите и их.`
+              : sendsLinks === 'STUB'
+                ? 'Пароль будет показан один раз.'
+                : 'Если почта работает через SMTP, ссылка уйдёт на почту сотрудника, иначе пароль будет показан один раз.'} При входе Keycloak попросит задать свой. Действующие сеансы не завершаются — при подозрении на утечку завершите и их.`
             : `Все сеансы «${name}» в Keycloak и CRM будут завершены: на следующем действии сотруднику придётся войти заново. Учётная запись остаётся включённой — чтобы закрыть доступ совсем, снимите «Доступ к CRM открыт».`}
         </p>
         {renderError()}

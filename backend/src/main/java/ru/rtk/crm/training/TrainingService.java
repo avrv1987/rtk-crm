@@ -19,6 +19,7 @@ import ru.rtk.crm.interaction.Interaction;
 import ru.rtk.crm.interaction.InteractionCommentRequest;
 import ru.rtk.crm.interaction.InteractionCommentResult;
 import ru.rtk.crm.interaction.InteractionCreateRequest;
+import ru.rtk.crm.interaction.InteractionKindService;
 import ru.rtk.crm.interaction.InteractionNextStep;
 import ru.rtk.crm.interaction.InteractionService;
 import ru.rtk.crm.interaction.InteractionValidationException;
@@ -36,15 +37,18 @@ public class TrainingService {
     private final InteractionService interactionService;
     private final CommandIdempotencyRepository commandIdempotencyRepository;
     private final TrainingRepository repository;
+    private final InteractionKindService interactionKindService;
 
     public TrainingService(
             InteractionService interactionService,
             CommandIdempotencyRepository commandIdempotencyRepository,
-            TrainingRepository repository
+            TrainingRepository repository,
+            InteractionKindService interactionKindService
     ) {
         this.interactionService = interactionService;
         this.commandIdempotencyRepository = commandIdempotencyRepository;
         this.repository = repository;
+        this.interactionKindService = interactionKindService;
     }
 
     @Transactional(readOnly = true)
@@ -114,6 +118,10 @@ public class TrainingService {
                 .find(profile.id(), CommandOperation.CREATE_INTERACTION, idempotencyKey).isEmpty())) {
             throw nextCycleExists(next.get());
         }
+        // Новый цикл наследует вид прошлого, если тот ещё действует; иначе вид подберут правила. Маршрут — по виду.
+        UUID kindId = request.kindId() != null
+                ? request.kindId()
+                : interactionKindService.activeOrNull(previous.kind() == null ? null : previous.kind().id());
         Interaction created = interactionService.create(
                 profile,
                 new InteractionCreateRequest(
@@ -125,9 +133,11 @@ public class TrainingService {
                         previous.programId(),
                         previous.productIds(),
                         null,
-                        request.templateId()
+                        request.templateId(),
+                        kindId
                 ),
                 idempotencyKey
+
         );
         if (next.isPresent()) {
             if (next.get().interactionId().equals(created.id())) {

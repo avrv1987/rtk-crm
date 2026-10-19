@@ -98,7 +98,7 @@ class DemoBootstrapCommandTest {
     @BeforeEach
     void setUp() {
         createSchema();
-        for (String table : List.of("interaction_events", "product_agreements", "agreement_status_events", "agreement_interactions",
+        for (String table : List.of("interaction_cycles", "interaction_events", "product_agreements", "agreement_status_events", "agreement_interactions",
                 "agreement_programs", "agreement_files", "agreement_supplements", "agreements", "attachments", "contacts",
                 "interaction_issues", "interactions", "products", "vendors", "programs", "directions",
                 "organizations", "crm_user_profiles", "teams")) {
@@ -148,7 +148,7 @@ class DemoBootstrapCommandTest {
             InteractionStage target = before.stages().stream().filter(stage -> stage.id().equals(request.toStageId())).findFirst().orElseThrow();
             Interaction moved = new Interaction(id, before.organizationId(), before.title(), target.id(), target.name(), before.stages(),
                     List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), List.of(), List.of(), null,
-                    before.version() + 1, UUID.randomUUID(), OffsetDateTime.now(), OffsetDateTime.now(), null, false, null);
+                    before.version() + 1, UUID.randomUUID(), OffsetDateTime.now(), OffsetDateTime.now(), null, false, null, null);
             interactions.put(id, moved);
             return moved;
         });
@@ -166,6 +166,11 @@ class DemoBootstrapCommandTest {
                     request.riskLevel() == null ? null : request.riskLevel().name(), request.dueOn(),
                     UUID.randomUUID(), UUID.randomUUID());
             jdbcTemplate.update("UPDATE interactions SET version = version + 1 WHERE id = ?", interactionId);
+            // Как настоящая команда: событие истории со снимком этапа, на котором стоит работа в момент записи.
+            jdbcTemplate.update("""
+                    INSERT INTO interaction_events (id, interaction_id, type, version, occurred_at, stage_name_snapshot)
+                    VALUES (?, ?, 'ISSUE_CREATED', 0, CURRENT_TIMESTAMP, ?)
+                    """, UUID.randomUUID(), interactionId, interactions.get(interactionId).currentStageName());
             return null;
         });
         when(interactionIssueService.resolve(any(), any(), any(), any(InteractionIssueResolution.class), anyString())).thenAnswer(invocation -> {
@@ -280,6 +285,19 @@ class DemoBootstrapCommandTest {
         OffsetDateTime created = jdbcTemplate.queryForObject("SELECT created_at FROM interactions WHERE id = ?",
                 OffsetDateTime.class, main.id());
         assertThat(created).isBefore(moves.getFirst());
+    }
+
+    @Test
+    void historyOfTheMainDemoWorkNamesTheStageWhereItsRisksAndProblemsWereRecorded() {
+        command(demo()).run(null);
+
+        Interaction main = interactions.values().iterator().next();
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT stage_name_snapshot FROM interaction_events WHERE interaction_id = ? AND type = 'ISSUE_CREATED'
+                """, String.class, main.id())).hasSize(3).containsOnly("Этап 6");
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT stage_id FROM interaction_events WHERE interaction_id = ? AND type = 'ISSUE_CREATED'
+                """, UUID.class, main.id())).containsOnly(main.currentStageId());
     }
 
     @Test
@@ -417,7 +435,7 @@ class DemoBootstrapCommandTest {
         List<DemoBootstrapProperties.Team> teams = new ArrayList<>(TEAMS);
         teams.add(new DemoBootstrapProperties.Team("open-enrolment", "Открытый набор"));
         List<DemoBootstrapProperties.Identity> identities = new ArrayList<>(DEMO_IDENTITIES);
-        identities.add(new DemoBootstrapProperties.Identity("enrol", ISSUER, "subject-enrol", "Оператор зачисления", UserRole.USER,
+        identities.add(new DemoBootstrapProperties.Identity("enrol", ISSUER, "subject-enrol", "Менеджер учебного процесса", UserRole.USER,
                 "open-enrolment", true, null, null));
         DemoBootstrapCommand command = command(new DemoBootstrapProperties(true, false, teams, identities, DEMO_ORGANIZATIONS, null));
 
@@ -425,8 +443,8 @@ class DemoBootstrapCommandTest {
         command.run(null);
 
         assertThat(jdbcTemplate.queryForList("SELECT display_name FROM crm_user_profiles WHERE enrolment_operator", String.class))
-                .containsExactly("Оператор зачисления");
-        assertThat(jdbcTemplate.queryForObject("SELECT team_id FROM crm_user_profiles WHERE display_name = 'Оператор зачисления'",
+                .containsExactly("Менеджер учебного процесса");
+        assertThat(jdbcTemplate.queryForObject("SELECT team_id FROM crm_user_profiles WHERE display_name = 'Менеджер учебного процесса'",
                 UUID.class)).isEqualTo(openEnrolment);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM teams", Integer.class)).isEqualTo(3);
         assertThat(jdbcTemplate.queryForList("""
@@ -565,6 +583,36 @@ class DemoBootstrapCommandTest {
         assertThat(ChronoUnit.DAYS.between(created, moves.getFirst())).isEqualTo(9);
     }
 
+    @Test
+    void classicUniversityGetsALinkedPairOfCompletedAndNextCycleOnce() {
+        List<DemoBootstrapProperties.Identity> identities = new ArrayList<>(DEMO_IDENTITIES);
+        identities.add(identity("leader-c", "Руководитель В", UserRole.LEADER, "team-c"));
+        identities.add(identity("kam-h", "КАМ З", UserRole.USER, "team-a"));
+        List<DemoBootstrapProperties.Team> teams = new ArrayList<>(TEAMS);
+        teams.add(new DemoBootstrapProperties.Team("team-c", "Команда В"));
+        List<DemoBootstrapProperties.Organization> organizations = new ArrayList<>(DEMO_ORGANIZATIONS);
+        organizations.add(new DemoBootstrapProperties.Organization("Классический университет (демо)", "UNIVERSITY", "team-a", "kam-h"));
+        DemoBootstrapCommand command = command(new DemoBootstrapProperties(true, false, teams, identities, organizations, null));
+
+        command.run(null);
+        command.run(null);
+
+        List<Map<String, Object>> cycles = jdbcTemplate.queryForList("""
+                SELECT n.title AS next_title, p.title AS previous_title, c.starts_on, n.created_at
+                FROM interaction_cycles c JOIN interactions n ON n.id = c.interaction_id
+                JOIN interactions p ON p.id = c.previous_interaction_id
+                """);
+        assertThat(cycles).singleElement().satisfies(row -> {
+            assertThat(row.get("NEXT_TITLE")).isEqualTo("Демо: повышение квалификации");
+            assertThat(row.get("PREVIOUS_TITLE")).isEqualTo("Демо: закрытый цикл");
+            assertThat(row.get("STARTS_ON")).isNotNull();
+        });
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM interaction_cycles c JOIN interactions n ON n.id = c.interaction_id
+                JOIN interactions p ON p.id = c.previous_interaction_id WHERE p.created_at < n.created_at
+                """, Integer.class)).as("прошлый цикл начат раньше нового").isEqualTo(1);
+    }
+
     private DemoBootstrapCommand command(DemoBootstrapProperties properties) {
         return new DemoBootstrapCommand(properties, jdbcClient, new UserProfileRepository(jdbcClient), contactService,
                 interactionService, interactionIssueService, attachmentService, productAgreementService, agreementFileService);
@@ -573,7 +621,7 @@ class DemoBootstrapCommandTest {
     private static Interaction interaction(UUID id, UUID organizationId, String title, List<InteractionStage> stages, int version) {
         return new Interaction(id, organizationId, title, stages.getFirst().id(), stages.getFirst().name(), stages, List.of(),
                 List.of(), null, null, List.of(), null, null, List.of(), List.of(), List.of(), List.of(), null, version,
-                UUID.randomUUID(), OffsetDateTime.now(), OffsetDateTime.now(), null, false, null);
+                UUID.randomUUID(), OffsetDateTime.now(), OffsetDateTime.now(), null, false, null, null);
     }
 
     private static DemoBootstrapProperties demo() {
@@ -590,6 +638,7 @@ class DemoBootstrapCommandTest {
     }
 
     private void createSchema() {
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.create(jdbcTemplate);
         for (String statement : List.of(
                 """
                 CREATE TABLE IF NOT EXISTS teams (
@@ -698,7 +747,7 @@ class DemoBootstrapCommandTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (interaction_kind_id UUID, workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL, current_stage_id UUID,
                     version INTEGER NOT NULL DEFAULT 0,
                     next_action VARCHAR(500), created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -708,7 +757,14 @@ class DemoBootstrapCommandTest {
                 """
                 CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, type VARCHAR(32) NOT NULL,
-                    version INTEGER NOT NULL, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                    version INTEGER NOT NULL, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    stage_id UUID, stage_name_snapshot VARCHAR(200)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS interaction_cycles (
+                    interaction_id UUID PRIMARY KEY, previous_interaction_id UUID NOT NULL UNIQUE, starts_on DATE NOT NULL,
+                    created_by UUID NOT NULL, created_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
                 """

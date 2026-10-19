@@ -51,12 +51,14 @@ type PickHandler = (managerId: string | null, tile: ControlTile | null) => void
 
 type AssignHandler = (organizationId: string) => void
 
-const WorkRow = ({ item, withPeriod }: { item: WorkControlItem; withPeriod: boolean }) => {
+// manager — ячейка «КАМ» в виде «Списком», где строки разных менеджеров идут одной таблицей.
+export const WorkRow = ({ item, withPeriod, manager }: { item: WorkControlItem; withPeriod: boolean; manager?: string }) => {
   const notes = withPeriod ? changeNotes(item) : []
   const extra = [item.direction, item.program, ...item.products].filter((value): value is string => value !== null && value !== undefined && value !== '')
   const quiet = item.problems + item.risks === 0 && notes.length === 0 && (item.status ?? 'ACTIVE') === 'ACTIVE'
   return (
     <tr className={`control-row control-row--${dueTones[item.due]}`}>
+      {manager !== undefined && <td data-label="КАМ">{manager}</td>}
       <td data-label="Вуз и взаимодействие">
         <a className="control-work__organization" href={`#/organizations/${item.organizationId}`}>{item.organizationName}</a>
         <a className="control-work__title" href={`#/organizations/${item.organizationId}/${item.interactionId}`}>{item.title}</a>
@@ -68,6 +70,7 @@ const WorkRow = ({ item, withPeriod }: { item: WorkControlItem; withPeriod: bool
         </span>
         <span className="control-route__bar" aria-hidden="true"><span style={{ width: `${routeShare(item)}%` }} /></span>
         {item.stageTotal > 0 && <span className="control-muted">{routeLabel(item)}</span>}
+        {item.missingDocuments && <span className="control-badge control-badge--warning">Нет документов этапа</span>}
         {item.daysOnStage !== null && item.daysOnStage !== undefined && (
           <span className="control-muted">на этапе {item.daysOnStage} дн.</span>
         )}

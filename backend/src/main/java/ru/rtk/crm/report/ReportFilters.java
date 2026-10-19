@@ -30,7 +30,8 @@ public record ReportFilters(
         Integer minDaysOnStage,
         ManagerWorkChange change,
         ManagerWorkTile tile,
-        ManagerAt managerAt
+        ManagerAt managerAt,
+        List<UUID> kindIds
 ) {
     private static final int MAX_DAYS_ON_STAGE = 3650;
     private static final int MAX_IDS = 500;
@@ -127,21 +128,53 @@ public record ReportFilters(
                 change, tile, null);
     }
 
+    public ReportFilters(
+            List<UUID> organizationIds,
+            List<UUID> directionIds,
+            boolean includeNoDirection,
+            List<UUID> programIds,
+            boolean includeNoProgram,
+            List<UUID> productIds,
+            boolean includeNoProduct,
+            List<UUID> managerIds,
+            boolean includeNoManager,
+            List<String> stages,
+            OrganizationType organizationType,
+            List<InteractionWorkStatus> workStatuses,
+            List<InteractionFlag> flags,
+            ReportAgreementFilters agreement,
+            List<ReportEventType> eventTypes,
+            Integer minDaysOnStage,
+            ManagerWorkChange change,
+            ManagerWorkTile tile,
+            ManagerAt managerAt
+    ) {
+        this(organizationIds, directionIds, includeNoDirection, programIds, includeNoProgram, productIds, includeNoProduct,
+                managerIds, includeNoManager, stages, organizationType, workStatuses, flags, agreement, eventTypes, minDaysOnStage,
+                change, tile, managerAt, List.of());
+    }
+
     public ReportFilters withChange(ManagerWorkChange value) {
         return new ReportFilters(organizationIds, directionIds, includeNoDirection, programIds, includeNoProgram, productIds,
                 includeNoProduct, managerIds, includeNoManager, stages, organizationType, workStatuses, flags, agreement, eventTypes,
-                minDaysOnStage, value, tile, managerAt);
+                minDaysOnStage, value, tile, managerAt, kindIds);
     }
 
     public ReportFilters withManagerAt(ManagerAt value) {
         return new ReportFilters(organizationIds, directionIds, includeNoDirection, programIds, includeNoProgram, productIds,
                 includeNoProduct, managerIds, includeNoManager, stages, organizationType, workStatuses, flags, agreement, eventTypes,
-                minDaysOnStage, change, tile, value);
+                minDaysOnStage, change, tile, value, kindIds);
+    }
+
+    public ReportFilters withKinds(List<UUID> value) {
+        return new ReportFilters(organizationIds, directionIds, includeNoDirection, programIds, includeNoProgram, productIds,
+                includeNoProduct, managerIds, includeNoManager, stages, organizationType, workStatuses, flags, agreement, eventTypes,
+                minDaysOnStage, change, tile, managerAt, value);
     }
 
     public static ReportFilters none() {
         return new ReportFilters(List.of(), List.of(), false, List.of(), false, List.of(), false, List.of(), false,
-                List.of(), null, List.of(), List.of(), ReportAgreementFilters.none(), List.of(), null, null, null, null);
+                List.of(), null, List.of(), List.of(), ReportAgreementFilters.none(), List.of(), null, null, null, null, List.of());
     }
 
     public ReportFilters normalized() {
@@ -164,9 +197,11 @@ public record ReportFilters(
                 daysOnStage(),
                 change,
                 tile,
-                managerAt
+                managerAt,
+                ids(kindIds, "filters.kindIds")
         );
     }
+
 
     private Integer daysOnStage() {
         if (minDaysOnStage != null && (minDaysOnStage < 1 || minDaysOnStage > MAX_DAYS_ON_STAGE)) {

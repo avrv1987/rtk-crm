@@ -123,7 +123,8 @@ import ru.rtk.crm.work.WorkService;
         "app.oidc.internal-base-url=http://keycloak.test",
         "app.oidc.client-secret=test-client-secret",
         "app.mcp.enabled=true",
-        "app.mcp.calls-per-minute=5"
+        "app.mcp.calls-per-minute=5",
+        "app.mcp.clients.private-client.pd-mode=none"
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("oidc")
@@ -290,11 +291,13 @@ class McpHttpTest {
     void toolListDependsOnRoleAndEveryToolIsReadOnly() throws Exception {
         JsonNode kam = result(token(subject(UserRole.USER), List.of("crm-user")), "tools/list", Map.of());
         assertThat(names(kam)).containsExactlyInAnyOrder(
-                "my_today", "find_interactions", "interaction_brief", "organization_brief", "agreements_in_review");
+                "my_today", "find_interactions", "interaction_brief", "organization_brief", "agreements_in_review",
+                "learning_overview", "lms_signals", "metric_passport");
         JsonNode leader = result(token(subject(UserRole.LEADER), List.of("crm-leader")), "tools/list", Map.of());
-        assertThat(names(leader)).hasSize(9).contains("team_control", "manager_breakdown", "period_summary", "stuck_and_idle");
+        assertThat(names(leader)).hasSize(15).contains("team_control", "manager_breakdown", "period_summary", "stuck_and_idle",
+                "learning_trend", "program_demand", "signing_plan");
         JsonNode management = result(token(subject(UserRole.MANAGEMENT), List.of("crm-management")), "tools/list", Map.of());
-        assertThat(names(management)).hasSize(8).doesNotContain("my_today");
+        assertThat(names(management)).hasSize(14).doesNotContain("my_today");
         leader.path("tools").forEach(tool -> {
             assertThat(tool.path("annotations").path("readOnlyHint").asBoolean()).isTrue();
             assertThat(tool.path("annotations").path("destructiveHint").asBoolean()).isFalse();
@@ -360,11 +363,13 @@ class McpHttpTest {
         when(organizationRepository.findVisibleById(any(), eq(ORGANIZATION))).thenReturn(Optional.of(organization()));
         when(interactionService.recentEvents(any(), eq(INTERACTION), eq(10))).thenReturn(new InteractionService.RecentEvents(
                 List.of(new InteractionEvent(UUID.randomUUID(), InteractionEventType.COMMENTED, null, STAGE, "Пилот", null, null,
-                        null, null, INJECTION, null, UUID.randomUUID(), "КАМ А", null, 3, OffsetDateTime.now())), 37));
+                        null, null, INJECTION, null, UUID.randomUUID(), "КАМ А", null, 3, OffsetDateTime.now(), false)), 37));
         when(agreementService.workAgreements(any(), eq(INTERACTION))).thenReturn(
                 new WorkAgreements(INTERACTION, ORGANIZATION, true, List.of(), List.of(agreementSummary())));
         when(agreementRegistryService.registry(any(), any())).thenReturn(List.of(registryRow(ApprovalColor.YELLOW)));
-        when(interactionIssueService.list(any(), eq(INTERACTION))).thenReturn(new InteractionIssueList(List.of(), List.of()));
+        UUID colleague = UUID.randomUUID();
+        when(interactionIssueService.list(any(), eq(INTERACTION))).thenReturn(new InteractionIssueList(List.of(),
+                List.of(new InteractionIssueList.ResponsibleOption(colleague, "Коллега Б"))));
 
         JsonNode data = callTool(token(subject, List.of("crm-user")), "interaction_brief", Map.of("interactionId", INTERACTION.toString()))
                 .path("structuredContent").path("result");
@@ -372,6 +377,11 @@ class McpHttpTest {
         assertThat(data.path("stagePosition").asInt()).isEqualTo(2);
         assertThat(data.path("stageTotal").asInt()).isEqualTo(3);
         assertThat(data.path("nextStages").get(0).asText()).isEqualTo("Договор");
+        // Для планов: id этапов маршрута, допустимые ответственные и id событий для фактов.
+        assertThat(data.path("nextStageOptions").get(0).path("stageName").asText()).isEqualTo("Договор");
+        assertThat(data.path("nextStageOptions").get(0).path("stageId").asText()).isNotBlank();
+        assertThat(data.path("eligibleResponsibles").get(0).path("id").asText()).isEqualTo(colleague.toString());
+        assertThat(data.path("recentEvents").path("items").get(0).path("eventId").asText()).isNotBlank();
         assertThat(data.path("agreements").get(0).path("approval").path("color").asText()).isEqualTo("YELLOW");
         assertThat(data.path("learning").isNull()).isTrue();
         assertThat(data.path("recentEvents").path("total").asLong()).isEqualTo(37);
@@ -470,6 +480,37 @@ class McpHttpTest {
         JsonNode stuck = callTool(token, "stuck_and_idle", Map.of()).path("structuredContent").path("result");
         assertThat(stuck.path("stuck").path("total").asLong()).isEqualTo(1);
         assertThat(stuck.path("idleOrganizations").path("items").get(0).path("organization").asText()).isEqualTo("Колледж Б");
+    }
+
+    @Test
+    void teamControlPassesModePeriodAndScreenFiltersAndReturnsTheBasis() throws Exception {
+        String token = token(subject(UserRole.LEADER), List.of("crm-leader"));
+        LocalDate from = LocalDate.parse("2026-09-01");
+        LocalDate to = LocalDate.parse("2026-09-30");
+        UUID product = UUID.randomUUID();
+        UUID manager = UUID.randomUUID();
+        when(workControlService.control(any(), argThat(filters -> filters != null
+                && filters.managerAt() == ru.rtk.crm.report.ManagerAt.PERIOD_END
+                && filters.productIds().equals(List.of(product)) && filters.managerIds().equals(List.of(manager))
+                && filters.includeNoManager() && filters.stages().equals(List.of("Встреча"))
+                && filters.organizationType() == OrganizationType.COLLEGE), eq(from), eq(to))).thenReturn(control());
+        when(workService.teamIndicators(any(), anyInt())).thenReturn(new TeamIndicators(OffsetDateTime.now(), 30, 2, List.of()));
+
+        JsonNode result = callTool(token, "team_control", Map.of("mode", "PERIOD", "from", "2026-09-01", "to", "2026-09-30",
+                "productIds", List.of(product.toString()), "managerIds", List.of(manager.toString(), "UNASSIGNED"),
+                "stages", List.of("Встреча"), "organizationType", "COLLEGE")).path("structuredContent").path("result");
+
+        assertThat(result.path("total").path("works").asLong()).isEqualTo(2);
+        JsonNode basis = result.path("basis");
+        assertThat(basis.path("mode").asText()).isEqualTo("PERIOD");
+        assertThat(basis.path("from").asText()).isEqualTo("2026-09-01");
+        assertThat(basis.path("filters").path("managerIds").toString()).contains("UNASSIGNED");
+        assertThat(basis.path("filters").path("organizationType").asText()).isEqualTo("COLLEGE");
+        assertThat(basis.path("passports").asText()).isEqualTo("docs/metrics.md");
+        assertThat(basis.path("learningCoverage").has("withFreshActivity")).isTrue();
+
+        JsonNode wrongMode = callTool(token, "team_control", Map.of("mode", "YESTERDAY"));
+        assertThat(wrongMode.path("isError").asBoolean()).isTrue();
     }
 
     @Test
@@ -604,10 +645,11 @@ class McpHttpTest {
         UUID planId = UUID.randomUUID();
         UUID foreign = UUID.randomUUID();
         when(agentPlanService.screen(any(), eq(planId), any())).thenReturn(new AgentPlanService.AgentPlanScreen(planId,
-                AgentPlanService.AgentPlan.State.PENDING, "crm-mcp-client", ORGANIZATION, "Университет А", INTERACTION, "Пилот",
-                "Поиск контакта", false, "Позвонить", OffsetDateTime.parse("2026-11-02T10:00:00+03:00"), INJECTION,
-                "Отправить договор", OffsetDateTime.parse("2026-11-09T15:30:00+03:00"), OffsetDateTime.now(),
-                OffsetDateTime.now().plusMinutes(20), null, null));
+                AgentPlanService.AgentPlan.State.PENDING, AgentPlanService.Kind.NOTE_UPDATE, "crm-mcp-client", ORGANIZATION,
+                "Университет А", INTERACTION, "Пилот", "Поиск контакта", 2, 3, null, null, false, "Позвонить",
+                OffsetDateTime.parse("2026-11-02T10:00:00+03:00"), INJECTION, "Отправить договор",
+                OffsetDateTime.parse("2026-11-09T15:30:00+03:00"), InteractionWorkStatus.ACTIVE, null, null, null, null, null, null,
+                null, null, null, null, List.of(), List.of(), OffsetDateTime.now(), OffsetDateTime.now().plusMinutes(20), null, null));
         when(agentPlanService.screen(any(), eq(foreign), any())).thenThrow(new AgentPlanService.AgentPlanNotFoundException());
 
         mockMvc.perform(get("/api/agent-plans/" + planId).with(session(subject)))
@@ -634,6 +676,148 @@ class McpHttpTest {
         verify(agentPlanService).reject(argThat(profile -> profile.id().equals(profileId(subject))), eq(planId), any());
     }
 
+    @Test
+    void clientWithPersonalDataModeNoneGetsNoContactNamesOrChannels() throws Exception {
+        String subject = subject(UserRole.USER);
+        when(organizationRepository.findVisibleById(any(), eq(ORGANIZATION))).thenReturn(Optional.of(organization()));
+        when(interactionService.find(any(), eq(ORGANIZATION), isNull(), isNull(), isNull(), eq("ALL"), isNull(), eq(25)))
+                .thenReturn(new InteractionPage(List.of(), 0, 25, 0));
+        when(contactService.list(any(), eq(ORGANIZATION))).thenReturn(List.of(
+                contact("Иванова Анна", "ivanova@vuz.example.ru", "+7 (900) 345-67-89", PersonalDataStatus.ACTIVE)));
+        when(agreementService.list(any(), eq(ORGANIZATION))).thenReturn(List.of());
+        when(organizationHistoryService.history(any(), eq(ORGANIZATION), any())).thenReturn(new OrganizationHistoryPage(List.of(), 0, 25, 0));
+
+        JsonNode result = callTool(token(subject, List.of("crm-user"), "crm-mcp", ISSUER, 300, "Bearer", "openid crm-mcp",
+                "private-client"), "organization_brief", Map.of("organizationId", ORGANIZATION.toString()));
+
+        JsonNode contact = result.path("structuredContent").path("result").path("contacts").path("items").get(0);
+        assertThat(contact.path("position").asText()).isEqualTo("Проректор");
+        assertThat(contact.path("name").isNull()).isTrue();
+        assertThat(contact.path("email").isNull()).isTrue();
+        assertThat(result.path("content").get(0).path("text").asText()).doesNotContain("Иванова").doesNotContain("i***@");
+    }
+
+    // Новые виды плана: у агента по-прежнему только «подготовить» и «узнать итог»; ни один инструмент не пишет сам.
+    @Test
+    void everyWriteToolOnlyPreparesAPlanAndNeedsTheWriteScope() throws Exception {
+        String subject = subject(UserRole.LEADER);
+        JsonNode tools = result(token(subject, List.of("crm-leader"), "openid crm-mcp crm-mcp.write"), "tools/list", Map.of());
+        List<String> writeTools = List.of("prepare_note_update", "prepare_stage_transition", "prepare_issue",
+                "prepare_issue_resolution", "prepare_pause", "prepare_resume", "get_change_plan");
+        assertThat(names(tools)).containsAll(writeTools);
+        tools.path("tools").forEach(tool -> {
+            String name = tool.path("name").asText();
+            assertThat(tool.path("annotations").path("destructiveHint").asBoolean()).as(name).isFalse();
+            if (!tool.path("annotations").path("readOnlyHint").asBoolean()) {
+                assertThat(name).startsWith("prepare_");
+            }
+        });
+        assertThat(names(result(token(subject, List.of("crm-leader")), "tools/list", Map.of()))).doesNotContainAnyElementsOf(writeTools);
+        JsonNode refused = callTool(token(subject, List.of("crm-leader")), "prepare_pause", Map.of(
+                "interactionId", INTERACTION.toString(), "reason", "Каникулы", "resumeOn", "2027-01-15"));
+        assertThat(refused.path("structuredContent").path("error").asText()).isEqualTo("insufficient_scope");
+        JsonNode management = result(token(subject(UserRole.MANAGEMENT), List.of("crm-management"), "crm-mcp crm-mcp.write"),
+                "tools/list", Map.of());
+        assertThat(names(management)).doesNotContainAnyElementsOf(writeTools);
+        verify(agentPlanService, never()).preparePause(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void stageTransitionToolPassesTheTargetEvidenceAndReturnsWarnings() throws Exception {
+        String subject = subject(UserRole.USER);
+        String writer = token(subject, List.of("crm-user"), "openid crm-mcp crm-mcp.write");
+        UUID planId = UUID.randomUUID();
+        UUID event = UUID.randomUUID();
+        OffsetDateTime due = OffsetDateTime.parse("2026-11-09T15:30:00+03:00");
+        when(agentPlanService.prepareTransition(any(), eq("crm-mcp-client"), eq(INTERACTION), eq("Договор"), eq(INJECTION),
+                eq("Отправить договор"), eq(due), eq(List.of(event)), any()))
+                .thenReturn(new AgentPlanService.Prepared(plan(planId, profileId(subject), AgentPlanService.AgentPlan.State.PENDING),
+                        List.of("SKIP"), 1));
+
+        JsonNode extra = callTool(writer, "prepare_stage_transition", Map.of("interactionId", INTERACTION.toString(),
+                "toStage", "Договор", "rationale", "Подписан", "confirmed", true));
+        assertThat(extra.path("isError").asBoolean()).isTrue();
+        JsonNode tooMany = callTool(writer, "prepare_stage_transition", Map.of("interactionId", INTERACTION.toString(),
+                "toStage", "Договор", "rationale", "Подписан", "evidenceEventIds",
+                java.util.Collections.nCopies(11, event.toString())));
+        assertThat(tooMany.path("isError").asBoolean()).isTrue();
+
+        JsonNode result = callTool(writer, "prepare_stage_transition", Map.of("interactionId", INTERACTION.toString(),
+                "toStage", "Договор", "rationale", INJECTION, "nextAction", "Отправить договор",
+                "nextActionAt", "2026-11-09T15:30:00+03:00", "evidenceEventIds", List.of(event.toString())));
+
+        JsonNode data = result.path("structuredContent").path("result");
+        assertThat(result.path("isError").asBoolean()).isFalse();
+        assertThat(data.path("confirmUrl").asText()).isEqualTo("http://crm.test/#/agent-plans/" + planId);
+        assertThat(data.path("warnings").get(0).asText()).isEqualTo("SKIP");
+        assertThat(data.path("droppedEvidence").asInt()).isEqualTo(1);
+        assertThat(data.has("rationale")).isFalse();
+        verify(agentPlanService, never()).apply(any(), any(), any());
+    }
+
+    @Test
+    void issuePauseResumeAndResolutionToolsParseTheirArguments() throws Exception {
+        String subject = subject(UserRole.USER);
+        String writer = token(subject, List.of("crm-user"), "openid crm-mcp crm-mcp.write");
+        UUID responsible = UUID.randomUUID();
+        UUID issue = UUID.randomUUID();
+        AgentPlanService.Prepared prepared = new AgentPlanService.Prepared(
+                plan(UUID.randomUUID(), profileId(subject), AgentPlanService.AgentPlan.State.PENDING), List.of(), 0);
+        when(agentPlanService.prepareIssue(any(), any(), eq(INTERACTION), eq(ru.rtk.crm.interaction.InteractionIssueKind.RISK),
+                eq("Нет лицензии"), eq(InteractionRiskLevel.HIGH), eq(responsible), eq(LocalDate.parse("2026-11-06")), any()))
+                .thenReturn(prepared);
+        when(agentPlanService.prepareIssueResolution(any(), any(), eq(INTERACTION), eq(issue), eq("Доступ выдан"), any()))
+                .thenReturn(prepared);
+        when(agentPlanService.preparePause(any(), any(), eq(INTERACTION), eq("Каникулы"), eq(LocalDate.parse("2027-01-15")), any()))
+                .thenReturn(prepared);
+        when(agentPlanService.prepareResume(any(), any(), eq(INTERACTION), eq("Вуз вернулся"), any())).thenReturn(prepared);
+
+        assertThat(callTool(writer, "prepare_issue", Map.of("interactionId", INTERACTION.toString(), "kind", "RISK",
+                "description", "Нет лицензии", "riskLevel", "HIGH", "responsibleId", responsible.toString(), "dueOn", "2026-11-06"))
+                .path("isError").asBoolean()).isFalse();
+        assertThat(callTool(writer, "prepare_issue_resolution", Map.of("interactionId", INTERACTION.toString(),
+                "issueId", issue.toString(), "resolution", "Доступ выдан")).path("isError").asBoolean()).isFalse();
+        assertThat(callTool(writer, "prepare_pause", Map.of("interactionId", INTERACTION.toString(), "reason", "Каникулы",
+                "resumeOn", "2027-01-15")).path("isError").asBoolean()).isFalse();
+        assertThat(callTool(writer, "prepare_resume", Map.of("interactionId", INTERACTION.toString(), "comment", "Вуз вернулся"))
+                .path("isError").asBoolean()).isFalse();
+        // Универсальной «задачи» нет: вид вне перечня отвергается до сервиса.
+        assertThat(callTool(writer, "prepare_issue", Map.of("interactionId", INTERACTION.toString(), "kind", "TASK",
+                "description", "Позвонить", "responsibleId", responsible.toString(), "dueOn", "2026-11-06"))
+                .path("isError").asBoolean()).isTrue();
+        verify(agentPlanService).prepareIssue(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void preparingForAnotherRoleOrForeignCardIsRefusedLikeTheCard() throws Exception {
+        String writer = token(subject(UserRole.USER), List.of("crm-user"), "openid crm-mcp crm-mcp.write");
+        when(agentPlanService.prepareResume(any(), any(), any(), any(), any()))
+                .thenThrow(new ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException());
+        when(agentPlanService.preparePause(any(), any(), any(), any(), any(), any())).thenThrow(new InteractionNotFoundException());
+
+        assertThat(callTool(writer, "prepare_resume", Map.of("interactionId", INTERACTION.toString(), "comment", "Вернулись"))
+                .path("structuredContent").path("error").asText()).isEqualTo("AUTHORIZATION_DENIED");
+        assertThat(callTool(writer, "prepare_pause", Map.of("interactionId", INTERACTION.toString(), "reason", "Каникулы",
+                "resumeOn", "2027-01-15")).path("structuredContent").path("error").asText()).isEqualTo("OBJECT_UNAVAILABLE");
+    }
+
+    @Test
+    void planListUsesTheSessionAndRejectsUnknownKind() throws Exception {
+        String subject = subject(UserRole.USER);
+        when(agentPlanService.list(any(), isNull(), eq(true))).thenReturn(List.of(new AgentPlanService.AgentPlanListItem(
+                UUID.randomUUID(), AgentPlanService.Kind.STATUS_CHANGE, AgentPlanService.AgentPlan.State.PENDING, "crm-mcp-client",
+                ORGANIZATION, "Университет А", INTERACTION, "Пилот", OffsetDateTime.now(), OffsetDateTime.now().plusMinutes(20))));
+
+        mockMvc.perform(get("/api/agent-plans").with(session(subject)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].kind").value("STATUS_CHANGE"))
+                .andExpect(jsonPath("$[0].organizationName").value("Университет А"));
+        mockMvc.perform(get("/api/agent-plans?kind=TASK").with(session(subject))).andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/agent-plans?status=SOME").with(session(subject))).andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/agent-plans").header("Authorization", "Bearer " + token(subject, List.of("crm-user"))))
+                .andExpect(status().is4xxClientError());
+    }
+
     private static org.springframework.test.web.servlet.request.RequestPostProcessor session(String subject) {
         return oidcLogin().idToken(token -> token.issuer(ISSUER).subject(subject)
                 .claim("realm_access", Map.of("roles", List.of("crm-user"))));
@@ -642,7 +826,8 @@ class McpHttpTest {
     private static AgentPlanService.AgentPlan plan(UUID id, UUID requester, AgentPlanService.AgentPlan.State state) {
         OffsetDateTime now = OffsetDateTime.now();
         return new AgentPlanService.AgentPlan(id, requester, "crm-mcp-client", INTERACTION, STAGE, 3, INJECTION, "Шаг",
-                now.plusDays(7), state, null, now, now.plusMinutes(20), null, null, null);
+                now.plusDays(7), state, null, now, now.plusMinutes(20), null, null, null, AgentPlanService.Kind.NOTE_UPDATE,
+                null, null, null, null, null, null, null, null, List.of());
     }
 
     private JsonNode callTool(String token, String name, Map<String, Object> arguments) throws Exception {
@@ -700,6 +885,11 @@ class McpHttpTest {
 
     private static String token(String subject, List<String> roles, String audience, String issuer, long lifetimeSeconds,
                                 String type, String scope) throws JOSEException {
+        return token(subject, roles, audience, issuer, lifetimeSeconds, type, scope, "crm-mcp-client");
+    }
+
+    private static String token(String subject, List<String> roles, String audience, String issuer, long lifetimeSeconds,
+                                String type, String scope, String clientId) throws JOSEException {
         Instant now = Instant.now();
         JWTClaimsSet claims = new JWTClaimsSet.Builder()
                 .issuer(issuer)
@@ -708,7 +898,7 @@ class McpHttpTest {
                 .issueTime(Date.from(now.minusSeconds(Math.abs(lifetimeSeconds) + 60)))
                 .expirationTime(Date.from(now.plusSeconds(lifetimeSeconds)))
                 .claim("typ", type)
-                .claim("azp", "crm-mcp-client")
+                .claim("azp", clientId)
                 .claim("scope", scope)
                 .claim("realm_access", Map.of("roles", roles))
                 .build();
@@ -729,7 +919,7 @@ class McpHttpTest {
         OffsetDateTime now = OffsetDateTime.now();
         return new InteractionSummary(INTERACTION, ORGANIZATION, "Пилот Java", STAGE, "Пилот", "Позвонить проректору",
                 now.minusDays(2), List.of(), null, List.of(), null, 3, UUID.randomUUID(), now.minusDays(60), now,
-                "Университет А", null, "КАМ А", marks(), "COMMENTED", now, now.minusDays(20), null, null);
+                "Университет А", null, "КАМ А", marks(), "COMMENTED", now, now.minusDays(20), null, null, null, null);
     }
 
     private static InteractionMarks marks() {
@@ -745,7 +935,7 @@ class McpHttpTest {
                         new InteractionStage(last, "Договор", 2, false)),
                 List.of(), List.of(new InteractionTransitionOption(last, "Договор", false)), "Позвонить проректору",
                 now.plusDays(1), List.of(), null, null, List.of(), List.of(), List.of(), List.of(), now.minusDays(3), 3,
-                UUID.randomUUID(), now.minusDays(60), now, marks(), false, null);
+                UUID.randomUUID(), now.minusDays(60), now, marks(), false, null, null);
     }
 
     private static Organization organization() {

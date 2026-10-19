@@ -25,13 +25,12 @@ import ru.rtk.crm.interaction.CommandOperation;
 import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.mail.MailInvitationService;
+import ru.rtk.crm.web.InputRules;
 
 @Service
 public class EmployeeAccountService {
     private static final int DISPLAY_NAME_LIMIT = 200;
     private static final Pattern LOGIN = Pattern.compile("[a-z0-9][a-z0-9._-]{1,62}");
-    private static final Pattern EMAIL = Pattern.compile("[^@\\s]+@[^@\\s]+\\.[^@\\s]+");
-    private static final int EMAIL_LIMIT = 254;
     private static final Logger LOGGER = LoggerFactory.getLogger(EmployeeAccountService.class);
 
     private final AdminCrmProfileRepository adminCrmProfileRepository;
@@ -364,8 +363,8 @@ public class EmployeeAccountService {
 
     private static String requiredEmail(String value) {
         String email = value == null ? "" : value.strip().toLowerCase(Locale.ROOT);
-        if (email.length() > EMAIL_LIMIT || !EMAIL.matcher(email).matches()) {
-            throw new InteractionValidationException("email", "Укажите почту в виде name@example.ru");
+        if (!InputRules.isLoginEmail(email)) {
+            throw new InteractionValidationException("email", InputRules.LOGIN_EMAIL_RULE);
         }
         return email;
     }
@@ -400,8 +399,10 @@ public class EmployeeAccountService {
                 throw new InteractionValidationException("body", "Заполните данные сотрудника");
             }
             String displayName = request.displayName() == null ? "" : request.displayName().strip();
-            if (displayName.isEmpty() || displayName.length() > DISPLAY_NAME_LIMIT) {
-                throw new InteractionValidationException("displayName", "ФИО должно содержать от 1 до 200 символов");
+            // ФИО и почту проверяем до Keycloak: он отклоняет угловые скобки и кириллицу в почте ответом 400, и раньше
+            // ошибка пользователя выглядела как сбой сервера (503).
+            if (!InputRules.isPersonName(displayName, DISPLAY_NAME_LIMIT)) {
+                throw new InteractionValidationException("displayName", "ФИО: от 1 до 200 символов — " + InputRules.NAME_RULE);
             }
             String login = request.login() == null ? "" : request.login().strip().toLowerCase(Locale.ROOT);
             if (!LOGIN.matcher(login).matches()) {

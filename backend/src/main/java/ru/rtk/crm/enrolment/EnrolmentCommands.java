@@ -1,6 +1,7 @@
 package ru.rtk.crm.enrolment;
 
 import java.time.OffsetDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -44,6 +45,10 @@ class EnrolmentCommands {
             throw InteractionConflictException.idempotency();
         }
         return new Reservation(commandId, stored.resultJson());
+    }
+
+    Optional<String> completedResult(UUID actorId, CommandOperation operation, String fingerprint) {
+        return repository.findCompletedResult(actorId, operation, fingerprint);
     }
 
     void complete(Reservation reservation, Object result) {

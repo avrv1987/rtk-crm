@@ -102,6 +102,11 @@ public class OrganizationCatalogService {
             String requestId
     ) {
         requireBusinessActor(actor);
+        // Сотрудники служебной команды — менеджеры учебного процесса: вуз, заведённый ими, попал бы в команду физлиц,
+        // а сам сотрудник стал бы его КАМ.
+        if (organizationCatalogRepository.serviceTeam(actor.teamId())) {
+            throw new CatalogChangeAccessDeniedException();
+        }
         OrganizationDetails details = OrganizationDetails.from(request);
         boolean pending = actor.role() == UserRole.USER && managerCreationRequiresApproval;
         UUID ownerManagerId = actor.role() == UserRole.USER ? actor.id() : null;

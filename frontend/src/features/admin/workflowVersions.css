@@ -298,3 +298,12 @@
     max-width: 100%;
   }
 }
+
+.wt-editor__documents {
+  grid-column: 2 / -1;
+}
+
+.wt-editor__documents > label {
+  display: flex;
+  margin: 4px 0;
+}

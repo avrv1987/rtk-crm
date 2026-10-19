@@ -23,6 +23,8 @@ const groupingHeaders: Record<StatisticsGroupBy, string> = {
   DIRECTION: 'ИТ-направление',
   PROGRAM: 'ИТ-программа',
   PRODUCT: 'ИТ-продукт',
+  KIND: 'Вид взаимодействия',
+  MILESTONE: 'Веха',
   MANAGER: 'Ответственный',
   MONTH: 'Месяц'
 }
@@ -101,7 +103,10 @@ const labelLines = (label: string) => {
 
 const captionLines = (result: StatisticsResult) => [
   `Показатель: ${countTitles[result.kind].toLowerCase()} в группе; всего в выборке: ${result.total}; шкала начинается с нуля.`,
-  ...(result.groupBy === 'STAGE' ? ['Этапы идут в порядке маршрута; этапы без взаимодействий показаны нулём.'] : []),
+  ...(result.groupBy === 'STAGE'
+    ? ['Этапы идут в порядке маршрута самих взаимодействий; при нескольких маршрутах — группами «шаблон: этап»; этапы без взаимодействий показаны нулём.']
+    : []),
+
   ...(result.groupBy === 'PRODUCT'
     ? ['Строка с несколькими ИТ-продуктами учтена в каждом из них, поэтому сумма столбцов может быть больше итога.']
     : []),

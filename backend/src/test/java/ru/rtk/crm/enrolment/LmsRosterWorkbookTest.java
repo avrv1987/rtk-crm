@@ -158,6 +158,9 @@ class LmsRosterWorkbookTest {
         List<LearnerWorkbookRow> rows = result.rows();
 
         assertThat(result.ignoredHeaders()).containsExactly("Комментарий");
+        // Н-9 (2.5): обычные написания пола из файлов вузов принимаются.
+        assertThat(List.of("Женский", "жен.", "F", "Мужской", "м")).extracting(value -> Gender.fromTitle(value).orElseThrow())
+                .containsExactly(Gender.FEMALE, Gender.FEMALE, Gender.FEMALE, Gender.MALE, Gender.MALE);
         assertThat(result.columns().get(LearnerField.MIDDLE_NAME)).isEqualTo(new LearnerWorkbookColumn("C", "Отчество (при наличии)"));
         assertThat(result.columns().get(LearnerField.SNILS)).isEqualTo(new LearnerWorkbookColumn("F", "СНИЛС"));
         assertThat(rows).extracting(LearnerWorkbookRow::rowNumber).containsExactly(4, 6, 7);
@@ -174,7 +177,7 @@ class LmsRosterWorkbookTest {
 
         assertThat(messages(rows.get(1))).containsExactly(
                 "PASSPORT_ISSUE_DATE: Дата должна быть в формате ДД.ММ.ГГГГ",
-                "GENDER: Пол: выберите «М» или «Ж»",
+                "GENDER: Пол: «М» или «Ж» (также «мужской», «женский»)",
                 "EDUCATION: Образование: выберите значение из списка на листе «Лист2»"
         );
         assertThat(rows.get(1).profile().snils()).isEqualTo("11223344596");

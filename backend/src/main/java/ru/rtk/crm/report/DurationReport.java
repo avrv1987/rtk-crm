@@ -25,6 +25,7 @@ final class DurationReport {
             .thenComparing(entry -> !entry.getKey().allPrograms())
             .thenComparing(entry -> entry.getKey().programName() == null)
             .thenComparing(entry -> Objects.requireNonNullElse(entry.getKey().programName(), ""), String.CASE_INSENSITIVE_ORDER)
+            .thenComparing(entry -> Objects.requireNonNullElse(entry.getKey().routeName(), ""), String.CASE_INSENSITIVE_ORDER)
             .thenComparing(entry -> entry.getKey().stageName() != null)
             .thenComparingInt(entry -> entry.getValue().stageOrder)
             .thenComparing(entry -> Objects.requireNonNullElse(entry.getKey().stageName(), ""));
@@ -32,15 +33,18 @@ final class DurationReport {
     private DurationReport() {
     }
 
+    // Несколько маршрутов в выборке — этапы и весь цикл считаются по каждому шаблону отдельно: одноимённые этапы разных
+    // маршрутов означают разную работу, а порядок этапов берётся из маршрута самой работы.
     static List<ReportRow> rows(List<StageEntry> entries, List<String> stages, OffsetDateTime fromAt, OffsetDateTime cutoff) {
         Map<Key, Stats> groups = new HashMap<>();
+        boolean byRoute = entries.stream().map(StageEntry::templateId).distinct().count() > 1;
         int start = 0;
         while (start < entries.size()) {
             int end = start + 1;
             while (end < entries.size() && entries.get(end).interactionId().equals(entries.get(start).interactionId())) {
                 end++;
             }
-            addInteraction(entries.subList(start, end), stages, fromAt, cutoff, groups);
+            addInteraction(entries.subList(start, end), stages, fromAt, cutoff, groups, byRoute);
             start = end;
         }
         return groups.entrySet().stream().sorted(ORDER).map(DurationReport::row).toList();
@@ -51,7 +55,8 @@ final class DurationReport {
             List<String> stages,
             OffsetDateTime fromAt,
             OffsetDateTime cutoff,
-            Map<Key, Stats> groups
+            Map<Key, Stats> groups,
+            boolean byRoute
     ) {
         StageEntry first = visits.getFirst();
         if (!first.createdAt().isBefore(cutoff)) {
@@ -72,13 +77,13 @@ final class DurationReport {
             }
             OffsetDateTime leftAt = index + 1 < visits.size() ? visits.get(index + 1).occurredAt() : null;
             int order = visit.stageOrder() == null ? Integer.MAX_VALUE : visit.stageOrder();
-            for (Key key : keys(first, visit.stageName())) {
+            for (Key key : keys(first, visit.stageName(), byRoute)) {
                 Stats stats = groups.computeIfAbsent(key, ignored -> new Stats());
                 stats.stageOrder = Math.min(stats.stageOrder, order);
                 add(stats, enteredAt, leftAt, fromAt, cutoff);
             }
         }
-        for (Key key : keys(first, null)) {
+        for (Key key : keys(first, null, byRoute)) {
             add(groups.computeIfAbsent(key, ignored -> new Stats()), first.createdAt(), completedAt, fromAt, cutoff);
         }
     }
@@ -87,9 +92,8 @@ final class DurationReport {
         if (endedAt != null && endedAt.isBefore(cutoff)) {
             if (fromAt == null || !endedAt.isBefore(fromAt)) {
                 long seconds = Duration.between(startedAt, endedAt).toSeconds();
-                stats.completed++;
-                stats.completedSeconds += seconds;
-                stats.completedMaxSeconds = Math.max(stats.completedMaxSeconds, seconds);
+                stats.completedSeconds.add(seconds);
+                stats.completedSum += seconds;
             }
             return;
         }
@@ -98,30 +102,37 @@ final class DurationReport {
         stats.currentMaxSeconds = Math.max(stats.currentMaxSeconds, seconds);
     }
 
-    private static List<Key> keys(StageEntry interaction, String stageName) {
+    private static List<Key> keys(StageEntry interaction, String stageName, boolean byRoute) {
+        String route = byRoute ? Objects.requireNonNullElse(interaction.templateName(), "Без шаблона") : null;
+        UUID routeId = byRoute ? interaction.templateId() : null;
         return List.of(
-                new Key(interaction.teamId(), interaction.teamName(), false, interaction.programId(), interaction.programName(), stageName),
-                new Key(interaction.teamId(), interaction.teamName(), true, null, null, stageName)
+                new Key(interaction.teamId(), interaction.teamName(), false, interaction.programId(), interaction.programName(),
+                        routeId, route, stageName),
+                new Key(interaction.teamId(), interaction.teamName(), true, null, null, routeId, route, stageName)
         );
     }
 
     private static ReportRow row(Map.Entry<Key, Stats> entry) {
         Key key = entry.getKey();
         Stats stats = entry.getValue();
+        List<Long> completed = stats.completedSeconds.stream().sorted().toList();
+        int count = completed.size();
         ReportRow.StageDuration duration = new ReportRow.StageDuration(
                 key.teamName(),
-                stats.completed,
-                stats.completed == 0 ? null : days(stats.completedSeconds / stats.completed),
-                stats.completed == 0 ? null : days(stats.completedMaxSeconds),
+                count,
+                count == 0 ? null : days(stats.completedSum / count),
+                count == 0 ? null : days(completed.getLast()),
                 stats.current,
-                stats.current == 0 ? null : days(stats.currentMaxSeconds)
+                stats.current == 0 ? null : days(stats.currentMaxSeconds),
+                count == 0 ? null : median(completed),
+                count == 0 ? null : days(nearestRank(completed, 90))
         );
         return new ReportRow(
                 null, null, null, null, null, null,
                 key.programId(),
                 key.allPrograms() ? ALL_PROGRAMS : key.programName(),
                 List.of(),
-                key.stageName() == null ? WHOLE_CYCLE : key.stageName(),
+                (key.routeName() == null ? "" : key.routeName() + ": ") + (key.stageName() == null ? WHOLE_CYCLE : key.stageName()),
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
                 null,
                 List.of(),
@@ -134,18 +145,34 @@ final class DurationReport {
         );
     }
 
+    // Медиана: при чётном числе прохождений — среднее двух центральных.
+    private static BigDecimal median(List<Long> sorted) {
+        int middle = sorted.size() / 2;
+        return sorted.size() % 2 == 1
+                ? days(sorted.get(middle))
+                : days((sorted.get(middle - 1) + sorted.get(middle)) / 2);
+    }
+
+    // Процентиль методом ближайшего ранга: всегда одно из наблюдённых значений, без интерполяции. При малом n он
+    // совпадает с максимумом — поэтому рядом всегда показано число прохождений.
+    static long nearestRank(List<Long> sorted, int percent) {
+        int rank = (int) Math.ceil(percent / 100.0 * sorted.size());
+        return sorted.get(Math.max(rank, 1) - 1);
+    }
+
     private static BigDecimal days(long seconds) {
         return BigDecimal.valueOf(seconds).divide(SECONDS_PER_DAY, 1, RoundingMode.HALF_UP);
     }
 
-    private record Key(UUID teamId, String teamName, boolean allPrograms, UUID programId, String programName, String stageName) {
+    private record Key(UUID teamId, String teamName, boolean allPrograms, UUID programId, String programName, UUID routeId,
+                       String routeName, String stageName) {
+
     }
 
     private static final class Stats {
         private int stageOrder = Integer.MAX_VALUE;
-        private long completed;
-        private long completedSeconds;
-        private long completedMaxSeconds;
+        private final List<Long> completedSeconds = new ArrayList<>();
+        private long completedSum;
         private long current;
         private long currentMaxSeconds;
     }

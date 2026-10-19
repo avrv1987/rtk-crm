@@ -8,12 +8,18 @@ import {
 } from '../src/features/admin/catalogTabs.ts'
 import { importStepOf, parseTransferStatuses } from '../src/features/admin/catalogImportSteps.ts'
 
-test('вкладки справочников: шесть слагов, у каждой есть подпись', () => {
-  assert.deepEqual([...catalogTabSlugs], ['directions', 'programs', 'vendors', 'products', 'activity-kinds', 'journal'])
+test('вкладки справочников: девять слагов, у каждой есть подпись', () => {
+  assert.deepEqual([...catalogTabSlugs], [
+    'directions', 'programs', 'vendors', 'products', 'document_kinds', 'interaction-kinds', 'interaction-kind-rules', 'activity-kinds',
+    'journal'
+  ])
+  assert.equal(catalogTabLabels.document_kinds, 'Виды документов')
   for (const slug of catalogTabSlugs) {
     assert.ok(catalogTabLabels[slug].length > 0, slug)
   }
   assert.equal(catalogTabLabels['activity-kinds'], 'Виды мероприятий')
+  assert.equal(catalogTabLabels['interaction-kinds'], 'Виды взаимодействия')
+
 })
 
 test('вкладка из строки запроса: с «?» и без, по умолчанию «ИТ-направления»', () => {

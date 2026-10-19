@@ -47,6 +47,27 @@ class PaidOrderParserTest {
         assertThat(batch.orders().get(1).phone()).isEqualTo("+79000000002");
     }
 
+    // Н-8 и Н-21 (2.5): ФИО проверяется тем же правилом, что анкета, — неверное поле не сохраняется, заявка принимается;
+    // пустой объект {} считается пустым элементом, как null.
+    @Test
+    void invalidNameIsNotStoredAndEmptyObjectIsAnEmptyElement() {
+        PaidOrderBatch batch = parser.parse(json("""
+                [{},
+                 {"Номер заявки": "ORD-1-A", "Курс": "Курс", "Фамилия": "<img src=x onerror=alert(1)>", "Имя": "Иван2",
+                  "Отчество": "Петрович", "Телефон": "9000000001", "Email": "ivan@example.test", "Номер потока": 1}]
+                """));
+
+        assertThat(batch.emptyElements()).isEqualTo(1);
+        assertThat(batch.orders()).singleElement().satisfies(order -> {
+            assertThat(order.lastName()).isNull();
+            assertThat(order.firstName()).isNull();
+            assertThat(order.middleName()).isEqualTo("Петрович");
+        });
+        assertThat(batch.issues()).filteredOn(PaidOrderIssue::warning).extracting(PaidOrderIssue::field)
+                .containsExactly("Фамилия", "Имя");
+        assertThat(batch.issues()).extracting(PaidOrderIssue::message).noneMatch(message -> message.contains("img"));
+    }
+
     @Test
     void reportsEveryElementProblemWithoutEchoingValues() {
         PaidOrderBatch batch = parser.parse(json("""
@@ -98,6 +119,23 @@ class PaidOrderParserTest {
                 .noneMatch(message -> message.contains("12345") || message.contains("ivan-at-example"));
         assertThat(batch.received()).isEqualTo(1);
         assertThat(batch.rejected()).isZero();
+    }
+
+    // Н-4 (2.5): имя с цифрами не сохраняется из оплаты — правило анкеты, иначе оно блокирует правку любой группы анкеты.
+    @Test
+    void dropsNameThatFailsProfileRuleWithWarning() {
+        PaidOrderBatch batch = parser.parse(json("""
+                [{"Номер заявки": "ORD-20260901000002-TST002", "Курс": "Курс А", "Фамилия": "Существующий", "Имя": "Т25",
+                  "Отчество": "О'Нил-Петровна", "Телефон": "9000000006", "Email": "t25@example.test", "Номер потока": 3}]
+                """));
+
+        assertThat(batch.orders()).singleElement().satisfies(order -> {
+            assertThat(order.firstName()).isNull();
+            assertThat(order.lastName()).isEqualTo("Существующий");
+            assertThat(order.middleName()).isEqualTo("О'Нил-Петровна");
+        });
+        assertThat(batch.issues()).containsExactly(new PaidOrderIssue(1, "Имя",
+                "Поле «Имя»: допустимы буквы, пробел, дефис, апостроф и точка; поле не сохранено", true, "ORD-20260901000002-TST002"));
     }
 
     @Test

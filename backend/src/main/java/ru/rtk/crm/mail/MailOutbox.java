@@ -52,6 +52,9 @@ public class MailOutbox {
     static final int BATCH = 20;
     static final String PASSWORD_CONTEXT = "mail:smtp-password";
     static final String INVITATION_KEY = "invitation:";
+    // Заглушка ссылки приглашения в очереди и журнале; настоящий токен подставляется только в отправляемое письмо.
+    static final String HIDDEN_INVITE_LINK = "#/invite/***";
+    private static final java.util.regex.Pattern INVITE_TOKEN = java.util.regex.Pattern.compile("#/invite/[A-Za-z0-9_-]{8,}");
     private static final List<Duration> BACKOFF = List.of(
             Duration.ofMinutes(1), Duration.ofMinutes(5), Duration.ofMinutes(15), Duration.ofMinutes(60)
     );
@@ -142,7 +145,7 @@ public class MailOutbox {
                 repository.markDropped(row.id(), "у учётной записи получателя не указана почта");
                 return false;
             }
-            message = build(row, settings, to, true, now);
+            message = build(withInvitationToken(row), settings, to, true, now);
         } catch (RuntimeException | MessagingException exception) {
             retry(row, now, MailSmtpTransport.reason(exception));
             return false;
@@ -156,12 +159,44 @@ public class MailOutbox {
         }
         try {
             // В журнал сведений субъекту ПДн сохраняется письмо без вложения: сам отчёт уже ушёл адресату.
-            MimeMessage stored = row.kind() == MailKind.SUBJECT_REPORT ? build(row, settings, to, false, now) : message;
+            // Приглашение тоже сохраняется заново, из строки очереди: в журнал попадает письмо с заглушкой вместо токена.
+            MimeMessage stored = row.kind() == MailKind.SUBJECT_REPORT || invitationLetter(row)
+                    ? build(row, settings, to, false, now) : message;
             repository.markSent(row.id(), now, settings.mode(), MailCodes.mask(to), mime(stored));
         } catch (MessagingException | IOException exception) {
             repository.markSent(row.id(), now, settings.mode(), MailCodes.mask(to), null);
         }
         return true;
+    }
+
+    // Новый токен на каждую попытку: прежний хэш заменяется, поэтому действует только ссылка из последнего ушедшего
+    // письма. Повтор письма администратором тоже создаёт новую ссылку, но получает её только адресат.
+    private OutboxRow withInvitationToken(OutboxRow row) {
+        if (!invitationLetter(row)) {
+            return row;
+        }
+        String token = MailCodes.token();
+        repository.replaceInvitationToken(invitationId(row), MailCodes.sha256(token));
+        String link = "#/invite/" + token;
+        return new OutboxRow(row.id(), row.eventKey(), row.kind(), row.profileId(), row.recipientEmail(), row.recipientMasked(),
+                row.organizationId(), row.subject(), row.bodyText().replace(HIDDEN_INVITE_LINK, link),
+                row.bodyHtml() == null ? null : row.bodyHtml().replace(HIDDEN_INVITE_LINK, link), row.attachmentName(),
+                row.attachmentType(), row.attachment(), row.status(), row.transport(), row.attempts(), row.createdAt(), row.sentAt(),
+                row.expiresAt(), row.lastError(), row.mime());
+    }
+
+    // Письмо со ссылкой на пароль: приглашение новой учётки или ссылка после сброса пароля (PASSWORD_RESET).
+    private static boolean invitationLetter(OutboxRow row) {
+        return row.kind() == MailKind.INVITATION || row.kind() == MailKind.PASSWORD_RESET;
+    }
+
+    private static UUID invitationId(OutboxRow row) {
+        return UUID.fromString(row.eventKey().substring(INVITATION_KEY.length()));
+    }
+
+    // Письма, сохранённые до 2.5, ещё содержат токен в тексте: при показе он скрывается всегда.
+    static String hideInvitationToken(String body) {
+        return body == null ? null : INVITE_TOKEN.matcher(body).replaceAll(HIDDEN_INVITE_LINK);
     }
 
     // Причина не отправлять или null. Проверки повторяют права CRM: тот же профиль, та же область видимости вуза.
@@ -187,8 +222,8 @@ public class MailOutbox {
             return "получатель отключил эту тему уведомлений";
         }
         // Ключ письма-приглашения — "invitation:" + идентификатор приглашения (MailInvitationService.invite).
-        if (row.kind() == MailKind.INVITATION
-                && !repository.invitationOpen(UUID.fromString(row.eventKey().substring(INVITATION_KEY.length())), now)) {
+        if (invitationLetter(row)
+                && !repository.invitationOpen(invitationId(row), now)) {
             return "приглашение уже использовано, заменено новым или истекло";
         }
         if (row.kind().organizationBound() && row.organizationId() != null) {
@@ -260,7 +295,7 @@ public class MailOutbox {
     LetterView view(OutboxRow row) {
         if (row.mime() == null) {
             return new LetterView(row.id(), row.kind().title(), row.status(), row.transport(), row.recipientMasked(), row.subject(),
-                    null, row.sentAt(), null, row.bodyText(), row.bodyHtml(),
+                    null, row.sentAt(), null, hideInvitationToken(row.bodyText()), hideInvitationToken(row.bodyHtml()),
                     row.attachmentName() == null ? List.of() : List.of(row.attachmentName()), 0, row.lastError());
         }
         try {
@@ -273,7 +308,8 @@ public class MailOutbox {
                     : message.getFrom()[0] instanceof InternetAddress address && address.getPersonal() != null
                     ? address.getPersonal() + " <" + address.getAddress() + ">" : message.getFrom()[0].toString();
             return new LetterView(row.id(), row.kind().title(), row.status(), row.transport(), row.recipientMasked(), message.getSubject(),
-                    from, row.sentAt(), message.getMessageID(), parts.text, parts.html, parts.attachments,
+                    from, row.sentAt(), message.getMessageID(), hideInvitationToken(parts.text), hideInvitationToken(parts.html),
+                    parts.attachments,
                     row.mime().length(), row.lastError());
         } catch (MessagingException | IOException exception) {
             throw new IllegalStateException("Сохранённое письмо не читается", exception);

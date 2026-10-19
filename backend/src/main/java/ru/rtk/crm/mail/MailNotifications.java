@@ -96,6 +96,11 @@ public class MailNotifications {
                     issue.organizationId(), templates.issueResolved(InteractionIssueKind.valueOf(issue.kind()), issue.organizationName(),
                             issue.organizationId())));
         }
+        // Срок письма — срок плана: после него «Записать» уже не сработает, и письмо не отправляется.
+        for (MailEventRepository.AgentPlanEvent plan : events.agentPlans(since, now)) {
+            queued += count(outbox.toProfile("agent-plan:" + plan.planId(), MailKind.AGENT_PLAN, plan.profileId(), plan.organizationId(),
+                    templates.agentPlan(plan.organizationName(), plan.planId(), plan.expiresAt()), plan.expiresAt()));
+        }
         queued += unassigned(since);
         queued += adminEvents(since);
         repository.saveCollectedUntil(now);

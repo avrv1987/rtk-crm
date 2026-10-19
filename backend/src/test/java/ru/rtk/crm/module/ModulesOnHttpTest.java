@@ -79,7 +79,8 @@ class ModulesOnHttpTest {
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
         mockMvc.perform(get("/api/me").with(login(OPERATOR)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.enrolmentOperator").value(true));
+                .andExpect(jsonPath("$.enrolmentOperator").value(true))
+                .andExpect(jsonPath("$.enrolmentOnly").value(false));
     }
 
     private void insertProfile(UUID id, String name, boolean operator) {

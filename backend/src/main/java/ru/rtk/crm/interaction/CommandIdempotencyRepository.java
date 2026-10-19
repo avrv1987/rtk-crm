@@ -125,6 +125,23 @@ public class CommandIdempotencyRepository {
         }
     }
 
+    // Уже выполненная команда с тем же содержимым, но под другим ключом: повтор «Применить» после успеха.
+    public Optional<String> findCompletedResult(UUID actorProfileId, CommandOperation operation, String requestFingerprint) {
+        return jdbcClient.sql("""
+                SELECT result_json
+                FROM command_idempotency_records
+                WHERE actor_profile_id = :actorProfileId AND operation = :operation
+                  AND request_fingerprint = :fingerprint AND result_json IS NOT NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """)
+                .param("actorProfileId", actorProfileId)
+                .param("operation", operation.name())
+                .param("fingerprint", requestFingerprint)
+                .query(String.class)
+                .optional();
+    }
+
     public Optional<StoredResult> findLatestResult(CommandOperation operation) {
         return jdbcClient.sql("""
                 SELECT created_at, result_json

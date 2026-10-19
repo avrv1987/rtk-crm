@@ -97,6 +97,33 @@ public class WorkRepository {
         return counts;
     }
 
+    // Статус на момент — последнее событие смены статуса до границы (work_status_after, V47); без таких событий
+    // взаимодействие активно с создания. Созданное позже границы статуса на неё не имеет.
+    private static final String STATUS_AT = """
+            CASE WHEN i.created_at >= :%1$s THEN CAST(NULL AS VARCHAR(16)) ELSE COALESCE(
+                (SELECT se.work_status_after FROM interaction_events se
+                 WHERE se.interaction_id = i.id AND se.type = 'STATUS_CHANGED' AND se.occurred_at < :%1$s
+                 ORDER BY se.occurred_at DESC, se.version DESC LIMIT 1),
+                'ACTIVE') END""";
+
+    public List<PortfolioChange.State> findPortfolioStates(VisibilityScope scope, OffsetDateTime fromAt, OffsetDateTime toAt) {
+        return jdbcClient.sql("SELECT t.id AS team_id, t.name AS team_name, " + STATUS_AT.formatted("fromAt") + " AS status_start, "
+                        + STATUS_AT.formatted("toAt") + " AS status_end"
+                        + " FROM interactions i JOIN organizations o ON o.id = i.organization_id JOIN teams t ON t.id = o.team_id"
+                        + " WHERE i.organization_id IN (" + scope.currentOrganizations() + ")"
+                        + " AND o.type <> 'OPEN_ENROLLMENT' AND i.created_at < :toAt")
+                .params(scope.parameters())
+                .param("fromAt", fromAt)
+                .param("toAt", toAt)
+                .query((resultSet, rowNumber) -> new PortfolioChange.State(
+                        resultSet.getObject("team_id", UUID.class),
+                        resultSet.getString("team_name"),
+                        resultSet.getString("status_start"),
+                        resultSet.getString("status_end")
+                ))
+                .list();
+    }
+
     public Map<UUID, Long> countOrganizationsByManager(VisibilityScope scope) {
         Map<UUID, Long> counts = new HashMap<>();
         jdbcClient.sql("""
@@ -325,14 +352,10 @@ public class WorkRepository {
 
     public List<ReminderTraining> findTrainingCycles(
             VisibilityScope scope,
-            List<String> stageNames,
             OffsetDateTime trainedBefore,
             int cycleYears,
             int limit
     ) {
-        if (stageNames.isEmpty()) {
-            return List.of();
-        }
         return jdbcClient.sql("""
                 SELECT i.id, i.organization_id, i.title, o.name AS organization_name,
                        training.to_stage_name_snapshot AS stage_name, training.occurred_at AS trained_at
@@ -340,14 +363,16 @@ public class WorkRepository {
                 JOIN interactions i ON i.id = training.interaction_id
                 JOIN organizations o ON o.id = i.organization_id
                 WHERE i.organization_id IN (SELECT id FROM organizations WHERE %s)
-                  AND training.to_stage_name_snapshot IN (:stageNames)
+                  AND EXISTS (SELECT 1 FROM interaction_stages ts WHERE ts.id = training.to_stage_id
+                      AND ts.lms_role IN ('TEACHER_TRAINING', 'QUALIFICATION'))
                   AND training.occurred_at < :trainedBefore
                   AND NOT EXISTS (
                       SELECT 1
                       FROM interactions later_work
                       JOIN interaction_events later ON later.interaction_id = later_work.id
                       WHERE later_work.organization_id = i.organization_id
-                        AND later.to_stage_name_snapshot IN (:stageNames)
+                        AND EXISTS (SELECT 1 FROM interaction_stages ls WHERE ls.id = later.to_stage_id
+                            AND ls.lms_role IN ('TEACHER_TRAINING', 'QUALIFICATION'))
                         AND (later.occurred_at > training.occurred_at
                             OR later.occurred_at = training.occurred_at AND later.id > training.id)
                   )
@@ -355,7 +380,6 @@ public class WorkRepository {
                 LIMIT :limit
                 """.formatted(scope.condition()))
                 .params(scope.parameters())
-                .param("stageNames", stageNames)
                 .param("trainedBefore", trainedBefore)
                 .param("limit", limit)
                 .query((resultSet, rowNumber) -> {
@@ -379,12 +403,11 @@ public class WorkRepository {
      */
     public List<ReminderQualification> findQualificationDue(
             VisibilityScope scope,
-            String stageName,
             LocalDate trainedBy,
             int afterMonths,
             int limit
     ) {
-        if (stageName == null || stageName.isBlank() || afterMonths <= 0) {
+        if (afterMonths <= 0) {
             return List.of();
         }
         return jdbcClient.sql("""
@@ -393,10 +416,10 @@ public class WorkRepository {
                 FROM interactions i
                 JOIN organizations o ON o.id = i.organization_id
                 JOIN interaction_stages current_stage ON current_stage.id = i.current_stage_id
-                JOIN interaction_stages q ON q.interaction_id = i.id AND q.name = :stageName
+                JOIN interaction_stages q ON q.interaction_id = i.id AND q.lms_role = 'QUALIFICATION'
                     AND NOT EXISTS (
                         SELECT 1 FROM interaction_stages earlier
-                        WHERE earlier.interaction_id = i.id AND earlier.name = :stageName AND earlier.stage_order < q.stage_order
+                        WHERE earlier.interaction_id = i.id AND earlier.lms_role = 'QUALIFICATION' AND earlier.stage_order < q.stage_order
                     )
                 JOIN (
                     SELECT interaction_id, MAX(trained_on) AS trained_on FROM teacher_trainings GROUP BY interaction_id
@@ -412,7 +435,6 @@ public class WorkRepository {
                 LIMIT :limit
                 """.formatted(scope.condition()))
                 .params(scope.parameters())
-                .param("stageName", stageName)
                 .param("trainedBy", trainedBy)
                 .param("limit", limit)
                 .query((resultSet, rowNumber) -> {

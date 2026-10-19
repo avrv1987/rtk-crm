@@ -102,6 +102,7 @@ public class InteractionIssueService {
         }
         String description = requiredText(request.description(), "description", "Опишите проблему или риск");
         InteractionRiskLevel riskLevel = riskLevel(request.kind(), request.riskLevel());
+        InteractionService.requireDueWithin(request.dueOn(), "dueOn");
         String key = interactionService.requiredIdempotencyKey(idempotencyKey);
         String fingerprint = CommandFingerprint.of(objectMapper, new CreateIssueCommand(
                 interactionId, version, request.kind(), description, riskLevel, request.responsibleId(), request.dueOn()
@@ -136,6 +137,7 @@ public class InteractionIssueService {
         }
         int version = interactionService.requiredVersion(request.version());
         String description = requiredText(request.description(), "description", "Опишите проблему или риск");
+        InteractionService.requireDueWithin(request.dueOn(), "dueOn");
         String key = interactionService.requiredIdempotencyKey(idempotencyKey);
         String fingerprint = CommandFingerprint.of(objectMapper, new UpdateIssueCommand(
                 interactionId, issueId, version, request.kind(), description, request.riskLevel(), request.responsibleId(), request.dueOn()

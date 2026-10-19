@@ -62,11 +62,15 @@ import ru.rtk.crm.interaction.CommandOperation;
 import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.web.InputRules;
 
 @Service
 public class AgreementService {
     public static final int CONFIRMATION_LIMIT = 500;
     public static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
+    // Окно разумных дат договора: 0001 и 9999 из опечаток портили реестр и отчёты.
+    private static final int AGREEMENT_YEARS_BACK = 30;
+    private static final int AGREEMENT_YEARS_AHEAD = 30;
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
 
@@ -175,7 +179,8 @@ public class AgreementService {
                 organizationId,
                 agreementStages.signingRule(),
                 agreementStages.stages(interactionId),
-                repository.findInteractionSummaries(interactionId)
+                repository.findInteractionSummaries(interactionId),
+                agreementStages.activeAgreementNumber(interactionId).orElse(null)
         );
     }
 
@@ -551,6 +556,17 @@ public class AgreementService {
 
     private AgreementValues agreementValues(Organization organization, AgreementRequest request, AgreementRow current) {
         requireOrder(request.concludedOn(), request.validUntil(), "validUntil", "Срок действия раньше даты подписания");
+        LocalDate today = LocalDate.now(ZONE);
+        // Подписанный договор с датой подписания в будущем закрывал бы этап «Подписание» договором, которого ещё нет:
+        // то же правило, что и при переходе в «Действует», действует и при создании и правке.
+        AgreementStatus status = current != null ? current.status() : request.status() == null ? AgreementStatus.DRAFT : request.status();
+        if (status.signed() && request.concludedOn() != null && request.concludedOn().isAfter(today)) {
+            throw new InteractionValidationException("concludedOn", "Дата подписания не может быть позже сегодняшней");
+        }
+        InputRules.requireDateWithin(request.concludedOn(), "concludedOn", today, AGREEMENT_YEARS_BACK, AGREEMENT_YEARS_AHEAD);
+        InputRules.requireDateWithin(request.validUntil(), "validUntil", today, AGREEMENT_YEARS_BACK, AGREEMENT_YEARS_AHEAD);
+        InputRules.requireDateWithin(request.plannedOn(), "plannedOn", today, AGREEMENT_YEARS_BACK, AGREEMENT_YEARS_AHEAD);
+        InputRules.requireDateWithin(request.sentOn(), "sentOn", today, AGREEMENT_YEARS_BACK, 0);
         // План подписания или продления — пара «вид + дата»; в БД это же гарантирует ограничение agreements_plan_pair.
         if ((request.plannedKind() == null) != (request.plannedOn() == null)) {
             throw new InteractionValidationException(

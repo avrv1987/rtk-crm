@@ -19,7 +19,9 @@ public record PaidOrderUpload(
         List<Stream> streams,
         List<PaidOrderIssue> issues,
         LearnerIntake learners,
-        List<String> unmappedCourses
+        List<String> unmappedCourses,
+        int heldStreamTransfers,
+        int duplicatesInFile
 ) {
     public PaidOrderUpload {
         learners = learners == null ? LearnerIntake.NONE : learners;
@@ -56,7 +58,9 @@ public record PaidOrderUpload(
                         .toList(),
                 batch.issues(),
                 learners,
-                unmappedCourses
+                unmappedCourses,
+                batch.heldStreamTransfers(),
+                batch.duplicates()
         );
     }
 

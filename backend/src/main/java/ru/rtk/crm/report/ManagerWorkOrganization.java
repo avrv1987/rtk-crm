@@ -15,12 +15,14 @@ public record ManagerWorkOrganization(
 ) {
 
     // Вузы без идущего взаимодействия входят в числа «Контроля» и в итоги его выгрузки, только когда не заданы период и
-    // отборы по направлению, программе, продукту и этапу: у такого вуза нет ни этапа, ни продукта, а период показывает
-    // изменения, а не состояние. Тогда число вузов совпадает с разделом «Вузы».
+    // отборы по направлению, программе, продукту, виду взаимодействия и этапу: у такого вуза нет ни этапа, ни продукта, а период
+    // показывает изменения, а не состояние. Тогда число вузов совпадает с разделом «Вузы». Тип организации список вузов без работы
+    // не знает, поэтому с этим отбором они тоже не считаются, а не попадают в итог вузами чужого типа.
     public static boolean counted(ReportFilters filters, LocalDate from, LocalDate to) {
         return from == null && to == null && filters.directionIds().isEmpty() && !filters.includeNoDirection()
                 && filters.programIds().isEmpty() && !filters.includeNoProgram() && filters.productIds().isEmpty()
-                && !filters.includeNoProduct() && filters.stages().isEmpty() && filters.change() == null;
+                && !filters.includeNoProduct() && filters.stages().isEmpty() && filters.change() == null
+                && filters.organizationType() == null && filters.kindIds().isEmpty();
     }
 
     public boolean selected(ReportFilters filters) {

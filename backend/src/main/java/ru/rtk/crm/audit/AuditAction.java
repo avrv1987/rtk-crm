@@ -3,7 +3,7 @@ package ru.rtk.crm.audit;
 public enum AuditAction {
     PROFILE_CHANGED(AuditCategory.PROFILE, "Изменён профиль CRM"),
     ACTIVATION_REQUESTED(AuditCategory.PROFILE, "Сотрудник попросил активировать профиль"),
-    ENROLMENT_OPERATOR_CHANGED(AuditCategory.LEARNER, "Изменён флаг «Оператор зачисления»"),
+    ENROLMENT_OPERATOR_CHANGED(AuditCategory.LEARNER, "Изменён флаг «Менеджер учебного процесса»"),
     KAM_ASSIGNED(AuditCategory.ASSIGNMENT, "Назначен ответственный КАМ"),
     KAM_CHANGED(AuditCategory.ASSIGNMENT, "Сменён ответственный КАМ"),
     KAM_UNASSIGNED(AuditCategory.ASSIGNMENT, "Снят ответственный КАМ"),
@@ -93,6 +93,8 @@ public enum AuditAction {
     CATALOG_IMPORT_APPLIED(AuditCategory.SETTINGS, "Применён импорт из Excel"),
     WORKFLOW_TEMPLATE_CHANGED(AuditCategory.SETTINGS, "Изменён шаблон маршрута"),
     WORKFLOW_ROLLOUT_APPLIED(AuditCategory.SETTINGS, "Работы переведены на версию шаблона маршрута"),
+    INTERACTION_KIND_CHANGED(AuditCategory.SETTINGS, "Изменён вид взаимодействия"),
+    INTERACTION_KIND_RULE_CHANGED(AuditCategory.SETTINGS, "Изменено правило выбора вида взаимодействия"),
     SOURCE_MAPPING_CHANGED(AuditCategory.SYNC, "Изменено сопоставление источника"),
     MAIL_SETTINGS_CHANGED(AuditCategory.MAIL, "Изменены настройки почты"),
     MAIL_CONNECTION_CHECKED(AuditCategory.MAIL, "Проверено подключение к почтовому серверу"),

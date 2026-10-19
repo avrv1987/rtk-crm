@@ -30,4 +30,6 @@ export const partnerRequestActions = (status: RequestStatus) => ({
   cancel: status !== 'ACCEPTED' && status !== 'CANCELLED'
 })
 
-export const answerable = (status: RequestStatus) => status === 'AWAITING_RESPONSE' || status === 'RETURNED'
+// Пока школа не уточнила, координатор может ответить и сам: свой вопрос не запирает готовый ответ.
+export const answerable = (status: RequestStatus) =>
+  status === 'AWAITING_RESPONSE' || status === 'RETURNED' || status === 'CLARIFICATION_NEEDED'

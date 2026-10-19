@@ -376,6 +376,21 @@
   white-space: nowrap;
 }
 
+/* Н-14 (2.5): на телефоне таблица слушателей не сжимается до переносов по слогам («Ду-блев»), а прокручивается
+   внутри своей области, как таблица потоков. */
+.catalog-import__table-scroll table[aria-label="Слушатели потока"] {
+  min-width: 760px;
+}
+
+.catalog-import__table-scroll table[aria-label="Слушатели потока"] :is(th, td) {
+  hyphens: manual;
+  overflow-wrap: normal;
+}
+
+.catalog-import__table-scroll table[aria-label="Слушатели потока"] :is(th, td button) {
+  white-space: nowrap;
+}
+
 .enrolment__back {
   display: inline-block;
   margin-bottom: var(--space-3);

@@ -3,6 +3,8 @@ package ru.rtk.crm.interaction;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -47,6 +49,10 @@ public class WorkflowTemplateRepository {
     }
 
     public Optional<WorkflowTemplate> findDefaultForOrganizationForUpdate(UUID organizationId) {
+        return findDefaultForOrganization(organizationId, true);
+    }
+
+    public Optional<WorkflowTemplate> findDefaultForOrganization(UUID organizationId, boolean forUpdate) {
         return jdbcClient.sql("""
                 SELECT team.default_workflow_template_id
                 FROM organizations organization
@@ -56,9 +62,9 @@ public class WorkflowTemplateRepository {
                 .param("organizationId", organizationId)
                 .query(UUID.class)
                 .optional()
-                .flatMap(this::findByIdForUpdate)
+                .flatMap(id -> findOne(id, forUpdate))
                 .map(this::toTemplate)
-                .or(this::findDefaultForUpdate);
+                .or(() -> findDefault(forUpdate));
     }
 
     public Optional<UUID> findTeamDefaultId(UUID teamId) {
@@ -119,19 +125,39 @@ public class WorkflowTemplateRepository {
     }
 
     public List<WorkflowTemplateStage> findStages(UUID templateId) {
+        Map<UUID, List<String>> documents = new HashMap<>();
+        jdbcClient.sql("""
+                SELECT d.stage_id, d.kind_code
+                FROM workflow_template_stage_documents d
+                JOIN workflow_template_stages s ON s.id = d.stage_id
+                WHERE s.template_id = :templateId
+                ORDER BY d.kind_code
+                """)
+                .param("templateId", templateId)
+                .query((ResultSet resultSet) -> {
+                    documents.computeIfAbsent(resultSet.getObject("stage_id", UUID.class), ignored -> new ArrayList<>())
+                            .add(resultSet.getString("kind_code"));
+                });
         return jdbcClient.sql("""
-                SELECT id, name, stage_order, optional
+                SELECT id, name, stage_order, optional, requires_agreement, lms_role
                 FROM workflow_template_stages
                 WHERE template_id = :templateId
                 ORDER BY stage_order ASC
                 """)
                 .param("templateId", templateId)
-                .query((resultSet, rowNumber) -> new WorkflowTemplateStage(
-                        resultSet.getObject("id", UUID.class),
-                        resultSet.getString("name"),
-                        resultSet.getInt("stage_order"),
-                        resultSet.getBoolean("optional")
-                ))
+                .query((resultSet, rowNumber) -> {
+                    UUID id = resultSet.getObject("id", UUID.class);
+                    String role = resultSet.getString("lms_role");
+                    return new WorkflowTemplateStage(
+                            id,
+                            resultSet.getString("name"),
+                            resultSet.getInt("stage_order"),
+                            resultSet.getBoolean("optional"),
+                            resultSet.getBoolean("requires_agreement"),
+                            role == null ? null : StageLmsRole.valueOf(role),
+                            documents.get(id)
+                    );
+                })
                 .list();
     }
 
@@ -194,6 +220,29 @@ public class WorkflowTemplateRepository {
                 .update() == 1;
     }
 
+    /** Незавершённые (идущие и приостановленные) взаимодействия, которые идут по шаблону. */
+    public long countOpenInteractions(UUID templateId) {
+        return jdbcClient.sql("""
+                SELECT COUNT(*) FROM interactions WHERE workflow_template_id = :templateId AND work_status <> 'COMPLETED'
+                """)
+                .param("templateId", templateId)
+                .query(Long.class)
+                .single();
+    }
+
+    /** Названия видов взаимодействия, у которых шаблон выбран общим или командным маршрутом. */
+    public List<String> findKindNamesUsing(UUID templateId) {
+        return jdbcClient.sql("""
+                SELECT DISTINCT k.name FROM interaction_kinds k
+                WHERE k.workflow_template_id = :templateId
+                   OR EXISTS (SELECT 1 FROM interaction_kind_team_templates t WHERE t.kind_id = k.id AND t.workflow_template_id = :templateId)
+                ORDER BY k.name
+                """)
+                .param("templateId", templateId)
+                .query(String.class)
+                .list();
+    }
+
     public boolean delete(UUID templateId, int expectedVersion) {
         return jdbcClient.sql("DELETE FROM workflow_templates WHERE id = :templateId AND version = :expectedVersion")
                 .param("templateId", templateId)
@@ -207,6 +256,12 @@ public class WorkflowTemplateRepository {
             List<WorkflowTemplateTransition> transitions
     ) {
         jdbcClient.sql("DELETE FROM workflow_template_transitions WHERE template_id = :templateId")
+                .param("templateId", templateId)
+                .update();
+        jdbcClient.sql("""
+                DELETE FROM workflow_template_stage_documents
+                WHERE stage_id IN (SELECT id FROM workflow_template_stages WHERE template_id = :templateId)
+                """)
                 .param("templateId", templateId)
                 .update();
         jdbcClient.sql("DELETE FROM workflow_template_stages WHERE template_id = :templateId")
@@ -254,15 +309,23 @@ public class WorkflowTemplateRepository {
     private void insertStages(UUID templateId, List<WorkflowTemplateStage> stages) {
         for (WorkflowTemplateStage stage : stages) {
             jdbcClient.sql("""
-                    INSERT INTO workflow_template_stages (id, template_id, stage_order, name, optional)
-                    VALUES (:id, :templateId, :stageOrder, :name, :optional)
+                    INSERT INTO workflow_template_stages (id, template_id, stage_order, name, optional, requires_agreement, lms_role)
+                    VALUES (:id, :templateId, :stageOrder, :name, :optional, :requiresAgreement, :lmsRole)
                     """)
                     .param("id", stage.id())
                     .param("templateId", templateId)
                     .param("stageOrder", stage.order())
                     .param("name", stage.name())
                     .param("optional", stage.optional())
+                    .param("requiresAgreement", stage.requiresAgreement())
+                    .param("lmsRole", stage.lmsRole() == null ? null : stage.lmsRole().name())
                     .update();
+            for (String kind : stage.documentKinds()) {
+                jdbcClient.sql("INSERT INTO workflow_template_stage_documents (stage_id, kind_code) VALUES (:stageId, :kind)")
+                        .param("stageId", stage.id())
+                        .param("kind", kind)
+                        .update();
+            }
         }
     }
 

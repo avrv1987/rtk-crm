@@ -226,3 +226,20 @@
 .document-extras__partner .interaction-field-hint {
   grid-column: 2;
 }
+
+.stage-document-checklist {
+  border: 1px solid var(--color-border, #d0d7de);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.stage-document-checklist ul {
+  margin: 4px 0 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.stage-document--missing {
+  color: var(--color-danger, #b42318);
+}

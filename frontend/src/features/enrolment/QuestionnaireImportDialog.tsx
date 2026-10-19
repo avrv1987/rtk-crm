@@ -139,7 +139,8 @@ export const QuestionnaireImportDialog = ({ streamId, onApplied, onAccessError, 
             </dl>
           ) : (
             <p role="status">
-              Применено {applyResult.updated}, без изменений {applyResult.unchanged}, пропущено с ошибками и конфликтами {applyResult.errors + applyResult.conflicts}.
+              {applyResult.alreadyApplied ? 'Этот файл уже применён, повторно ничего не изменено. ' : ''}
+              {applyResult.updated === 0 ? 'Анкеты не изменены' : `Применено ${applyResult.updated}`}, без изменений {applyResult.unchanged}, пропущено с ошибками и конфликтами {applyResult.errors + applyResult.conflicts}.
             </p>
           )}
           {rowsResult.ignoredHeaders.length > 0 && (

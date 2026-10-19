@@ -8,7 +8,8 @@ const columns = { PORTFOLIO: [], EVENTS: [], DEMAND: [], SNAPSHOT: [], DURATION:
 
 const defaultSelection = (kind: ReportSelection['kind']): ReportSelection => ({
   kind, from: '', to: '', asOf: '', periodBasis: 'CREATED', organizationIds: [], directionIds: [], includeNoDirection: false,
-  programIds: [], includeNoProgram: false, productIds: [], includeNoProduct: false, managerIds: [], includeNoManager: false,
+  programIds: [], includeNoProgram: false, productIds: [], includeNoProduct: false, kindIds: [], managerIds: [], includeNoManager: false,
+
   stages: [], organizationType: '', workStatuses: [], flags: [],
   agreement: { vendorIds: [], licenseSigned: '', licenseExpiresBy: '', notTransferred: [] },
   eventTypes: [], minDaysOnStage: '', change: '', columns, groupBy: 'STAGE', chartType: 'BAR', seriesBy: null, sortBy: 'APPLICATIONS'

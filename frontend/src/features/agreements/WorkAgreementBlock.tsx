@@ -143,8 +143,8 @@ export const WorkAgreementBlock = ({
   return (
     <section className="work-agreement" aria-labelledby="work-agreement-title">
       <h5 id="work-agreement-title">Договор с вузом</h5>
-      {work.signingRuleEnabled && hasSigningStage && signingRuleHint(role, work.agreements) !== null && (
-        <p className="work-agreement__rule">{signingRuleHint(role, work.agreements)}</p>
+      {work.signingRuleEnabled && hasSigningStage && signingRuleHint(role, work) !== null && (
+        <p className="work-agreement__rule">{signingRuleHint(role, work)}</p>
       )}
       {work.agreements.length === 0 ? (
         <div className="work-agreement__empty">

@@ -59,6 +59,7 @@ const agreementFields: MappingField[] = [
     ['Ответственный от ВУЗа', 'Контактное лицо', 'Контакт', 'Контакты вуза']),
   field('comment', 'Комментарий', false, false, ['Комментарии', 'Примечание']),
   field('organizationType', 'Тип организации', false, true, ['Тип']),
+  field('programName', 'ИТ-программа', false, true, ['Программа', 'ИТ программа']),
   field('organizationExternalKey', 'Ключ вуза', false, true),
   field('vendorExternalKey', 'Ключ вендора', false, true),
   field('productExternalKey', 'Ключ ПО', false, true),
@@ -601,7 +602,9 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
               <label className="import-sheet">
                 Лист
                 <select value={sheetName} disabled={busy !== null} onChange={(event) => selectSheet(event.target.value)}>
-                  {sheets.map((sheet) => <option key={sheet.name} value={sheet.name}>{sheet.name}</option>)}
+                  {sheets.map((sheet) => (
+                    <option key={sheet.name} value={sheet.name}>{sheet.hidden ? `${sheet.name} (скрытый лист)` : sheet.name}</option>
+                  ))}
                 </select>
               </label>
               <div className="import-grid">

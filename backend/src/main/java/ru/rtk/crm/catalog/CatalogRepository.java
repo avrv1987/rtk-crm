@@ -19,15 +19,15 @@ public class CatalogRepository {
     }
 
     public CatalogPage findPrograms(CatalogQuery query, CatalogEntryState state) {
-        return findPage("programs", query, state);
+        return findPage("programs", "LEFT JOIN directions parent ON parent.id = entry.direction_id", "parent.name", query, state);
     }
 
     public CatalogPage findProducts(CatalogQuery query, CatalogEntryState state) {
-        return findPage("products", query, state);
+        return findPage("products", "LEFT JOIN vendors parent ON parent.id = entry.vendor_id", "parent.name", query, state);
     }
 
     public CatalogPage findDirections(CatalogQuery query, CatalogEntryState state) {
-        return findPage("directions", query, state);
+        return findPage("directions", "", "CAST(NULL AS VARCHAR(255))", query, state);
     }
 
     public Optional<CatalogReference> findActiveProgramById(UUID programId) {
@@ -72,14 +72,16 @@ public class CatalogRepository {
                 .list());
     }
 
-    private CatalogPage findPage(String table, CatalogQuery query, CatalogEntryState state) {
+    // Родитель (направление программы, вендор продукта) нужен формам для группировки длинных списков.
+    private CatalogPage findPage(String table, String parentJoin, String groupName, CatalogQuery query, CatalogEntryState state) {
         List<CatalogLookup> items = jdbcClient.sql("""
-                SELECT entry.id, entry.name, entry.archived, entry.version
+                SELECT entry.id, entry.name, entry.archived, entry.version, %s AS group_name
                 FROM %s entry
+                %s
                 WHERE %s
                 ORDER BY entry.archived ASC, entry.name ASC, entry.id ASC
                 LIMIT :size OFFSET :offset
-                """.formatted(table, state.condition()))
+                """.formatted(groupName, table, parentJoin, state.condition()))
                 .param("size", query.size())
                 .param("offset", query.offset())
                 .query(this::mapLookup)
@@ -95,7 +97,8 @@ public class CatalogRepository {
                 resultSet.getObject("id", UUID.class),
                 resultSet.getString("name"),
                 resultSet.getBoolean("archived"),
-                resultSet.getInt("version")
+                resultSet.getInt("version"),
+                resultSet.getString("group_name")
         );
     }
 

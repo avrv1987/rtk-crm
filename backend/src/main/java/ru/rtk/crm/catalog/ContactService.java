@@ -209,6 +209,8 @@ public class ContactService {
         );
         if (next.inactive() && !current.inactive()) {
             eventPublisher.publishEvent(new CatalogArchivedEvent(organizationId, contactId, profile.id(), null));
+        } else if (!java.util.Objects.equals(current.email(), next.email())) {
+            eventPublisher.publishEvent(new ContactEmailChangedEvent(organizationId, contactId, next.email(), profile.id()));
         }
         return store(commandId, contactRepository.findById(organizationId, contactId)
                 .orElseThrow(ContactNotFoundException::new));

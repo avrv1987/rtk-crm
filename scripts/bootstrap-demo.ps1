@@ -696,7 +696,7 @@ try {
             @('leader-b', 'Руководитель Б', 'LEADER', 'team-b'),
             @('admin', 'Администратор', 'ADMIN', 'team-a'),
             @('management', 'Руководство', 'MANAGEMENT', $null),
-            @('enrol', 'Оператор зачисления', 'USER', 'open-enrolment', $true),
+            @('enrol', 'Менеджер учебного процесса', 'USER', 'open-enrolment', $true),
             @('partner', 'Представитель вуза', 'PARTNER', '')
         )
         $controlIdentities = @(

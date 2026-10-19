@@ -9,6 +9,7 @@ import ru.rtk.crm.access.CurrentProfileService;
 import ru.rtk.crm.access.PartnerModuleDisabledException;
 import ru.rtk.crm.access.UserProfileRepository;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.catalog.OrganizationCatalogRepository;
 import ru.rtk.crm.enrolment.EnrolmentAccess;
 import ru.rtk.crm.mcp.McpProperties;
 import ru.rtk.crm.module.ModuleProperties;
@@ -20,19 +21,22 @@ public class SessionApiController {
     private final EnrolmentAccess enrolmentAccess;
     private final ModuleProperties modules;
     private final McpProperties mcp;
+    private final OrganizationCatalogRepository organizationCatalogRepository;
 
     public SessionApiController(
             CurrentProfileService currentProfileService,
             UserProfileRepository userProfileRepository,
             EnrolmentAccess enrolmentAccess,
             ModuleProperties modules,
-            McpProperties mcp
+            McpProperties mcp,
+            OrganizationCatalogRepository organizationCatalogRepository
     ) {
         this.currentProfileService = currentProfileService;
         this.userProfileRepository = userProfileRepository;
         this.enrolmentAccess = enrolmentAccess;
         this.modules = modules;
         this.mcp = mcp;
+        this.organizationCatalogRepository = organizationCatalogRepository;
     }
 
     @GetMapping("/api/me")
@@ -44,8 +48,11 @@ public class SessionApiController {
         String teamName = profile.teamId() == null
                 ? null
                 : userProfileRepository.findTeamName(profile.teamId()).orElse(null);
+        boolean operator = enrolmentAccess.isOperator(profile.id());
+        // КАМ служебной команды «Открытый набор» с флагом — менеджер учебного процесса без своих вузов: разделы КАМ ему не нужны.
+        boolean enrolmentOnly = operator && profile.role() == UserRole.USER && organizationCatalogRepository.serviceTeam(profile.teamId());
         return new MeResponse(profile.id(), profile.role(), profile.teamId(), teamName, profile.accessRevision(),
-                enrolmentAccess.isOperator(profile.id()), userProfileRepository.findDisplayName(profile.id()).orElse(null));
+                operator, userProfileRepository.findDisplayName(profile.id()).orElse(null), enrolmentOnly);
     }
 
     @GetMapping("/api/config")

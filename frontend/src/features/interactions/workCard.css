@@ -435,8 +435,11 @@ a.interaction-list-item {
 
 .work-facts__action {
   justify-self: start;
+  max-width: 100%;
   min-height: var(--control-height-compact);
   margin-top: var(--space-1);
+  /* У dd перенос «где угодно» (длинные номера договоров), но подпись кнопки должна переноситься только по словам. */
+  overflow-wrap: normal;
 }
 
 .work-step {
@@ -678,10 +681,18 @@ a.interaction-list-item {
     bottom: var(--space-14);
   }
 
+  /* На 320 px подпись не обрезается многоточием, а переносится по словам во вторую строку. */
   .work-card__primary {
     flex: 1 1 auto;
     min-width: 0;
     padding: 0 var(--space-3);
+    white-space: normal;
+    overflow-wrap: normal;
+    line-height: 1.15;
+  }
+
+  .work-card__transition {
+    flex: 0 0 auto;
     white-space: nowrap;
   }
 
@@ -702,6 +713,14 @@ a.interaction-list-item {
   .work-route__bar {
     flex-basis: 100%;
     max-width: none;
+  }
+}
+
+/* На 320 px четыре кнопки нижней панели не помещаются, и главная сжималась до полоски. Переход остаётся в «⋯»
+   («Перейти на следующий этап…»), поэтому отдельную кнопку на самых узких экранах убираем. */
+@media (max-width: 360px) {
+  .work-card__transition {
+    display: none;
   }
 }
 

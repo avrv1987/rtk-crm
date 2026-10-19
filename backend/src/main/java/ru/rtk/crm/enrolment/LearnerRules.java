@@ -10,6 +10,8 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import ru.rtk.crm.web.InputRules;
+
 final class LearnerRules {
     static final int MAX_TEXT_LENGTH = 500;
     static final int MAX_EMAIL_LENGTH = 254;
@@ -37,7 +39,6 @@ final class LearnerRules {
     private static final Set<LearnerField> DIPLOMA_CODES = EnumSet.of(
             LearnerField.DIPLOMA_NUMBER, LearnerField.DIPLOMA_SERIES, LearnerField.DIPLOMA_REGISTRATION_NUMBER
     );
-    private static final Pattern NAME = Pattern.compile("[\\p{L} .'’\\-]{1," + MAX_NAME_LENGTH + "}");
     private static final Pattern DIPLOMA_CODE = Pattern.compile("[\\p{L}\\p{Nd} \\-]{1," + MAX_DIPLOMA_CODE_LENGTH + "}");
 
     private static final Pattern SPACES = Pattern.compile("(?U)\\s+");
@@ -88,6 +89,14 @@ final class LearnerRules {
         return matcher.matches() ? matcher.group(1) + "-" + matcher.group(2) : null;
     }
 
+    static String nameRule(String label) {
+        return "«" + label + "»: до " + MAX_NAME_LENGTH + " символов — " + InputRules.NAME_RULE;
+    }
+
+    static boolean isName(String value) {
+        return InputRules.isPersonName(value, MAX_NAME_LENGTH);
+    }
+
     static boolean isEmail(String value) {
         return value.length() <= MAX_EMAIL_LENGTH && EMAIL.matcher(value).matches();
     }
@@ -118,9 +127,8 @@ final class LearnerRules {
             if (profile.value(field) instanceof String text) {
                 if (text.length() > MAX_TEXT_LENGTH) {
                     errors.add(new LearnerFieldError(field, "Значение длиннее " + MAX_TEXT_LENGTH + " символов"));
-                } else if (NAMES.contains(field) && !NAME.matcher(text).matches()) {
-                    errors.add(new LearnerFieldError(field, "«" + field.label() + "»: до " + MAX_NAME_LENGTH
-                            + " символов — буквы, пробел, дефис, апостроф, точка"));
+                } else if (NAMES.contains(field) && !isName(text)) {
+                    errors.add(new LearnerFieldError(field, nameRule(field.label())));
                 } else if (ADDRESS_LENGTHS.containsKey(field) && text.length() > ADDRESS_LENGTHS.get(field)) {
                     errors.add(new LearnerFieldError(field, "«" + field.label() + "»: не длиннее " + ADDRESS_LENGTHS.get(field)
                             + " символов"));

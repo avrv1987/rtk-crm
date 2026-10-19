@@ -29,7 +29,7 @@ public class AttachmentContentValidator {
     // по значению multipart и по фактически прочитанным байтам.
     public AttachmentUploadInspection inspect(MultipartFile file) {
         if (file == null || file.isEmpty()) {
-            throw new AttachmentValidationException("file", "Выберите файл");
+            throw new AttachmentValidationException("file", file == null ? "Выберите файл" : "Файл пустой (0 байт): выберите файл с содержимым");
         }
         if (file.getSize() > properties.maxFileSize().toBytes()) {
             throw new AttachmentTooLargeException();
@@ -59,7 +59,7 @@ public class AttachmentContentValidator {
             throw new AttachmentValidationException("file", "Файл не удалось прочитать");
         }
         if (sizeBytes == 0) {
-            throw new AttachmentValidationException("file", "Выберите файл");
+            throw new AttachmentValidationException("file", "Файл пустой (0 байт): выберите файл с содержимым");
         }
         // Расширение должно соответствовать сигнатуре: переименованный исполняемый файл с расширением .pdf не пройдёт.
         // DOCX и XLSX — ZIP-контейнеры, поэтому для них проверяется сигнатура ZIP; содержимое дальше проверяет антивирус.

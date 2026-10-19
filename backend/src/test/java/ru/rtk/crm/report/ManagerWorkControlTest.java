@@ -220,6 +220,25 @@ class ManagerWorkControlTest {
     }
 
     @Test
+    void missingDocumentsOfTheCurrentStageAreASignalInControl() {
+        UUID stage = jdbcTemplate.queryForObject("SELECT current_stage_id FROM interactions WHERE id = ?", UUID.class, INTERACTION_WITHOUT_LINKS);
+        jdbcTemplate.update("INSERT INTO interaction_stage_documents (interaction_id, stage_id, kind_code) VALUES (?, ?, 'CONTRACT'), (?, ?, 'ACT')",
+                INTERACTION_WITHOUT_LINKS, stage, INTERACTION_WITHOUT_LINKS, stage);
+        jdbcTemplate.update("INSERT INTO attachments (id, interaction_id, stage_id, kind) VALUES (?, ?, ?, 'CONTRACT')",
+                UUID.randomUUID(), INTERACTION_WITHOUT_LINKS, stage);
+        java.util.function.Supplier<List<WorkItem>> flagged = () -> workControlService.control(LEADER_A_PROFILE, filters(), null, null)
+                .teams().getFirst().managers().stream().flatMap(block -> block.works().stream()).filter(WorkItem::missingDocuments).toList();
+
+        assertThat(flagged.get()).extracting(WorkItem::interactionId).containsExactly(INTERACTION_WITHOUT_LINKS);
+        UUID act = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO attachments (id, interaction_id, stage_id, kind, status) VALUES (?, ?, ?, 'ACT', 'REJECTED')",
+                act, INTERACTION_WITHOUT_LINKS, stage);
+        assertThat(flagged.get()).as("отклонённый антивирусом файл не приложен").hasSize(1);
+        jdbcTemplate.update("UPDATE attachments SET status = 'QUARANTINE' WHERE id = ?", act);
+        assertThat(flagged.get()).as("всё приложено — сигнала нет").isEmpty();
+    }
+
+    @Test
     void managementSeesAllTeamsReadOnlyAndOthersAreDenied() {
         CrmProfile management = new CrmProfile(UUID.randomUUID(), UserRole.MANAGEMENT, null, 0);
 

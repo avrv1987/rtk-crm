@@ -5,7 +5,7 @@ import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { saveFile } from '../admin/saveFile'
 import { daysInStatus, partnerApprovalLine } from '../agreements/agreementModel'
 import { AgreementTermMark } from '../agreements/agreementUi'
-import { attachmentKindLabels } from '../documents/documentsApi'
+import { attachmentKindLabel } from '../documents/documentsApi'
 import { handledAccessError, workStatusLabels } from '../interactions/workMarks'
 import {
   agreementStatusLabels,
@@ -219,7 +219,7 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
                 <strong className="partner-card__name">{document.name}</strong>
               </div>
               <p className="partner-card__meta">
-                {attachmentKindLabels[document.kind]} · версия {document.revision}{document.replaced ? ' (есть новая версия)' : ''} · {fileSize(document.sizeBytes)} · {document.workTitle} · {formatMoscowDateTime(document.createdAt)}
+                {attachmentKindLabel(document)} · версия {document.revision}{document.replaced ? ' (есть новая версия)' : ''} · {fileSize(document.sizeBytes)} · {document.workTitle} · {formatMoscowDateTime(document.createdAt)}
               </p>
               {document.receivedAt !== null && (
                 <p className="partner-card__meta">Получение этой версии подтверждено {formatMoscowDateTime(document.receivedAt)}</p>

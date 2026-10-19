@@ -44,6 +44,7 @@ final class ReportTestData {
     }
 
     static void createSchema(JdbcTemplate jdbc) {
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.create(jdbc);
         jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
                     id UUID PRIMARY KEY,
@@ -143,7 +144,7 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interactions (workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
+                CREATE TABLE IF NOT EXISTS interactions (interaction_kind_id UUID, workflow_template_id UUID, workflow_version INTEGER, next_step_partner_visible BOOLEAN DEFAULT FALSE NOT NULL, 
                     work_status VARCHAR(16) DEFAULT 'ACTIVE' NOT NULL, work_status_reason VARCHAR(1000), waiting_on VARCHAR(16), waiting_note VARCHAR(500),
                     id UUID PRIMARY KEY,
                     organization_id UUID NOT NULL,
@@ -156,7 +157,7 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_stages (template_stage_id UUID, 
+                CREATE TABLE IF NOT EXISTS interaction_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), template_stage_id UUID, 
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
                     stage_order INTEGER NOT NULL,
@@ -210,7 +211,7 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS workflow_template_stages (
+                CREATE TABLE IF NOT EXISTS workflow_template_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
                     id UUID PRIMARY KEY, template_id UUID NOT NULL, stage_order INTEGER NOT NULL, name VARCHAR(200) NOT NULL
                 )
                 """);
@@ -389,8 +390,17 @@ final class ReportTestData {
                     PRIMARY KEY (interaction_id, mapping_id, signal_type)
                 )
                 """);
+        // Документы нужны только для сигнала «нет документов» в строках «Контроля» (missingDocumentsCondition).
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS attachments (
+                    id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_id UUID NOT NULL, kind VARCHAR(32) DEFAULT 'OTHER' NOT NULL,
+                    status VARCHAR(32) DEFAULT 'CLEAN' NOT NULL, deleted_at TIMESTAMP WITH TIME ZONE
+                )
+                """);
+        jdbc.execute("CREATE TABLE IF NOT EXISTS interaction_stage_completions (interaction_id UUID NOT NULL, stage_id UUID NOT NULL,"
+                + " completed_on DATE NOT NULL, event_id UUID NOT NULL, PRIMARY KEY (interaction_id, stage_id))");
         for (String table : new String[]{
-                "lms_signal_dismissals", "interaction_cycles", "interaction_stage_transitions", "labor_market_mappings", "labor_market_snapshots", "learning_observations", "learning_snapshots", "source_mappings", "source_records", "report_jobs", "interaction_event_contacts", "contacts", "interaction_events", "product_transfers", "product_agreements", "interaction_stages",
+                "interaction_stage_completions", "attachments", "interaction_stage_documents", "lms_signal_dismissals", "interaction_cycles", "interaction_stage_transitions", "labor_market_mappings", "labor_market_snapshots", "learning_observations", "learning_snapshots", "source_mappings", "source_records", "report_jobs", "interaction_event_contacts", "contacts", "interaction_events", "product_transfers", "product_agreements", "interaction_stages",
                 "interaction_issues", "interactions", "products", "vendors", "programs", "directions", "organizations", "crm_user_profiles", "teams", "organization_assignment_events",
                 "command_idempotency_records", "saved_reports", "workflow_template_stages", "workflow_templates"
         }) {

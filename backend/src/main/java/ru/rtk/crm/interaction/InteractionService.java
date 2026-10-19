@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.ContactInteractionMutationAccessDeniedException;
 import ru.rtk.crm.access.ContactInteractionMutationAuthorization;
+import ru.rtk.crm.web.InputRules;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.agreement.AgreementStages;
 import ru.rtk.crm.attachment.AttachmentRepository;
@@ -56,6 +57,7 @@ public class InteractionService {
     private final CommandIdempotencyRepository commandIdempotencyRepository;
     private final ObjectMapper objectMapper;
     private final AgreementStages agreementStages;
+    private final InteractionKindService interactionKindService;
 
     public InteractionService(
             OrganizationRepository organizationRepository,
@@ -66,7 +68,8 @@ public class InteractionService {
             AttachmentRepository attachmentRepository,
             CommandIdempotencyRepository commandIdempotencyRepository,
             ObjectMapper objectMapper,
-            AgreementStages agreementStages
+            AgreementStages agreementStages,
+            InteractionKindService interactionKindService
     ) {
         this.organizationRepository = organizationRepository;
         this.contactRepository = contactRepository;
@@ -77,6 +80,7 @@ public class InteractionService {
         this.commandIdempotencyRepository = commandIdempotencyRepository;
         this.objectMapper = objectMapper;
         this.agreementStages = agreementStages;
+        this.interactionKindService = interactionKindService;
     }
 
     @Transactional(readOnly = true)
@@ -161,7 +165,15 @@ public class InteractionService {
         requireActiveContacts(organization.id(), contactIds);
         UUID programId = validatedProgramId(request.programId());
         List<UUID> productIds = validatedProductIds(request.productIds());
-        WorkflowTemplate template = requireAvailableTemplate(organization, request.templateId());
+        InteractionKindModels.ResolvedRoute route = interactionKindService.route(
+                organization.id(), request.kindId(), programId, productIds, request.templateId()
+        );
+        // Ручной выбор шаблона главнее вида: вид при этом всё равно записывается в карточку.
+        WorkflowTemplate template = request.templateId() == null
+                ? route.template()
+                : requireAvailableTemplate(organization, request.templateId());
+        requireDueWithin(request.nextActionAt(), "nextActionAt");
+        requireLastContact(request.lastContactAt());
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
         CreateInteractionCommand command = new CreateInteractionCommand(
                 organization.id(),
@@ -172,7 +184,8 @@ public class InteractionService {
                 programId,
                 productIds,
                 request.lastContactAt(),
-                request.templateId()
+                request.templateId(),
+                request.kindId()
         );
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
@@ -200,7 +213,8 @@ public class InteractionService {
                         programId,
                         request.lastContactAt(),
                         contactIds,
-                        productIds
+                        productIds,
+                        route.kindId()
                 ),
                 template,
                 profile.id(),
@@ -212,31 +226,46 @@ public class InteractionService {
         return storeInteraction(commandId, created);
     }
 
+    // Импорт каталога выбирает вид по правилам (тип вуза и продукт строки), маршрут — по виду.
     @Transactional
     public UUID createImportedInteraction(
             UUID organizationId,
             UUID ownerManagerId,
             String title,
+            UUID productId,
+            UUID actorProfileId,
+            UUID commandId,
+            OffsetDateTime now
+    ) {
+        return createImportedInteraction(organizationId, ownerManagerId, title, null, productId, actorProfileId, commandId, now);
+    }
+
+    public UUID createImportedInteraction(
+            UUID organizationId,
+            UUID ownerManagerId,
+            String title,
+            UUID programId,
+            UUID productId,
             UUID actorProfileId,
             UUID commandId,
             OffsetDateTime now
     ) {
         requireWorkableOrganization(organizationRepository.isArchived(organizationId));
-        WorkflowTemplate template = workflowTemplateRepository.findDefaultForOrganizationForUpdate(organizationId)
-                .orElseThrow(() -> new InteractionValidationException(
-                        "templateId", "Нет шаблона процесса по умолчанию; создайте его перед импортом"
-                ));
+        InteractionKindModels.ResolvedRoute route = interactionKindService.route(
+                organizationId, null, programId, productId == null ? List.of() : List.of(productId), null
+        );
         return startInteraction(
-                new InteractionStart(organizationId, ownerManagerId, title, null, null, null, null, List.of(), List.of()),
-                template,
+                new InteractionStart(organizationId, ownerManagerId, title, null, null, programId, null, List.of(), List.of(),
+                        route.kindId()),
+                route.template(),
                 actorProfileId,
                 commandId,
                 now
         );
     }
 
-    // Работа по записи источника стартует с первого этапа шаблона по умолчанию для вуза (источник этап не выбирает);
-    // шаблон блокируется, чтобы маршрут не сменился до снимка этапов. commandId — команда применения записи, уже
+    // Работа по записи источника стартует с первого этапа маршрута вида, выбранного правилами по вузу, программе и
+    // продукту (источник этап не выбирает); шаблон блокируется, чтобы маршрут не сменился до снимка этапов. commandId — команда применения записи, уже
     // зарезервированная вызывающим: события работы идут под ней, поэтому повторное применение той же версии не плодит
     // работ. В архивной организации работа не создаётся.
     @Transactional
@@ -253,15 +282,12 @@ public class InteractionService {
             OffsetDateTime now
     ) {
         requireWorkableOrganization(organizationRepository.isArchived(organizationId));
-        WorkflowTemplate template = workflowTemplateRepository.findDefaultForOrganizationForUpdate(organizationId)
-                .orElseThrow(() -> new InteractionValidationException(
-                        "templateId", "Нет шаблона процесса по умолчанию; создайте его перед применением записей источника"
-                ));
+        InteractionKindModels.ResolvedRoute route = interactionKindService.route(organizationId, null, programId, productIds, null);
         return startInteraction(
                 new InteractionStart(organizationId, ownerManagerId, title,
                         nextStep == null ? null : nextStep.nextAction(), nextStep == null ? null : nextStep.nextActionAt(),
-                        programId, null, contactIds, productIds),
-                template,
+                        programId, null, contactIds, productIds, route.kindId()),
+                route.template(),
                 actorProfileId,
                 commandId,
                 now
@@ -329,6 +355,7 @@ public class InteractionService {
                 start.nextActionAt(),
                 start.programId(),
                 start.lastContactAt(),
+                start.kindId(),
                 actorProfileId,
                 now
         );
@@ -397,6 +424,7 @@ public class InteractionService {
         // Версия сверяется ПОСЛЕ резерва ключа: повтор уже выполненной команды получает сохранённый результат, а не
         // 409 из-за версии, которую эта же команда и подняла. Устаревшая версия новой команды даёт 409.
         requireExpectedVersion(visible.row(), expectedVersion);
+        requireOpen(visible.row());
         List<InteractionStage> stages = interactionRepository.findStages(interactionId);
         InteractionStage fromStage = currentStage(stages, visible.row());
         InteractionStage toStage = targetStage(stages, request.toStageId(), "toStageId");
@@ -413,8 +441,27 @@ public class InteractionService {
         if (transition.commentRequired() && comment == null) {
             throw new InteractionValidationException("comment", "Заполните значение");
         }
-        // Правило этапа «Подписание»: выйти из него вперёд нельзя, пока договор не подписан (см. AgreementStages).
+        // Этап с отметкой «требует действующего договора»: пройти дальше нельзя без действующего договора с вузом
+        // (см. AgreementStages).
         agreementStages.requireSignedToLeave(interactionId, stages, fromStage, toStage);
+        // Обязательные документы этапа — мягкое правило: уйти вперёд можно и без них, но с комментарием. Перечень
+        // недостающего сервер сам ставит в начало комментария, чтобы он остался в истории при любом клиенте.
+        if (toStage.order() > fromStage.order()) {
+            List<String> missing = interactionRepository.findDocumentChecklist(interactionId, fromStage.id()).stream()
+                    .filter(document -> !document.attached())
+                    .map(Interaction.StageDocument::name)
+                    .toList();
+            if (!missing.isEmpty()) {
+                String prefix = missingDocumentsText(missing);
+                if (comment == null || comment.strip().equals(prefix)) {
+                    throw new InteractionValidationException("comment", prefix
+                            + " Объясните в комментарии, почему переходите без них");
+                }
+                if (!comment.startsWith(prefix)) {
+                    comment = optionalText(prefix + " " + comment, "comment", 4_000);
+                }
+            }
+        }
         // Условие version в самом UPDATE — вторая линия защиты от потерянного обновления независимо от блокировки строки.
         if (!interactionRepository.updateCurrentStage(interactionId, expectedVersion, toStage.id(), now)) {
             throw versionConflict(interactionId, visible.row().version());
@@ -483,6 +530,7 @@ public class InteractionService {
             return replayComment(profile.id(), normalizedKey, fingerprint);
         }
         requireExpectedVersion(visible.row(), expectedVersion);
+        requireOpen(visible.row());
         InteractionStage selectedStage = targetStage(
                 interactionRepository.findStages(interactionId),
                 request.stageId(),
@@ -548,6 +596,7 @@ public class InteractionService {
             return replayInteraction(profile.id(), CommandOperation.EDIT_INTERACTION_STAGES, normalizedKey, fingerprint);
         }
         requireExpectedVersion(visible.row(), expectedVersion);
+        requireOpen(visible.row());
         UUID currentStageId = visible.row().currentStageId();
         List<InteractionStage> previousStages = interactionRepository.findStages(interactionId);
         List<InteractionStage> stages = new ArrayList<>(previousStages);
@@ -628,6 +677,7 @@ public class InteractionService {
             return replayInteraction(profile.id(), CommandOperation.COMPLETE_INTERACTION_STAGE, normalizedKey, fingerprint);
         }
         requireExpectedVersion(visible.row(), expectedVersion);
+        requireOpen(visible.row());
         InteractionStage stage = targetStage(interactionRepository.findStages(interactionId), request.stageId(), "stageId");
         // Текущий этап закрывается только переходом вперёд, чтобы у работы всегда был ровно один «текущий» этап.
         if (stage.id().equals(visible.row().currentStageId())) {
@@ -692,6 +742,7 @@ public class InteractionService {
             return replayInteraction(profile.id(), CommandOperation.CLEAR_INTERACTION_STAGE_COMPLETION, normalizedKey, fingerprint);
         }
         requireExpectedVersion(visible.row(), expectedVersion);
+        requireOpen(visible.row());
         InteractionStage stage = targetStage(interactionRepository.findStages(interactionId), stageId, "stageId");
         LocalDate completedOn = interactionRepository.findStageCompletionDate(interactionId, stage.id())
                 .orElseThrow(() -> new InteractionValidationException("stageId", "Этап не отмечен выполненным"));
@@ -753,14 +804,19 @@ public class InteractionService {
         String requestedTitle = request.title() == null ? null : requiredText(request.title().orElse(null), "title", 200);
         boolean lastContactAtSet = request.lastContactAt() != null;
         OffsetDateTime requestedLastContactAt = lastContactAtSet ? request.lastContactAt().orElse(null) : null;
+        requireLastContact(requestedLastContactAt);
         List<UUID> requestedContactIds = request.contactIds() == null
                 ? null
                 : validatedContactIds(visible.row().organizationId(), request.contactIds().orElse(List.of()));
         Boolean requestedPartnerVisible = request.nextStepPartnerVisible() == null
                 ? null
                 : request.nextStepPartnerVisible().orElse(false);
+        UUID requestedKindId = request.kindId() == null
+                ? null
+                : request.kindId().orElseThrow(() -> new InteractionValidationException("kindId", "Выберите вид взаимодействия"));
         if (!nextStep.nextActionSet() && !nextStep.nextActionAtSet() && !programSet && requestedProductIds == null
-                && requestedTitle == null && !lastContactAtSet && requestedContactIds == null && requestedPartnerVisible == null) {
+                && requestedTitle == null && !lastContactAtSet && requestedContactIds == null && requestedPartnerVisible == null
+                && requestedKindId == null) {
             throw new InteractionValidationException("body", "Измените хотя бы одно поле плана");
         }
         String normalizedKey = requiredIdempotencyKey(idempotencyKey);
@@ -775,7 +831,8 @@ public class InteractionService {
                 lastContactAtSet,
                 requestedLastContactAt,
                 requestedContactIds,
-                requestedPartnerVisible
+                requestedPartnerVisible,
+                requestedKindId
         );
         String fingerprint = CommandFingerprint.of(objectMapper, command);
         UUID commandId = UUID.randomUUID();
@@ -827,7 +884,13 @@ public class InteractionService {
                 ? List.of()
                 : currentContactIds.stream().filter(id -> !requestedContactIds.contains(id)).toList();
         requireActiveContacts(row.organizationId(), addedContactIds);
-        boolean detailsChanged = titleChanged || lastContactChanged || !addedContactIds.isEmpty() || !removedContactIds.isEmpty();
+        InteractionKindModels.InteractionKindRef currentKind = interactionRepository.findKind(interactionId).orElse(null);
+        boolean kindChanged = requestedKindId != null && (currentKind == null || !requestedKindId.equals(currentKind.id()));
+        if (kindChanged && interactionKindService.activeOrNull(requestedKindId) == null) {
+            throw new InteractionValidationException("kindId", "Вид взаимодействия недоступен; выберите действующий вид");
+        }
+        boolean detailsChanged = titleChanged || lastContactChanged || kindChanged || !addedContactIds.isEmpty()
+                || !removedContactIds.isEmpty();
         if (!nextStepChanged && !programChanged && addedProductIds.isEmpty() && removedProductIds.isEmpty() && !detailsChanged
                 && !partnerVisibilityChanged) {
             return storeInteraction(commandId, toInteraction(row));
@@ -849,6 +912,14 @@ public class InteractionService {
         if (lastContactChanged) {
             detailChanges.add("Дата последнего контакта: " + eventDateTime(row.lastContactAt())
                     + " → " + eventDateTime(requestedLastContactAt));
+        }
+        // Смена вида маршрут не трогает: идущая работа остаётся на своих этапах. Мастер версий переводит работы только
+        // между версиями одного шаблона, поэтому маршрут другого вида начинается новым циклом.
+
+        if (kindChanged) {
+            interactionRepository.updateKind(interactionId, requestedKindId);
+            detailChanges.add("Вид взаимодействия: «" + (currentKind == null ? "не задан" : currentKind.name()) + "» → «"
+                    + interactionKindService.kindName(requestedKindId) + "»; маршрут не изменён");
         }
         interactionRepository.deleteContacts(interactionId, removedContactIds);
         interactionRepository.insertContacts(interactionId, row.organizationId(), addedContactIds);
@@ -946,6 +1017,7 @@ public class InteractionService {
         }
         InteractionRepository.InteractionRow row = visible.row();
         requireExpectedVersion(row, expectedVersion);
+        requireOpen(row);
         if (row.nextAction() == null && row.nextActionAt() == null) {
             throw new InteractionValidationException("nextStep", "Следующий шаг не задан: отмечать выполненным нечего");
         }
@@ -1034,6 +1106,9 @@ public class InteractionService {
         }
         InteractionRepository.InteractionRow row = visible.row();
         requireExpectedVersion(row, expectedVersion);
+        if (request.status() != InteractionWorkStatus.ACTIVE) {
+            requireOpen(row);
+        }
         InteractionMarks current = row.marks();
         if (current.status() == request.status()) {
             throw new InteractionValidationException("status", "Взаимодействие уже в этом статусе");
@@ -1041,11 +1116,27 @@ public class InteractionService {
         InteractionMarks next = current.withStatus(request.status(), reason);
         // Отдельного поля «вернуться к работе» в модели нет: дата повторного касания записывается следующим шагом
         // со сроком. Так она видна в карточке и истории, а «Моя работа» возвращает взаимодействие к этой дате.
-        InteractionNextStep resumeStep = resumeOn == null
-                ? null
-                : new InteractionNextStep(RESUME_ACTION, resumeOn.atTime(RESUME_TIME).atZone(InteractionDue.ZONE).toOffsetDateTime());
+        InteractionNextStep resumeStep = resumeOn == null ? null : resumeStep(resumeOn);
+        String description = statusDescription(request.status(), reason, resumeOn);
+        // При досрочном возобновлении служебный шаг возврата с прежней датой устарел, а с «Показывать вузу» его ещё и
+        // видит вуз: снимаем его, карточка покажет «Следующий шаг не задан».
+        if (request.status() == InteractionWorkStatus.ACTIVE && current.status() == InteractionWorkStatus.PAUSED
+                && RESUME_ACTION.equals(row.nextAction())) {
+            interactionRepository.updatePlan(row.id(), null, null, row.programId());
+            description += ". Шаг «" + RESUME_ACTION + "» снят: задайте следующий шаг";
+        }
         return saveMarks(profile, visible, commandId, expectedVersion, next, InteractionEventType.STATUS_CHANGED,
-                statusDescription(request.status(), reason, resumeOn), now, resumeStep);
+                description, now, resumeStep);
+    }
+
+    // Шаг возврата, который CRM ставит при паузе; его же показывает экран плана ИИ-агента до записи.
+    public static InteractionNextStep resumeStep(LocalDate resumeOn) {
+        return new InteractionNextStep(RESUME_ACTION, resumeOn.atTime(RESUME_TIME).atZone(InteractionDue.ZONE).toOffsetDateTime());
+    }
+
+    /** Начало комментария при переходе без обязательных документов; то же подставляет окно перехода в карточке. */
+    public static String missingDocumentsText(List<String> missing) {
+        return "Не хватает документов: " + String.join(", ", missing) + ".";
     }
 
     private LocalDate requiredResumeOn(LocalDate resumeOn) {
@@ -1194,7 +1285,28 @@ public class InteractionService {
         }
     }
 
+    // Окна правдоподобных дат (Н-3, 2.5): срок шага или проблемы — пять лет назад и вперёд, последний контакт — не в
+    // будущем. Даты 1900 и 9999 давали просрочки на 46 000 дней и ломали «Нет контакта N дней».
+    static final int DUE_YEARS = 5;
+    private static final int LAST_CONTACT_YEARS_BACK = 30;
+
+    static void requireDueWithin(LocalDate value, String field) {
+        InputRules.requireDateWithin(value, field, LocalDate.now(InteractionDue.ZONE), DUE_YEARS, DUE_YEARS);
+    }
+
+    private static void requireDueWithin(OffsetDateTime value, String field) {
+        requireDueWithin(value == null ? null : value.atZoneSameInstant(InteractionDue.ZONE).toLocalDate(), field);
+    }
+
+    private static void requireLastContact(OffsetDateTime value) {
+        InputRules.requireDateWithin(value == null ? null : value.atZoneSameInstant(InteractionDue.ZONE).toLocalDate(),
+                "lastContactAt", LocalDate.now(InteractionDue.ZONE), LAST_CONTACT_YEARS_BACK, 0);
+    }
+
     private NextStepPatch nextStepPatch(Optional<String> nextAction, Optional<OffsetDateTime> nextActionAt) {
+        if (nextActionAt != null) {
+            requireDueWithin(nextActionAt.orElse(null), "nextActionAt");
+        }
         return new NextStepPatch(
                 nextAction != null,
                 nextAction == null ? null : optionalText(nextAction.orElse(null), "nextAction", 500),
@@ -1204,6 +1316,9 @@ public class InteractionService {
     }
 
     private NextStepPatch nextStepPatch(InteractionNextStep nextStep) {
+        if (nextStep != null) {
+            requireDueWithin(nextStep.nextActionAt(), "nextStep.nextActionAt");
+        }
         return nextStep == null
                 ? new NextStepPatch(false, null, false, null)
                 : new NextStepPatch(
@@ -1279,14 +1394,55 @@ public class InteractionService {
             case ADD_AFTER -> addStageAfter(stages, currentStageId, protectedStageIds, operation);
             case MOVE_AFTER -> moveStageAfter(stages, currentStageId, protectedStageIds, operation);
             case DELETE -> deleteStage(stages, currentStageId, protectedStageIds, operation);
+            case SET_OPTIONAL -> setStageOptional(stages, currentStageId, protectedStageIds, operation);
         };
+    }
+
+    // Обязательность меняется только у будущего этапа без событий — те же границы, что у перестановки. Переходы
+    // пересобираются как при перемещении на то же место: необязательный этап получает пропуск с комментарием,
+    // обязательный — теряет переходы «через себя».
+    private StageEdit setStageOptional(
+            List<InteractionStage> stages,
+            UUID currentStageId,
+            Set<UUID> protectedStageIds,
+            InteractionStageEditOperation operation
+    ) {
+        int index = requiredStageIndex(stages, operation.id(), "id");
+        InteractionStage stage = stages.get(index);
+        if (operation.optional() == null) {
+            throw new InteractionValidationException("optional", "Заполните значение");
+        }
+        InteractionStage current = currentStage(stages, currentStageId);
+        if (stage.order() <= current.order() || protectedStageIds.contains(stage.id())) {
+            throw new InteractionValidationException("id", "Обязательность меняется только у будущих этапов без событий");
+        }
+        if (stage.optional() == operation.optional()) {
+            throw new InteractionValidationException("optional", operation.optional()
+                    ? "Этап уже необязательный" : "Этап уже обязательный");
+        }
+        stages.set(index, stage.withOptional(operation.optional()));
+        return new StageEdit(
+                "Этап «" + stage.name() + "» стал " + (operation.optional() ? "необязательным" : "обязательным"),
+                stage.id(),
+                stage.id()
+        );
+    }
+
+
+    // Два этапа с одним именем в карточке путают «Перейти на…» и историю, а добавленный этап с именем «Подписание»
+    // ещё и получает правило подписания по имени (Н-12).
+    private static void requireUniqueStageName(List<InteractionStage> stages, String name, UUID exceptId) {
+        if (stages.stream().anyMatch(stage -> !stage.id().equals(exceptId) && stage.name().strip().equalsIgnoreCase(name.strip()))) {
+            throw new InteractionValidationException("name", "Этап «" + name + "» в этой карточке уже есть: выберите другое название");
+        }
     }
 
     private StageEdit renameStage(List<InteractionStage> stages, InteractionStageEditOperation operation) {
         int index = requiredStageIndex(stages, operation.id(), "id");
         InteractionStage stage = stages.get(index);
         String name = requiredText(operation.name(), "name", 200);
-        stages.set(index, new InteractionStage(stage.id(), name, stage.order(), stage.optional()));
+        requireUniqueStageName(stages, name, stage.id());
+        stages.set(index, stage.withName(name));
         return new StageEdit("Этап «" + stage.name() + "» переименован в «" + name + "»", null, null);
     }
 
@@ -1303,11 +1459,30 @@ public class InteractionService {
             throw new InteractionValidationException("optional", "Заполните значение");
         }
         String name = requiredText(operation.name(), "name", 200);
-        InteractionStage added = new InteractionStage(UUID.randomUUID(), name, after.order() + 1, operation.optional());
+        requireUniqueStageName(stages, name, null);
+        List<String> documents = operation.documentKinds() == null ? List.of()
+                : operation.documentKinds().stream().distinct().toList();
+        if (documents.size() > 20 || !interactionRepository.findDocumentKindCodes().containsAll(documents)) {
+            throw new InteractionValidationException("documentKinds", "Обязательные документы этапа — до 20 видов из справочника");
+        }
+        boolean requiresAgreement = Boolean.TRUE.equals(operation.requiresAgreement());
+        InteractionStage added = new InteractionStage(UUID.randomUUID(), name, after.order() + 1, operation.optional(),
+                requiresAgreement, operation.lmsRole(), documents);
         stages.add(afterIndex + 1, added);
+        List<String> properties = new ArrayList<>();
+        if (requiresAgreement) {
+            properties.add("требует действующего договора");
+        }
+        if (operation.lmsRole() != null) {
+            properties.add("роль для LMS «" + operation.lmsRole().title() + "»");
+        }
+        if (!documents.isEmpty()) {
+            properties.add("обязательных документов: " + documents.size());
+        }
         return new StageEdit(
                 "Добавлен " + (operation.optional() ? "необязательный" : "обязательный")
-                        + " этап «" + name + "» после «" + after.name() + "»",
+                        + " этап «" + name + "» после «" + after.name() + "»"
+                        + (properties.isEmpty() ? "" : " (" + String.join(", ", properties) + ")"),
                 null,
                 added.id()
         );
@@ -1392,7 +1567,7 @@ public class InteractionService {
     private void normalizeStageOrders(List<InteractionStage> stages) {
         for (int index = 0; index < stages.size(); index++) {
             InteractionStage stage = stages.get(index);
-            stages.set(index, new InteractionStage(stage.id(), stage.name(), index, stage.optional()));
+            stages.set(index, stage.withOrder(index));
         }
     }
 
@@ -1531,7 +1706,8 @@ public class InteractionService {
             UUID interactionStageId = UUID.randomUUID();
             stageIds.put(stage.id(), interactionStageId);
             templateStageIds.put(interactionStageId, stage.id());
-            return new InteractionStage(interactionStageId, stage.name(), stage.order(), stage.optional());
+            return new InteractionStage(interactionStageId, stage.name(), stage.order(), stage.optional(),
+                    stage.requiresAgreement(), stage.lmsRole(), stage.documentKinds());
         }).toList();
         return new InteractionWorkflowSnapshot(
                 stages,
@@ -1570,7 +1746,10 @@ public class InteractionService {
                 listRow.lastEventAt(),
                 listRow.stageEnteredAt(),
                 listRow.deputyManagerName(),
-                listRow.deputyEndsOn()
+                listRow.deputyEndsOn(),
+                listRow.kindId(),
+                listRow.kindName(),
+                listRow.missingDocuments()
         );
     }
 
@@ -1578,6 +1757,7 @@ public class InteractionService {
         List<InteractionStage> stages = interactionRepository.findStages(row.id());
         List<InteractionStageTransition> transitions = interactionRepository.findTransitions(row.id());
         InteractionStage currentStage = currentStage(stages, row);
+        List<Interaction.StageDocument> checklist = interactionRepository.findDocumentChecklist(row.id(), currentStage.id());
         CatalogReference program = row.programId() == null
                 ? null
                 : catalogRepository.findProgramById(row.programId())
@@ -1590,7 +1770,7 @@ public class InteractionService {
                 currentStage.name(),
                 stages,
                 transitions,
-                allowedTransitions(stages, transitions, currentStage),
+                allowedTransitions(stages, transitions, currentStage, checklist.stream().anyMatch(document -> !document.attached())),
                 row.nextAction(),
                 row.nextActionAt(),
                 interactionRepository.findContactIds(row.id()),
@@ -1607,14 +1787,17 @@ public class InteractionService {
                 row.updatedAt(),
                 row.marks(),
                 row.nextStepPartnerVisible(),
-                interactionRepository.findRoute(row.id()).orElse(null)
+                interactionRepository.findRoute(row.id()).orElse(null),
+                interactionRepository.findKind(row.id()).orElse(null),
+                checklist
         );
     }
 
     private List<InteractionTransitionOption> allowedTransitions(
             List<InteractionStage> stages,
             List<InteractionStageTransition> transitions,
-            InteractionStage currentStage
+            InteractionStage currentStage,
+            boolean documentsMissing
     ) {
         Map<UUID, InteractionStage> stagesById = new HashMap<>();
         stages.forEach(stage -> stagesById.put(stage.id(), stage));
@@ -1627,6 +1810,7 @@ public class InteractionService {
                     }
                     return new InteractionTransitionOption(
                             target.id(), target.name(), transition.commentRequired() || target.order() < currentStage.order()
+                                    || documentsMissing && target.order() > currentStage.order()
                     );
                 })
                 .sorted(Comparator.comparing(option -> stagesById.get(option.stageId()).order()))
@@ -1670,6 +1854,14 @@ public class InteractionService {
                         "toStageId",
                         "Переход на этот этап из текущего не разрешён"
                 ));
+    }
+
+    // Завершённая работа не меняется, пока её явно не вернут в работу (статус «В работе» с причиной в истории): иначе
+    // переходы и пауза после итога искажали отчёты «Длительность» и «Работа менеджеров».
+    private static void requireOpen(InteractionRepository.InteractionRow row) {
+        if (row.marks().status() == InteractionWorkStatus.COMPLETED) {
+            throw InteractionConflictException.stateConflict("Взаимодействие завершено; чтобы изменить его, сначала верните его в работу");
+        }
     }
 
     private void requireExpectedVersion(InteractionRepository.InteractionRow row, int expectedVersion) {
@@ -1803,7 +1995,8 @@ public class InteractionService {
             UUID programId,
             OffsetDateTime lastContactAt,
             List<UUID> contactIds,
-            List<UUID> productIds
+            List<UUID> productIds,
+            UUID kindId
     ) {
     }
 
@@ -1816,11 +2009,13 @@ public class InteractionService {
             UUID programId,
             List<UUID> productIds,
             OffsetDateTime lastContactAt,
-            UUID templateId
+            UUID templateId,
+            UUID kindId
     ) {
     }
 
     private record TransitionInteractionCommand(
+
             UUID interactionId,
             int version,
             UUID toStageId,
@@ -1896,9 +2091,11 @@ public class InteractionService {
             boolean lastContactAtSet,
             OffsetDateTime lastContactAt,
             List<UUID> contactIds,
-            Boolean nextStepPartnerVisible
+            Boolean nextStepPartnerVisible,
+            UUID kindId
     ) {
     }
+
 
     private record ChangeStatusCommand(
             UUID interactionId, int version, InteractionWorkStatus status, String reason, LocalDate resumeOn

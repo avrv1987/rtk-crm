@@ -195,6 +195,7 @@ export const OrganizationAssignmentPanel = ({
     return (
       <OrganizationDeputyPanel
         organization={organization}
+        profileId={profileId}
         onChanged={onReload}
         onSessionExpired={onSessionExpired}
         onProfileUnavailable={onProfileUnavailable}
@@ -278,9 +279,10 @@ export const OrganizationAssignmentPanel = ({
       <ConfirmDialog
         open={confirmingUnassign}
         title="Снять ответственного?"
-        description={ownerManagerId === profileId
+        description={(ownerManagerId === profileId
           ? `Вы останетесь руководителем команды и сохраните доступ к вузу «${organization.name}». Вуз попадёт в «Требует назначения», история сохранится.`
-          : `${currentOwnerLabel} потеряет доступ к вузу «${organization.name}» и его взаимодействиям, если не руководит командой. Вуз попадёт в «Требует назначения», история сохранится.`}
+          : `${currentOwnerLabel} потеряет доступ к вузу «${organization.name}» и его взаимодействиям, если не руководит командой. Вуз попадёт в «Требует назначения», история сохранится.`)
+          + (organization.deputyManagerName === null ? '' : ` Замещение (${organization.deputyManagerName}) тоже будет завершено.`)}
         confirmLabel="Снять назначение"
         onConfirm={confirmUnassign}
         onCancel={() => setConfirmingUnassign(false)}

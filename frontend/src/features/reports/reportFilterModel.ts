@@ -3,13 +3,14 @@ import type { AgreementSelection } from './reportAgreement'
 import type { ReportSelection } from './reportSelection'
 
 export type FilterGroupId =
-  | 'organizationType' | 'organizations' | 'directions' | 'programs' | 'products' | 'managers' | 'stages'
+  | 'organizationType' | 'organizations' | 'directions' | 'programs' | 'products' | 'kinds' | 'managers' | 'stages'
   | 'workStatuses' | 'flags' | 'eventTypes' | 'change' | 'agreement' | 'periodBasis' | 'minDays'
 
 // Какие отборы вид отчёта применяет на самом деле (то же, что отправляет baseRequest в reportSelection.ts).
 export const filterVisibility = (kind: ReportKind) => ({
   programs: kind !== 'AGREEMENTS',
   products: kind !== 'DEMAND' && kind !== 'AGREEMENTS',
+  kinds: kind !== 'DEMAND' && kind !== 'AGREEMENTS',
   stages: kind !== 'DEMAND' && kind !== 'AGREEMENTS',
   agreement: kind !== 'DEMAND' && kind !== 'AGREEMENTS' && kind !== 'MANAGER_WORK',
   workStatuses: kind === 'PORTFOLIO',
@@ -34,6 +35,7 @@ export const activeFilterGroups = (selection: ReportSelection): FilterGroupId[] 
     ['directions', visible.programs && (selection.directionIds.length > 0 || selection.includeNoDirection)],
     ['programs', visible.programs && (selection.programIds.length > 0 || selection.includeNoProgram)],
     ['products', visible.products && (selection.productIds.length > 0 || selection.includeNoProduct)],
+    ['kinds', visible.kinds && selection.kindIds.length > 0],
     ['managers', selection.managerIds.length > 0 || selection.includeNoManager],
     ['stages', visible.stages && selection.stages.length > 0],
     ['workStatuses', visible.workStatuses && selection.workStatuses.length > 0],
@@ -61,6 +63,8 @@ export const resetFilters = (selection: ReportSelection): ReportSelection => ({
   includeNoProgram: false,
   productIds: [],
   includeNoProduct: false,
+  kindIds: [],
+
   managerIds: [],
   includeNoManager: false,
   stages: [],

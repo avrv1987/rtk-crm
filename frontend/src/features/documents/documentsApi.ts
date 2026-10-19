@@ -2,29 +2,31 @@ import { ApiError, apiClient, createIdempotencyKey, type Attachment, type Intera
 import type { components } from '../../shared/api/openapi'
 
 export type AttachmentKind = components['schemas']['AttachmentKind']
+export type DocumentKind = components['schemas']['DocumentKind']
 export type ProductTransfer = components['schemas']['ProductTransfer']
 export type ProductTransferKind = components['schemas']['ProductTransferKind']
 export type ProductAgreementUpdate = components['schemas']['ProductAgreementUpdate']
 export type ReportAgreementFilters = components['schemas']['ReportAgreementFilters']
 export type CatalogReference = components['schemas']['CatalogReference']
 
-export const attachmentKinds: readonly AttachmentKind[] = [
-  'CONTRACT', 'LICENSE_AGREEMENT', 'APPENDIX', 'ACT', 'SIGNED_SCAN',
-  'MATERIALS', 'DOCUMENTATION', 'CURRICULUM', 'QUALIFICATION', 'OTHER'
-]
+// Справочник «Виды документов» ведёт администратор; на странице он нужен в нескольких местах, поэтому запрос один.
+let documentKindsRequest: Promise<DocumentKind[]> | null = null
 
-export const attachmentKindLabels: Record<AttachmentKind, string> = {
-  CONTRACT: 'Договор',
-  LICENSE_AGREEMENT: 'Лицензионное соглашение',
-  APPENDIX: 'Приложение',
-  ACT: 'Акт',
-  SIGNED_SCAN: 'Скан подписанного документа',
-  MATERIALS: 'Учебные материалы',
-  DOCUMENTATION: 'Документация продукта',
-  CURRICULUM: 'Рабочая программа',
-  QUALIFICATION: 'Документ о повышении квалификации',
-  OTHER: 'Иное'
+export const listDocumentKinds = (): Promise<DocumentKind[]> => {
+  documentKindsRequest ??= apiClient.request<DocumentKind[]>('/api/document-kinds').catch((error: unknown) => {
+    documentKindsRequest = null
+    throw error
+  })
+  return documentKindsRequest
 }
+
+/** Сбрасывает запомненный справочник после его правки администратором. */
+export const forgetDocumentKinds = () => {
+  documentKindsRequest = null
+}
+
+/** Название вида документа: из ответа сервера, иначе код. */
+export const attachmentKindLabel = (attachment: { kind: string; kindName?: string | null }) => attachment.kindName ?? attachment.kind
 
 export const transferKinds: readonly ProductTransferKind[] = ['MATERIALS', 'LICENSE', 'DOCUMENTATION']
 

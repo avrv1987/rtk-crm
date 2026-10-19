@@ -89,7 +89,9 @@ export const WorkHistoryTab = ({ events, loading, failedRequestId, attachmentsBy
                       Документы: {eventAttachments.map((attachment) => attachment.originalName).join(', ')}
                     </p>
                   )}
-                  <p className="interaction-events__meta">Автор: {item.actorDisplayName}</p>
+                  <p className="interaction-events__meta">
+                    Автор: {item.actorDisplayName}{item.preparedByAgent ? ' · подготовлено ИИ-агентом, подтвердил автор' : ''}
+                  </p>
                 </li>
               )
             })}

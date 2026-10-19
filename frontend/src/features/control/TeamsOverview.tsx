@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ApiError, apiClient, type TeamsSummary, type WorkControl } from '../../shared/api/client'
+import { ApiError, apiClient, type LearningCoverage, type PortfolioChange, type TeamsSummary, type WorkControl } from '../../shared/api/client'
 import { formatCalendarDate, formatMoscowDateTime, todayInMoscow } from '../../shared/format/datetime'
 import { HintButton } from '../../shared/ui/HintButton'
 import { Segmented } from '../../shared/ui/Segmented'
@@ -12,6 +12,8 @@ import {
   changeHref,
   changeText,
   comparisonPeriods,
+  coverageText,
+  portfolioParts,
   registryHref,
   shareText,
   teamChanges,
@@ -35,6 +37,8 @@ type Loaded = {
   current: WorkControl
   previous: WorkControl
   periods: { current: Period; previous: Period }
+  portfolio: PortfolioChange | null
+  coverage: LearningCoverage | null
 }
 
 type State = { kind: 'loading' } | { kind: 'ready'; data: Loaded } | { kind: 'failed'; error: unknown }
@@ -69,14 +73,17 @@ export const TeamsOverview = ({ onSessionExpired, onProfileUnavailable }: Overvi
     setState({ kind: 'loading' })
     const periods = comparisonPeriods(todayInMoscow(), Number(window))
     try {
-      const [control, summary, agreements, current, previous] = await Promise.all([
+      // Состав и покрытие — дополнительные блоки: их сбой не скрывает основную сводку.
+      const [control, summary, agreements, current, previous, portfolio, coverage] = await Promise.all([
         apiClient.getWorkControl(emptyControlFilters),
         apiClient.getTeamsSummary(defaultStuckDays),
         agreementsApi.registry(emptyRegistryFilters),
         apiClient.getWorkControl({ ...emptyControlFilters, ...periods.current }),
-        apiClient.getWorkControl({ ...emptyControlFilters, ...periods.previous })
+        apiClient.getWorkControl({ ...emptyControlFilters, ...periods.previous }),
+        apiClient.getPortfolioChange(periods.current.from, periods.current.to).catch(() => null),
+        apiClient.getLearningCoverage().catch(() => null)
       ])
-      setState({ kind: 'ready', data: { control, summary, agreements, current, previous, periods } })
+      setState({ kind: 'ready', data: { control, summary, agreements, current, previous, periods, portfolio, coverage } })
     } catch (error) {
       if (error instanceof ApiError && error.code === 'UNAUTHENTICATED') {
         onSessionExpired()
@@ -118,13 +125,15 @@ export const TeamsOverview = ({ onSessionExpired, onProfileUnavailable }: Overvi
           Команды рядом: у каждого числа — из скольких и доля, общего балла нет. Активные — идущие взаимодействия;
           просрочено — из взаимодействий со сроком следующего шага; вузы без КАМ и без работы — из вузов команды.
           Договоры — по реестру, вместе с не привязанными к взаимодействию. Изменения — последние 30 или 90 дней против
-          стольких же дней перед ними; если раньше было 0, пишется «новое наблюдение». Число открывает те же строки
-          в «Контроле» или в реестре договоров.
+          стольких же дней перед ними; если раньше было 0, пишется «новое наблюдение», при базе меньше 10 процент не
+          считается. Состав активных — сколько взаимодействий было активно на начало окна и сегодня и из чего сложилась
+          разница. Число открывает те же строки в «Контроле» или в реестре договоров.
         </HintButton>
         <Segmented label="Окно сравнения" options={windowOptions} value={days} onChange={setDays} />
         <a className="button-link" href="#/control">Контроль по всем командам</a>
       </div>
       <p className="control-status">{`данные на ${formatMoscowDateTime(data.control.calculatedAt)}`}</p>
+      {data.coverage !== null && <p className="control-muted">{coverageText(data.coverage)}</p>}
 
       <h2 className="overview__title">Команды сейчас</h2>
       {teams.length === 0 ? <p className="control-empty">Команд с вузами нет.</p> : (
@@ -210,6 +219,33 @@ export const TeamsOverview = ({ onSessionExpired, onProfileUnavailable }: Overvi
           ))}
         </tbody>
       </table>
+
+      {data.portfolio !== null && (
+        <>
+          <h2 className="overview__title">Состав активных взаимодействий</h2>
+          <p className="control-muted">
+            {`Активные на начало ${formatCalendarDate(data.portfolio.from)} и на конец ${formatCalendarDate(data.portfolio.to)}; было = остались + завершены + приостановлены, стало = остались + новые + возобновлены. Команда — текущая команда вуза.`}
+          </p>
+          <table className="control-table overview__table">
+            <thead>
+              <tr>
+                <th scope="col">Команда</th>
+                <th scope="col">Было → стало</th>
+                <th scope="col">Из чего сложилось</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...data.portfolio.teams, data.portfolio.total].map((row) => (
+                <tr key={row.teamId ?? 'total'}>
+                  <th scope="row" data-label="Команда">{row.teamId === null || row.teamId === undefined ? 'Все команды' : row.teamName}</th>
+                  <td data-label="Было → стало">{`${row.atStart} → ${row.atEnd}`}</td>
+                  <td data-label="Из чего сложилось">{portfolioParts(row).join(', ')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </section>
   )
 }

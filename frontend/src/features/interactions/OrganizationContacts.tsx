@@ -357,6 +357,15 @@ const ContactItem = ({
           <span className="interaction-field-hint">
             Неактуальный контакт не предлагается для новых взаимодействий; в прежних взаимодействиях и истории его имя сохраняется.
           </span>
+          {values.inactive && !contact.inactive && partner?.access?.active === true && (
+            <p className="notice" role="alert">
+              У контакта открыт доступ в кабинет вуза: после сохранения доступ закроется, а открытые запросы вузу этому контакту
+              отменятся с причиной «доступ закрыт».
+            </p>
+          )}
+          {values.email.trim() !== (contact.email ?? '') && !values.inactive && partner?.access?.active === true && (
+            <span className="interaction-field-hint">Новая почта станет и почтой входа в кабинет вуза: письма пойдут на неё. Логин не меняется.</span>
+          )}
           <div className="interaction-plan-form__actions">
             <button type="submit" disabled={state.kind === 'saving' || !changed || conflicts.length > 0 || values.name.trim().length === 0}>
               {state.kind === 'saving' ? 'Сохраняем…' : 'Сохранить контакт'}

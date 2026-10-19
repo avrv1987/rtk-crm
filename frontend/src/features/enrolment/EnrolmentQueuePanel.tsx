@@ -8,7 +8,7 @@ import {
   type EnrolmentQueue,
   type EnrolmentQueueItem
 } from './enrolmentBatchApi'
-import { queueKinds, queueOrder } from './enrolmentQueueModel'
+import { courseNotMapped, queueKinds, queueOrder } from './enrolmentQueueModel'
 import { enrolmentHref } from './enrolmentRoute'
 import { type AccessErrorReporter, learnerFullName, responseErrorMessage } from './enrolmentShared'
 
@@ -112,6 +112,9 @@ export const EnrolmentQueuePanel = ({ onAccessError }: EnrolmentQueuePanelProps)
                 </a>
                 <span>{item.streamTitle}{item.orderNumber !== null && <> · заявка {item.orderNumber}</>}</span>
                 {item.detail !== null && <span className="enrolment-queue__detail">{item.detail}</span>}
+                {courseNotMapped(item.detail) && (
+                  <span className="enrolment__hint">Нужно сопоставить курс — обратитесь к администратору. Анкету исправлять не нужно.</span>
+                )}
                 {item.kind === 'MOVED_AFTER_TRANSFER' && state.queue.moodleWriteAvailable && (
                   <button type="button" disabled={busy === `${item.kind}:${item.enrolmentId}`} onClick={() => void reconcile(item, true)}>
                     Перенести в Moodle

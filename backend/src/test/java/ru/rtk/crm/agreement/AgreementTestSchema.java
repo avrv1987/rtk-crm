@@ -12,6 +12,7 @@ public final class AgreementTestSchema {
     }
 
     public static void create(JdbcTemplate jdbc) {
+        ru.rtk.crm.interaction.StagePropertiesTestSchema.create(jdbc);
         jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS agreement_status_events (
                     id UUID PRIMARY KEY, agreement_id UUID NOT NULL, from_status VARCHAR(16), to_status VARCHAR(16) NOT NULL,
@@ -49,13 +50,13 @@ public final class AgreementTestSchema {
 
     public static void createWorkTables(JdbcTemplate jdbc) {
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interactions (
+                CREATE TABLE IF NOT EXISTS interactions (interaction_kind_id UUID, 
                     id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL, current_stage_id UUID,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_stages (
+                CREATE TABLE IF NOT EXISTS interaction_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, stage_order INTEGER NOT NULL, name VARCHAR(200) NOT NULL,
                     template_stage_id UUID
                 )

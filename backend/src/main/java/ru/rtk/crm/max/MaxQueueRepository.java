@@ -1,6 +1,7 @@
 package ru.rtk.crm.max;
 
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -181,7 +182,8 @@ public class MaxQueueRepository {
                 SET status = 'QUEUED', attempts = 0, next_attempt_at = :now
                 WHERE status = 'ERROR' AND expires_at > :now
                 """)
-                .param("now", now)
+                // Усечение до микросекунд — см. MailRepository.retry: иначе ближайший проход мог пропустить письмо.
+                .param("now", now.truncatedTo(ChronoUnit.MICROS))
                 .update();
     }
 
