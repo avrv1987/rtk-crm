@@ -165,3 +165,9 @@ test('«Контроль»: вложенные сетки и таблица ме
   const manager = css.slice(css.indexOf('.control-manager {'), css.indexOf('}', css.indexOf('.control-manager {')))
   assert.match(manager, /overflow-x: auto/)
 })
+
+test('редактор шаблона: свойства этапа идут строками ниже, поле названия не сжимается в 1440 px', () => {
+  const css = readFileSync(new URL('../src/features/admin/workflowVersions.css', import.meta.url), 'utf8')
+  assert.match(css, /\.wt-editor__stages > li > :nth-child\(2\) \{ grid-column: 2; grid-row: 1; \}/)
+  assert.match(css, /:nth-child\(6\) \{ grid-column: 2 \/ -1; \}/)
+})

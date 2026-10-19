@@ -72,6 +72,16 @@
   grid-template-columns: auto minmax(0, 1fr) auto auto;
 }
 
+/* В 2.5 у этапа появились три свойства: в одну строку из четырёх колонок семь полей не помещались, поле названия
+   сжималось до нуля. Первая строка — номер, название, «необязательный», кнопки; свойства — строками ниже. */
+.wt-editor__stages > li > :nth-child(1) { grid-column: 1; grid-row: 1; }
+.wt-editor__stages > li > :nth-child(2) { grid-column: 2; grid-row: 1; }
+.wt-editor__stages > li > :nth-child(3) { grid-column: 3; grid-row: 1; }
+.wt-editor__stages > li > :nth-child(7) { grid-column: 4; grid-row: 1; }
+.wt-editor__stages > li > :nth-child(4),
+.wt-editor__stages > li > :nth-child(5),
+.wt-editor__stages > li > :nth-child(6) { grid-column: 2 / -1; }
+
 .wt-editor__transitions > li {
   grid-template-columns: repeat(2, minmax(0, 1fr)) auto auto;
 }
@@ -278,6 +288,11 @@
   .wt-editor__stages > li,
   .wt-editor__transitions > li {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wt-editor__stages > li > * {
+    grid-column: auto;
+    grid-row: auto;
   }
 
   .wt-editor__number {
