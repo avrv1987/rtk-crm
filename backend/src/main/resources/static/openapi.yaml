@@ -119,11 +119,12 @@ paths:
   /api/config:
     get:
       tags: [Session]
-      summary: Включённые модули CRM
+      summary: Включённые модули CRM и режим главной страницы
       operationId: getConfig
       security: []
       description: >-
-        Доступен без входа: интерфейс по нему скрывает разделы выключенных модулей, в том числе на посадочной странице.
+        Доступен без входа: интерфейс по нему скрывает разделы выключенных модулей, в том числе на посадочной странице,
+        и выбирает главную страницу по настройке администратора «Главная страница». Других настроек ответ не раскрывает.
         Модули включаются переменными MODULE_ENROLMENT_ENABLED и MODULE_PARTNER_ENABLED (по умолчанию выключены), модуль MAX — MAX_ENABLED.
       responses:
         '200':
@@ -15714,8 +15715,12 @@ components:
           description: end_session_endpoint Keycloak с id_token_hint и post_logout_redirect_uri
     Config:
       type: object
-      required: [modules]
+      required: [modules, landing]
       properties:
+        landing:
+          type: string
+          enum: [CONTEST, PRODUCT]
+          description: Главная страница без входа — конкурсная или продуктовая (настройка LANDING_PAGE в «Настройках» администратора)
         modules:
           type: object
           required: [enrolment, partner, max, mcp]
@@ -22526,16 +22531,16 @@ components:
                  RETENTION_MAX_OUTBOX, RETENTION_PERSONAL_DATA_REQUESTS, STUCK_DAYS, SOURCES_STALE_HOURS,
                  LMS_COMPLETION_COVERAGE, PERSONAL_DATA_RESPONSE_DAYS, PERSONAL_DATA_RESPONSE_WORKING_DAYS, PERSONAL_DATA_REMIND_DAYS,
                  CONSENTS_CONTACTS,
-                 CONSENTS_LEARNERS]
+                 CONSENTS_LEARNERS, LANDING_PAGE]
         group:
           type: string
-          enum: [RETENTION, SIGNALS, PRIVACY]
+          enum: [RETENTION, SIGNALS, PRIVACY, SITE]
         title:
           type: string
         unit:
           type: string
-          enum: [DAYS, HOURS, MONTHS, PERCENT, FLAG]
-          description: FLAG — 0 выключено, 1 включено
+          enum: [DAYS, HOURS, MONTHS, PERCENT, FLAG, LANDING]
+          description: FLAG — 0 выключено, 1 включено; LANDING — 0 конкурсная главная, 1 продуктовая
         min:
           type: integer
         max:

@@ -13,6 +13,7 @@ import ru.rtk.crm.catalog.OrganizationCatalogRepository;
 import ru.rtk.crm.enrolment.EnrolmentAccess;
 import ru.rtk.crm.mcp.McpProperties;
 import ru.rtk.crm.module.ModuleProperties;
+import ru.rtk.crm.settings.SystemSettings;
 
 @RestController
 public class SessionApiController {
@@ -22,6 +23,7 @@ public class SessionApiController {
     private final ModuleProperties modules;
     private final McpProperties mcp;
     private final OrganizationCatalogRepository organizationCatalogRepository;
+    private final SystemSettings systemSettings;
 
     public SessionApiController(
             CurrentProfileService currentProfileService,
@@ -29,7 +31,8 @@ public class SessionApiController {
             EnrolmentAccess enrolmentAccess,
             ModuleProperties modules,
             McpProperties mcp,
-            OrganizationCatalogRepository organizationCatalogRepository
+            OrganizationCatalogRepository organizationCatalogRepository,
+            SystemSettings systemSettings
     ) {
         this.currentProfileService = currentProfileService;
         this.userProfileRepository = userProfileRepository;
@@ -37,6 +40,7 @@ public class SessionApiController {
         this.modules = modules;
         this.mcp = mcp;
         this.organizationCatalogRepository = organizationCatalogRepository;
+        this.systemSettings = systemSettings;
     }
 
     @GetMapping("/api/me")
@@ -59,7 +63,7 @@ public class SessionApiController {
     public ConfigResponse config() {
         return new ConfigResponse(new ConfigResponse.Modules(modules.enrolmentEnabled(), modules.partnerEnabled(), modules.maxEnabled(),
                 mcp.enabled(),
-                modules.mailEnabled()));
+                modules.mailEnabled()), systemSettings.landing());
     }
 
     @GetMapping("/api/csrf")

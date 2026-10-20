@@ -3,7 +3,8 @@ import { ApiError, apiClient, type SystemSetting } from '../../shared/api/client
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { HintButton } from '../../shared/ui/HintButton'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
-import { settingDraftProblem, settingGroups, settingValueText, unitLabel } from './adminSettings'
+import { landingOptions, savedOnChange, settingDraftProblem, settingGroups, settingValueText, unitLabel } from './adminSettings'
+import { productDemoHref } from '../landing/landingMode'
 import { formatDateTime, handledSessionError, requestIdOf, type SessionHandlers } from './adminShared'
 import './adminUi.css'
 
@@ -122,13 +123,24 @@ export const SettingsPanel = ({ onSessionExpired, onProfileUnavailable }: Sessio
               <tbody>
                 {state.settings.filter((setting) => setting.group === group).map((setting) => {
                   const draft = drafts[setting.key] ?? ''
-                  const problem = setting.unit === 'FLAG' ? null : settingDraftProblem(setting, draft)
+                  const problem = savedOnChange(setting.unit) ? null : settingDraftProblem(setting, draft)
                   const changed = draft !== String(setting.value)
                   return (
                     <tr key={setting.key}>
                       <td className="admin-table__cell-main"><span className="admin-table__main">{setting.title}</span></td>
                       <td data-label="Значение">
-                        {setting.unit === 'FLAG' ? (
+                        {setting.unit === 'LANDING' ? (
+                          <label>
+                            <span className="admin-visually-hidden">{setting.title}</span>
+                            <select
+                              value={setting.value}
+                              disabled={busy !== null}
+                              onChange={(event) => save(setting, Number(event.target.value))}
+                            >
+                              {landingOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                            </select>
+                          </label>
+                        ) : setting.unit === 'FLAG' ? (
                           <label className="admin-form__check">
                             <input
                               type="checkbox"
@@ -162,7 +174,7 @@ export const SettingsPanel = ({ onSessionExpired, onProfileUnavailable }: Sessio
                       </td>
                       <td>
                         <div className="admin-form__actions">
-                          {setting.unit !== 'FLAG' && (
+                          {!savedOnChange(setting.unit) && (
                             <button type="button" disabled={busy !== null || !changed || problem !== null}
                               onClick={() => save(setting, Number(draft))}>
                               {busy === setting.key ? 'Сохраняем…' : 'Сохранить'}
@@ -180,6 +192,11 @@ export const SettingsPanel = ({ onSessionExpired, onProfileUnavailable }: Sessio
               </tbody>
             </table>
           </div>
+          {group === 'SITE' && (
+            <p className="admin-form__hint">
+              <a href={productDemoHref} target="_blank" rel="noopener">Открыть продуктовую главную (демонстрация)</a>
+            </p>
+          )}
           {group === 'SIGNALS' && (
             <p className="admin-form__hint">
               Порог покрытия и малая база индекса востребованности задаются в разделе{' '}

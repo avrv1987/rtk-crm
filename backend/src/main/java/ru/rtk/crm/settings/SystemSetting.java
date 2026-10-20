@@ -28,11 +28,14 @@ public enum SystemSetting {
             "app.privacy.request-response-working-days", 0),
         PERSONAL_DATA_REMIND_DAYS(Group.PRIVACY, "Напоминать о сроке ответа за", Unit.DAYS, 0, 30, "app.privacy.request-remind-days", 3),
     CONSENTS_CONTACTS(Group.PRIVACY, "Учёт согласий контактов вузов", Unit.FLAG, 0, 1, "app.privacy.consents.contacts", 0),
-    CONSENTS_LEARNERS(Group.PRIVACY, "Учёт согласий слушателей", Unit.FLAG, 0, 1, "app.privacy.consents.learners", 0);
+    CONSENTS_LEARNERS(Group.PRIVACY, "Учёт согласий слушателей", Unit.FLAG, 0, 1, "app.privacy.consents.learners", 0),
+    // Какую главную видит посетитель без входа. Режим отдаёт публичный /api/config — только его, без других настроек.
+    LANDING_PAGE(Group.SITE, "Главная страница", Unit.LANDING, 0, 1, "app.landing.product", 0);
 
-    public enum Group { RETENTION, SIGNALS, PRIVACY }
+    public enum Group { RETENTION, SIGNALS, PRIVACY, SITE }
 
-    public enum Unit { DAYS, HOURS, MONTHS, PERCENT, FLAG }
+    /** LANDING — 0 конкурсная главная, 1 продуктовая. */
+    public enum Unit { DAYS, HOURS, MONTHS, PERCENT, FLAG, LANDING }
 
     // Свойства с числом дней без единицы (app.work.stuck-days: 30, а не 30d) читаются как число, а не Duration.
     private static final java.util.Set<String> PLAIN_NUMBERS = java.util.Set.of("app.work.stuck-days",
@@ -95,6 +98,7 @@ public enum SystemSetting {
             case MONTHS -> value + " мес.";
             case PERCENT -> value + " %";
             case FLAG -> value == 0 ? "выключено" : "включено";
+            case LANDING -> value == 0 ? "конкурсная" : "продуктовая";
         };
     }
 }

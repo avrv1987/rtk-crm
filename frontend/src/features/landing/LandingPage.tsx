@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { appVersion } from '../../shared/appVersion'
 import { getModules, type Modules } from '../../shared/modules'
 import { landingLinks } from './landingLinks'
+import { productDemoHref } from './landingMode'
 import { audienceNote, moodleIntegrationText, rolesFor, rolesLead, siteIntegrationText } from './landingModules'
 import './landing.css'
 
@@ -285,6 +286,9 @@ export const LandingPage = ({ onLogin, notice = null }: LandingPageProps) => {
                 {showJurySection && <a className="landing-hero__check" href="#lp-check">Материалы для проверки</a>}
               </div>
               <p className="landing-hero__note">Вход по корпоративной учётной записи. Пароль вводится только на странице защищённого входа.</p>
+              <p className="landing-hero__demo">
+                <a href={productDemoHref}>Продуктовая версия главной (демонстрация) <span aria-hidden="true">→</span></a>
+              </p>
               <p className="landing-hero__audience">
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
                   <circle cx="10" cy="10" r="8" />

@@ -6,6 +6,7 @@ import java.util.Optional;
 
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.core.env.Environment;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
@@ -44,7 +45,7 @@ public class SystemSettings {
             case HOURS -> binder.bind(property, Duration.class).map(value -> (int) value.toHours()).orElse(setting.fallback());
             case MONTHS -> binder.bind(property, Period.class).map(value -> (int) value.toTotalMonths()).orElse(setting.fallback());
             case PERCENT -> binder.bind(property, Integer.class).orElse(setting.fallback());
-            case FLAG -> binder.bind(property, Boolean.class).map(value -> value ? 1 : 0).orElse(setting.fallback());
+            case FLAG, LANDING -> binder.bind(property, Boolean.class).map(value -> value ? 1 : 0).orElse(setting.fallback());
         };
     }
 
@@ -70,5 +71,17 @@ public class SystemSettings {
 
     public boolean enabled(SystemSetting setting) {
         return value(setting) != 0;
+    }
+
+    // Режим главной читает публичный /api/config при каждом открытии CRM: сбой чтения настройки не должен ронять
+    // ответ с модулями, без которого интерфейс не стартует, — тогда действует конфигурация сервера.
+    public String landing() {
+        int value;
+        try {
+            value = value(SystemSetting.LANDING_PAGE);
+        } catch (DataAccessException exception) {
+            value = configured(SystemSetting.LANDING_PAGE);
+        }
+        return value != 0 ? "PRODUCT" : "CONTEST";
     }
 }

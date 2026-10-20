@@ -26,3 +26,12 @@ export const withoutPaymentColumns = <T extends string>(columns: readonly T[], m
 export const sectionAvailable = (section: string, modules: Modules): boolean => (
   section === 'enrolment' ? modules.enrolment : section === 'partner' ? modules.partner : true
 )
+
+/** Режим главной без входа из /api/config; старый сервер без поля — конкурсная. */
+let landing: 'CONTEST' | 'PRODUCT' = 'CONTEST'
+
+export const setLandingMode = (mode: 'CONTEST' | 'PRODUCT' | undefined): void => {
+  landing = mode ?? 'CONTEST'
+}
+
+export const getLandingMode = (): 'CONTEST' | 'PRODUCT' => landing

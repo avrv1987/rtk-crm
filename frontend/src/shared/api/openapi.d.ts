@@ -83,8 +83,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Включённые модули CRM
-         * @description Доступен без входа: интерфейс по нему скрывает разделы выключенных модулей, в том числе на посадочной странице. Модули включаются переменными MODULE_ENROLMENT_ENABLED и MODULE_PARTNER_ENABLED (по умолчанию выключены), модуль MAX — MAX_ENABLED.
+         * Включённые модули CRM и режим главной страницы
+         * @description Доступен без входа: интерфейс по нему скрывает разделы выключенных модулей, в том числе на посадочной странице, и выбирает главную страницу по настройке администратора «Главная страница». Других настроек ответ не раскрывает. Модули включаются переменными MODULE_ENROLMENT_ENABLED и MODULE_PARTNER_ENABLED (по умолчанию выключены), модуль MAX — MAX_ENABLED.
          */
         get: operations["getConfig"];
         put?: never;
@@ -7804,6 +7804,11 @@ export interface components {
             logoutUrl: string;
         };
         Config: {
+            /**
+             * @description Главная страница без входа — конкурсная или продуктовая (настройка LANDING_PAGE в «Настройках» администратора)
+             * @enum {string}
+             */
+            landing: "CONTEST" | "PRODUCT";
             modules: {
                 /** @description Модуль «Слушатели»; при false все методы /api/enrolment/** и /api/admin/personal-data/learners/** отвечают 404 */
                 enrolment: boolean;
@@ -11335,15 +11340,15 @@ export interface components {
         };
         SystemSetting: {
             /** @enum {string} */
-            key: "RETENTION_REPORT_FILES" | "RETENTION_INACTIVE_CONTACTS" | "RETENTION_DISMISSED_PROFILES" | "RETENTION_AUDIT_EVENTS" | "RETENTION_AGENT_PLANS" | "RETENTION_LEARNER_PROFILES" | "RETENTION_MAIL_LETTERS" | "RETENTION_MAX_INBOX" | "RETENTION_MAX_OUTBOX" | "RETENTION_PERSONAL_DATA_REQUESTS" | "STUCK_DAYS" | "SOURCES_STALE_HOURS" | "LMS_COMPLETION_COVERAGE" | "PERSONAL_DATA_RESPONSE_DAYS" | "PERSONAL_DATA_RESPONSE_WORKING_DAYS" | "PERSONAL_DATA_REMIND_DAYS" | "CONSENTS_CONTACTS" | "CONSENTS_LEARNERS";
+            key: "RETENTION_REPORT_FILES" | "RETENTION_INACTIVE_CONTACTS" | "RETENTION_DISMISSED_PROFILES" | "RETENTION_AUDIT_EVENTS" | "RETENTION_AGENT_PLANS" | "RETENTION_LEARNER_PROFILES" | "RETENTION_MAIL_LETTERS" | "RETENTION_MAX_INBOX" | "RETENTION_MAX_OUTBOX" | "RETENTION_PERSONAL_DATA_REQUESTS" | "STUCK_DAYS" | "SOURCES_STALE_HOURS" | "LMS_COMPLETION_COVERAGE" | "PERSONAL_DATA_RESPONSE_DAYS" | "PERSONAL_DATA_RESPONSE_WORKING_DAYS" | "PERSONAL_DATA_REMIND_DAYS" | "CONSENTS_CONTACTS" | "CONSENTS_LEARNERS" | "LANDING_PAGE";
             /** @enum {string} */
-            group: "RETENTION" | "SIGNALS" | "PRIVACY";
+            group: "RETENTION" | "SIGNALS" | "PRIVACY" | "SITE";
             title: string;
             /**
-             * @description FLAG — 0 выключено, 1 включено
+             * @description FLAG — 0 выключено, 1 включено; LANDING — 0 конкурсная главная, 1 продуктовая
              * @enum {string}
              */
-            unit: "DAYS" | "HOURS" | "MONTHS" | "PERCENT" | "FLAG";
+            unit: "DAYS" | "HOURS" | "MONTHS" | "PERCENT" | "FLAG" | "LANDING";
             min: number;
             max: number;
             /** @description Действующее значение */

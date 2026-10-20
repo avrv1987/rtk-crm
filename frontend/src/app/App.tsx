@@ -34,6 +34,8 @@ import {
   type NavItem
 } from './routing'
 import { LandingPage } from '../features/landing/LandingPage'
+import { isProductDemo, landingPageFor, showBackToContest } from '../features/landing/landingMode'
+import { ProductLanding } from '../features/landing/ProductLanding'
 import { InvitationScreen } from '../features/mail/InvitationScreen'
 import { invitationToken } from '../features/mail/mailAdmin'
 import { OrganizationsScreen } from '../features/organizations/OrganizationsScreen'
@@ -43,7 +45,7 @@ import { ProfileMenu, SessionScreen } from '../features/session/SessionScreen'
 import { ReminderCenter } from '../features/work/ReminderCenter'
 import { AdminReminderCenter } from '../features/admin/AdminReminderCenter'
 import { WorkScreen } from '../features/work/WorkScreen'
-import { getModules, setModules } from '../shared/modules'
+import { getLandingMode, getModules, setLandingMode, setModules } from '../shared/modules'
 import { ActionMenu } from '../shared/ui/ActionMenu'
 import { HintButton } from '../shared/ui/HintButton'
 import { SupportDetails } from '../shared/ui/SupportDetails'
@@ -147,7 +149,9 @@ export const App = () => {
 
   const loadSession = async () => {
     try {
-      setModules((await apiClient.config()).modules)
+      const config = await apiClient.config()
+      setModules(config.modules)
+      setLandingMode(config.landing)
       const profile = await apiClient.me()
       await apiClient.refreshCsrf()
       rememberActiveProfile(profile.id)
@@ -246,11 +250,26 @@ export const App = () => {
       </div>
     )
   }
+  const search = window.location.search
+  // Демонстрационный адрес открывает продуктовую главную и вошедшему сотруднику; «Открыть CRM» ведёт в корень.
+  if (state.kind === 'profile' && isProductDemo(search)) {
+    return <ProductLanding signedIn backToContest={showBackToContest(getLandingMode(), search)} onLogin={() => window.location.assign('/')} />
+  }
+  const sessionNotice = sessionExpired ? 'Сеанс истёк. Войдите снова — вы вернётесь на тот же экран, несохранённый текст восстановится.' : null
+  if (state.kind === 'anonymous' && landingPageFor(getLandingMode(), search) === 'product') {
+    return (
+      <ProductLanding
+        backToContest={showBackToContest(getLandingMode(), search)}
+        onLogin={() => apiClient.login()}
+        notice={sessionNotice}
+      />
+    )
+  }
   if (state.kind === 'anonymous') {
     return (
       <LandingPage
         onLogin={() => apiClient.login()}
-        notice={sessionExpired ? 'Сеанс истёк. Войдите снова — вы вернётесь на тот же экран, несохранённый текст восстановится.' : null}
+        notice={sessionNotice}
       />
     )
   }

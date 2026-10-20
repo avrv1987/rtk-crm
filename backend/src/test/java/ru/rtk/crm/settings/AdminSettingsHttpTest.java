@@ -134,6 +134,39 @@ class AdminSettingsHttpTest {
     }
 
     @Test
+    void landingPageModeIsPublicReadOnlyChangedOnlyByAdministratorAndJournaled() throws Exception {
+        // Без входа виден только режим главной и модули — других настроек публичный ответ не раскрывает.
+        String anonymous = mockMvc.perform(get("/api/config"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.landing").value("CONTEST"))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(objectMapper.readTree(anonymous).fieldNames()).toIterable().containsExactlyInAnyOrder("modules", "landing");
+
+        mockMvc.perform(put("/api/admin/settings/LANDING_PAGE").with(csrf()).contentType(MediaType.APPLICATION_JSON).content("{\"value\":1}"))
+                .andExpect(status().isUnauthorized());
+        for (UUID profile : List.of(KAM, LEADER, MANAGEMENT)) {
+            mockMvc.perform(json(put("/api/admin/settings/LANDING_PAGE"), profile, "{\"value\":1}")).andExpect(status().isForbidden());
+        }
+        mockMvc.perform(get("/api/config")).andExpect(jsonPath("$.landing").value("CONTEST"));
+        mockMvc.perform(json(put("/api/admin/settings/LANDING_PAGE"), ADMIN, "{\"value\":2}")).andExpect(status().isBadRequest());
+
+        mockMvc.perform(json(put("/api/admin/settings/LANDING_PAGE"), ADMIN, "{\"value\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.key == 'LANDING_PAGE')].group").value(hasItem("SITE")))
+                .andExpect(jsonPath("$[?(@.key == 'LANDING_PAGE')].unit").value(hasItem("LANDING")))
+                .andExpect(jsonPath("$[?(@.key == 'LANDING_PAGE')].value").value(hasItem(1)));
+        mockMvc.perform(get("/api/config")).andExpect(jsonPath("$.landing").value("PRODUCT"));
+
+        mockMvc.perform(delete("/api/admin/settings/LANDING_PAGE").with(login(ADMIN)).with(csrf())).andExpect(status().isOk());
+        mockMvc.perform(get("/api/config")).andExpect(jsonPath("$.landing").value("CONTEST"));
+        assertThat(jdbc.queryForList("""
+                SELECT object_name || ': ' || details FROM audit_events WHERE action = 'SYSTEM_SETTING_CHANGED'""", String.class))
+                .containsExactlyInAnyOrder(
+                        "Главная страница: конкурсная → продуктовая",
+                        "Главная страница: возвращено значение конфигурации: продуктовая → конкурсная");
+    }
+
+    @Test
     void onlyAdministratorChangesSettingsEachChangeIsJournaledAndActsWithoutRestart() throws Exception {
         for (UUID profile : List.of(KAM, LEADER, MANAGEMENT)) {
             mockMvc.perform(get("/api/admin/settings").with(login(profile))).andExpect(status().isForbidden());
