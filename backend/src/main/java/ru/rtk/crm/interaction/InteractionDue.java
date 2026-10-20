@@ -10,13 +10,15 @@ import java.util.Map;
 // Единое правило срока следующего шага: список, лента и сводка «Моей работы», показатели руководителя и «Контроль»
 // (ManagerWorkLine.due) берут его отсюда. Просрочка важнее всего: работа со сроком в прошлом — только «Просрочено»,
 // даже без текста шага, и не попадает ни в «Сегодня», ни в «На этой неделе», ни в «Без следующего шага».
-// TODAY входит в THIS_WEEK; границы дня и недели — по Москве.
+// TODAY входит в THIS_WEEK; REST_OF_WEEK — та же неделя без сегодняшнего дня (группа «На неделе» мини-приложения MAX,
+// как «На этой неделе» ленты CRM; её итог — THIS_WEEK минус TODAY). Границы дня и недели — по Москве.
 // Срок требуется только от идущей работы: завершённая не попадает ни в одну группу, у приостановленной срок — дата
 // возврата (она хранится следующим шагом), и «Без следующего шага» к ней не относится.
 public enum InteractionDue {
     OVERDUE("(i.work_status <> 'COMPLETED' AND i.next_action_at < :dueNow)"),
     TODAY("(" + Sql.STEP + " AND i.next_action_at >= :dueNow AND i.next_action_at < :dueDayEnd)"),
     THIS_WEEK("(" + Sql.STEP + " AND i.next_action_at >= :dueNow AND i.next_action_at < :dueWeekEnd)"),
+    REST_OF_WEEK("(" + Sql.STEP + " AND i.next_action_at >= :dueDayEnd AND i.next_action_at < :dueWeekEnd)"),
     LATER("(" + Sql.STEP + " AND i.next_action_at >= :dueWeekEnd)"),
     NO_NEXT_STEP("(i.work_status = 'ACTIVE' AND (i.next_action_at IS NULL OR (i.next_action IS NULL AND i.next_action_at >= :dueNow)))");
 
@@ -47,6 +49,7 @@ public enum InteractionDue {
             case OVERDUE -> overdue;
             case TODAY -> step && nextActionAt.isBefore(dayEnd(now));
             case THIS_WEEK -> step && nextActionAt.isBefore(weekEnd(now));
+            case REST_OF_WEEK -> step && !nextActionAt.isBefore(dayEnd(now)) && nextActionAt.isBefore(weekEnd(now));
             case LATER -> step && !nextActionAt.isBefore(weekEnd(now));
             case NO_NEXT_STEP -> !paused && !overdue && !step;
         };

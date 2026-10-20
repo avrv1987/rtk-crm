@@ -4,7 +4,7 @@ import jakarta.mail.internet.MimeMessage;
 import org.springframework.stereotype.Component;
 import ru.rtk.crm.mail.MailRepository.MailMode;
 
-// Заглушка: наружу ничего не уходит, письмо остаётся в журнале отправки со статусом «отправлено (заглушка)».
+// Режим «Без отправки» (STUB): наружу ничего не уходит, письмо остаётся в журнале отправки со статусом «в журнале (без отправки)».
 @Component
 @MailEnabled
 class MailStubTransport implements MailTransport {
@@ -19,6 +19,6 @@ class MailStubTransport implements MailTransport {
 
     @Override
     public String check(Connection connection) {
-        return "Режим заглушки: письма собираются полностью и сохраняются в журнал, наружу ничего не уходит";
+        return "Режим «Без отправки»: письма собираются полностью и сохраняются в журнал, наружу ничего не уходит";
     }
 }

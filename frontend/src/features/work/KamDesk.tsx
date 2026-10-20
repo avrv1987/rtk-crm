@@ -15,7 +15,7 @@ import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { ReminderAgreements } from './ReminderCenter'
 import { StepCompletion } from './StepCompletion'
 import { isIssueOverdue, issueTitle, myIssueHref } from '../issues/issueModel'
-import { type FeedGroupData, feedGroups, type PausedGroups, pausedGroups, shownOf } from './deadlines'
+import { type FeedGroupData, feedGroups, groupTitles, type PausedGroups, pausedGroups, shownOf } from './deadlines'
 import { browserStorage, type FeedGroup, feedGroupLinks, feedGroupsFor, type KamTile } from './workView'
 import { type AccessHandlers, daysLabel, formatDate, formatDateTime, handledAccessError, requestIdOf, todayIso } from './workShared'
 import './workControl.css'
@@ -49,13 +49,6 @@ type DeskState =
 
 const feedLimit = 5
 
-const groupTitles: Record<FeedGroup, string> = {
-  overdue: 'Просрочено',
-  today: 'Сегодня',
-  week: 'На этой неделе',
-  later: 'Позже',
-  noStep: 'Без следующего шага'
-}
 
 const total = async (query: InteractionListParams) => (await apiClient.listInteractions({ ...query, size: 1 })).total
 

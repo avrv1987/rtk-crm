@@ -19,6 +19,8 @@ import { KamReviewPanel } from './KamReviewPanel'
 import { LearningDynamicsReport } from './LearningDynamics'
 import { SigningPlanReport } from './SigningPlanReport'
 import { AgreementPeriodReport } from './AgreementPeriodReport'
+import { PeopleReportPage } from './PeopleReportPage'
+import { AgreementReportingReport } from './AgreementReportingReport'
 import { CardTabPanel, CardTabs } from '../interactions/cardUi'
 import { ReportBuilder, type OrderTarget } from './ReportBuilder'
 import { kindViews, ReportCatalog, ReportTasks, viewKind, type ReportView } from './ReportCatalog'
@@ -28,9 +30,9 @@ import { isFinished, ReportJobs, type DownloadState, type JobsState } from './Re
 import { homeTabFromQuery, homeTabHash, jobsLinkHash } from './reportsRoute'
 import { periodOnKindChange, periodPresets } from './reportPeriods'
 import { reportTaskFor, taskMethod, taskSelection } from './reportTasks'
-import { applyDefinition, chartKinds, groupingsFor, normalizeSelection, type ReportSelection } from './reportSelection'
+import { applyDefinition, chartKinds, demandSelectionFromLink, groupingsFor, normalizeSelection, type ReportSelection } from './reportSelection'
 import { SavedReportsList, useSavedReports } from './SavedReports'
-import { interactionKindsApi } from '../interactions/interactionKinds'
+import { interactionKindsApi, kindFilterLabel } from '../interactions/interactionKinds'
 import './reports.css'
 import './reportsLayout.css'
 
@@ -45,7 +47,7 @@ type ReportsScreenProps = {
 
 const reportViews: readonly ReportView[] = [
   'manager-work', 'portfolio', 'events', 'snapshot', 'duration', 'demand', 'agreements', 'statistics', 'learning-dynamics', 'kam-review',
-  'confirmations', 'signing-plan', 'agreements-period'
+  'confirmations', 'signing-plan', 'agreements-period', 'people', 'agreement-reporting'
 ]
 
 const pollIntervalMs = 1000
@@ -105,7 +107,9 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
   // Переход «Все форматы — в отчёте» из «Контроля» приносит его отборы в адресе и заменяет ими сохранённый выбор.
   const [selection, setSelection] = useState<ReportSelection>(() => {
     const stored = normalizeSelection(loadReportSelection(profileId))
-    return (current === 'manager-work' ? reportSelectionFromControl(stored, query ?? '') : null) ?? stored
+    const linked = current === 'manager-work' ? reportSelectionFromControl(stored, query ?? '')
+      : current === 'demand' ? demandSelectionFromLink(stored, query ?? '') : null
+    return linked ?? stored
   })
   const [transferNotice] = useState(() => (current === 'manager-work' ? skippedNotice(query ?? '') : null))
   const task = reportTaskFor(current, query ?? '')
@@ -147,7 +151,7 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
         apiClient.listReportManagers(),
         apiClient.listReportStages(),
         listReportVendors(),
-        interactionKindsApi.available()
+        interactionKindsApi.forFilters()
       ])
       const options: FilterOptions = {
         organizations: organizations.map((organization) => ({
@@ -159,7 +163,7 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
         directions: catalogOptions(directions),
         programs: catalogOptions(programs),
         products: catalogOptions(products),
-        kinds: kinds.map((kind) => ({ id: kind.id, label: kind.name })),
+        kinds: kinds.map((kind) => ({ id: kind.id, label: kindFilterLabel(kind) })),
 
         managers: managers.map((manager) => ({
           id: manager.id,
@@ -363,6 +367,12 @@ export const ReportsScreen = ({ profileId, role, view, query, onSessionExpired, 
     }
     if (current === 'agreements-period') {
       return <AgreementPeriodReport role={role} {...accessHandlers} />
+    }
+    if (current === 'people') {
+      return <PeopleReportPage role={role} {...accessHandlers} />
+    }
+    if (current === 'agreement-reporting') {
+      return <AgreementReportingReport role={role} {...accessHandlers} />
     }
     if (current === 'kam-review') {
       return <KamReviewPanel role={role} {...accessHandlers} />

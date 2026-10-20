@@ -6,6 +6,7 @@ import { HintButton } from '../../shared/ui/HintButton'
 import { CardDialog, CardSection } from '../interactions/cardUi'
 import {
   activityStatusLabels,
+  activityStatuses,
   agreementStatusLabels,
   agreementsApi,
   formatDate,
@@ -29,6 +30,9 @@ import { AgreementForm } from './AgreementForm'
 import { AgreementSupplements } from './AgreementSupplements'
 import { AgreementTransitions } from './AgreementTransitions'
 import { AgreementTermMark, ApprovalMark, CommandError, useAccessErrorHandler, useCommandKey } from './agreementUi'
+import { reportingApi } from './reportingApi'
+import { formatMoney, parseMoney, referenceOptions, requiredFields, type ReferenceItem } from './reportingModel'
+import { RequiredMark } from '../interactions/cardUi'
 import './agreements.css'
 
 type AgreementsPanelProps = {
@@ -48,9 +52,9 @@ type Load<T> =
 type Catalogs = {
   options: AgreementOptions
   kinds: ActivityKind[]
+  references: ReferenceItem[]
+  attributes: { code: string; title: string }[]
 }
-
-const activityStatuses: readonly ActivityStatus[] = ['PLANNED', 'IN_PROGRESS', 'DONE', 'CANCELLED']
 
 const agreementTitle = (agreement: { number: string; concludedOn?: string | null }) => (
   `№ ${agreement.number}${agreement.concludedOn ? ` от ${formatDate(agreement.concludedOn)}` : ''}`
@@ -98,8 +102,13 @@ export const AgreementsPanel = ({ organizationId, role, initialAgreementId, onCh
   const loadCatalogs = useCallback(async () => {
     setCatalogs((current) => (current?.kind === 'ready' ? current : { kind: 'loading' }))
     try {
-      const [options, kinds] = await Promise.all([agreementsApi.options(organizationId), agreementsApi.listKinds(true)])
-      setCatalogs({ kind: 'ready', value: { options, kinds } })
+      const [options, kinds, references, settings] = await Promise.all([
+        agreementsApi.options(organizationId),
+        agreementsApi.listKinds(true),
+        reportingApi.references(true),
+        reportingApi.settings()
+      ])
+      setCatalogs({ kind: 'ready', value: { options, kinds, references, attributes: settings.attributes } })
     } catch (error) {
       if (!handleAccessError(error)) {
         setCatalogs({ kind: 'failed', error })
@@ -592,6 +601,36 @@ const AgreementDetail = ({
                   <dt>Ответственный</dt>
                   <dd>{activity.responsibleName ?? 'Не назначен'}</dd>
                 </div>
+                {activity.educationLevelName && (
+                  <div>
+                    <dt>Уровень образования</dt>
+                    <dd>{activity.educationLevelName}</dd>
+                  </div>
+                )}
+                {activity.participants !== null && activity.participants !== undefined && (
+                  <div>
+                    <dt>Охват</dt>
+                    <dd>{activity.participants} участн.</dd>
+                  </div>
+                )}
+                {activity.cost !== null && activity.cost !== undefined && (
+                  <div>
+                    <dt>Стоимость (оценка)</dt>
+                    <dd>{formatMoney(activity.cost)} ₽</dd>
+                  </div>
+                )}
+                {activity.executorName && (
+                  <div>
+                    <dt>Исполнитель</dt>
+                    <dd>{activity.executorName}</dd>
+                  </div>
+                )}
+                {activity.documentNote && (
+                  <div>
+                    <dt>Подтверждающий документ</dt>
+                    <dd>{activity.documentNote}</dd>
+                  </div>
+                )}
                 <div>
                   <dt>Взаимодействия</dt>
                   <dd>{activity.interactions.length === 0 ? 'Не связаны' : activity.interactions.map((item) => item.title).join('; ')}</dd>
@@ -649,7 +688,7 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
   const kinds = catalogs.kinds.filter((kind) => !kind.archived || kind.id === activity?.kindId)
   const [kindId, setKindId] = useState(activity?.kindId ?? kinds[0]?.id ?? '')
   const [title, setTitle] = useState(activity?.title ?? '')
-  const [unit, setUnit] = useState(activity?.unit ?? '')
+  const [unitId, setUnitId] = useState(activity?.unitId ?? '')
   const [plannedVolume, setPlannedVolume] = useState(activity?.plannedVolume?.toString() ?? '')
   const [actualVolume, setActualVolume] = useState(activity?.actualVolume?.toString() ?? '')
   const [plannedStart, setPlannedStart] = useState(activity?.plannedStart ?? '')
@@ -658,12 +697,27 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
   const [actualEnd, setActualEnd] = useState(activity?.actualEnd ?? '')
   const [responsibleId, setResponsibleId] = useState(activity?.responsibleProfileId ?? '')
   const [status, setStatus] = useState<ActivityStatus>(activity?.status ?? 'PLANNED')
+  const [educationLevelId, setEducationLevelId] = useState(activity?.educationLevelId ?? '')
+  const [participants, setParticipants] = useState(activity?.participants?.toString() ?? '')
+  const [cost, setCost] = useState(activity?.cost?.toString() ?? '')
+  const [executorId, setExecutorId] = useState(activity?.executorId ?? '')
+  const [documentNote, setDocumentNote] = useState(activity?.documentNote ?? '')
   const [interactionIds, setInteractionIds] = useState<string[]>(activity?.interactions.map((item) => item.id) ?? [])
   const [attachmentIds, setAttachmentIds] = useState<string[]>(activity?.attachments.map((item) => item.id) ?? [])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const commandKey = useCommandKey()
   const formId = useId()
+  const kind = catalogs.kinds.find((item) => item.id === kindId)
+  const required = requiredFields(kind?.requiredAttributes ?? [], status)
+  const requiredTitles = (kind?.requiredAttributes ?? [])
+    .map((code) => catalogs.attributes.find((item) => item.code === code)?.title ?? code)
+  const levels = referenceOptions(catalogs.references, 'EDUCATION_LEVEL', activity?.educationLevelId)
+  const units = referenceOptions(catalogs.references, 'UNIT', activity?.unitId)
+  const executors = referenceOptions(catalogs.references, 'EXECUTOR', activity?.executorId)
+  // У мероприятий до справочника единиц единица записана текстом: показываем её и сохраняем, пока не выбрана новая.
+  const legacyUnit = activity !== undefined && !activity.unitId && activity.unit ? activity.unit : null
+  const mark = (on: boolean) => (on ? <RequiredMark /> : null)
 
   const toggle = (values: string[], id: string, checked: boolean) => (
     checked ? [...values, id] : values.filter((item) => item !== id)
@@ -675,7 +729,8 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
       version: activity?.version ?? null,
       kindId,
       title: title.trim(),
-      unit: orNull(unit),
+      unit: unitId === '' ? legacyUnit : null,
+      unitId: orNull(unitId),
       plannedVolume: numberOrNull(plannedVolume),
       actualVolume: numberOrNull(actualVolume),
       plannedStart: orNull(plannedStart),
@@ -684,6 +739,11 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
       actualEnd: orNull(actualEnd),
       responsibleProfileId: orNull(responsibleId),
       status,
+      educationLevelId: orNull(educationLevelId),
+      participants: numberOrNull(participants),
+      cost: parseMoney(cost),
+      executorId: orNull(executorId),
+      documentNote: orNull(documentNote),
       interactionIds,
       attachmentIds
     }
@@ -712,31 +772,66 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
     <form className="agreement-form" onSubmit={(event) => void submit(event)} aria-label={activity ? 'Изменение мероприятия' : 'Новое мероприятие'}>
       <div className="agreement-form__grid">
         <label className="agreement-form__wide">
-          <span>Вид мероприятия<span className="required-mark" aria-hidden="true"> *</span></span>
+          <span>Вид мероприятия<RequiredMark /></span>
           <select value={kindId} required onChange={(event) => setKindId(event.target.value)}>
-            {kinds.map((kind) => <option key={kind.id} value={kind.id}>{kind.name}{kind.archived ? ' (в архиве)' : ''}</option>)}
+            {kinds.map((item) => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (в архиве)' : ''}</option>)}
           </select>
         </label>
+        {requiredTitles.length > 0 && (
+          <p className="agreement-form__hint agreement-form__wide">
+            Для этого вида обязательны: {requiredTitles.join(', ').toLowerCase()} (поля со звёздочкой). Подтверждающий документ и факт
+            количества нужны, когда мероприятие проведено или подтверждено вузом; у отменённого и отклонённого проверки нет.
+          </p>
+        )}
         <label className="agreement-form__wide">
-          <span>Мероприятие<span className="required-mark" aria-hidden="true"> *</span></span>
+          <span>Мероприятие<RequiredMark /></span>
           <input value={title} required maxLength={300} onChange={(event) => setTitle(event.target.value)} />
-        </label>
-        <label>
-          Объём по плану
-          <input type="number" min={0} step={1} inputMode="numeric" value={plannedVolume} onChange={(event) => setPlannedVolume(event.target.value)} />
-        </label>
-        <label>
-          Объём факт
-          <input type="number" min={0} step={1} inputMode="numeric" value={actualVolume} onChange={(event) => setActualVolume(event.target.value)} />
-        </label>
-        <label>
-          Единица
-          <input value={unit} maxLength={50} placeholder="чел., ч, программ" onChange={(event) => setUnit(event.target.value)} />
         </label>
         <label>
           Статус
           <select value={status} onChange={(event) => setStatus(event.target.value as ActivityStatus)}>
             {activityStatuses.map((item) => <option key={item} value={item}>{activityStatusLabels[item]}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Уровень образования{mark(required.educationLevel)}</span>
+          <select value={educationLevelId} required={required.educationLevel} onChange={(event) => setEducationLevelId(event.target.value)}>
+            <option value="">Не указан</option>
+            {levels.map((item) => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (в архиве)' : ''}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Единица{mark(required.unit)}</span>
+          <select value={unitId} required={required.unit && legacyUnit === null} onChange={(event) => setUnitId(event.target.value)}>
+            <option value="">{legacyUnit === null ? 'Не указана' : `«${legacyUnit}» (из прежней записи)`}</option>
+            {units.map((item) => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (в архиве)' : ''}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Охват, участников{mark(required.participants)}</span>
+          <input type="number" min={0} step={1} inputMode="numeric" value={participants} required={required.participants}
+            onChange={(event) => setParticipants(event.target.value)} />
+        </label>
+        <label>
+          <span>Количество по плану{mark(required.plannedVolume)}</span>
+          <input type="number" min={0} step={1} inputMode="numeric" value={plannedVolume} required={required.plannedVolume}
+            onChange={(event) => setPlannedVolume(event.target.value)} />
+        </label>
+        <label>
+          <span>Количество факт{mark(required.actualVolume)}</span>
+          <input type="number" min={0} step={1} inputMode="numeric" value={actualVolume} required={required.actualVolume}
+            onChange={(event) => setActualVolume(event.target.value)} />
+        </label>
+        <label>
+          <span>Стоимость или оценка, ₽{mark(required.cost)}</span>
+          <input type="number" min={0} step={0.01} inputMode="decimal" value={cost} required={required.cost}
+            onChange={(event) => setCost(event.target.value)} />
+        </label>
+        <label>
+          <span>Исполнитель{mark(required.executor)}</span>
+          <select value={executorId} required={required.executor} onChange={(event) => setExecutorId(event.target.value)}>
+            <option value="">Не указан</option>
+            {executors.map((item) => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (в архиве)' : ''}</option>)}
           </select>
         </label>
         <label>
@@ -761,6 +856,14 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
             <option value="">Не назначен</option>
             {catalogs.options.responsibles.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}
           </select>
+        </label>
+        <label className="agreement-form__wide">
+          <span>Подтверждающий документ: реквизиты{mark(required.document)}</span>
+          <input value={documentNote} maxLength={500} placeholder="Акт, письмо вуза: номер и дата"
+            onChange={(event) => setDocumentNote(event.target.value)} />
+          {required.document && (
+            <span className="agreement-form__hint">Укажите реквизиты или выберите проверенный документ ниже.</span>
+          )}
         </label>
       </div>
       <fieldset className="agreement-form__choices">

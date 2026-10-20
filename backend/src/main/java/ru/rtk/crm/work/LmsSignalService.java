@@ -22,6 +22,7 @@ import ru.rtk.crm.interaction.InteractionIssueService;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionRiskLevel;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.settings.SystemSettings;
 import ru.rtk.crm.work.LmsSignalModels.LmsSignal;
 import ru.rtk.crm.work.LmsSignalModels.LmsSignalAction;
 import ru.rtk.crm.work.LmsSignalModels.LmsSignalDismissalRequest;
@@ -30,6 +31,7 @@ import ru.rtk.crm.work.LmsSignalModels.LmsSignalType;
 import ru.rtk.crm.work.LmsSignalModels.LmsSignals;
 import ru.rtk.crm.work.LmsSignalRepository.Activity;
 import ru.rtk.crm.work.LmsSignalRepository.SignalSource;
+import ru.rtk.crm.web.Plural;
 
 @Service
 public class LmsSignalService {
@@ -38,19 +40,22 @@ public class LmsSignalService {
 
     private final OrganizationRepository organizationRepository;
     private final LmsSignalRepository repository;
-    private final LmsSignalProperties properties;
+    private final LmsSignalProperties configured;
     private final InteractionIssueService issueService;
+    private final SystemSettings settings;
 
     public LmsSignalService(
             OrganizationRepository organizationRepository,
             LmsSignalRepository repository,
             LmsSignalProperties properties,
-            InteractionIssueService issueService
+            InteractionIssueService issueService,
+            SystemSettings settings
     ) {
         this.organizationRepository = organizationRepository;
         this.repository = repository;
-        this.properties = properties;
+        this.configured = properties;
         this.issueService = issueService;
+        this.settings = settings;
     }
 
     // Список для КАМ и «Контроля» — только не скрытые сигналы; карточка (forInteraction) возвращает и скрытые с
@@ -59,7 +64,7 @@ public class LmsSignalService {
     public LmsSignals list(CrmProfile profile) {
         VisibilityScope scope = organizationRepository.visibilityScope(profile).orElseThrow(WorkAccessDeniedException::new);
         OffsetDateTime now = OffsetDateTime.now();
-        List<LmsSignal> active = signals(scope, null, now).stream().filter(signal -> !signal.dismissed()).toList();
+        List<LmsSignal> active = signals(scope, null, now, configured.with(settings)).stream().filter(signal -> !signal.dismissed()).toList();
         return new LmsSignals(now, active);
     }
 
@@ -67,7 +72,7 @@ public class LmsSignalService {
     public LmsSignals forInteraction(CrmProfile profile, UUID interactionId) {
         VisibilityScope scope = visibleScope(profile, interactionId);
         OffsetDateTime now = OffsetDateTime.now();
-        return new LmsSignals(now, signals(scope, interactionId, now));
+        return new LmsSignals(now, signals(scope, interactionId, now, configured.with(settings)));
     }
 
     @Transactional
@@ -79,11 +84,12 @@ public class LmsSignalService {
         VisibilityScope scope = visibleScope(profile, interactionId);
         ContactInteractionMutationAuthorization.requireCardEditor(profile);
         OffsetDateTime now = OffsetDateTime.now();
-        SignalSource source = activeSource(scope, interactionId, request.type(), request.mappingId(), now);
+        LmsSignalProperties properties = configured.with(settings);
+        SignalSource source = activeSource(scope, interactionId, request.type(), request.mappingId(), now, properties);
         // Скрытие привязано к версии данных потока: изменились данные — сигнал вернётся.
         repository.saveDismissal(interactionId, source.mappingId(), request.type(), source.dataVersion(request.type()),
                 profile.id(), now, false);
-        return new LmsSignals(now, signals(scope, interactionId, now));
+        return new LmsSignals(now, signals(scope, interactionId, now, configured.with(settings)));
     }
 
     /**
@@ -99,14 +105,15 @@ public class LmsSignalService {
         VisibilityScope scope = visibleScope(profile, interactionId);
         ContactInteractionMutationAuthorization.requireCardEditor(profile);
         OffsetDateTime now = OffsetDateTime.now();
-        SignalSource source = activeSource(scope, interactionId, request.type(), request.mappingId(), now);
+        LmsSignalProperties properties = configured.with(settings);
+        SignalSource source = activeSource(scope, interactionId, request.type(), request.mappingId(), now, properties);
         String dataVersion = source.dataVersion(request.type());
         String key = LmsSignalRepository.dismissalKey(interactionId, source.mappingId(), request.type(), dataVersion);
         // Пока данные не изменились, сигнал уже записан: второй риск по нему дублировал бы запись в реестре.
         if (Boolean.TRUE.equals(repository.findDismissals(scope, interactionId).get(key))) {
             throw new InteractionValidationException("type", "Этот сигнал уже записан в реестр проблем и рисков");
         }
-        LmsSignal signal = signal(source, request.type(), false, false, now);
+        LmsSignal signal = signal(source, request.type(), false, false, now, properties);
         // Пометка устаревания уходит и в текст риска: по записи в реестре должно быть видно, что данные были старыми.
         String description = "Сигнал LMS «" + signal.title() + "»" + (signal.stale() ? " (данные устарели)" : "") + ": "
                 + signal.message();
@@ -135,7 +142,7 @@ public class LmsSignalService {
     // Скрыть и записать можно только действующий сигнал, найденный заново по текущим данным: сигнал мог перестать
     // действовать, а присланному клиентом верить нельзя.
     private SignalSource activeSource(VisibilityScope scope, UUID interactionId, LmsSignalType type, UUID mappingId,
-                                      OffsetDateTime now) {
+                                      OffsetDateTime now, LmsSignalProperties properties) {
         return repository.findSources(scope, interactionId).stream()
                 .filter(candidate -> candidate.mappingId().equals(mappingId))
                 .filter(candidate -> types(candidate, now, properties).contains(type))
@@ -146,7 +153,7 @@ public class LmsSignalService {
                 ));
     }
 
-    private List<LmsSignal> signals(VisibilityScope scope, UUID interactionId, OffsetDateTime now) {
+    private List<LmsSignal> signals(VisibilityScope scope, UUID interactionId, OffsetDateTime now, LmsSignalProperties properties) {
         Map<String, Boolean> dismissals = repository.findDismissals(scope, interactionId);
         List<LmsSignal> signals = new ArrayList<>();
         for (SignalSource source : repository.findSources(scope, interactionId)) {
@@ -154,7 +161,7 @@ public class LmsSignalService {
                 Boolean recordedAsRisk = dismissals.get(LmsSignalRepository.dismissalKey(
                         source.interactionId(), source.mappingId(), type, source.dataVersion(type)
                 ));
-                signals.add(signal(source, type, recordedAsRisk != null, Boolean.TRUE.equals(recordedAsRisk), now));
+                signals.add(signal(source, type, recordedAsRisk != null, Boolean.TRUE.equals(recordedAsRisk), now, properties));
             }
         }
         return signals;
@@ -252,7 +259,8 @@ public class LmsSignalService {
 
     // Сообщение строится из данных потока на момент наблюдения; пороги в тексте берутся из настроек, чтобы менеджер
     // видел, почему сигнал сработал.
-    private LmsSignal signal(SignalSource source, LmsSignalType type, boolean dismissed, boolean recordedAsRisk, OffsetDateTime now) {
+    private LmsSignal signal(SignalSource source, LmsSignalType type, boolean dismissed, boolean recordedAsRisk, OffsetDateTime now,
+                             LmsSignalProperties properties) {
         String run = "«" + source.courseName() + (source.groupName() == null ? "" : ", группа «" + source.groupName() + "»")
                 + "» (" + period(source) + ")";
         int participants = source.participants();
@@ -362,17 +370,8 @@ public class LmsSignalService {
         return "с " + DATE.format(source.runStartsOn()) + " по " + DATE.format(source.runEndsOn().minusDays(1));
     }
 
-    // Склонение по правилам русского языка: 11–14 — «дней», иначе по последней цифре.
     static String days(long value) {
-        long lastTwo = value % 100;
-        long last = value % 10;
-        if (last == 1 && lastTwo != 11) {
-            return value + " день";
-        }
-        if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
-            return value + " дня";
-        }
-        return value + " дней";
+        return Plural.withCount(value, "день", "дня", "дней");
     }
 
     static LocalDate today(OffsetDateTime now) {

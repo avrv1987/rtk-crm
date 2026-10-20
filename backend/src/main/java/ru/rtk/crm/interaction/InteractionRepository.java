@@ -35,7 +35,8 @@ public class InteractionRepository {
                    e.plan_changed, e.next_action, e.next_action_at,
                    e.actor_profile_id, actor.display_name AS actor_display_name,
                    e.owner_manager_id_snapshot, e.version, e.occurred_at,
-                   CASE WHEN agent_command.idempotency_key LIKE 'agent-plan:%%' THEN TRUE ELSE FALSE END AS prepared_by_agent
+                   CASE WHEN agent_command.idempotency_key LIKE 'agent-plan:%%' THEN TRUE ELSE FALSE END AS prepared_by_agent,
+                   e.import_source, e.import_author
             FROM interaction_events e
             JOIN crm_user_profiles actor ON actor.id = e.actor_profile_id
             LEFT JOIN command_idempotency_records agent_command ON agent_command.id = e.command_id
@@ -356,7 +357,18 @@ public class InteractionRepository {
         return jdbcClient.sql("""
                 SELECT t.id, t.name, i.workflow_version,
                        (SELECT MAX(v.version_number) FROM workflow_template_versions v WHERE v.template_id = t.id)
-                           AS latest_version
+                           AS latest_version,
+                       -- Вид меняли (событие правки с «маршрут не изменён»), и маршрут не тот, что дал бы нынешний вид:
+                       -- шапка карточки должна сказать, что этапы остались от прежнего вида.
+                       CASE WHEN EXISTS (SELECT 1 FROM interaction_events e WHERE e.interaction_id = i.id
+                                         AND e.comment LIKE '%Вид взаимодействия: %маршрут не изменён%')
+                             AND NOT EXISTS (SELECT 1 FROM interaction_kinds k WHERE k.id = i.interaction_kind_id
+                                             AND k.workflow_template_id = i.workflow_template_id)
+                             AND NOT EXISTS (SELECT 1 FROM interaction_kind_team_templates tt
+                                             JOIN organizations o ON o.team_id = tt.team_id
+                                             WHERE tt.kind_id = i.interaction_kind_id AND o.id = i.organization_id
+                                               AND tt.workflow_template_id = i.workflow_template_id)
+                            THEN TRUE ELSE FALSE END AS from_previous_kind
                 FROM interactions i
                 JOIN workflow_templates t ON t.id = i.workflow_template_id
                 WHERE i.id = :interactionId AND i.workflow_version IS NOT NULL
@@ -366,7 +378,8 @@ public class InteractionRepository {
                         resultSet.getObject("id", UUID.class),
                         resultSet.getString("name"),
                         resultSet.getInt("workflow_version"),
-                        resultSet.getInt("latest_version")
+                        resultSet.getInt("latest_version"),
+                        resultSet.getBoolean("from_previous_kind")
                 ))
                 .optional();
     }
@@ -1026,6 +1039,44 @@ public class InteractionRepository {
                 .list();
     }
 
+    // Последний вход на каждый этап (создание или переход на него) — для «Пути вуза».
+    public Map<UUID, OffsetDateTime> findStageEntries(UUID interactionId) {
+        Map<UUID, OffsetDateTime> entries = new HashMap<>();
+        jdbcClient.sql("""
+                SELECT to_stage_id, MAX(occurred_at) AS entered_at
+                FROM interaction_events
+                WHERE interaction_id = :interactionId AND to_stage_id IS NOT NULL AND type IN ('CREATED', 'TRANSITIONED')
+                GROUP BY to_stage_id
+                """)
+                .param("interactionId", interactionId)
+                .query((ResultSet resultSet) -> {
+                    entries.put(resultSet.getObject("to_stage_id", UUID.class), resultSet.getObject("entered_at", OffsetDateTime.class));
+                });
+        return entries;
+    }
+
+    // Шаг, который действовал перед последней паузой: последнее изменение плана раньше события паузы, поставившего
+    // служебный шаг возврата.
+    public Optional<InteractionNextStep> findStepBeforePause(UUID interactionId, String resumeAction) {
+        return jdbcClient.sql("""
+                SELECT e.next_action, e.next_action_at
+                FROM interaction_events e
+                WHERE e.interaction_id = :interactionId AND e.plan_changed = TRUE AND e.version < (
+                    SELECT MAX(pause.version) FROM interaction_events pause
+                    WHERE pause.interaction_id = :interactionId AND pause.type = 'STATUS_CHANGED'
+                      AND pause.plan_changed = TRUE AND pause.next_action = :resumeAction)
+                ORDER BY e.version DESC
+                LIMIT 1
+                """)
+                .param("interactionId", interactionId)
+                .param("resumeAction", resumeAction)
+                .query((resultSet, rowNumber) -> new InteractionNextStep(
+                        resultSet.getString("next_action"),
+                        resultSet.getObject("next_action_at", OffsetDateTime.class)
+                ))
+                .optional();
+    }
+
     public List<InteractionEvent> findRecentEvents(UUID interactionId, int limit) {
         return jdbcClient.sql(EVENT_SELECT + """
                 WHERE e.interaction_id = :interactionId
@@ -1106,7 +1157,10 @@ public class InteractionRepository {
                 resultSet.getObject("owner_manager_id_snapshot", UUID.class),
                 resultSet.getInt("version"),
                 resultSet.getObject("occurred_at", OffsetDateTime.class),
-                resultSet.getBoolean("prepared_by_agent")
+                resultSet.getBoolean("prepared_by_agent"),
+                null,
+                resultSet.getString("import_source"),
+                resultSet.getString("import_author")
         );
     }
 

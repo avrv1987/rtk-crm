@@ -13,6 +13,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 // Проверка против настоящего Bot API MAX: только чтение (/me, /subscriptions), без рассылок и без подписки.
 // Запускается лишь при MAX_LIVE_TOKEN_FILE — пути к файлу с токеном; сам токен в сообщениях проверок не выводится.
 // Клиент собран так же, как в приложении: свой SSLContext с корнем Минцифры из infra/max.
+// В CI токена нет, поэтому тест там пропускается; без внешней системы ту же логику проверяют MaxChannelHttpTest и MaxClientWiringTest.
 @EnabledIfEnvironmentVariable(named = "MAX_LIVE_TOKEN_FILE", matches = ".+")
 class MaxLiveApiTest {
     @Test

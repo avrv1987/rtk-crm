@@ -22,6 +22,25 @@ export const deadlineGroup = (dueAt: string, now: number): DeadlineGroup => {
   return day < today - weekday + 7 ? 'week' : 'later'
 }
 
+// Названия групп ленты — одни для «Моей работы» CRM и мини-приложения MAX (там на плитке короткая форма).
+export const groupTitles: Record<FeedGroup, string> = {
+  overdue: 'Просрочено',
+  today: 'Сегодня',
+  week: 'На этой неделе',
+  later: 'Позже',
+  noStep: 'Без следующего шага'
+}
+
+// Итоги групп из серверной сводки. «На этой неделе» — неделя без сегодняшнего дня: разность итогов, на сервере это
+// отбор REST_OF_WEEK.
+export const groupTotals = (feed: ReminderFeed): Record<FeedGroup, number> => ({
+  overdue: feed.overdue,
+  today: feed.today,
+  week: Math.max(0, feed.thisWeek - feed.today),
+  later: feed.later,
+  noStep: feed.noNextStep
+})
+
 export type FeedPage = { items: InteractionListItem[] }
 
 export type FeedGroupData = { items: InteractionListItem[]; total: number }
@@ -36,12 +55,13 @@ export const feedGroups = (
   now: number
 ): Map<FeedGroup, FeedGroupData> => {
   const restOfWeek = pages.week.items.filter((item) => item.nextActionAt !== null && deadlineGroup(item.nextActionAt, now) === 'week')
+  const totals = groupTotals(feed)
   const groups: [FeedGroup, InteractionListItem[], number][] = [
-    ['overdue', pages.overdue.items, feed.overdue],
-    ['today', pages.today.items, feed.today],
-    ['week', restOfWeek, feed.thisWeek - feed.today],
-    ['later', pages.later.items, feed.later],
-    ['noStep', pages.noStep.items, feed.noNextStep]
+    ['overdue', pages.overdue.items, totals.overdue],
+    ['today', pages.today.items, totals.today],
+    ['week', restOfWeek, totals.week],
+    ['later', pages.later.items, totals.later],
+    ['noStep', pages.noStep.items, totals.noStep]
   ]
   return new Map(groups
     .map(([key, items, total]): [FeedGroup, FeedGroupData] => [key, { items, total: Math.max(total, items.length) }])

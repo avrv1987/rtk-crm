@@ -15,7 +15,7 @@ import {
 import { filterTeams, teamArchivable } from '../src/features/admin/teamList.ts'
 import { organizationMenuActions } from '../src/features/admin/organizationList.ts'
 import { lockoutText, transferSummary, unassignsOrganizations } from '../src/features/admin/employeeFilters.ts'
-import { backupText } from '../src/features/admin/backupStatus.ts'
+import { backupLines } from '../src/features/admin/backupStatus.ts'
 
 const profile = (patch: Record<string, unknown> = {}) => ({
   id: 'p1',
@@ -135,9 +135,30 @@ test('блок «Вход в систему» различает блокиро�
   assert.match(lockoutText({ available: false, failures: 0, locked: false, lastFailureAt: null }), /не настроена/)
 })
 
-test('«Обзор» показывает время последней копии и предупреждает о старой или пропавшей отметке', () => {
-  const now = Date.parse('2026-10-18T12:00:00Z')
-  assert.deepEqual(backupText({ lastBackupAt: '2026-10-18T00:30:00Z' }, now), { text: 'Последняя копия: 18 окт. 2026 г., 03:30 МСК.', stale: false })
-  assert.equal(backupText({ lastBackupAt: '2026-10-15T00:30:00Z' }, now).stale, true)
-  assert.equal(backupText({ lastBackupAt: null }, now).stale, true)
+test('«Обзор» показывает копию, размер, проверку восстановления и предупреждения сервера', () => {
+  const fresh = {
+    lastBackupAt: '2026-10-18T00:30:00Z', lastBackupBytes: 52428800, backupFailure: null,
+    lastRestoreCheckAt: '2026-10-01T00:30:00Z', lastRestoreCheckSeconds: 94, restoreCheckFailure: null, warnings: []
+  }
+  assert.deepEqual(backupLines(fresh), [
+    { text: 'Последняя копия: 18 окт. 2026 г., 03:30 МСК, 50 МиБ.', warning: false },
+    { text: 'Проверка восстановления: 1 окт. 2026 г., 03:30 МСК, восстановление 1 мин 34 с.', warning: false }
+  ])
+  const stale = backupLines({
+    ...fresh,
+    lastBackupBytes: 3 * 1024 ** 3,
+    backupFailure: { at: '2026-10-19T23:00:00Z', message: 'backup.sh exited with code 1' },
+    warnings: ['BACKUP_STALE', 'BACKUP_FAILED', 'RESTORE_CHECK_STALE']
+  })
+  assert.equal(stale[0].text, 'Последняя копия: 18 окт. 2026 г., 03:30 МСК, 3.0 ГиБ — больше суток назад.')
+  assert.equal(stale[1].text, 'Последняя копия 20 окт. 2026 г., 02:00 МСК не удалась: backup.sh exited with code 1.')
+  assert.match(stale[2].text, /больше 35 дней назад/)
+  assert.ok(stale.every((line) => line.warning))
+  const empty = backupLines({
+    lastBackupAt: null, lastBackupBytes: null, backupFailure: null,
+    lastRestoreCheckAt: null, lastRestoreCheckSeconds: null, restoreCheckFailure: null,
+    warnings: ['BACKUP_MISSING', 'RESTORE_CHECK_MISSING']
+  })
+  assert.deepEqual(empty.map((line) => line.warning), [true, true])
+  assert.match(empty[1].text, /restore-check\.sh/)
 })

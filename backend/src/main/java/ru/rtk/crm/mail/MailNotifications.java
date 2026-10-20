@@ -209,6 +209,12 @@ public class MailNotifications {
                 partnerProfileId, organizationId, templates.partnerReturned(organizationName));
     }
 
+    // responseId — принятый ответ: одно письмо на приёмку, повтор команды второго не ставит.
+    public boolean partnerAccepted(UUID partnerProfileId, UUID organizationId, String organizationName, UUID responseId) {
+        return outbox.toProfile("partner-accepted:" + responseId + ":" + partnerProfileId, MailKind.PARTNER_ACCEPTED,
+                partnerProfileId, organizationId, templates.partnerAccepted(organizationName));
+    }
+
     public boolean partnerReply(UUID managerProfileId, UUID organizationId, UUID interactionId, String organizationName,
                                 UUID replyId) {
         return outbox.toProfile("partner-reply:" + replyId + ":" + managerProfileId, MailKind.PARTNER_REPLY, managerProfileId,

@@ -83,10 +83,14 @@ class OrganizationPathServiceTest {
         when(interactionRepository.findStages(OLD)).thenReturn(List.of(
                 new InteractionStage(UUID.randomUUID(), "Поиск контакта", 1, false),
                 new InteractionStage(oldFinal, "Повышение квалификации", 2, false)));
+        UUID newFirst = UUID.randomUUID();
+        OffsetDateTime firstEntered = now.minusDays(20);
         when(interactionRepository.findStages(NEW)).thenReturn(List.of(
-                new InteractionStage(UUID.randomUUID(), "Поиск контакта", 1, false),
+                new InteractionStage(newFirst, "Поиск контакта", 1, false),
                 new InteractionStage(newSecond, "Встреча", 2, true),
                 new InteractionStage(UUID.randomUUID(), "Подписание", 3, false)));
+        // даты входа по этапам — для подсказки и отметки «пропущен» на «Пути вуза».
+        when(interactionRepository.findStageEntries(NEW)).thenReturn(Map.of(newFirst, firstEntered));
         when(reportRepository.findManagerWorkProducts(any())).thenReturn(Map.of(NEW, List.of("Продукт А")));
         when(agreementRepository.findWorkStatuses(any())).thenReturn(Map.of(NEW,
                 new WorkAgreementStatus(AgreementStatus.ACTIVE, "Д-1", LocalDate.parse("2027-12-31"), null, false)));
@@ -105,6 +109,7 @@ class OrganizationPathServiceTest {
         OrganizationPathService.PathWork current = path.works().getFirst();
         assertThat(current.stagePosition()).isEqualTo(2);
         assertThat(current.stages()).extracting(OrganizationPathService.PathStage::optional).containsExactly(false, true, false);
+        assertThat(current.stages()).extracting(OrganizationPathService.PathStage::enteredAt).containsExactly(firstEntered, null, null);
         assertThat(current.daysOnStage()).isEqualTo(3);
         assertThat(current.due()).isEqualTo(ManagerWorkDue.OVERDUE);
         assertThat(current.products()).containsExactly("Продукт А");

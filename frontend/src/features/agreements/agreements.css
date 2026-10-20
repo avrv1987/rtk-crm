@@ -406,6 +406,7 @@
   color: var(--color-text-body);
   font-size: var(--font-size-md);
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .agreement-files__history summary {

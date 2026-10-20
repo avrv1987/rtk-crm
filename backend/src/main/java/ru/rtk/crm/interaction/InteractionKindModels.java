@@ -21,11 +21,12 @@ public final class InteractionKindModels {
             int version,
             UUID teamTemplateId,
             String teamTemplateName,
-            boolean defaultKind
+            boolean defaultKind,
+            long interactionCount
     ) {
         public InteractionKind(UUID id, String name, String description, boolean active, UUID templateId, String templateName,
                                int sortOrder, int version, UUID teamTemplateId, String teamTemplateName) {
-            this(id, name, description, active, templateId, templateName, sortOrder, version, teamTemplateId, teamTemplateName, false);
+            this(id, name, description, active, templateId, templateName, sortOrder, version, teamTemplateId, teamTemplateName, false, 0);
         }
     }
 
@@ -60,7 +61,9 @@ public final class InteractionKindModels {
             UUID productId,
             String productName,
             int priority,
-            int version
+            int version,
+            boolean active,
+            boolean kindActive
     ) {
     }
 
@@ -70,8 +73,13 @@ public final class InteractionKindModels {
             OrganizationType organizationType,
             UUID programId,
             UUID productId,
-            Integer priority
+            Integer priority,
+            Boolean active
     ) {
+        public InteractionKindRuleRequest(Integer version, UUID kindId, OrganizationType organizationType, UUID programId,
+                                          UUID productId, Integer priority) {
+            this(version, kindId, organizationType, programId, productId, priority, null);
+        }
     }
 
     public enum KindSource {

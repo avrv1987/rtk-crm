@@ -371,6 +371,10 @@ foreach ([
     'enrol_manual_enrol_users',
     'enrol_manual_unenrol_users',
     'core_group_add_group_members',
+    // Перенос между группами одного курса: снять из группы прежнего потока и сверить состав группы. Право то же —
+    // moodle/course:managegroups, оно у роли уже есть.
+    'core_group_delete_group_members',
+    'core_group_get_group_members',
     'core_enrol_get_enrolled_users',
 ] as $function) {
     if (!$webservicemanager->service_function_exists($function, $writeservice->id)) {

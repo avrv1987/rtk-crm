@@ -59,7 +59,12 @@ export const WorkFacts = ({ interaction, organization, stageNumber, daysOnStage,
         <dd>
           {agreement === 'loading' && 'Загружаем…'}
           {agreement === 'failed' && 'Не удалось загрузить'}
-          {typeof agreement === 'object' && agreement.kind === 'none' && 'Нет'}
+          {typeof agreement === 'object' && agreement.kind === 'none' && (
+            <>
+              Нет
+              {agreement.counted && <span className="work-facts__sub">{agreement.counted}</span>}
+            </>
+          )}
           {typeof agreement === 'object' && agreement.kind === 'create' && (
             <>
               Нет
@@ -74,6 +79,7 @@ export const WorkFacts = ({ interaction, organization, stageNumber, daysOnStage,
                 {' '}<AgreementTermMark agreement={agreement.agreement} />
               </span>
               <span className="work-facts__sub">{daysLabel(daysInStatus(agreement.agreement.statusChangedAt, Date.now()))} в статусе</span>
+              {agreement.counted && <span className="work-facts__sub">{agreement.counted}</span>}
             </>
           )}
         </dd>

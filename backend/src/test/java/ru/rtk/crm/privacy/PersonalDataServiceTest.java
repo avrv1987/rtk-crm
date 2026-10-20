@@ -65,7 +65,7 @@ import ru.rtk.crm.enrolment.EnrolmentBatchTestSchema;
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({
+@Import({PersonalDataRequestService.class, ru.rtk.crm.settings.TestSystemSettings.class, 
         PersonalDataService.class,
         PersonalDataRepository.class,
         SubjectSearchRepository.class,
@@ -148,6 +148,7 @@ class PersonalDataServiceTest {
     void setUp() throws IOException {
         createSchema();
         for (String table : List.of(
+                "university_teaching", "internships", "teacher_qualifications",
                 "agent_change_plans", "learner_enrolments", "learners", "enrolment_streams",
                 "audit_events", "crm_profile_events", "organization_assignment_events", "organization_team_events",
                 "report_jobs", "catalog_import_rows", "source_records", "attachments", "interaction_contacts",
@@ -215,13 +216,64 @@ class PersonalDataServiceTest {
                         assertThat(exception.field()).isEqualTo("name"));
     }
 
+    // Учёт людей и часов (w62): стажёр и преподаватель на повышении квалификации находятся по ФИО и почте, попадают
+    // в выгрузку, обезличиваются по выбранной записи, а обезличивание контакта заменяет его ФИО в записях его вуза.
+    @Test
+    void peopleRecordsAreFoundExportedAndAnonymized() throws IOException {
+        UUID intern = UUID.randomUUID();
+        UUID qualification = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO internships (id, organization_id, intern_name, intern_kind, place, mentor_name, starts_on, ends_on,
+                    intern_hours, hour_unit, result, document, version, created_by, created_at, updated_by, updated_at)
+                VALUES (?, ?, ?, 'STUDENT', 'Отдел облаков', 'Наставник Другой', DATE '2026-09-01', DATE '2026-10-01', 72,
+                    'ASTRONOMICAL', 'COMPLETED', 'Справка № 7', 0, ?, ?, ?, ?)
+                """, intern, UNIVERSITY, SUBJECT_NAME, KAM, NOW, KAM, NOW);
+        jdbcTemplate.update("""
+                INSERT INTO teacher_qualifications (id, organization_id, contact_id, person_name, person_email, program, starts_on,
+                    ends_on, hours, hour_unit, result, certificate_number, version, created_by, created_at, updated_by, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'Облачные технологии', DATE '2026-09-01', DATE '2026-09-30', 72, 'ACADEMIC', 'CERTIFIED',
+                    'У-1', 0, ?, ?, ?, ?)
+                """, qualification, UNIVERSITY, SUBJECT, SUBJECT_NAME, SUBJECT_EMAIL, KAM, NOW, KAM, NOW);
+
+        SubjectSearchResult found = personalDataService.search(administrator, new SubjectQuery(SUBJECT_NAME, null, null, null, null), "rq-p1");
+        assertThat(found.peopleRecords()).extracting(SubjectPersonRecord::kind)
+                .containsExactlyInAnyOrder(SubjectPersonRecord.Kind.INTERN, SubjectPersonRecord.Kind.QUALIFICATION);
+        assertThat(personalDataService.search(administrator, new SubjectQuery(null, SUBJECT_EMAIL, null, null, null), "rq-p2")
+                .peopleRecords()).extracting(SubjectPersonRecord::id).containsExactly(qualification);
+
+        var document = objectMapper.readTree(personalDataService.export(
+                administrator, new SubjectQuery(SUBJECT_NAME, null, null, null, null), SubjectExportFormat.JSON, "rq-p3").content());
+        assertThat(document.path("data").path("peopleRecords").toString()).contains("Отдел облаков", "Облачные технологии");
+        PersonalDataService.SubjectExport pdf = personalDataService.export(
+                administrator, new SubjectQuery(SUBJECT_NAME, null, null, null, null), SubjectExportFormat.PDF, "rq-p4");
+        assertThat(new String(pdf.content(), 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+
+        AnonymizationRequest byRecord = new AnonymizationRequest(null, List.of(), List.of(), List.of(), List.of(),
+                List.of(new SubjectPersonRecord.Ref(intern, SubjectPersonRecord.Kind.INTERN)), PersonalDataReason.SUBJECT_REQUEST, null);
+        assertThat(personalDataService.previewAnonymization(administrator, byRecord).peopleRecords()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT intern_name FROM internships WHERE id = ?", String.class, intern))
+                .as("предпросмотр ничего не меняет").isEqualTo(SUBJECT_NAME);
+        AnonymizationResult result = personalDataService.anonymize(administrator, byRecord, "anonymize-intern", "rq-p5");
+        assertThat(result.peopleRecords()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForMap("SELECT intern_name, document, mentor_name, anonymized_at FROM internships WHERE id = ?", intern))
+                .containsEntry("INTERN_NAME", "Стажёр обезличен").containsEntry("DOCUMENT", null)
+                .containsEntry("MENTOR_NAME", "Наставник Другой").extractingByKey("ANONYMIZED_AT").isNotNull();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_events WHERE action = 'SUBJECT_ANONYMIZED' AND object_type = 'PEOPLE_RECORD' AND object_id = ?",
+                Long.class, intern)).isEqualTo(1);
+
+        personalDataService.anonymize(administrator, request(null, List.of(SUBJECT), List.of(), List.of(), List.of()), "anonymize-contact", "rq-p6");
+        assertThat(jdbcTemplate.queryForMap("SELECT person_name, person_email FROM teacher_qualifications WHERE id = ?", qualification))
+                .doesNotContainValue(SUBJECT_NAME).doesNotContainValue(SUBJECT_EMAIL);
+    }
+
     @Test
     void exportDescribesPurposesSourcesAndFoundDataInJsonAndPdf() throws IOException {
         PersonalDataService.SubjectExport json = personalDataService.export(
                 administrator, new SubjectQuery(null, SUBJECT_EMAIL, null, null, null), SubjectExportFormat.JSON, "rq-export"
         );
         var document = objectMapper.readTree(json.content());
-        assertThat(document.path("purposes")).hasSize(3);
+        assertThat(document.path("purposes")).hasSize(4);
         assertThat(document.path("data").path("contacts").get(0).path("name").asText()).isEqualTo(SUBJECT_NAME);
         assertThat(document.path("retention").get(0).asText()).contains("7 дн.");
 
@@ -231,6 +283,44 @@ class PersonalDataServiceTest {
         assertThat(new String(pdf.content(), 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM audit_events WHERE action = 'SUBJECT_EXPORTED'", Long.class))
                 .isEqualTo(2);
+    }
+
+    @Test
+    void exportMasksOtherPeopleInMentionsButKeepsTheSubjectAndAdminSearchUntouched() throws IOException {
+        String comment = "Созвонились с UAT Субъект Тестовый; копия Ирина Другая (irina@example.test) и Олег Заблокированный. Ирина просила перезвонить";
+        event(UUID.randomUUID(), comment);
+
+        PersonalDataService.SubjectExport json = personalDataService.export(
+                administrator, new SubjectQuery(SUBJECT_NAME, null, null, null, null), SubjectExportFormat.JSON, "rq-export-mask"
+        );
+
+        List<String> texts = objectMapper.readTree(json.content()).path("data").path("mentions").findValuesAsText("text");
+        assertThat(texts).contains("Созвонились с UAT Субъект Тестовый; копия [другое лицо] ([другое лицо]) и [другое лицо]. "
+                + "Ирина просила перезвонить");
+        assertThat(String.join("\n", texts)).doesNotContain("Ирина Другая", "irina@example.test", "Олег Заблокированный");
+        assertThat(personalDataService.search(administrator, new SubjectQuery(SUBJECT_NAME, null, null, null, null), "rq-mask")
+                .mentions()).extracting(SubjectMention::text).contains(comment);
+    }
+
+    // Н1, Н2 проверки 2.5.3: имя другого лица закрывается и по «фамилия + имя» в любом порядке, и с инициалами, и без
+    // служебной приставки «(демо)» из справочника; приставка уходит вместе с именем, лишней скобки не остаётся. Имя
+    // самого субъекта не закрывается, даже если у однофамильца в справочнике те же слова.
+    @Test
+    void exportMasksOtherPeopleInAnyOrderWithInitialsAndWithoutServiceSuffix() throws IOException {
+        contact(UUID.randomUUID(), UNIVERSITY, "Борис Методистов (демо)", null, null, NOW);
+        contact(UUID.randomUUID(), UNIVERSITY, "Петров Илья Сергеевич", null, null, NOW);
+        contact(UUID.randomUUID(), UNIVERSITY, "Тестовый Субъект Иванович", null, null, NOW);
+        event(UUID.randomUUID(), "Борис Методистов пришлёт программу; Методистов Б. согласует, затем Б. Методистов (демо) подпишет; "
+                + "Методистов Борис (демо) пришлёт. Илья Петров и Петров И.С. в копии, UAT Субъект Тестовый на связи");
+
+        PersonalDataService.SubjectExport json = personalDataService.export(
+                administrator, new SubjectQuery(SUBJECT_NAME, null, null, null, null), SubjectExportFormat.JSON, "rq-export-mask-2"
+        );
+
+        List<String> texts = objectMapper.readTree(json.content()).path("data").path("mentions").findValuesAsText("text");
+        assertThat(texts).contains("[другое лицо] пришлёт программу; [другое лицо] согласует, затем [другое лицо] подпишет; "
+                + "[другое лицо] пришлёт. [другое лицо] и [другое лицо] в копии, UAT Субъект Тестовый на связи");
+        assertThat(String.join(" ", texts)).doesNotContain("Методистов", "Петров", "демо", "])");
     }
 
     @Test
@@ -602,7 +692,7 @@ class PersonalDataServiceTest {
                 .containsEntry("ACTOR_DISPLAY_NAME", "Система")
                 .containsEntry("DETAILS", "удалено файлов отчётов: 1, обезличено контактов: 1, обезличено профилей: 1, "
                         + "обезличено анкет слушателей: 1, удалено записей журнала: 1, "
-                        + "истекло планов ИИ-агента: 0, удалено планов ИИ-агента: 0");
+                        + "истекло планов ИИ-агента: 0, удалено планов ИИ-агента: 0, удалено закрытых обращений субъектов ПДн: 0");
         assertThat(jdbcTemplate.queryForMap("SELECT personal_data_status, fields FROM learners WHERE id = ?", expiredLearner))
                 .containsEntry("PERSONAL_DATA_STATUS", "ANONYMIZED")
                 .containsEntry("FIELDS", null);
@@ -669,7 +759,7 @@ class PersonalDataServiceTest {
         assertThat(jdbcTemplate.queryForList("SELECT object_name FROM audit_events WHERE action = 'AGENT_PLAN_EXPIRED'", String.class))
                 .containsExactly("план " + forgotten);
         assertThat(jdbcTemplate.queryForObject("SELECT details FROM audit_events WHERE action = 'RETENTION_APPLIED'", String.class))
-                .endsWith("истекло планов ИИ-агента: 1, удалено планов ИИ-агента: 5");
+                .endsWith("истекло планов ИИ-агента: 1, удалено планов ИИ-агента: 5, удалено закрытых обращений субъектов ПДн: 0");
         assertThat(retentionService.policy(administrator).agentPlansDays()).isEqualTo(30);
         assertThat(retentionService.run(administrator, "rq-plans-again").agentPlansExpired()).isZero();
     }
@@ -822,7 +912,7 @@ class PersonalDataServiceTest {
         )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
                 assertThat(exception.field()).isEqualTo("comment"));
         assertThatThrownBy(() -> personalDataService.anonymize(
-                administrator, new AnonymizationRequest(null, List.of(SUBJECT), List.of(), List.of(), List.of(), null, null),
+                administrator, new AnonymizationRequest(null, List.of(SUBJECT), List.of(), List.of(), List.of(), List.of(), null, null),
                 "anonymize-no-reason", "rq-reason-3"
         )).isInstanceOfSatisfying(InteractionValidationException.class, exception ->
                 assertThat(exception.field()).isEqualTo("reason"));
@@ -872,7 +962,7 @@ class PersonalDataServiceTest {
             List<UUID> learnerIds
     ) {
         return new AnonymizationRequest(
-                subject, contactIds, profileIds, attachmentIds, learnerIds, PersonalDataReason.SUBJECT_REQUEST, null
+                subject, contactIds, profileIds, attachmentIds, learnerIds, List.of(), PersonalDataReason.SUBJECT_REQUEST, null
         );
     }
 
@@ -997,6 +1087,7 @@ class PersonalDataServiceTest {
 
     private void createSchema() {
         ru.rtk.crm.interaction.StagePropertiesTestSchema.create(jdbcTemplate);
+        ru.rtk.crm.people.PeopleTestSchema.create(jdbcTemplate);
         for (String statement : List.of(
                 """
                 CREATE TABLE IF NOT EXISTS crm_user_profiles (role_synced_at TIMESTAMP WITH TIME ZONE, last_login_at TIMESTAMP WITH TIME ZONE, role_reconcile_required BOOLEAN DEFAULT FALSE NOT NULL, partner_organization_id UUID, partner_contact_id UUID, enrolment_operator BOOLEAN DEFAULT FALSE NOT NULL, 
@@ -1046,7 +1137,7 @@ class PersonalDataServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
+                CREATE TABLE IF NOT EXISTS interaction_events (import_source VARCHAR(300), import_author VARCHAR(200), contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, comment TEXT, next_action VARCHAR(500),
                     actor_profile_id UUID NOT NULL, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
@@ -1111,6 +1202,7 @@ class PersonalDataServiceTest {
                 CREATE TABLE IF NOT EXISTS enrolment_streams (
                     id UUID PRIMARY KEY, course_key VARCHAR(310) NOT NULL, course_name VARCHAR(1333) NOT NULL,
                     stream_no INTEGER NOT NULL, ends_on DATE, version INTEGER NOT NULL DEFAULT 0,
+                    moodle_course_id BIGINT, moodle_group_id BIGINT,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )
                 """,
@@ -1132,6 +1224,11 @@ class PersonalDataServiceTest {
                 """,
                 EnrolmentBatchTestSchema.BATCHES,
                 EnrolmentBatchTestSchema.ITEMS,
+                """
+                CREATE TABLE IF NOT EXISTS personal_data_requests (
+                    id UUID PRIMARY KEY, status VARCHAR(16) NOT NULL, completed_on DATE
+                )
+                """,
                 """
                 CREATE TABLE IF NOT EXISTS agent_change_plans (
                     id UUID PRIMARY KEY, requester_profile_id UUID NOT NULL, client_id VARCHAR(200), interaction_id UUID NOT NULL,

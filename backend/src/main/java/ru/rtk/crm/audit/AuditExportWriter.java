@@ -82,7 +82,8 @@ public class AuditExportWriter {
         );
     }
 
-    private static void line(StringBuilder csv, List<String> values) {
+    /** Строка CSV через «;» в кавычках; значение, похожее на формулу, экранируется апострофом. */
+    public static void line(StringBuilder csv, List<String> values) {
         for (int index = 0; index < values.size(); index++) {
             if (index > 0) {
                 csv.append(CSV_SEPARATOR);

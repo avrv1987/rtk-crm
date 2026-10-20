@@ -39,10 +39,12 @@ public class SubjectSearchRepository {
         List<SubjectMention> mentions = findMentions(terms);
         List<SubjectAttachment> attachments = findAttachments(terms);
         List<SubjectSourceRecord> sourceRecords = findSourceRecords(terms);
+        List<SubjectPersonRecord> peopleRecords = findPeopleRecords(terms);
         boolean truncated = contacts.size() > LIMIT || profiles.size() > LIMIT || mentions.size() > LIMIT
-                || attachments.size() > LIMIT || sourceRecords.size() > LIMIT;
+                || attachments.size() > LIMIT || sourceRecords.size() > LIMIT || peopleRecords.size() > LIMIT;
         return new SubjectSearchResult(
-                first(contacts), first(profiles), first(mentions), first(attachments), first(sourceRecords), List.of(), truncated
+                first(contacts), first(profiles), first(mentions), first(attachments), first(sourceRecords), List.of(),
+                first(peopleRecords), truncated
         );
     }
 
@@ -184,6 +186,63 @@ public class SubjectSearchRepository {
                         resultSet.getObject("submitted_at", OffsetDateTime.class)
                 ))
                 .list();
+    }
+
+    // Учёт людей и часов: ФИО хранится текстом в записи, поэтому ищется так же, как упоминания.
+    private List<SubjectPersonRecord> findPeopleRecords(SubjectTerms terms) {
+        List<SubjectPersonRecord> records = new ArrayList<>();
+        records.addAll(findPeopleRecords(terms, SubjectPersonRecord.Kind.TEACHING_PERFORMER, "university_teaching", "x.performer_name",
+                "x.discipline", "CAST(NULL AS TIMESTAMP WITH TIME ZONE)", new String[]{"x.performer_name"}));
+        records.addAll(findPeopleRecords(terms, SubjectPersonRecord.Kind.INTERN, "internships", "x.intern_name", "x.place",
+                "x.anonymized_at", new String[]{"x.intern_name"}));
+        records.addAll(findPeopleRecords(terms, SubjectPersonRecord.Kind.MENTOR, "internships", "x.mentor_name", "x.place",
+                "CAST(NULL AS TIMESTAMP WITH TIME ZONE)", new String[]{"x.mentor_name"}));
+        records.addAll(findPeopleRecords(terms, SubjectPersonRecord.Kind.QUALIFICATION, "teacher_qualifications", "x.person_name",
+                "x.program", "x.anonymized_at", new String[]{"x.person_name", "x.person_email"}));
+        return records;
+    }
+
+    private List<SubjectPersonRecord> findPeopleRecords(SubjectTerms terms, SubjectPersonRecord.Kind kind, String table, String name,
+                                                        String details, String anonymizedAt, String[] columns) {
+        SqlMatch match = terms.textMatch(columns);
+        return bind(jdbcClient.sql("""
+                SELECT x.id, o.name AS organization_name, %1$s AS name, %2$s AS details, x.starts_on, x.ends_on,
+                       %3$s AS anonymized_at
+                FROM %4$s x
+                JOIN organizations o ON o.id = x.organization_id
+                WHERE %1$s IS NOT NULL AND %5$s
+                ORDER BY x.starts_on DESC, x.id
+                LIMIT :limit
+                """.formatted(name, details, anonymizedAt, table, match.sql())), match)
+                .param("limit", LIMIT + 1)
+                .query((resultSet, rowNumber) -> new SubjectPersonRecord(
+                        resultSet.getObject("id", UUID.class),
+                        kind,
+                        resultSet.getString("organization_name"),
+                        resultSet.getString("name"),
+                        resultSet.getString("details"),
+                        resultSet.getObject("starts_on", java.time.LocalDate.class),
+                        resultSet.getObject("ends_on", java.time.LocalDate.class),
+                        resultSet.getObject("anonymized_at", OffsetDateTime.class) != null
+                ))
+                .list();
+    }
+
+    // Все известные системе люди — контакты вузов и сотрудники. Нужны выгрузке субъекта, чтобы закрыть в его
+    // упоминаниях ФИО и почту других людей.
+    List<KnownPerson> knownPeople() {
+        return jdbcClient.sql("""
+                SELECT name, email, phone FROM contacts
+                UNION ALL
+                SELECT display_name, CAST(NULL AS VARCHAR(320)), CAST(NULL AS VARCHAR(50)) FROM crm_user_profiles
+                """)
+                .query((resultSet, rowNumber) -> new KnownPerson(
+                        resultSet.getString(1), resultSet.getString(2), resultSet.getString(3)
+                ))
+                .list();
+    }
+
+    record KnownPerson(String name, String email, String phone) {
     }
 
     private SubjectContact mapContact(ResultSet resultSet, int rowNumber) throws SQLException {

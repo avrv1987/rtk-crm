@@ -16,12 +16,12 @@ class ReportRequestModulesTest {
     }
 
     @Test
-    void demandWithoutTheModuleDropsPaymentColumnsFromDefaultsAndFallsBackToApplicationsSort() {
+    void demandWithoutTheModuleDropsPaymentColumnsFromDefaultsAndFallsBackToIndexSort() {
         ReportRequest request = demand(null, ReportColumn.PAID_STREAMS).normalized(false);
 
         assertThat(request.columns()).doesNotContain(ReportColumn.PAID_ORDERS, ReportColumn.PAID_STREAMS)
                 .contains(ReportColumn.APPLICATIONS, ReportColumn.PARTICIPANTS);
-        assertThat(request.sortBy()).isEqualTo(ReportColumn.APPLICATIONS);
+        assertThat(request.sortBy()).isEqualTo(ReportColumn.DEMAND_INDEX);
     }
 
     @Test

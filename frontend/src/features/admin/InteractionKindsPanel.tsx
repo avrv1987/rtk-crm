@@ -11,10 +11,10 @@ import { CommandError, useAccessErrorHandler, useCommandKey } from '../agreement
 import { CardDialog } from '../interactions/cardUi'
 import {
   interactionKindsApi,
+  kindDisableWarning,
   organizationTypeLabels,
-  overlappingRules,
   ruleConditions,
-  sameConditions,
+  ruleOverlapNotes,
   type InteractionKind,
   type InteractionKindRule,
   type KindOrganizationType
@@ -40,6 +40,8 @@ type KindDraft = {
   sortOrder: string
   defaultKind: boolean
   wasDefault: boolean
+  wasActive: boolean
+  interactionCount: number
 }
 type RuleDraft = {
   id: string | null
@@ -49,12 +51,16 @@ type RuleDraft = {
   programId: string
   productId: string
   priority: string
+  active: boolean
 }
 
 const emptyKind: KindDraft = {
-  id: null, version: 0, name: '', description: '', active: true, templateId: '', sortOrder: '', defaultKind: false, wasDefault: false
+  id: null, version: 0, name: '', description: '', active: true, templateId: '', sortOrder: '', defaultKind: false, wasDefault: false,
+  wasActive: true, interactionCount: 0
 }
-const emptyRule: RuleDraft = { id: null, version: 0, kindId: '', organizationType: '', programId: '', productId: '', priority: '100' }
+const emptyRule: RuleDraft = {
+  id: null, version: 0, kindId: '', organizationType: '', programId: '', productId: '', priority: '100', active: true
+}
 
 // Добавление по главной кнопке страницы: новое значение счётчика открывает окно один раз.
 const useAddRequest = (addRequest: number | undefined, open: () => void) => {
@@ -74,6 +80,7 @@ export const InteractionKindsPanel = ({ onSessionExpired, onProfileUnavailable, 
   const [loadError, setLoadError] = useState<unknown>(null)
   const [draft, setDraft] = useState<KindDraft | null>(null)
   const [saving, setSaving] = useState(false)
+  const [confirmDisable, setConfirmDisable] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [ownMessage, setOwnMessage] = useState<string | null>(null)
   const commandKey = useCommandKey()
@@ -102,8 +109,17 @@ export const InteractionKindsPanel = ({ onSessionExpired, onProfileUnavailable, 
   }, [])
   useAddRequest(addRequest, openAdd)
 
-  const save = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (draft !== null && draft.id !== null && draft.wasActive && !draft.active) {
+      setConfirmDisable(true)
+      return
+    }
+    void save()
+  }
+
+  const save = async () => {
+    setConfirmDisable(false)
     if (draft === null) {
       return
     }
@@ -172,6 +188,7 @@ export const InteractionKindsPanel = ({ onSessionExpired, onProfileUnavailable, 
                   {!kind.active && <> <span className="admin-chip admin-chip--warn">Не действует</span></>}
                   {kind.defaultKind && <> <span className="admin-chip">По умолчанию</span></>}
                   {kind.description && <span className="admin-table__sub">{kind.description}</span>}
+                  {kind.interactionCount > 0 && <span className="admin-table__sub">Незавершённых взаимодействий: {kind.interactionCount}</span>}
                 </td>
                 <td>{kind.templateName ?? 'Шаблон по умолчанию'}</td>
                 <td className="admin-table__actions">
@@ -190,7 +207,9 @@ export const InteractionKindsPanel = ({ onSessionExpired, onProfileUnavailable, 
                           templateId: kind.templateId ?? '',
                           sortOrder: String(kind.sortOrder),
                           defaultKind: kind.defaultKind,
-                          wasDefault: kind.defaultKind
+                          wasDefault: kind.defaultKind,
+                          wasActive: kind.active,
+                          interactionCount: kind.interactionCount
                         })
                       }
                     }]}
@@ -203,7 +222,7 @@ export const InteractionKindsPanel = ({ onSessionExpired, onProfileUnavailable, 
       )}
       <CardDialog open={draft !== null} title={draft?.id ? `Вид «${draft.name}»` : 'Добавить вид взаимодействия'} onClose={() => setDraft(null)}>
         {draft !== null && (
-          <form className="admin-form" onSubmit={(event) => void save(event)}>
+          <form className="admin-form" onSubmit={submit}>
             <label>
               Название
               <input value={draft.name} required maxLength={200} disabled={saving} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
@@ -248,6 +267,14 @@ export const InteractionKindsPanel = ({ onSessionExpired, onProfileUnavailable, 
           </form>
         )}
       </CardDialog>
+      <ConfirmDialog
+        open={confirmDisable && draft !== null}
+        title={`Отключить вид «${draft?.name ?? ''}»?`}
+        description={draft === null ? '' : kindDisableWarning(draft.name, draft.interactionCount)}
+        confirmLabel="Отключить вид"
+        onConfirm={() => void save()}
+        onCancel={() => setConfirmDisable(false)}
+      />
       {onNotify === undefined && <Toast message={ownMessage} onClose={() => setOwnMessage(null)} />}
     </Fragment>
   )
@@ -331,12 +358,28 @@ export const InteractionKindRulesPanel = ({ onSessionExpired, onProfileUnavailab
       organizationType: draft.organizationType === '' ? null : draft.organizationType,
       programId: draft.programId === '' ? null : draft.programId,
       productId: draft.productId === '' ? null : draft.productId,
-      priority: Number(draft.priority)
+      priority: Number(draft.priority),
+      active: draft.active
     }
     const key = commandKey.keyFor({ id: draft.id, ...payload })
     const id = draft.id
     void run(() => (id === null ? interactionKindsApi.createRule(payload, key) : interactionKindsApi.updateRule(id, payload, key)),
       'Правило сохранено.')
+  }
+
+  // Временное отключение вместо удаления: правило остаётся в списке и включается обратно одной командой.
+  const toggle = (rule: InteractionKindRule) => {
+    const payload = {
+      version: rule.version,
+      kindId: rule.kindId,
+      organizationType: rule.organizationType,
+      programId: rule.programId,
+      productId: rule.productId,
+      priority: rule.priority,
+      active: !rule.active
+    }
+    const key = commandKey.keyFor({ id: rule.id, ...payload })
+    void run(() => interactionKindsApi.updateRule(rule.id, payload, key), rule.active ? 'Правило отключено.' : 'Правило включено.')
   }
 
   const remove = (rule: InteractionKindRule) => {
@@ -380,7 +423,8 @@ export const InteractionKindRulesPanel = ({ onSessionExpired, onProfileUnavailab
                 <td>{ruleConditions(rule)}</td>
                 <td>
                   {rule.kindName}
-                  {kinds.some((kind) => kind.id === rule.kindId && !kind.active) && (
+                  {!rule.active && <> <span className="admin-chip admin-chip--warn">Правило отключено</span></>}
+                  {rule.active && !rule.kindActive && (
                     <> <span className="admin-chip admin-chip--warn">Вид отключён — правило не действует</span></>
                   )}
                 </td>
@@ -399,10 +443,12 @@ export const InteractionKindRulesPanel = ({ onSessionExpired, onProfileUnavailab
                             organizationType: rule.organizationType ?? '',
                             programId: rule.programId ?? '',
                             productId: rule.productId ?? '',
-                            priority: String(rule.priority)
+                            priority: String(rule.priority),
+                            active: rule.active
                           })
                         }
                       },
+                      { label: rule.active ? 'Отключить' : 'Включить', onSelect: () => toggle(rule) },
                       { label: 'Удалить', danger: true, onSelect: () => setDeleting(rule) }
                     ]}
                   />
@@ -451,31 +497,20 @@ export const InteractionKindRulesPanel = ({ onSessionExpired, onProfileUnavailab
               <input type="number" min={1} max={1000} required value={draft.priority} disabled={saving}
                 onChange={(event) => setDraft({ ...draft, priority: event.target.value })} />
             </label>
+            <label className="interaction-stage-editor__checkbox">
+              <input type="checkbox" checked={draft.active} disabled={saving}
+                onChange={(event) => setDraft({ ...draft, active: event.target.checked })} />
+              Действует (снимите, чтобы временно отключить правило, не удаляя его)
+            </label>
             {noCondition && <p className="notice" role="note">Укажите хотя бы одно условие.</p>}
-            {rules !== null && !noCondition && overlappingRules({
+            {rules !== null && !noCondition && ruleOverlapNotes({
               id: draft.id,
               organizationType: draft.organizationType === '' ? null : draft.organizationType,
               programId: draft.programId === '' ? null : draft.programId,
               productId: draft.productId === '' ? null : draft.productId,
-              priority: Number(draft.priority)
-            }, rules).map((rule) => sameConditions(rule, {
-              organizationType: draft.organizationType === '' ? null : draft.organizationType,
-              programId: draft.programId === '' ? null : draft.programId,
-              productId: draft.productId === '' ? null : draft.productId,
-              priority: Number(draft.priority)
-            })
-              ? (
-                <p key={rule.id} className="notice" role="note">
-                  Правило с теми же условиями уже есть: «{ruleConditions(rule)} → {rule.kindName}». Измените условия или правьте
-                  существующее правило.
-                </p>
-              )
-              : (
-                <p key={rule.id} className="notice" role="note">
-                  Пересекается с правилом «{ruleConditions(rule)} → {rule.kindName}» того же приоритета: подойдут оба — выиграет правило с
-                  большим числом условий, при равенстве — вид выше в справочнике.
-                </p>
-              ))}
+              priority: Number(draft.priority),
+              active: draft.active
+            }, rules).map((note) => <p key={note.id} className="notice" role="note">{note.text}</p>)}
             {error !== null && <CommandError error={error} fallback="Правило не сохранено." />}
             <div className="admin-form__actions">
               <button type="button" className="button--secondary" disabled={saving} onClick={() => setDraft(null)}>Отмена</button>

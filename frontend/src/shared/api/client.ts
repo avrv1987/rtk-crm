@@ -128,6 +128,7 @@ export type WorkControlQuery = {
   to: string
   change: ManagerWorkChange | ''
   mode: 'NOW' | 'PERIOD'
+  organizationType: '' | 'UNIVERSITY' | 'COLLEGE' | 'SCHOOL'
 }
 export type LearningTrendItem = components['schemas']['LearningTrendItem']
 export type PortfolioChange = components['schemas']['PortfolioChange']
@@ -250,6 +251,22 @@ export type SourceSettings = components['schemas']['SourceSettings']
 export type SourceSettingsUpdate = components['schemas']['SourceSettingsUpdate']
 export type SourceConnectionCheck = components['schemas']['SourceConnectionCheck']
 export type LaborMarketSettings = components['schemas']['LaborMarketSettings']
+export type DemandIndexSettings = components['schemas']['DemandIndexSettings']
+export type SystemSetting = components['schemas']['SystemSetting']
+export type ModuleStatus = components['schemas']['ModuleStatus']
+export type PersonalDataRequest = components['schemas']['PersonalDataRequest']
+export type PersonalDataRequestInput = components['schemas']['PersonalDataRequestInput']
+export type PersonalDataRequests = components['schemas']['PersonalDataRequests']
+export type PersonalDataRequestKind = components['schemas']['PersonalDataRequestKind']
+export type PersonalDataRequestStatus = components['schemas']['PersonalDataRequestStatus']
+export type AdminReminders = components['schemas']['AdminReminders']
+export type Consent = components['schemas']['Consent']
+export type ConsentInput = components['schemas']['ConsentInput']
+export type Consents = components['schemas']['Consents']
+export type ConsentSubjectType = components['schemas']['ConsentSubjectType']
+export type ConsentSettings = components['schemas']['ConsentSettings']
+export type RouteVersionsRow = components['schemas']['RouteVersionsRow']
+export type DemandIndexWeights = components['schemas']['DemandIndexWeights']
 export type LaborMarketSettingsUpdate = components['schemas']['LaborMarketSettingsUpdate']
 export type LaborMarketMappings = components['schemas']['LaborMarketMappings']
 export type LaborMarketDirection = components['schemas']['LaborMarketDirection']
@@ -272,7 +289,9 @@ export type TeacherTrainingCreate = components['schemas']['TeacherTrainingCreate
 export type TeacherTrainingCreated = components['schemas']['TeacherTrainingCreated']
 export type InteractionCycle = components['schemas']['InteractionCycle']
 export type CycleStart = components['schemas']['CycleStart']
-export type CatalogImportProfile = 'AGREEMENT' | 'DIRECTION_PROGRAM' | 'VENDOR_CONTACTS'
+export type CatalogImportProfile = 'AGREEMENT' | 'DIRECTION_PROGRAM' | 'VENDOR_CONTACTS' | 'INTERACTION_HISTORY' | 'UNIVERSITY_AGREEMENT'
+export type ImportSettings = components['schemas']['ImportSettings']
+export type MissingStepsResult = components['schemas']['MissingStepsResult']
 export type CatalogImportRowTarget = {
   organizationId?: string | null
   managerProfileId?: string | null
@@ -284,6 +303,7 @@ export type CatalogImportMapping = {
   rowTargets?: Record<string, CatalogImportRowTarget>
   transferStatuses?: Record<string, string>
   unassignedTeamId?: string | null
+  stageFromHistory?: boolean | null
 }
 export type CatalogImportSheet = {
   name: string
@@ -736,6 +756,14 @@ export class ApiClient {
     idempotencyKey: string
   ): Promise<EnrolmentStream> {
     return this.command<EnrolmentStream>(`/api/enrolment/streams/${encodeURIComponent(id)}`, payload, idempotencyKey, 'PATCH')
+  }
+
+  async updateEnrolmentStreamMoodleCourse(
+    id: EnrolmentStream['id'],
+    payload: { version: number; courseId: number | null; groupId: number | null },
+    idempotencyKey: string
+  ): Promise<EnrolmentStream> {
+    return this.command<EnrolmentStream>(`/api/enrolment/streams/${encodeURIComponent(id)}/moodle-course`, payload, idempotencyKey, 'PUT')
   }
 
   async listEnrolmentStreamLearners(id: EnrolmentStream['id']): Promise<EnrolmentStreamLearners> {
@@ -1285,6 +1313,18 @@ export class ApiClient {
     return this.request<CatalogImportJob>(`/api/jobs/${encodeURIComponent(id)}`)
   }
 
+  async getImportSettings(): Promise<ImportSettings> {
+    return this.request<ImportSettings>('/api/admin/import-settings')
+  }
+
+  async updateImportSettings(payload: ImportSettings): Promise<ImportSettings> {
+    return this.send<ImportSettings>('/api/admin/import-settings', 'PUT', payload)
+  }
+
+  async assignMissingSteps(interactionIds: string[], idempotencyKey: string): Promise<MissingStepsResult> {
+    return this.command<MissingStepsResult>('/api/work/control/missing-steps', { interactionIds }, idempotencyKey)
+  }
+
   async listReportManagers(): Promise<ReportManagerOption[]> {
     return this.request<ReportManagerOption[]>('/api/report-filters/managers')
   }
@@ -1600,7 +1640,13 @@ export class ApiClient {
       stage: query.stage
     }
     Object.entries(lists).forEach(([key, values]) => values.forEach((value) => params.append(key, value)))
-    Object.entries({ from: query.from, to: query.to, change: query.change, mode: query.mode === 'PERIOD' ? 'PERIOD' : '' }).forEach(([key, value]) => {
+    Object.entries({
+      from: query.from,
+      to: query.to,
+      change: query.change,
+      mode: query.mode === 'PERIOD' ? 'PERIOD' : '',
+      organizationType: query.organizationType
+    }).forEach(([key, value]) => {
       if (value !== '') {
         params.set(key, value)
       }
@@ -1714,6 +1760,101 @@ export class ApiClient {
 
   async checkSourceConnection(source: SourceCode, payload: SourceSettingsUpdate): Promise<SourceConnectionCheck> {
     return this.post<SourceConnectionCheck>(`/api/admin/sources/${encodeURIComponent(source)}/check`, payload)
+  }
+
+  async getSystemSettings(): Promise<SystemSetting[]> {
+    return this.request<SystemSetting[]>('/api/admin/settings')
+  }
+
+  async updateSystemSetting(key: SystemSetting['key'], value: number): Promise<SystemSetting[]> {
+    return this.send<SystemSetting[]>(`/api/admin/settings/${encodeURIComponent(key)}`, 'PUT', { value })
+  }
+
+  async resetSystemSetting(key: SystemSetting['key']): Promise<SystemSetting[]> {
+    return this.send<SystemSetting[]>(`/api/admin/settings/${encodeURIComponent(key)}`, 'DELETE')
+  }
+
+  async getModuleStatuses(): Promise<ModuleStatus[]> {
+    return this.request<ModuleStatus[]>('/api/admin/modules')
+  }
+
+  async getAdminReminders(): Promise<AdminReminders> {
+    return this.request<AdminReminders>('/api/admin/reminders')
+  }
+
+  async listPersonalDataRequests(): Promise<PersonalDataRequests> {
+    return this.request<PersonalDataRequests>('/api/admin/personal-data/requests')
+  }
+
+  async createPersonalDataRequest(payload: PersonalDataRequestInput): Promise<PersonalDataRequest> {
+    return this.post<PersonalDataRequest>('/api/admin/personal-data/requests', payload)
+  }
+
+  async updatePersonalDataRequest(id: PersonalDataRequest['id'], payload: PersonalDataRequestInput): Promise<PersonalDataRequest> {
+    return this.send<PersonalDataRequest>(`/api/admin/personal-data/requests/${encodeURIComponent(id)}`, 'PUT', payload)
+  }
+
+  async exportPersonalDataRequests(): Promise<Blob> {
+    return this.download('/api/admin/personal-data/requests/export')
+  }
+
+  async listConsents(subjectType: ConsentSubjectType, subjectId: string): Promise<Consents> {
+    return this.request<Consents>(`/api/admin/personal-data/consents?subjectType=${subjectType}&subjectId=${encodeURIComponent(subjectId)}`)
+  }
+
+  async getConsentSettings(): Promise<ConsentSettings> {
+    return this.request<ConsentSettings>('/api/consent-settings')
+  }
+
+  async listContactConsents(organizationId: string, contactId: string): Promise<Consents> {
+    return this.request<Consents>(`/api/organizations/${encodeURIComponent(organizationId)}/contacts/${encodeURIComponent(contactId)}/consents`)
+  }
+
+  async createContactConsent(organizationId: string, contactId: string, payload: ConsentInput): Promise<Consent> {
+    return this.post<Consent>(`/api/organizations/${encodeURIComponent(organizationId)}/contacts/${encodeURIComponent(contactId)}/consents`, payload)
+  }
+
+  async updateContactConsent(organizationId: string, contactId: string, id: Consent['id'], payload: ConsentInput): Promise<Consent> {
+    return this.send<Consent>(
+      `/api/organizations/${encodeURIComponent(organizationId)}/contacts/${encodeURIComponent(contactId)}/consents/${encodeURIComponent(id)}`,
+      'PUT', payload)
+  }
+
+  async listLearnerConsents(learnerId: string): Promise<Consents> {
+    return this.request<Consents>(`/api/enrolment/learners/${encodeURIComponent(learnerId)}/consents`)
+  }
+
+  async createLearnerConsent(learnerId: string, payload: ConsentInput): Promise<Consent> {
+    return this.post<Consent>(`/api/enrolment/learners/${encodeURIComponent(learnerId)}/consents`, payload)
+  }
+
+  async updateLearnerConsent(learnerId: string, id: Consent['id'], payload: ConsentInput): Promise<Consent> {
+    return this.send<Consent>(`/api/enrolment/learners/${encodeURIComponent(learnerId)}/consents/${encodeURIComponent(id)}`, 'PUT', payload)
+  }
+
+  async getRouteVersions(): Promise<RouteVersionsRow[]> {
+    return this.request<RouteVersionsRow[]>('/api/workflow-route-versions')
+  }
+
+  async getDemandIndexSettings(): Promise<DemandIndexSettings> {
+    return this.request<DemandIndexSettings>('/api/admin/demand-index/settings')
+  }
+
+  async updateDemandIndexSettings(payload: DemandIndexWeights): Promise<DemandIndexSettings> {
+    return this.send<DemandIndexSettings>('/api/admin/demand-index/settings', 'PUT', payload)
+  }
+
+  async resetDemandIndexSettings(): Promise<void> {
+    return this.send<void>('/api/admin/demand-index/settings', 'DELETE')
+  }
+
+  // Настройки отчётности по соглашениям: PUT и DELETE без ключа идемпотентности, как у остальных настроек.
+  async saveAgreementReporting<T>(part: 'settings' | 'template' | 'deadlines', payload: object): Promise<T> {
+    return this.send<T>(`/api/admin/agreement-reporting/${part}`, 'PUT', payload)
+  }
+
+  async resetAgreementReportTemplate<T>(): Promise<T> {
+    return this.send<T>('/api/admin/agreement-reporting/template', 'DELETE')
   }
 
   async getLaborMarketSettings(): Promise<LaborMarketSettings> {

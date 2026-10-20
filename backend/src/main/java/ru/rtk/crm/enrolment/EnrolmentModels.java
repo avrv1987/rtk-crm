@@ -210,7 +210,8 @@ record StreamEnrolmentRow(
     }
 }
 
-record StreamSummary(UUID id, String courseName, int streamNo, String programName, LocalDate endsOn, int version) {
+record StreamSummary(UUID id, String courseName, int streamNo, String programName, LocalDate endsOn, int version,
+                     Long moodleCourseId, Long moodleGroupId) {
     String title() {
         return courseName + ", поток " + streamNo;
     }
@@ -231,7 +232,9 @@ record EnrolmentStreamView(
         int profilesComplete,
         int exported,
         int transferred,
-        int pending
+        int pending,
+        Long moodleCourseId,
+        Long moodleGroupId
 ) {
 }
 
@@ -239,6 +242,10 @@ record EnrolmentCountersView(long profiles, long profilesLimit, boolean nearLimi
 }
 
 record EnrolmentStreamUpdate(Integer version, LocalDate endsOn, Boolean confirmPastDate) {
+}
+
+// Пустой курс снимает уточнение: курс снова берётся из сопоставлений программы потока.
+record StreamMoodleCourseUpdate(Integer version, Long courseId, Long groupId) {
 }
 
 record EnrolmentStreamLearners(
@@ -353,7 +360,7 @@ record EnrolmentBatchView(
 ) {
 }
 
-record MoodleTransferResult(EnrolmentBatchView batch, int sent, int accepted, int failed, String stoppedReason) {
+record MoodleTransferResult(EnrolmentBatchView batch, int sent, int accepted, int failed, int confirmed, String stoppedReason) {
 }
 
 record MoodleMoveResult(UUID enrolmentId, long courseFrom, long courseTo) {
@@ -390,7 +397,11 @@ record EnrolmentQueueItem(
 record EnrolmentQueueGroup(EnrolmentQueueKind kind, int total, List<EnrolmentQueueItem> items) {
 }
 
-record EnrolmentQueue(List<EnrolmentQueueGroup> groups, boolean moodleWriteAvailable) {
+record EnrolmentQueue(List<EnrolmentQueueGroup> groups, boolean moodleWriteAvailable, List<EnrolmentQueueStream> streams) {
+}
+
+// Поток, у которого есть строки в очереди, и сколько их (по всем группам) — для отбора по потоку.
+record EnrolmentQueueStream(UUID id, String title, int total) {
 }
 
 record LmsReconcile(EnrolmentQueueKind kind, Integer learnerVersion) {

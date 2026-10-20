@@ -1,6 +1,7 @@
 package ru.rtk.crm.source;
 
 import java.time.LocalDate;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -15,6 +16,8 @@ import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
+import ru.rtk.crm.settings.SystemSetting;
+import ru.rtk.crm.settings.SystemSettings;
 import ru.rtk.crm.work.WorkAccessDeniedException;
 
 @Service
@@ -27,19 +30,22 @@ public class LearningCoverageService {
     private final SourceRepository sourceRepository;
     private final SourceProperties properties;
     private final SourceSettingsService settings;
+    private final SystemSettings systemSettings;
 
     public LearningCoverageService(
             JdbcClient jdbcClient,
             OrganizationRepository organizationRepository,
             SourceRepository sourceRepository,
             SourceProperties properties,
-            SourceSettingsService settings
+            SourceSettingsService settings,
+            SystemSettings systemSettings
     ) {
         this.jdbcClient = jdbcClient;
         this.organizationRepository = organizationRepository;
         this.sourceRepository = sourceRepository;
         this.properties = properties;
         this.settings = settings;
+        this.systemSettings = systemSettings;
     }
 
     @Transactional(readOnly = true)
@@ -54,7 +60,8 @@ public class LearningCoverageService {
                 : organizationRepository.visibilityScope(profile).orElseThrow(WorkAccessDeniedException::new);
         OffsetDateTime now = OffsetDateTime.now();
         boolean configured = settings.moodle().configured();
-        OffsetDateTime staleBefore = now.minus(properties.staleAfter());
+        Duration staleAfter = systemSettings.hours(SystemSetting.SOURCES_STALE_HOURS, properties.staleAfter());
+        OffsetDateTime staleBefore = now.minus(staleAfter);
         List<LearningCoverage.Run> runs = findRuns(scope, now.atZoneSameInstant(ZONE).toLocalDate(), staleBefore,
                 configured);
         int fresh = 0;
@@ -74,7 +81,7 @@ public class LearningCoverageService {
         return new LearningCoverage(
                 now,
                 configured,
-                properties.staleAfter().toHours(),
+                staleAfter.toHours(),
                 runs.size(),
                 fresh,
                 stale,

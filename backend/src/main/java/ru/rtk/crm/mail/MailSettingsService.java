@@ -72,7 +72,7 @@ public class MailSettingsService {
     public View update(CrmProfile actor, UpdateRequest request, String requestId) {
         AdminAuthorization.requireAdmin(actor);
         if (request == null || request.mode() == null) {
-            throw new InteractionValidationException("mode", "Выберите режим: заглушка или SMTP");
+            throw new InteractionValidationException("mode", "Выберите режим: без отправки или SMTP");
         }
         Settings current = repository.settings();
         String host = blankToNull(request.host());
@@ -120,7 +120,7 @@ public class MailSettingsService {
         }
         repository.saveSettings(new Settings(request.mode(), host, port, security, username, passwordEncrypted,
                 fromAddress.toLowerCase(Locale.ROOT), fromName, null, null, null, null, null), OffsetDateTime.now());
-        String details = "режим " + (request.mode() == MailMode.STUB ? "заглушка" : "SMTP")
+        String details = "режим " + (request.mode() == MailMode.STUB ? "без отправки" : "SMTP")
                 + (host == null ? "" : "; сервер " + host + ":" + port + ", шифрование " + security)
                 + (username == null ? "; без входа" : "; вход по логину")
                 + (passwordChanged ? (passwordEncrypted == null ? "; пароль удалён" : "; пароль заменён") : "");
@@ -265,7 +265,7 @@ public class MailSettingsService {
         return preferences(actor);
     }
 
-    // Менеджер учебного процесса писем по вузам не получает, как и в MAX; представитель вуза тем не настраивает.
+    // Менеджер учебного процесса писем по вузам не получает, как и в MAX; координатору вуза доступны только его темы.
     private Set<MailTopic> availableTopics(CrmProfile actor) {
         boolean operator = repository.recipient(actor.id()).map(MailRepository.Recipient::enrolmentOperator).orElse(false);
         Set<MailTopic> topics = EnumSet.noneOf(MailTopic.class);

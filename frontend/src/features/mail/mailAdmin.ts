@@ -5,7 +5,7 @@ type Profile = { role: string; enrolmentOperator: boolean }
 
 /** Пункт «Уведомления на почту» — при включённом модуле всем сотрудникам, кроме представителя вуза и менеджера учебного процесса. */
 export const mailPreferencesAvailable = (profile: Profile, modules: Modules): boolean => (
-  modules.mail === true && profile.role !== 'PARTNER' && !profile.enrolmentOperator
+  modules.mail === true && !profile.enrolmentOperator
 )
 
 export const statusText: Record<MailJournalRow['status'], string> = {
@@ -16,10 +16,22 @@ export const statusText: Record<MailJournalRow['status'], string> = {
   CANCELLED: 'отменено'
 }
 
-/** «Отправлено (заглушка)»: письмо собрано целиком и лежит в журнале, наружу не уходило. */
+/** «В журнале (без отправки)»: письмо собрано целиком и лежит в журнале, наружу не уходило. */
 export const rowStatusText = (row: Pick<MailJournalRow, 'status' | 'transport'>): string => (
-  row.status === 'SENT' && row.transport === 'STUB' ? 'отправлено (заглушка)' : statusText[row.status]
+  row.status === 'SENT' && row.transport === 'STUB' ? 'в журнале (без отправки)' : statusText[row.status]
 )
+
+/** Итог очереди за сутки: в режиме «Без отправки» письма только записаны в журнал, «отправлено» про них не говорится. */
+export const queueDayText = (mode: MailSettings['mode'], queue: Pick<MailSettings['queue'], 'sent' | 'logged'>): string => {
+  const parts = []
+  if (mode === 'SMTP' || queue.sent > 0) {
+    parts.push(`отправлено ${queue.sent}`)
+  }
+  if (mode === 'STUB' || queue.logged > 0) {
+    parts.push(`записано в журнал без отправки ${queue.logged}`)
+  }
+  return parts.join(', ')
+}
 
 export const passwordStateText: Record<MailSettings['passwordState'], string> = {
   NONE: 'не задан',

@@ -31,7 +31,7 @@ test('«Контроль» на телефоне: не меньше двух к�
   assert.match(file('frontend/src/features/control/control.css'), /minmax\(min\(8rem, calc\(\(100% - var\(--space-1\)\) \/ 2\)\), 1fr\)/)
 })
 
-// w48 (Н-А6): о ссылке форма говорит только в режиме SMTP — в режиме заглушки пароль показывается на экране.
+// w48 (Н-А6): о ссылке форма говорит только в режиме SMTP — в режиме «Без отправки» пароль показывается на экране.
 test('«Новый сотрудник» при почте через SMTP говорит о ссылке, а после приглашения — кнопка «Готово»', () => {
   const dialog = file('frontend/src/features/admin/EmployeeAccountDialog.tsx')
   assert.match(dialog, /sendsLinks === 'SMTP'\n\s+\? 'CRM создаст учётную запись Keycloak и активный профиль и отправит на почту сотрудника одноразовую ссылку/)
@@ -68,6 +68,6 @@ test('сигнал LMS по устаревшим данным несёт пом�
 
 test('письмо о возврате ответа координатору — отдельный вид в «Почте» администратора', () => {
   const yaml = file('backend/src/main/resources/static/openapi.yaml')
-  assert.match(yaml, /PARTNER_REQUEST, PARTNER_RETURNED, PARTNER_REPLY/)
+  assert.match(yaml, /PARTNER_REQUEST, PARTNER_RETURNED, PARTNER_ACCEPTED, PARTNER_REPLY/)
   internalDoc('docs/mail.md', (text) => assert.match(text, /\| Ответ возвращён на доработку \| координатор вуза \|/))
 })

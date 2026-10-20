@@ -1,8 +1,9 @@
 import { useId, useState } from 'react'
 import type { Interaction, InteractionEvent, InteractionStage } from '../../shared/api/client'
 import { formatCompletionDate } from './StageCompletionPanel'
+import { routeKindNote } from './interactionKinds'
 import { formatMoscowDateTime } from './moscowTime'
-import { routeWindow } from './workCardModel'
+import { routeWindow, stageTimes, type StageTime } from './workCardModel'
 
 export type StagePathStatus = 'passed' | 'current' | 'completed' | 'skipped' | 'future'
 
@@ -11,6 +12,7 @@ export type StagePathItem = {
   status: StagePathStatus
   enteredAt?: string
   completedOn?: string
+  time?: StageTime
 }
 
 const dayMilliseconds = 24 * 60 * 60 * 1000
@@ -30,12 +32,8 @@ export const daysLabel = (days: number) => {
 export const daysSince = (value: string) => Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / dayMilliseconds))
 
 export const stagePath = (interaction: Interaction, events: InteractionEvent[] | undefined): StagePathItem[] => {
-  const enteredAt = new Map<InteractionStage['id'], string>()
-  events?.forEach((event) => {
-    if ((event.type === 'CREATED' || event.type === 'TRANSITIONED') && event.toStageId) {
-      enteredAt.set(event.toStageId, event.occurredAt)
-    }
-  })
+  const times = stageTimes(events ?? [])
+  const enteredAt = new Map([...times].map(([stageId, time]) => [stageId, time.enteredAt]))
   const completedOn = new Map(interaction.stageCompletions.map((completion) => [completion.stageId, completion.completedOn]))
   const currentOrder = interaction.stages.find((stage) => stage.id === interaction.currentStageId)?.order ?? 0
   return interaction.stages.map((stage) => {
@@ -45,13 +43,22 @@ export const stagePath = (interaction: Interaction, events: InteractionEvent[] |
       return { stage, status: 'current', enteredAt: entered, completedOn: completed }
     }
     if (completed !== undefined) {
-      return { stage, status: 'completed', enteredAt: entered, completedOn: completed }
+      return { stage, status: 'completed', enteredAt: entered, completedOn: completed, time: times.get(stage.id) }
     }
     if (entered !== undefined) {
-      return { stage, status: 'passed', enteredAt: entered }
+      return { stage, status: 'passed', enteredAt: entered, time: times.get(stage.id) }
     }
     return { stage, status: events !== undefined && stage.order < currentOrder ? 'skipped' : 'future' }
   })
+}
+
+// Выход и длительность этапа — по истории переходов; при возвратах дни всех заходов складываются.
+const timeNote = (time: StageTime | undefined) => {
+  if (time?.exitedAt === undefined) {
+    return ''
+  }
+  const visits = time.visits > 1 ? `, заходов ${time.visits}` : ''
+  return `, выход ${formatMoscowDateTime(time.exitedAt)}; на этапе ${daysLabel(Math.round(time.days))}${visits}`
 }
 
 export const stagePathLabel = (item: StagePathItem) => {
@@ -63,10 +70,10 @@ export const stagePathLabel = (item: StagePathItem) => {
     return `Текущий этап: ${daysLabel(daysSince(item.enteredAt))} на этапе${completedNote}`
   }
   if (item.status === 'completed' && item.completedOn !== undefined) {
-    return `Выполнен ${formatCompletionDate(item.completedOn)}`
+    return `Выполнен ${formatCompletionDate(item.completedOn)}${timeNote(item.time)}`
   }
   if (item.status === 'passed') {
-    return item.enteredAt === undefined ? 'Пройден' : `Пройден; вход ${formatMoscowDateTime(item.enteredAt)}`
+    return item.enteredAt === undefined ? 'Пройден' : `Пройден; вход ${formatMoscowDateTime(item.enteredAt)}${timeNote(item.time)}`
   }
   return item.status === 'skipped' ? 'Пропущен' : 'Впереди'
 }
@@ -93,8 +100,12 @@ export const RouteDisclosure = ({ interaction, items, canEdit, onCompleteStage, 
     <section className="work-route" aria-labelledby="work-route-title">
       <div className="work-route__summary">
         <h4 id="work-route-title" className="work-route__title">
-          Маршрут{interaction.kind ? <span className="work-route__kind"> · {interaction.kind.name}</span> : null}
+          Маршрут{route ? ` «${route.templateName}»` : ''}
+          {interaction.kind ? <span className="work-route__kind"> · вид «{interaction.kind.name}»</span> : null}
         </h4>
+        {routeKindNote(interaction.kind?.name, route) !== null && (
+          <p className="work-route__note" role="note">{routeKindNote(interaction.kind?.name, route)}</p>
+        )}
 
         <div className="work-route__bar" aria-hidden="true">
           {items.map((item) => (

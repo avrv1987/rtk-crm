@@ -17,6 +17,7 @@ import {
 } from './partnerApi'
 import { emailHref, phoneHref } from '../../shared/format/links'
 import { ContactLink } from '../../shared/ui/ContactLink'
+import { PartnerActivityLists } from './PartnerActivityLists'
 import { PartnerRequestCard } from './PartnerRequestCard'
 import { partnerRequestGroups } from './partnerRequestModel'
 import './partner.css'
@@ -146,6 +147,9 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
         </a>
         <a href="#partner-agreements" onClick={(event) => { event.preventDefault(); document.getElementById('partner-agreements')?.focus() }}>
           Договоры ({agreements.length})
+        </a>
+        <a href="#partner-activity-lists" onClick={(event) => { event.preventDefault(); document.getElementById('partner-activity-lists')?.focus() }}>
+          Перечни мероприятий
         </a>
       </nav>
 
@@ -279,6 +283,8 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
           ))}
         </ul>
       </section>
+
+      <PartnerActivityLists onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
     </div>
   )
 }

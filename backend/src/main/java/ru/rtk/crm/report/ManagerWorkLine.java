@@ -32,7 +32,8 @@ public record ManagerWorkLine(
         UUID programId,
         UUID kindId,
         UUID routeId,
-        boolean missingDocuments
+        boolean missingDocuments,
+        Integer stageNormDays
 ) {
     public ManagerWorkLine(UUID interactionId, String title, UUID organizationId, String organizationName, UUID teamId, String teamName,
                            UUID managerId, String managerName, String directionName, String programName, String stageName,
@@ -41,7 +42,12 @@ public record ManagerWorkLine(
                            boolean created, boolean completed) {
         this(interactionId, title, organizationId, organizationName, teamId, teamName, managerId, managerName, directionName,
                 programName, stageName, stagePosition, stageTotal, daysOnStage, stageAtStart, stageAtEnd, nextAction, nextActionAt,
-                marks, transitions, created, completed, null, null, null, false);
+                marks, transitions, created, completed, null, null, null, false, null);
+    }
+
+    /** «Долго на этапе»: норматив текущего этапа шаблона, а без него — общий порог. */
+    public boolean stuck(int stuckDays) {
+        return daysOnStage != null && daysOnStage >= (stageNormDays == null ? stuckDays : stageNormDays);
     }
 
     public ManagerWorkDue due(OffsetDateTime now) {

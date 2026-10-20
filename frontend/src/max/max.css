@@ -1,0 +1,852 @@
+/* Стили мини-приложения MAX. Из CRM берутся только переменные и шрифты (variables.css): глобальные правила кнопок,
+   :hover и :focus-visible основной CRM здесь не действуют. Тёмная тема — только тут и только по prefers-color-scheme:
+   мост MAX тему не отдаёт. Атрибутов style нет: CSP /max/ их запрещает (style-src-attr 'none'). */
+
+:root {
+  color-scheme: light dark;
+  --mx-canvas: var(--color-canvas);
+  --mx-surface: var(--color-surface);
+  --mx-surface-2: var(--color-surface-muted);
+  --mx-accent-surface: var(--color-surface-accent);
+  --mx-text: var(--color-text);
+  --mx-muted: var(--color-text-muted);
+  --mx-border: var(--color-border);
+  --mx-control-border: var(--color-border-control);
+  --mx-action: var(--color-action);
+  --mx-action-fill: var(--color-action);
+  --mx-on-action: var(--color-text-inverse);
+  --mx-danger: var(--color-danger);
+  --mx-danger-surface: var(--color-danger-surface);
+  --mx-warning: var(--color-warning);
+  --mx-warning-surface: var(--color-warning-surface);
+  --mx-success: var(--color-success);
+  --mx-success-surface: var(--color-success-surface);
+  --mx-focus: var(--color-action);
+  --mx-skeleton: #e3e9f2;
+  --mx-shadow: 0 1px 2px rgba(23, 32, 47, 0.06);
+  --mx-toast: #17202f;
+  --mx-gutter: 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mx-canvas: #0f1520;
+    --mx-surface: #1a2230;
+    --mx-surface-2: #232d3d;
+    --mx-accent-surface: #1b2c47;
+    --mx-text: #e8edf5;
+    --mx-muted: #9aa8bb;
+    --mx-border: #2e3a4c;
+    --mx-control-border: #5d6b80;
+    /* Синий для текста и для заливки разный: #2f7cf0 текстом на тёмном фоне не проходит по контрасту. */
+    --mx-action: #7fb2ff;
+    --mx-action-fill: #2f6fd6;
+    --mx-danger: #ff8a80;
+    --mx-danger-surface: #3a1c1c;
+    --mx-warning: #f0c060;
+    --mx-warning-surface: #33280f;
+    --mx-success: #6fd39a;
+    --mx-success-surface: #143022;
+    --mx-focus: #7fb2ff;
+    --mx-skeleton: #253042;
+    --mx-shadow: none;
+    --mx-toast: #e8edf5;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--mx-canvas);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--mx-canvas);
+  color: var(--mx-text);
+  font-family: var(--font-family-base);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+h1, h2, p {
+  margin: 0;
+}
+
+button, input, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 3px solid var(--mx-focus);
+  outline-offset: 2px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.mx-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Каркас: боковые отступы с безопасной зоной; верх закрывает шапка MAX. */
+.mx-app {
+  max-width: 640px;
+  margin: 0 auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.mx-layer,
+.mx-screen {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.mx-layer > div:not([hidden]),
+.mx-layer > .mx-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.mx-content {
+  flex: 1;
+  padding: 12px max(var(--mx-gutter), env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(var(--mx-gutter), env(safe-area-inset-left));
+}
+
+.mx-content--head {
+  flex: none;
+  padding-bottom: 0;
+}
+
+
+.mx-screen:has(.mx-bottom) > .mx-content {
+  padding-bottom: 24px;
+}
+
+.mx-starting {
+  padding: 24px var(--mx-gutter);
+  color: var(--mx-muted);
+}
+
+.mx-title {
+  margin: 4px 0 2px;
+  font-size: 22px;
+  line-height: 28px;
+  overflow-wrap: anywhere;
+}
+
+.mx-sub {
+  margin: 0 0 12px;
+  color: var(--mx-muted);
+  font-size: 14px;
+}
+
+.mx-sub--tight {
+  margin: 0;
+}
+
+.mx-section {
+  margin: 20px 0 8px;
+  color: var(--mx-muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.mx-hint {
+  display: block;
+  margin: 8px 0 0;
+  color: var(--mx-muted);
+  font-size: 13px;
+}
+
+.mx-gap {
+  margin-top: 16px;
+}
+
+.mx-gap-bottom {
+  margin-bottom: 16px;
+}
+
+/* Кнопки */
+.mx-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+.mx-button--primary {
+  background: var(--mx-action-fill);
+  color: var(--mx-on-action);
+}
+
+.mx-button--secondary {
+  border-color: var(--mx-action);
+  background: var(--mx-surface);
+  color: var(--mx-action);
+}
+
+.mx-button--text {
+  padding: 0 8px;
+  color: var(--mx-action);
+}
+
+.mx-button--block {
+  display: flex;
+  width: 100%;
+}
+
+.mx-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.mx-back {
+  margin: -4px 0 4px -8px;
+}
+
+.mx-more {
+  margin-top: 12px;
+}
+
+.mx-content > .mx-button--text:last-child,
+.mx-content > a.mx-button--text:last-child {
+  margin-top: 16px;
+}
+
+/* :hover только там, где он есть: на сенсоре цвет после касания «залипает». */
+@media (hover: hover) {
+  .mx-button--primary:hover:not(:disabled) {
+    filter: brightness(0.92);
+  }
+
+  .mx-button--secondary:hover:not(:disabled),
+  .mx-row__main:hover,
+  .mx-tile:not([aria-pressed="true"]):hover {
+    background: var(--mx-surface-2);
+  }
+}
+
+/* Сегменты «Моя работа | Команда» */
+.mx-segments {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 0 4px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--mx-surface-2);
+}
+
+.mx-segments button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--mx-muted);
+  font-weight: 600;
+}
+
+.mx-segments button[aria-pressed="true"] {
+  background: var(--mx-surface);
+  color: var(--mx-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+/* Плитки групп: 3 + 2, без прокрутки вбок на 320–640 px; выбранная — заливка, других признаков нет. */
+.mx-tiles {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.mx-tile {
+  grid-column: span 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 1px solid var(--mx-border);
+  border-radius: 12px;
+  background: var(--mx-surface);
+  color: var(--mx-text);
+  font-weight: 400;
+  text-align: left;
+}
+
+.mx-tile:nth-child(n + 4) {
+  grid-column: span 3;
+  flex-direction: row-reverse;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+}
+
+.mx-tile__count {
+  font-size: 22px;
+  line-height: 24px;
+  font-weight: 700;
+}
+
+.mx-tile:nth-child(n + 4) .mx-tile__count {
+  font-size: 18px;
+}
+
+.mx-tile__label {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--mx-muted);
+  font-size: 13px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mx-tile--hot .mx-tile__count {
+  color: var(--mx-danger);
+}
+
+.mx-tile--zero .mx-tile__count {
+  color: var(--mx-muted);
+  font-weight: 500;
+}
+
+.mx-tile[aria-pressed="true"] {
+  border-color: var(--mx-action-fill);
+  background: var(--mx-action-fill);
+  color: var(--mx-on-action);
+}
+
+.mx-tile[aria-pressed="true"] .mx-tile__count,
+.mx-tile[aria-pressed="true"] .mx-tile__label {
+  color: var(--mx-on-action);
+}
+
+.mx-tile--skeleton {
+  gap: 6px;
+}
+
+/* Строка работы */
+.mx-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mx-row {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--mx-border);
+  border-radius: 12px;
+  background: var(--mx-surface);
+  box-shadow: var(--mx-shadow);
+}
+
+.mx-row__main {
+  flex: 1;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  min-height: 72px;
+  padding: 12px;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
+.mx-row__main:active {
+  background: var(--mx-surface-2);
+}
+
+.mx-row__step {
+  display: -webkit-box;
+  overflow: hidden;
+  font-weight: 600;
+  line-height: 22px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.mx-row__org {
+  overflow: hidden;
+  color: var(--mx-muted);
+  font-size: 14px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mx-row__action {
+  flex: none;
+  width: 56px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--mx-border);
+  background: none;
+  color: var(--mx-success);
+  font-size: 22px;
+}
+
+.mx-row__action--add {
+  color: var(--mx-action);
+}
+
+.mx-row--skeleton {
+  flex-direction: column;
+  padding: 12px;
+}
+
+/* Метки */
+.mx-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.mx-chips--card {
+  margin: 6px 0 12px;
+}
+
+.mx-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--mx-surface-2);
+  color: var(--mx-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.mx-chip--danger { background: var(--mx-danger-surface); color: var(--mx-danger); }
+.mx-chip--warning { background: var(--mx-warning-surface); color: var(--mx-warning); }
+.mx-chip--success { background: var(--mx-success-surface); color: var(--mx-success); }
+.mx-chip--info { background: var(--mx-accent-surface); color: var(--mx-action); }
+
+/* Плашки, пустые состояния, скелеты */
+.mx-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 12px;
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.mx-banner--error { background: var(--mx-danger-surface); color: var(--mx-danger); }
+.mx-banner--warn { background: var(--mx-warning-surface); color: var(--mx-warning); }
+.mx-banner--ok { background: var(--mx-success-surface); color: var(--mx-success); }
+
+.mx-banner__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.mx-banner__button {
+  flex: none;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  background: var(--mx-surface);
+  color: inherit;
+  font-weight: 600;
+}
+
+.mx-empty {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 28px 12px;
+  border: 1px dashed var(--mx-border);
+  border-radius: 12px;
+  background: var(--mx-surface);
+  text-align: center;
+}
+
+.mx-empty__icon {
+  color: var(--mx-success);
+  font-size: 32px;
+  line-height: 1;
+}
+
+.mx-empty p {
+  margin: 0 0 8px;
+  color: var(--mx-muted);
+  font-size: 14px;
+}
+
+.mx-sk {
+  display: block;
+  height: 14px;
+  margin: 6px 0;
+  border-radius: 6px;
+  background: var(--mx-skeleton);
+  animation: mx-pulse 1.2s ease-in-out infinite;
+}
+
+.mx-sk--num { width: 28px; height: 20px; margin: 0; }
+.mx-sk--title { width: 90%; height: 22px; }
+.mx-sk--w85 { width: 85%; }
+.mx-sk--w60 { width: 60%; }
+.mx-sk--w50 { width: 50%; }
+.mx-sk--w35 { width: 35%; }
+
+@keyframes mx-pulse {
+  50% { opacity: 0.5; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mx-sk { animation: none; }
+}
+
+.mx-full {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 24px max(var(--mx-gutter), env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(var(--mx-gutter), env(safe-area-inset-left));
+  text-align: center;
+}
+
+.mx-full__icon {
+  font-size: 44px;
+}
+
+.mx-full h1 {
+  margin: 10px 0 6px;
+  font-size: 18px;
+  line-height: 24px;
+}
+
+.mx-full p {
+  max-width: 300px;
+  margin: 0 0 18px;
+  color: var(--mx-muted);
+}
+
+.mx-full .mx-button {
+  width: 100%;
+  max-width: 360px;
+}
+
+/* Карточка */
+.mx-block {
+  padding: 12px;
+  border: 1px solid var(--mx-border);
+  border-radius: 12px;
+  background: var(--mx-surface);
+}
+
+.mx-next {
+  display: grid;
+  gap: 2px;
+  border-left: 4px solid var(--mx-action-fill);
+}
+
+.mx-next--overdue {
+  border-left-color: var(--mx-danger);
+}
+
+.mx-next__label {
+  color: var(--mx-muted);
+  font-size: 13px;
+}
+
+.mx-next__text {
+  margin-bottom: 4px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.mx-plain {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  margin: 0;
+  list-style: none;
+  font-size: 14px;
+}
+
+.mx-when {
+  display: block;
+  color: var(--mx-muted);
+  font-size: 12px;
+}
+
+.mx-event {
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.mx-contact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mx-contact + .mx-contact {
+  padding-top: 10px;
+  border-top: 1px solid var(--mx-border);
+}
+
+.mx-contact__who {
+  flex: 1;
+  min-width: 0;
+}
+
+.mx-contact__who b {
+  display: block;
+  overflow: hidden;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mx-contact__who span {
+  color: var(--mx-muted);
+  font-size: 13px;
+}
+
+.mx-icon-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--mx-accent-surface);
+  color: var(--mx-action);
+}
+
+.mx-icon {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+/* Нижняя панель действий: sticky, а не fixed — при открытой клавиатуре остаётся над ней. */
+.mx-bottom {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px max(var(--mx-gutter), env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(var(--mx-gutter), env(safe-area-inset-left));
+  border-top: 1px solid var(--mx-border);
+  background: var(--mx-surface);
+}
+
+.mx-bottom > .mx-button {
+  flex: 1 1 140px;
+  white-space: nowrap;
+}
+
+/* Формы: шрифт полей 16 px, иначе iOS увеличивает страницу при фокусе. */
+.mx-field {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 16px;
+}
+
+.mx-field__label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mx-field__label small {
+  color: var(--mx-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.mx-field textarea,
+.mx-field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--mx-control-border);
+  border-radius: 10px;
+  background: var(--mx-surface);
+  font-size: 16px;
+}
+
+.mx-field textarea {
+  resize: vertical;
+}
+
+.mx-error {
+  color: var(--mx-danger);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mx-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mx-quick button {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--mx-border);
+  border-radius: 10px;
+  background: var(--mx-surface);
+  font-weight: 500;
+}
+
+.mx-quick button[aria-pressed="true"] {
+  border-color: var(--mx-action);
+  background: var(--mx-accent-surface);
+  color: var(--mx-action);
+  font-weight: 600;
+}
+
+.mx-datetime {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.mx-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--mx-border);
+  border-radius: 10px;
+  background: var(--mx-surface);
+}
+
+.mx-summary__text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mx-summary__text b {
+  display: block;
+}
+
+.mx-summary__text span {
+  color: var(--mx-muted);
+  font-size: 13px;
+}
+
+/* «Команда» */
+.mx-manager {
+  display: grid;
+  gap: 2px;
+  padding: 12px;
+  border: 1px solid var(--mx-border);
+  border-radius: 12px;
+  background: var(--mx-surface);
+}
+
+.mx-manager .mx-chips {
+  margin-top: 6px;
+}
+
+/* Всплывающее сообщение — над нижней панелью и безопасной зоной. */
+.mx-toast {
+  position: fixed;
+  right: max(var(--mx-gutter), env(safe-area-inset-right));
+  bottom: calc(84px + env(safe-area-inset-bottom));
+  left: max(var(--mx-gutter), env(safe-area-inset-left));
+  z-index: 2;
+  max-width: 608px;
+  margin: 0 auto;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--mx-toast);
+  color: var(--mx-canvas);
+  font-size: 14px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+/* Экран сбоя из общего ErrorBoundary (его стили живут в tokens.css, которого здесь нет). */
+.session-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px var(--mx-gutter);
+}
+
+.session-card {
+  max-width: 420px;
+  text-align: center;
+}
+
+.session-help {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.session-help button {
+  min-height: 44px;
+  border: 1px solid var(--mx-action);
+  border-radius: 10px;
+  background: var(--mx-surface);
+  color: var(--mx-action);
+  font-weight: 600;
+}
+
+/* 320 px: три плитки по ~90 px — «Просрочено» помещается только с узкими полями. */
+@media (max-width: 359px) {
+  .mx-tile {
+    padding: 8px 6px;
+  }
+
+  .mx-tile__label {
+    font-size: 12px;
+  }
+}

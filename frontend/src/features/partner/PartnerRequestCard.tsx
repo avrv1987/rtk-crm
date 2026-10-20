@@ -9,6 +9,7 @@ import { attachmentFileProblem, attachmentLimitMegabytes, attachmentNameLimit } 
 import {
   confirmPartnerDocument,
   downloadPartnerDocument,
+  downloadPartnerResponseFile,
   respondPartnerRequest,
   type PartnerReceipt,
   type PartnerRequestForPartner
@@ -69,12 +70,14 @@ export const PartnerRequestCard = ({ request, onChanged, onSessionExpired, onPro
     }
   }
 
-  const documentAction = async (id: string, name: string, action: 'download' | 'confirm') => {
+  const documentAction = async (id: string, name: string, action: 'download' | 'confirm' | 'response') => {
     setBusyDocument(id)
     setDocumentError(null)
     try {
       if (action === 'download') {
         saveFile(await downloadPartnerDocument(id), name)
+      } else if (action === 'response') {
+        saveFile(await downloadPartnerResponseFile(id), name)
       } else {
         await confirmPartnerDocument(id)
         onChanged()
@@ -145,6 +148,13 @@ export const PartnerRequestCard = ({ request, onChanged, onSessionExpired, onPro
             {request.responses.map((receipt) => (
               <li key={receipt.receiptNumber}>
                 {receiptLine(receipt)}
+                {receipt.downloadable && receipt.fileName !== null && (
+                  <>
+                    {' '}
+                    <button type="button" className="button--secondary" disabled={busyDocument === receipt.responseId}
+                      onClick={() => void documentAction(receipt.responseId, receipt.fileName ?? 'файл', 'response')}>Скачать свой файл</button>
+                  </>
+                )}
                 {receipt.message !== null && <div className="partner-request__message">{receipt.message}</div>}
                 {receipt.decision === 'ACCEPTED' && <div>Принято школой.</div>}
                 {receipt.decision === 'RETURNED' && <div>Возвращено на доработку: {receipt.decisionReason}</div>}

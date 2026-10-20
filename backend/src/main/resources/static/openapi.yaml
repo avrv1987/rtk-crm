@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: CRM ИТ Школы РТК — REST API
-  version: 2.5.1
+  version: 2.5.3
   description: |
     API веб-клиента CRM и точка интеграции с корпоративными системами.
 
@@ -1175,6 +1175,13 @@ paths:
             items:
               type: string
               format: uuid
+        - name: organizationType
+          in: query
+          required: false
+          description: Тип организации — тот же отбор, что в отчётах; сужает и строки, и вузы «Без работы»
+          schema:
+            type: string
+            enum: [UNIVERSITY, SCHOOL, COLLEGE, OPEN_ENROLLMENT]
         - name: managerId
           in: query
           required: false
@@ -1954,11 +1961,12 @@ paths:
             Одна работа попадает ровно в одно из OVERDUE, NO_NEXT_STEP, THIS_WEEK, LATER — то же правило, что у «Контроля».
             OVERDUE — срок следующего шага прошёл, даже если текст шага не задан; TODAY — шаг и срок заданы, срок не прошёл и
             приходится на сегодня по Москве; THIS_WEEK — шаг и срок заданы, срок не прошёл и приходится на текущую неделю
-            по Москве (понедельник–воскресенье), включая сегодня; LATER — шаг задан, срок после текущей недели;
+            по Москве (понедельник–воскресенье), включая сегодня; REST_OF_WEEK — то же, но без сегодняшнего дня (THIS_WEEK
+            минус TODAY); LATER — шаг задан, срок после текущей недели;
             NO_NEXT_STEP — срок не прошёл, но нет текста шага или его срока
           schema:
             type: string
-            enum: [OVERDUE, TODAY, THIS_WEEK, LATER, NO_NEXT_STEP]
+            enum: [OVERDUE, TODAY, THIS_WEEK, REST_OF_WEEK, LATER, NO_NEXT_STEP]
         - name: stage
           in: query
           required: false
@@ -3587,6 +3595,661 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/agreement-reporting/settings:
+    get:
+      tags: [Agreements]
+      summary: Настройки отчётности по соглашениям
+      operationId: getAgreementReportingSettings
+      description: >-
+        Период (календарный или учебный год), срок ответа вуза на перечень («молчание»), горизонт напоминаний, порог и база
+        свода по исполнителям, шаблон выгрузки отчёта, сроки отчётного цикла, перечень обязательных атрибутов мероприятия
+        и текущий период. Читают все сотрудники; представитель вуза — 403.
+      responses:
+        '200':
+          description: Настройки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementReportingSettingsView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/agreement-reporting/settings:
+    put:
+      tags: [Administration]
+      summary: Сохранить настройки отчётности по соглашениям
+      operationId: saveAgreementReportingSettings
+      description: >-
+        Только ADMIN. Срок ответа вуза пустой — согласования «молчанием» нет; порог включается только с указанным процентом.
+        Прежние и новые значения пишутся в журнал (AGREEMENT_REPORTING_CHANGED).
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementReportingSettingsInput'
+      responses:
+        '200':
+          description: Сохранённые настройки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementReportingSettingsView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/agreement-reporting/template:
+    put:
+      tags: [Administration]
+      summary: Сохранить шаблон выгрузки отчёта по соглашениям
+      operationId: saveAgreementReportTemplate
+      description: Только ADMIN. Набор, порядок и подписи колонок строк отчёта — для экрана, XLSX, PDF и JSON.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementReportTemplateInput'
+      responses:
+        '200':
+          description: Сохранённые настройки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementReportingSettingsView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Administration]
+      summary: Вернуть колонки отчёта по соглашениям по умолчанию
+      operationId: resetAgreementReportTemplate
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Настройки с колонками по умолчанию
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementReportingSettingsView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/agreement-reporting/deadlines:
+    put:
+      tags: [Administration]
+      summary: Сохранить сроки отчётного цикла
+      operationId: saveAgreementReportingDeadlines
+      description: Только ADMIN. Список заменяется целиком; пустой список — сроков нет. Ежегодный срок повторяется в тот же день и месяц.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementReportingDeadlinesInput'
+      responses:
+        '200':
+          description: Сохранённые настройки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementReportingSettingsView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/agreement-reporting/references:
+    get:
+      tags: [Agreements]
+      summary: Справочники отчётности — исполнители, уровни образования, единицы
+      operationId: listAgreementReportingReferences
+      parameters:
+        - name: includeArchived
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Значения всех трёх справочников, упорядоченные по справочнику и порядку
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgreementReferenceItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/agreement-reporting/references:
+    post:
+      tags: [Administration]
+      summary: Добавить значение справочника отчётности
+      operationId: createAgreementReportingReference
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementReferenceCreate'
+      responses:
+        '201':
+          description: Значение добавлено в конец справочника
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementReferenceItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/agreement-reporting/references/{id}:
+    patch:
+      tags: [Administration]
+      summary: Изменить значение справочника отчётности
+      operationId: updateAgreementReportingReference
+      description: Переименовать, перенести в архив или вернуть, задать базу исполнителя для порога
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementReferenceUpdate'
+      responses:
+        '200':
+          description: Значение изменено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementReferenceItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/agreement-reporting/rates:
+    get:
+      tags: [Agreements]
+      summary: Ставки оценки мероприятий
+      operationId: listAgreementRates
+      description: Вид мероприятия × единица (× уровень образования) → ставка в рублях за единицу с даты начала действия
+      responses:
+        '200':
+          description: Ставки
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgreementRate'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/agreement-reporting/rates:
+    post:
+      tags: [Administration]
+      summary: Добавить ставку оценки
+      operationId: createAgreementRate
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementRateInput'
+      responses:
+        '201':
+          description: Ставка добавлена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementRate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/agreement-reporting/rates/{id}:
+    patch:
+      tags: [Administration]
+      summary: Изменить ставку оценки
+      operationId: updateAgreementRate
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementRateInput'
+      responses:
+        '200':
+          description: Ставка изменена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementRate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Administration]
+      summary: Удалить ставку оценки
+      operationId: deleteAgreementRate
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: version
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '204':
+          description: Ставка удалена
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/agreement-reporting/reminders:
+    get:
+      tags: [Agreements]
+      summary: Напоминания отчётности по соглашениям
+      operationId: getAgreementReportingReminders
+      description: >-
+        Сроки отчётного цикла в ближайшие reminderDays дней и перечни вузов области доступа, которые на согласовании
+        или возвращены. Те же данные приходят в колокольчике (ReminderDigest.agreementReporting).
+      responses:
+        '200':
+          description: Напоминания
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementReportingReminders'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/activity-lists:
+    get:
+      tags: [Agreements]
+      summary: Перечни мероприятий вуза
+      operationId: listActivityLists
+      description: >-
+        Перечни на период, текущий период по настройке и признак coordinatorAvailable (у вуза есть координатор с доступом
+        к кабинету). Перечни, у которых истёк срок ответа вуза, при обращении переходят в «согласован без ответа».
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Перечни вуза
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityListsView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Agreements]
+      summary: Сформировать перечень мероприятий из плана договоров
+      operationId: createActivityList
+      description: >-
+        КАМ своих вузов и руководитель команды. Период — год по настройке (календарный или учебный). Без activityIds в
+        перечень входят все мероприятия договоров вуза на период, кроме отменённых и отклонённых и договоров «Расторгнут».
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivityListCreate'
+      responses:
+        '201':
+          description: Проект перечня
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/activity-lists/{id}:
+    get:
+      tags: [Agreements]
+      summary: Перечень мероприятий с позициями и историей
+      operationId: getActivityList
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Перечень
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [Agreements]
+      summary: Изменить проект или возвращённый перечень
+      operationId: updateActivityList
+      description: Название и состав; без activityIds перечень заново собирается из плана договоров на тот же период
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivityListUpdate'
+      responses:
+        '200':
+          description: Перечень
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/activity-lists/{id}/transitions:
+    post:
+      tags: [Agreements]
+      summary: Отправить перечень вузу или отметить ответ вуза
+      operationId: transitionActivityList
+      description: >-
+        SEND — отправить проект или возвращённый перечень; срок ответа — дата отправки плюс срок из настроек (для повторной
+        отправки — срок повторного ответа, если задан). APPROVE и RETURN — отметка КАМ об ответе вуза, только у вуза без
+        координатора; RETURN требует комментарий. Каждое действие пишется в историю перечня и журнал.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivityListTransition'
+      responses:
+        '200':
+          description: Перечень после действия
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/partner/activity-lists:
+    get:
+      tags: [Partner]
+      summary: Перечни мероприятий своего вуза в кабинете вуза
+      operationId: listPartnerActivityLists
+      description: Только PARTNER при включённом кабинете вуза. Все перечни вуза, кроме проектов, с позициями и историей.
+      responses:
+        '200':
+          description: Перечни; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ActivityList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/partner/activity-lists/{id}/decision:
+    post:
+      tags: [Partner]
+      summary: Согласовать или вернуть перечень мероприятий
+      operationId: decidePartnerActivityList
+      description: Координатор своего вуза; только перечень на согласовании. RETURN требует комментарий.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PartnerActivityListDecision'
+      responses:
+        '200':
+          description: Перечень после решения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/reports/agreement-reporting:
+    get:
+      tags: [Reports]
+      summary: Отчёт по соглашениям за период
+      operationId: getAgreementReport
+      description: >-
+        Строки — мероприятия планов договоров за период (колонки по шаблону выгрузки, значения типизированы: числа —
+        числами), своды по вузам, видам, исполнителям и уровням, свод по исполнителям против порога (если включён).
+        Без дат — текущий период по настройке. Область данных как у реестра договоров; администратор и вуз — 403.
+      parameters:
+        - $ref: '#/components/parameters/AgreementPeriodFrom'
+        - $ref: '#/components/parameters/AgreementPeriodTo'
+        - name: organizationId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Отчёт
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementReport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/reports/agreement-reporting/file:
+    get:
+      tags: [Reports]
+      summary: Скачать отчёт по соглашениям в XLSX, PDF или JSON
+      operationId: downloadAgreementReport
+      description: Те же строки и своды, что на экране; скачивание пишется в журнал (REPORT_DOWNLOADED)
+      parameters:
+        - name: format
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [XLSX, PDF, JSON]
+        - $ref: '#/components/parameters/AgreementPeriodFrom'
+        - $ref: '#/components/parameters/AgreementPeriodTo'
+        - name: organizationId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Файл; Content-Disposition содержит имя файла в UTF-8 (filename*)
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgreementReport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CrmProfileRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/organizations/{id}/agreements:
     get:
       tags: [Agreements]
@@ -4592,10 +5255,19 @@ paths:
       summary: Действующие виды взаимодействия
       operationId: listInteractionKinds
       x-implementation-stage: 9
-      description: Для формы создания карточки и отборов; teamTemplate* — шаблон команды текущего пользователя для вида
+      description: >-
+        Для формы создания карточки и отборов; teamTemplate* — шаблон команды текущего пользователя для вида.
+        Отборам нужны и отключённые виды: их карточки остаются, поэтому includeInactive=true добавляет их с active=false.
+      parameters:
+        - name: includeInactive
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
-          description: Действующие виды в порядке справочника
+          description: Виды в порядке справочника; без includeInactive — только действующие
           content:
             application/json:
               schema:
@@ -5517,14 +6189,15 @@ paths:
   /api/admin/backup-status:
     get:
       tags: [Administration]
-      summary: Время последней резервной копии
+      summary: Последняя резервная копия и проверка восстановления
       operationId: getBackupStatus
       description: >-
-        Только администратор. scripts/backup.sh после успешной копии оставляет отметку времени в томе вложений; в саму
-        копию отметка не входит. null — копий ещё не было, отметка не записалась или стенд восстановлен из копии.
+        Только администратор. scripts/backup.sh, backup-scheduled.sh и restore-check.sh оставляют отметки в томе
+        вложений; в саму копию отметки не входят. Предупреждения считает сервер: копии нет больше суток, проверки
+        восстановления — больше 35 дней, последний запуск завершился сбоем.
       responses:
         '200':
-          description: Отметка последней копии
+          description: Отметки копии и проверки восстановления
           content:
             application/json:
               schema:
@@ -6505,6 +7178,644 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/admin/settings:
+    get:
+      tags: [Administration]
+      summary: Настройки системы
+      operationId: getSystemSettings
+      description: >
+        Только ADMIN. Сроки хранения, пороги сигналов и учёт по ПДн: действующее значение, значение конфигурации сервера
+        (по умолчанию), кто и когда изменил. Без правки действует значение конфигурации.
+      responses:
+        '200':
+          description: Все настройки
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SystemSetting'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/settings/{key}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+          maxLength: 64
+    put:
+      tags: [Administration]
+      summary: Изменить настройку
+      operationId: updateSystemSetting
+      description: >
+        Только ADMIN. Значение — целое в пределах min–max настройки. Действует сразу, без перезапуска: расчёты читают
+        настройку при каждом обращении. Прежнее и новое значения пишутся в журнал (SYSTEM_SETTING_CHANGED).
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemSettingUpdate'
+      responses:
+        '200':
+          description: Все настройки после сохранения
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SystemSetting'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Administration]
+      summary: Вернуть значение конфигурации
+      operationId: resetSystemSetting
+      description: Только ADMIN. Удаляет правку; запись в журнале «было → стало».
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Все настройки после сброса
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SystemSetting'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/modules:
+    get:
+      tags: [Administration]
+      summary: Состояние модулей
+      operationId: getModuleStatuses
+      description: >
+        Только ADMIN. Какие модули включены, переменная окружения включения и исправность: последняя успешная операция и
+        ошибки за 7 дней. Включает модули администратор сервера, экран только показывает.
+      responses:
+        '200':
+          description: Модули
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ModuleStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/reminders:
+    get:
+      tags: [Administration]
+      summary: Напоминания администратора
+      operationId: getAdminReminders
+      description: Только ADMIN. Открытые обращения субъектов ПДн, срок ответа которых истёк или наступает в ближайшие дни.
+      responses:
+        '200':
+          description: Напоминания
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminReminders'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/personal-data/requests:
+    get:
+      tags: [Administration]
+      summary: Журнал обращений субъектов ПДн
+      operationId: listPersonalDataRequests
+      description: >
+        Только ADMIN. Обращения (сначала открытые, по сроку ответа) и последние записи журнала об исполнении — выгрузке,
+        уточнении, ограничении, обезличивании, — к которым можно привязать обращение.
+      responses:
+        '200':
+          description: Журнал обращений
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalDataRequests'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Administration]
+      summary: Зарегистрировать обращение
+      operationId: createPersonalDataRequest
+      description: >
+        Только ADMIN. Без dueOn срок ответа — дата поступления плюс настройка PERSONAL_DATA_RESPONSE_DAYS (в календарных
+        или, при PERSONAL_DATA_RESPONSE_WORKING_DAYS, в рабочих днях пн–пт без праздников); без assigneeId
+        исполнитель — автор. В журнал (PERSONAL_DATA_REQUEST_CHANGED) пишутся вид, канал, срок и статус, без имени субъекта.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonalDataRequestInput'
+      responses:
+        '200':
+          description: Обращение
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalDataRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/personal-data/requests/{id}:
+    put:
+      tags: [Administration]
+      summary: Изменить обращение
+      operationId: updatePersonalDataRequest
+      description: >
+        Только ADMIN. Статусы DONE и REJECTED требуют даты исполнения (по умолчанию сегодня); auditEventId — запись журнала
+        об исполнении из списка executions.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonalDataRequestInput'
+      responses:
+        '200':
+          description: Обращение
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalDataRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/personal-data/requests/export:
+    get:
+      tags: [Administration]
+      summary: Выгрузить журнал обращений
+      operationId: exportPersonalDataRequests
+      description: Только ADMIN. CSV в UTF-8 с разделителем «;»; выгрузка пишется в журнал (PERSONAL_DATA_REQUESTS_EXPORTED).
+      responses:
+        '200':
+          description: Файл журнала обращений; Content-Disposition содержит имя файла в UTF-8 (filename*)
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/personal-data/consents:
+    get:
+      tags: [Administration]
+      summary: Согласия субъекта
+      operationId: listConsents
+      description: >
+        Только ADMIN, только чтение: записывают согласия КАМ в карточке контакта и менеджер учебного процесса в анкете.
+        enabled — включён ли учёт согласий для вида субъекта (настройки CONSENTS_CONTACTS и CONSENTS_LEARNERS); при
+        выключенном учёте записи не показываются.
+      parameters:
+        - name: subjectType
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/ConsentSubjectType'
+        - name: subjectId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Согласия
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Consents'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/consent-settings:
+    get:
+      tags: [Catalog]
+      summary: Включён ли учёт согласий
+      operationId: getConsentSettings
+      description: Любой вошедший сотрудник; интерфейс показывает блок согласий только при включённом учёте.
+      responses:
+        '200':
+          description: Настройки учёта
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/contacts/{contactId}/consents:
+    get:
+      tags: [Catalog]
+      summary: Согласия субъекта
+      operationId: listContactConsents
+      description: >
+        Все, кто видит вуз. enabled — включён ли учёт для вида субъекта; при выключенном учёте записей нет.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: contactId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Согласия
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Consents'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Catalog]
+      summary: Записать согласие
+      operationId: createContactConsent
+      description: >
+        Как правка контакта: KAM (USER) и LEADER с вузом в своей области. Только при включённом учёте (иначе 404) и у действующей записи: ограниченная или обезличенная —
+        409. Пишется в журнал (CONSENT_CHANGED) без имени субъекта.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: contactId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentInput'
+      responses:
+        '200':
+          description: Согласие
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Consent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/contacts/{contactId}/consents/{consentId}:
+    put:
+      tags: [Catalog]
+      summary: Изменить согласие или отметить отзыв
+      operationId: updateContactConsent
+      description: >
+        Как правка контакта: KAM (USER) и LEADER с вузом в своей области. Те же условия, что при записи.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: contactId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: consentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentInput'
+      responses:
+        '200':
+          description: Согласие
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Consent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/enrolment/learners/{id}/consents:
+    get:
+      tags: [Enrolment]
+      summary: Согласия субъекта
+      operationId: listLearnerConsents
+      description: >
+        Менеджер учебного процесса (флаг). enabled — включён ли учёт для вида субъекта; при выключенном учёте записей нет.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Согласия
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Consents'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Enrolment]
+      summary: Записать согласие
+      operationId: createLearnerConsent
+      description: >
+        Менеджер учебного процесса (флаг). Только при включённом учёте (иначе 404) и у действующей записи: ограниченная или обезличенная —
+        409. Пишется в журнал (CONSENT_CHANGED) без имени субъекта.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentInput'
+      responses:
+        '200':
+          description: Согласие
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Consent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/enrolment/learners/{id}/consents/{consentId}:
+    put:
+      tags: [Enrolment]
+      summary: Изменить согласие или отметить отзыв
+      operationId: updateLearnerConsent
+      description: >
+        Менеджер учебного процесса (флаг). Те же условия, что при записи.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: consentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentInput'
+      responses:
+        '200':
+          description: Согласие
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Consent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/workflow-route-versions:
+    get:
+      tags: [Administration]
+      summary: Какая команда на какой версии маршрута
+      operationId: getRouteVersions
+      description: >
+        ADMIN и MANAGEMENT — все команды, LEADER — своя (для него это напоминание перевести работы). Незавершённые работы
+        по команде, шаблону и версии; outdatedWorks — работы на версиях старше последней. Без вузов и названий работ.
+      responses:
+        '200':
+          description: Сводка
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RouteVersionsRow'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/demand-index/settings:
+    get:
+      tags: [Administration]
+      summary: Веса индекса востребованности программ
+      operationId: getDemandIndexSettings
+      description: >
+        Только ADMIN. Действующие веса компонентов индекса востребованности (паспорт М17), порог покрытия и порог малой
+        базы; без сохранённых значений действуют значения по умолчанию.
+      responses:
+        '200':
+          description: Действующие и исходные значения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DemandIndexSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Administration]
+      summary: Сохранить веса индекса востребованности
+      operationId: updateDemandIndexSettings
+      description: >
+        Только ADMIN. Веса — целые от 0 до 100 с суммой 100, порог покрытия — 1–100 %, малая база — 0–10 000 участий.
+        Прежние и новые значения пишутся в журнал (DEMAND_INDEX_SETTINGS_CHANGED); отчёт «Востребованность программ»
+        сразу считает по новым весам.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DemandIndexWeights'
+      responses:
+        '200':
+          description: Действующие значения после сохранения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DemandIndexSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Administration]
+      summary: Вернуть веса индекса востребованности по умолчанию
+      operationId: resetDemandIndexSettings
+      description: Только ADMIN. Удаляет сохранённые значения; запись в журнале с прежними значениями.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Значения по умолчанию восстановлены
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/labor-market/check:
     post:
       tags: [Administration]
@@ -7295,12 +8606,100 @@ paths:
                 $ref: '#/components/schemas/ApiError'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/admin/import-settings:
+    get:
+      tags: [Administration]
+      summary: Шаг по умолчанию при импорте
+      operationId: getImportSettings
+      description: >-
+        Только ADMIN. Текст и срок в днях шага, который получают карточки, созданные импортом, и карточки массового
+        действия руководителя «Задать шаг карточкам без шага». По умолчанию «Связаться с вузом», 7 дней.
+      responses:
+        '200':
+          description: Действующая настройка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Administration]
+      summary: Сохранить шаг по умолчанию при импорте
+      operationId: updateImportSettings
+      description: Только ADMIN. Текст до 500 символов, срок 1–365 дней. Изменение пишется в журнал (IMPORT_SETTINGS_CHANGED).
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportSettings'
+      responses:
+        '200':
+          description: Настройка после сохранения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/work/control/missing-steps:
+    post:
+      tags: [Work]
+      summary: Задать шаг карточкам без шага
+      operationId: assignMissingSteps
+      description: >-
+        Только руководитель команды (LEADER). Карточки из отбора «Контроля»; шаг получают только карточки своей команды,
+        которые по правилу «Контроля» всё ещё «Без шага или срока» (уже введённый текст шага сохраняется). Без текста
+        и срока берётся шаг по умолчанию при импорте. Каждая карточка пишет событие плана, операция — запись журнала
+        MISSING_STEPS_ASSIGNED. Повтор с тем же ключом возвращает прежний результат.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MissingStepsRequest'
+      responses:
+        '200':
+          description: Сколько карточек получили шаг и сколько пропущено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MissingStepsResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/imports/inspect:
     post:
       tags: [Catalog]
       summary: Прочитать листы и заголовки файла импорта
       operationId: inspectCatalogImport
       x-implementation-stage: 4
+      description: >-
+        Только ADMIN. Книга XLS или XLSX либо файл CSV (UTF-8 или Windows-1251, разделитель «;», «,» или табуляция;
+        файл CSV читается как один лист «CSV»).
       parameters:
         - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
@@ -7794,6 +9193,45 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/enrolment/streams/{id}/moodle-course:
+    put:
+      tags: [Enrolment]
+      summary: Уточнить курс и группу Moodle потока
+      operationId: updateEnrolmentStreamMoodleCourse
+      description: >-
+        Решение владельца 21.10: по умолчанию курс потока берётся из сопоставлений программы, а здесь его можно задать
+        явно — передача и перенос в Moodle используют уточнение. Менеджер учебного процесса или администратор. Номера с
+        Moodle не сверяются: неверный курс покажет ошибка строки при передаче. Изменение пишется в журнал
+        (STREAM_MOODLE_COURSE_CHANGED).
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StreamMoodleCourseUpdate'
+      responses:
+        '200':
+          description: Поток с уточнением курса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrolmentStream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/enrolment/streams/{id}/learners:
     get:
       tags: [Enrolment]
@@ -8162,7 +9600,11 @@ paths:
         Moodle программы потока; нет курса — ошибка строки «нет курса для потока». Строка «принята» только после сверки;
         отказ Moodle — ошибка строки с кодом Moodle. Moodle недоступен или отклонил токен — передача останавливается,
         оставшиеся строки ждут (stoppedReason). Повтор отправляет только не принятые строки. Журнал — LMS_API_TRANSFER
-        без персональных данных.
+        без персональных данных. Курс — явное уточнение потока, если оно задано (moodleCourseId), иначе сопоставления.
+        Логин — по правилу APP_ENROLMENT_LMS_LOGIN (по умолчанию почта в нижнем регистре). Слушатель, перенесённый из
+        другого потока и ждущий «Перенести в Moodle», не отправляется: строка получает ошибку с подсказкой. Строки,
+        принятые по прежним отметкам (источник LEGACY), сверяются без записи в Moodle: пользователь с почтой слушателя
+        найден на курсе — строка подтверждается (источник API, confirmed), иначе остаётся с пометкой.
       parameters:
         - $ref: '#/components/parameters/UuidId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -8174,7 +9616,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [batch, sent, accepted, failed, stoppedReason]
+                required: [batch, sent, accepted, failed, confirmed, stoppedReason]
                 properties:
                   batch:
                     $ref: '#/components/schemas/EnrolmentBatch'
@@ -8184,6 +9626,9 @@ paths:
                     type: integer
                   failed:
                     type: integer
+                  confirmed:
+                    type: integer
+                    description: Строки прежнего учёта (источник LEGACY), которые сверка нашла на курсе Moodle и подтвердила
                   stoppedReason:
                     type: [string, 'null']
         '400':
@@ -8205,8 +9650,10 @@ paths:
       operationId: moveEnrolmentInMoodle
       description: >-
         Только менеджер учебного процесса, при включённой записи в Moodle и только для зачисления из очереди «перенос после
-        передачи». enrol_manual_unenrol_users с курса прежнего потока, enrol_manual_enrol_users на курс нового, сверка;
-        затем сверка снимается. Пользователь Moodle ищется по почте; нет или несколько — 400, перенос вручную. Журнал —
+        передачи». Сначала enrol_manual_enrol_users на курс нового потока и группа, сверка; потом
+        enrol_manual_unenrol_users с курса прежнего (или core_group_delete_group_members из группы прежнего потока того
+        же курса) и сверка снятия; затем сверка снимается. Сбой на шаге — 400, состояние записано в причину сверки,
+        повтор доводит перенос. Пользователь Moodle ищется по почте; нет или несколько — 400, перенос вручную. Журнал —
         LMS_API_MOVE.
       parameters:
         - $ref: '#/components/parameters/UuidId'
@@ -8252,8 +9699,34 @@ paths:
         AMBIGUOUS_MATCH — та же почта или телефон у другого слушателя потока; READY — готово к передаче; NOT_SENT — файл
         сформирован, партия не отмечена переданной; AWAITING_RESULT — ожидается результат LMS; LMS_ERROR — ошибка LMS;
         MOVED_AFTER_TRANSFER — перенос в другой поток после выгрузки, нужна сверка LMS; CHANGED_AFTER_TRANSFER —
-        анкета изменена после передачи. В группе total и до 50 строк. Анкеты с ограниченной обработкой и обезличенные
-        в очереди передачи не показываются. Просмотр пишется в журнал.
+        анкета изменена после передачи. В группе total и до limit строк (по умолчанию 50). streamId отбирает один поток,
+        kind — одну группу (в остальных группах строк нет, счётчики есть), offset листает строки группы kind. Анкеты с
+        ограниченной обработкой и обезличенные в очереди передачи не показываются. Просмотр пишется в журнал.
+      parameters:
+        - name: streamId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: kind
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EnrolmentQueueKind'
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
       responses:
         '200':
           description: Очередь
@@ -8579,6 +10052,35 @@ paths:
       description: >-
         Пока кабинет вуза выключен (MODULE_PARTNER_ENABLED=false, по умолчанию), метод отвечает 404 всем.
         Только для роли PARTNER. Документ своего вуза с флагом «Доступен вузу» и статусом CLEAN; иначе 404. Скачивание записывается в журнал безопасности.
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Файл
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/partner/responses/{id}/file:
+    get:
+      tags: [Partner]
+      summary: Скачать свой файл ответа на запрос школы
+      operationId: downloadPartnerResponseFile
+      description: >-
+        Только для роли PARTNER (решение владельца 21.10). Файл ответа, который отправил этот координатор, по запросу его
+        контакта и вуза, в любом статусе запроса; только после антивирусной проверки (CLEAN) и если файл не удалён. Чужие
+        ответы и внутренние файлы школы — 404. Скачивание записывается в журнал безопасности.
       parameters:
         - $ref: '#/components/parameters/UuidId'
       responses:
@@ -9419,7 +10921,7 @@ paths:
       summary: Мои уведомления на почту
       operationId: getMailPreferences
       description: >-
-        Любой активный сотрудник. Темы, доступные роли, и адрес учётной записи Keycloak, на который приходят письма. Менеджеру учебного процесса и представителю вуза тем нет.
+        Любой активный сотрудник и координатор вуза. Темы, доступные роли, и адрес учётной записи Keycloak, на который приходят письма. Менеджеру учебного процесса тем нет; координатору вуза — одна тема PARTNER_ACCEPTED (школа приняла его ответ).
       responses:
         '200':
           description: Результат
@@ -9485,7 +10987,7 @@ paths:
       summary: Сохранить настройки почты
       operationId: updateMailSettings
       description: >-
-        Только ADMIN. Режим (заглушка или SMTP), сервер, порт, шифрование, логин, пароль, отправитель. Пароль шифруется ключом SOURCES_SETTINGS_KEY; пустое поле пароля оставляет прежний, clearPassword удаляет. Журнал — MAIL_SETTINGS_CHANGED без пароля и логина.
+        Только ADMIN. Режим (без отправки или SMTP), сервер, порт, шифрование, логин, пароль, отправитель. Пароль шифруется ключом SOURCES_SETTINGS_KEY; пустое поле пароля оставляет прежний, clearPassword удаляет. Журнал — MAIL_SETTINGS_CHANGED без пароля и логина.
       parameters:
         - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
@@ -9515,7 +11017,7 @@ paths:
       summary: Проверить подключение к почтовому серверу
       operationId: checkMailConnection
       description: >-
-        Только ADMIN. Заглушка — всегда успех; SMTP — подключение и вход на сервер. Журнал — MAIL_CONNECTION_CHECKED.
+        Только ADMIN. Без отправки — всегда успех; SMTP — подключение и вход на сервер. Журнал — MAIL_CONNECTION_CHECKED.
       parameters:
         - $ref: '#/components/parameters/CsrfHeader'
       responses:
@@ -9856,15 +11358,19 @@ paths:
         - maxAppBearer: []
       description: >-
         Итоги групп — лента ReminderFeed (как колокольчик и «Моя работа» в CRM); список — серверная страница по 20
-        взаимодействий выбранной группы срока по Москве, total — полное число.
+        взаимодействий выбранной группы срока по Москве, total — полное число. Итоги считаются одним запросом, без
+        остальных напоминаний колокольчика.
       parameters:
         - name: due
           in: query
           required: false
+          description: >-
+            Группа срока. Без параметра сервер берёт первую непустую группу в порядке OVERDUE, TODAY, REST_OF_WEEK,
+            NO_NEXT_STEP, LATER (всё пусто — TODAY) и возвращает выбранную в поле due ответа. Группа «На неделе»
+            мини-приложения — REST_OF_WEEK (неделя без сегодняшнего дня), её итог — feed.thisWeek − feed.today.
           schema:
             type: string
-            enum: [OVERDUE, TODAY, THIS_WEEK, LATER, NO_NEXT_STEP]
-            default: TODAY
+            enum: [OVERDUE, TODAY, THIS_WEEK, REST_OF_WEEK, LATER, NO_NEXT_STEP]
         - name: page
           in: query
           required: false
@@ -10024,6 +11530,530 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/people:
+    get:
+      tags: [Interaction]
+      summary: Учёт людей и часов по вузу
+      operationId: getOrganizationPeople
+      description: >-
+        Преподавание сотрудниками, стажировки и повышение квалификации преподавателей вуза; с interactionId — только
+        записи этого взаимодействия. Читают КАМ (свои вузы), руководитель (вузы команды) и «Руководство» (все);
+        администратор и представитель вуза — 403, чужой или неизвестный вуз — 404. Справочные значения формы (options)
+        приходят только тем, кто может менять записи (canEdit).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: interactionId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Записи, настройки единиц часов и справочные значения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeopleOverview'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/university-teaching:
+    post:
+      tags: [Interaction]
+      summary: Добавить запись о преподавании сотрудником в вузе
+      operationId: createUniversityTeaching
+      description: >-
+        Только КАМ и руководитель с доступом к вузу; вуз не в архиве. Исполнитель — сотрудник из справочника
+        (performerProfileId) или исполнитель группы компаний (performerName и performerCompany). Мероприятие плана
+        договора (agreementActivityId) должно относиться к договору этого вуза; договор подставляется по мероприятию.
+        Единица часа по умолчанию — из настроек. Журнал — PEOPLE_RECORD_CHANGED без ФИО.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeachingInput'
+      responses:
+        '201':
+          description: Запись создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeachingRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/university-teaching/{recordId}:
+    put:
+      tags: [Interaction]
+      summary: Изменить запись о преподавании сотрудником
+      operationId: updateUniversityTeaching
+      description: Те же правила, что при создании; version — текущая версия записи, иначе 409 VERSION_CONFLICT.
+      parameters:
+        - $ref: '#/components/parameters/PeopleRecordId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeachingInput'
+      responses:
+        '200':
+          description: Запись сохранена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeachingRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Interaction]
+      summary: Удалить запись о преподавании сотрудником
+      operationId: deleteUniversityTeaching
+      parameters:
+        - $ref: '#/components/parameters/PeopleRecordId'
+        - $ref: '#/components/parameters/PeopleRecordVersion'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Запись удалена
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/internships:
+    post:
+      tags: [Interaction]
+      summary: Добавить запись о стажировке
+      operationId: createInternship
+      description: >-
+        Только КАМ и руководитель с доступом к вузу. Стажёр — студент или преподаватель этого вуза; наставник — сотрудник
+        из справочника (mentorProfileId) или ФИО текстом. Единица часа по умолчанию — из настроек (обычно астрономический
+        час). ФИО стажёра — персональные данные: входят в выгрузку субъекта и обезличиваются администратором.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternshipInput'
+      responses:
+        '201':
+          description: Запись создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternshipRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/internships/{recordId}:
+    put:
+      tags: [Interaction]
+      summary: Изменить запись о стажировке
+      operationId: updateInternship
+      description: Обезличенную запись изменить нельзя (400), только удалить. Чужая версия — 409 VERSION_CONFLICT.
+      parameters:
+        - $ref: '#/components/parameters/PeopleRecordId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternshipInput'
+      responses:
+        '200':
+          description: Запись сохранена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternshipRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Interaction]
+      summary: Удалить запись о стажировке
+      operationId: deleteInternship
+      parameters:
+        - $ref: '#/components/parameters/PeopleRecordId'
+        - $ref: '#/components/parameters/PeopleRecordVersion'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Запись удалена
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/teacher-qualifications:
+    post:
+      tags: [Interaction]
+      summary: Добавить запись о повышении квалификации преподавателя
+      operationId: createTeacherQualification
+      description: >-
+        Только КАМ и руководитель с доступом к вузу. Преподаватель — контакт вуза (contactId, ФИО и почта подставляются)
+        или ФИО текстом. Список на курс LMS (teacherRosterId) — связь с потоком Moodle, если он есть. Отметка
+        frdoSubmittedOn допустима только у аттестованных. Срок передачи в ФРДО — дата удостоверения плюс срок из
+        настроек; без настройки срок не считается.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QualificationInput'
+      responses:
+        '201':
+          description: Запись создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QualificationRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/teacher-qualifications/{recordId}:
+    put:
+      tags: [Interaction]
+      summary: Изменить запись о повышении квалификации
+      operationId: updateTeacherQualification
+      description: Обезличенную запись изменить нельзя (400), только удалить. Чужая версия — 409 VERSION_CONFLICT.
+      parameters:
+        - $ref: '#/components/parameters/PeopleRecordId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QualificationInput'
+      responses:
+        '200':
+          description: Запись сохранена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QualificationRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Interaction]
+      summary: Удалить запись о повышении квалификации
+      operationId: deleteTeacherQualification
+      parameters:
+        - $ref: '#/components/parameters/PeopleRecordId'
+        - $ref: '#/components/parameters/PeopleRecordVersion'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Запись удалена
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/teacher-qualifications/import-template:
+    get:
+      tags: [Interaction]
+      summary: Скачать шаблон XLSX списка повышения квалификации
+      operationId: downloadTeacherQualificationTemplate
+      description: Пустой шаблон с колонками и листом пояснений; доступен сотрудникам, представителю вуза — 403.
+      responses:
+        '200':
+          description: Шаблон XLSX
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/organizations/{id}/teacher-qualifications/import:
+    post:
+      tags: [Interaction]
+      summary: Загрузить список повышения квалификации из XLSX
+      operationId: importTeacherQualifications
+      description: >-
+        Файл по шаблону (до 2 МиБ, до 1000 строк). Колонки ищутся по заголовку. Загрузка «всё или ничего»: при любой
+        ошибке в строках ничего не создаётся, ответ перечисляет ошибки по номерам строк. dryRun=true — только проверка.
+        Преподаватель связывается с контактом вуза по совпадающей почте. Журнал — PEOPLE_IMPORT_APPLIED.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: interactionId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: teacherRosterId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: dryRun
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Книга XLSX по шаблону
+      responses:
+        '200':
+          description: Итог проверки или загрузки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeopleImportResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/people-settings:
+    get:
+      tags: [Interaction]
+      summary: Настройки учёта людей и часов
+      operationId: getPeopleSettings
+      description: Единицы часа по умолчанию и срок передачи сведений в ФРДО; читают все сотрудники.
+      responses:
+        '200':
+          description: Действующие настройки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeopleSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/people-settings:
+    put:
+      tags: [Administration]
+      summary: Сохранить настройки учёта людей и часов
+      operationId: updatePeopleSettings
+      description: >-
+        Только ADMIN. Единицы часа (академический — 45 минут, астрономический — 60 минут) для преподавания, стажировок
+        и повышения квалификации; срок передачи сведений в ФРДО (1–365 дней, пусто — срок не считается) и за сколько
+        дней напоминать (0–90). Прежние и новые значения — в журнал PEOPLE_SETTINGS_CHANGED.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PeopleSettingsRequest'
+      responses:
+        '200':
+          description: Сохранённые настройки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeopleSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Administration]
+      summary: Вернуть настройки учёта людей и часов по умолчанию
+      operationId: resetPeopleSettings
+      description: Только ADMIN. Записи журнала PEOPLE_SETTINGS_CHANGED с прежними значениями.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Действуют значения по умолчанию
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/reports/people:
+    get:
+      tags: [Reports]
+      summary: Отчёт «Люди и часы» за период
+      operationId: getPeopleReport
+      description: >-
+        Часы преподавания сотрудниками по вузам, исполнителям и месяцам; стажировки (стажёры, часы стажёров и
+        наставников); повышение квалификации (аттестованы, переданы в ФРДО, просрочка). Запись входит, если её период
+        пересекается с отчётным; часы приведены к единице из настроек. Область данных как у карточек; администратор и
+        представитель вуза — 403. Без дат — с 1 января по сегодня.
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Итоги отчёта
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeopleReport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ContactInteractionMutationForbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
   securitySchemes:
     maxAppBearer:
@@ -10036,6 +12066,21 @@ components:
       name: SESSION
       description: Серверная сессия BFF, созданная входом через GET /api/auth/login. Swagger UI на том же origin использует сессию браузера.
   parameters:
+    PeopleRecordId:
+      name: recordId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PeopleRecordVersion:
+      name: version
+      in: query
+      required: true
+      description: Текущая версия записи; чужая — 409 VERSION_CONFLICT
+      schema:
+        type: integer
+        minimum: 0
     LearningDynamicsFrom:
       name: from
       in: query
@@ -10911,10 +12956,24 @@ components:
           type: integer
     EnrolmentQueue:
       type: object
-      required: [groups, moodleWriteAvailable]
+      required: [groups, moodleWriteAvailable, streams]
       properties:
         moodleWriteAvailable:
           type: boolean
+        streams:
+          type: array
+          description: Потоки, у которых есть строки в очереди (без отбора), и число строк по всем группам
+          items:
+            type: object
+            required: [id, title, total]
+            properties:
+              id:
+                type: string
+                format: uuid
+              title:
+                type: string
+              total:
+                type: integer
         groups:
           type: array
           items:
@@ -10942,7 +13001,7 @@ components:
     EnrolmentStream:
       type: object
       required: [id, courseName, streamNo, programName, endsOn, keepUntil, version, paid, profilesComplete, exported,
-                 transferred, pending]
+                 transferred, pending, moodleCourseId, moodleGroupId]
       properties:
         id:
           type: string
@@ -10980,6 +13039,31 @@ components:
         pending:
           type: integer
           minimum: 0
+        moodleCourseId:
+          type: [integer, 'null']
+          format: int64
+          description: Явное уточнение курса Moodle; null — курс по сопоставлениям программы потока
+        moodleGroupId:
+          type: [integer, 'null']
+          format: int64
+          description: Группа Moodle при явном уточнении курса; null — группа по сопоставлениям или без группы
+    StreamMoodleCourseUpdate:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        courseId:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          description: Номер курса Moodle; null снимает уточнение
+        groupId:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          description: Номер группы Moodle; только вместе с курсом
     EnrolmentCounters:
       type: object
       required: [profiles, profilesLimit, nearLimit, streamsWithoutEndDate]
@@ -11666,6 +13750,25 @@ components:
           type: string
         role:
           $ref: '#/components/schemas/AgreementStageRole'
+    WorkActiveAgreement:
+      type: object
+      required: [id, number, linked]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+        concludedOn:
+          type: [string, 'null']
+          format: date
+        validUntil:
+          type: [string, 'null']
+          format: date
+          description: Срок действия; null — бессрочный
+        linked:
+          type: boolean
+          description: Договор связан с этой работой
     WorkAgreements:
       type: object
       required: [interactionId, organizationId, signingRuleEnabled, stages, agreements, activeAgreementNumber]
@@ -11673,6 +13776,13 @@ components:
         activeAgreementNumber:
           type: [string, 'null']
           description: Номер действующего договора школы с вузом (любого, не только связанного с работой); по нему правило договора пропускает переход
+        activeAgreement:
+          description: >
+            Действующий договор, которым выполнено правило договора: связанный с работой, иначе самый свежий по смене статуса
+            договор вуза; null, если действующего нет
+          anyOf:
+            - $ref: '#/components/schemas/WorkActiveAgreement'
+            - type: 'null'
         interactionId:
           type: string
           format: uuid
@@ -11835,12 +13945,728 @@ components:
       enum: [SIGNING, RENEWAL]
     AgreementActivityStatus:
       type: string
-      description: PLANNED запланировано, IN_PROGRESS выполняется, DONE выполнено, CANCELLED отменено
-      enum: [PLANNED, IN_PROGRESS, DONE, CANCELLED]
+      description: >-
+        PLANNED запланировано, IN_PROGRESS выполняется, DONE проведено, CONFIRMED подтверждено вузом, REJECTED отклонено,
+        CANCELLED отменено
+      enum: [PLANNED, IN_PROGRESS, DONE, CONFIRMED, REJECTED, CANCELLED]
+    AgreementActivityAttribute:
+      type: string
+      description: >-
+        Атрибут мероприятия, который вид мероприятия может сделать обязательным. UNIT_QUANTITY — единица и количество по
+        плану (у проведённого — и факт), DOCUMENT — подтверждающий документ (только у проведённого и подтверждённого)
+      enum: [EDUCATION_LEVEL, PARTICIPANTS, UNIT_QUANTITY, COST, EXECUTOR, DOCUMENT]
+    AgreementReferenceCategory:
+      type: string
+      description: EXECUTOR исполнитель (организация группы компаний), EDUCATION_LEVEL уровень образования, UNIT единица
+      enum: [EXECUTOR, EDUCATION_LEVEL, UNIT]
+    AgreementReferenceItem:
+      type: object
+      required: [id, category, name, baseAmount, sortOrder, archived, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        category:
+          $ref: '#/components/schemas/AgreementReferenceCategory'
+        name:
+          type: string
+        baseAmount:
+          type: [number, 'null']
+          description: Только у исполнителя — база для свода против порога, рублей
+        sortOrder:
+          type: integer
+        archived:
+          type: boolean
+        version:
+          type: integer
+          minimum: 0
+    AgreementReferenceCreate:
+      type: object
+      required: [category, name]
+      properties:
+        category:
+          $ref: '#/components/schemas/AgreementReferenceCategory'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        baseAmount:
+          type: [number, 'null']
+          minimum: 0
+    AgreementReferenceUpdate:
+      type: object
+      required: [version, name, archived]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        archived:
+          type: boolean
+        baseAmount:
+          type: [number, 'null']
+          minimum: 0
+    AgreementRate:
+      type: object
+      required: [id, kindId, kindName, unitId, unitName, educationLevelId, educationLevelName, effectiveFrom, rate, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kindId:
+          type: string
+          format: uuid
+        kindName:
+          type: string
+        unitId:
+          type: string
+          format: uuid
+        unitName:
+          type: string
+        educationLevelId:
+          type: [string, 'null']
+          format: uuid
+          description: Пусто — ставка для любого уровня
+        educationLevelName:
+          type: [string, 'null']
+        effectiveFrom:
+          type: string
+          format: date
+        rate:
+          type: number
+          description: Рублей за единицу
+        version:
+          type: integer
+          minimum: 0
+    AgreementRateInput:
+      type: object
+      required: [kindId, unitId, effectiveFrom, rate]
+      properties:
+        version:
+          type: [integer, 'null']
+          minimum: 0
+          description: Обязательно при изменении
+        kindId:
+          type: string
+          format: uuid
+        unitId:
+          type: string
+          format: uuid
+        educationLevelId:
+          type: [string, 'null']
+          format: uuid
+        effectiveFrom:
+          type: string
+          format: date
+        rate:
+          type: number
+          minimum: 0
+    AgreementReportingPeriodKind:
+      type: string
+      description: CALENDAR календарный год, ACADEMIC учебный год с месяца academicYearStartMonth
+      enum: [CALENDAR, ACADEMIC]
+    AgreementReportingSettings:
+      type: object
+      required: [periodKind, academicYearStartMonth, silenceDays, repeatSilenceDays, reminderDays, thresholdEnabled, thresholdPercent,
+                 thresholdBase, thresholdBaseLabel]
+      properties:
+        periodKind:
+          $ref: '#/components/schemas/AgreementReportingPeriodKind'
+        academicYearStartMonth:
+          type: integer
+          minimum: 1
+          maximum: 12
+        silenceDays:
+          type: [integer, 'null']
+          description: Срок ответа вуза на перечень, календарных дней; пусто — без согласования «молчанием»
+        repeatSilenceDays:
+          type: [integer, 'null']
+          description: Срок ответа на повторно отправленный перечень; пусто — как silenceDays
+        reminderDays:
+          type: integer
+          description: За сколько дней напоминать о сроках отчётного цикла
+        thresholdEnabled:
+          type: boolean
+        thresholdPercent:
+          type: [number, 'null']
+        thresholdBase:
+          type: [number, 'null']
+          description: Общая база порога, рублей; пусто — сумма баз исполнителей
+        thresholdBaseLabel:
+          type: [string, 'null']
+    AgreementReportingSettingsInput:
+      type: object
+      required: [periodKind, academicYearStartMonth, reminderDays, thresholdEnabled]
+      properties:
+        periodKind:
+          $ref: '#/components/schemas/AgreementReportingPeriodKind'
+        academicYearStartMonth:
+          type: integer
+          minimum: 1
+          maximum: 12
+        silenceDays:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 365
+        repeatSilenceDays:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 365
+        reminderDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+        thresholdEnabled:
+          type: boolean
+        thresholdPercent:
+          type: [number, 'null']
+          exclusiveMinimum: 0
+          maximum: 100
+        thresholdBase:
+          type: [number, 'null']
+          minimum: 0
+        thresholdBaseLabel:
+          type: [string, 'null']
+          maxLength: 300
+    AgreementReportColumn:
+      type: object
+      required: [code, title]
+      properties:
+        code:
+          type: string
+          maxLength: 40
+          description: >-
+            ORGANIZATION, AGREEMENT, KIND, TITLE, EDUCATION_LEVEL, EXECUTOR, STATUS, PERIOD, UNIT, PLANNED_VOLUME,
+            ACTUAL_VOLUME, PARTICIPANTS, COST, RATE, PLANNED_VALUATION, ACTUAL_VALUATION, DOCUMENT, RESPONSIBLE
+        title:
+          type: [string, 'null']
+          maxLength: 200
+          description: Подпись колонки; пусто — подпись по умолчанию
+    AgreementReportColumnOption:
+      type: object
+      required: [code, defaultTitle]
+      properties:
+        code:
+          type: string
+        defaultTitle:
+          type: string
+    AgreementReportTemplateInput:
+      type: object
+      required: [columns]
+      properties:
+        columns:
+          type: array
+          minItems: 1
+          maxItems: 40
+          items:
+            $ref: '#/components/schemas/AgreementReportColumn'
+    AgreementReportingDeadline:
+      type: object
+      required: [id, name, dueOn, deliverable, annual]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        dueOn:
+          type: string
+          format: date
+        deliverable:
+          type: [string, 'null']
+          description: Что сдаётся
+        annual:
+          type: boolean
+          description: Повторяется ежегодно в тот же день и месяц
+    AgreementReportingDeadlineInput:
+      type: object
+      required: [name, dueOn]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        dueOn:
+          type: string
+          format: date
+        deliverable:
+          type: [string, 'null']
+          maxLength: 500
+        annual:
+          type: [boolean, 'null']
+    AgreementReportingDeadlinesInput:
+      type: object
+      required: [deadlines]
+      properties:
+        deadlines:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/AgreementReportingDeadlineInput'
+    AgreementActivityAttributeOption:
+      type: object
+      required: [code, title]
+      properties:
+        code:
+          $ref: '#/components/schemas/AgreementActivityAttribute'
+        title:
+          type: string
+    AgreementReportingPeriod:
+      type: object
+      required: [year, from, to, label]
+      properties:
+        year:
+          type: integer
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        label:
+          type: string
+    AgreementReportingSettingsView:
+      type: object
+      required: [settings, columns, defaultColumns, availableColumns, deadlines, attributes, currentPeriod, updatedAt, updatedByName]
+      properties:
+        settings:
+          $ref: '#/components/schemas/AgreementReportingSettings'
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementReportColumn'
+        defaultColumns:
+          type: boolean
+        availableColumns:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementReportColumnOption'
+        deadlines:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementReportingDeadline'
+        attributes:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementActivityAttributeOption'
+        currentPeriod:
+          $ref: '#/components/schemas/AgreementReportingPeriod'
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+        updatedByName:
+          type: [string, 'null']
+    AgreementDeadlineReminder:
+      type: object
+      required: [id, name, dueOn, deliverable, daysLeft]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        dueOn:
+          type: string
+          format: date
+          description: Ближайшая дата (у ежегодного срока — в этом или следующем году)
+        deliverable:
+          type: [string, 'null']
+        daysLeft:
+          type: integer
+          minimum: 0
+    ActivityListStatus:
+      type: string
+      description: DRAFT проект, REVIEW на согласовании, APPROVED согласован, APPROVED_SILENTLY согласован без ответа, RETURNED возвращён
+      enum: [DRAFT, REVIEW, APPROVED, APPROVED_SILENTLY, RETURNED]
+    ActivityListAction:
+      type: string
+      description: SEND отправить вузу, APPROVE согласовать, RETURN вернуть на доработку
+      enum: [SEND, APPROVE, RETURN]
+    AgreementListReminder:
+      type: object
+      required: [id, organizationId, organizationName, title, status, reviewDueOn]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        title:
+          type: string
+        status:
+          $ref: '#/components/schemas/ActivityListStatus'
+        reviewDueOn:
+          type: [string, 'null']
+          format: date
+    AgreementReportingReminders:
+      type: object
+      required: [reminderDays, deadlines, lists]
+      properties:
+        reminderDays:
+          type: integer
+          minimum: 0
+        deadlines:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementDeadlineReminder'
+        lists:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementListReminder'
+    ActivityListSummary:
+      type: object
+      required: [id, organizationId, organizationName, title, periodFrom, periodTo, periodLabel, status, reviewRound, sentOn, reviewDueOn,
+                 decidedOn, itemCount, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        title:
+          type: string
+        periodFrom:
+          type: string
+          format: date
+        periodTo:
+          type: string
+          format: date
+        periodLabel:
+          type: string
+        status:
+          $ref: '#/components/schemas/ActivityListStatus'
+        reviewRound:
+          type: integer
+          minimum: 0
+        sentOn:
+          type: [string, 'null']
+          format: date
+        reviewDueOn:
+          type: [string, 'null']
+          format: date
+          description: Последний день срока ответа вуза; пусто — срок не задан
+        decidedOn:
+          type: [string, 'null']
+          format: date
+        itemCount:
+          type: integer
+          minimum: 0
+        version:
+          type: integer
+          minimum: 0
+    ActivityListItem:
+      type: object
+      required: [activityId, agreementNumber, kindName, title, educationLevel, executor, unit, plannedVolume, participants, cost,
+                 periodStart, periodEnd]
+      properties:
+        activityId:
+          type: [string, 'null']
+          format: uuid
+          description: Пусто, если мероприятие потом удалили из плана; позиция перечня остаётся
+        agreementNumber:
+          type: string
+        kindName:
+          type: string
+        title:
+          type: string
+        educationLevel:
+          type: [string, 'null']
+        executor:
+          type: [string, 'null']
+        unit:
+          type: [string, 'null']
+        plannedVolume:
+          type: [integer, 'null']
+        participants:
+          type: [integer, 'null']
+        cost:
+          type: [number, 'null']
+        periodStart:
+          type: [string, 'null']
+          format: date
+        periodEnd:
+          type: [string, 'null']
+          format: date
+    ActivityListEvent:
+      type: object
+      required: [id, fromStatus, toStatus, channel, comment, actorName, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        fromStatus:
+          oneOf:
+            - $ref: '#/components/schemas/ActivityListStatus'
+            - type: 'null'
+        toStatus:
+          $ref: '#/components/schemas/ActivityListStatus'
+        channel:
+          type: string
+          enum: [KAM, COORDINATOR, SYSTEM]
+        comment:
+          type: [string, 'null']
+        actorName:
+          type: [string, 'null']
+        occurredAt:
+          type: string
+          format: date-time
+    ActivityList:
+      type: object
+      required: [summary, items, history, coordinatorAvailable, actions]
+      properties:
+        summary:
+          $ref: '#/components/schemas/ActivityListSummary'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityListItem'
+        history:
+          type: array
+          description: Новые сверху
+          items:
+            $ref: '#/components/schemas/ActivityListEvent'
+        coordinatorAvailable:
+          type: boolean
+        actions:
+          type: array
+          description: Действия, доступные текущему пользователю
+          items:
+            $ref: '#/components/schemas/ActivityListAction'
+    ActivityListsView:
+      type: object
+      required: [coordinatorAvailable, currentPeriod, lists]
+      properties:
+        coordinatorAvailable:
+          type: boolean
+        currentPeriod:
+          $ref: '#/components/schemas/AgreementReportingPeriod'
+        lists:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityListSummary'
+    ActivityListCreate:
+      type: object
+      required: [year]
+      properties:
+        title:
+          type: [string, 'null']
+          maxLength: 200
+        year:
+          type: integer
+          minimum: 2000
+          maximum: 2100
+          description: Год начала периода (для учебного года — год, в котором он начинается)
+        activityIds:
+          type: [array, 'null']
+          maxItems: 500
+          items:
+            type: string
+            format: uuid
+    ActivityListUpdate:
+      type: object
+      required: [version, title]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        activityIds:
+          type: [array, 'null']
+          maxItems: 500
+          items:
+            type: string
+            format: uuid
+    ActivityListTransition:
+      type: object
+      required: [version, action]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        action:
+          $ref: '#/components/schemas/ActivityListAction'
+        comment:
+          type: [string, 'null']
+          maxLength: 2000
+        respondedOn:
+          type: [string, 'null']
+          format: date
+          description: Дата ответа вуза для отметки КАМ; пусто — сегодня
+    PartnerActivityListDecision:
+      type: object
+      required: [version, decision]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        decision:
+          type: string
+          enum: [APPROVE, RETURN]
+        comment:
+          type: [string, 'null']
+          maxLength: 2000
+    AgreementReportQuantity:
+      type: object
+      required: [unit, planned, actual]
+      properties:
+        unit:
+          type: string
+        planned:
+          type: integer
+        actual:
+          type: integer
+    AgreementReportGroup:
+      type: object
+      required: [id, name, activities, participants, quantities, cost, plannedValuation, actualValuation]
+      properties:
+        id:
+          type: [string, 'null']
+          format: uuid
+          description: Пусто — «Не указан»
+        name:
+          type: string
+        activities:
+          type: integer
+        participants:
+          type: integer
+        quantities:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementReportQuantity'
+        cost:
+          type: number
+        plannedValuation:
+          type: number
+        actualValuation:
+          type: number
+    AgreementReportTotals:
+      type: object
+      required: [organizations, activities, participants, cost, plannedValuation, actualValuation, withoutRate]
+      properties:
+        organizations:
+          type: integer
+        activities:
+          type: integer
+        participants:
+          type: integer
+        cost:
+          type: number
+        plannedValuation:
+          type: number
+        actualValuation:
+          type: number
+        withoutRate:
+          type: integer
+          description: Мероприятий без подходящей ставки
+    AgreementThresholdRow:
+      type: object
+      required: [executorId, name, plannedValuation, actualValuation, base, required, plannedMet, actualMet]
+      properties:
+        executorId:
+          type: [string, 'null']
+          format: uuid
+        name:
+          type: string
+        plannedValuation:
+          type: number
+        actualValuation:
+          type: number
+        base:
+          type: [number, 'null']
+        required:
+          type: [number, 'null']
+          description: База × порог / 100
+        plannedMet:
+          type: [boolean, 'null']
+        actualMet:
+          type: [boolean, 'null']
+    AgreementThresholdSummary:
+      type: object
+      required: [enabled, percent, baseLabel, rows, total]
+      properties:
+        enabled:
+          type: boolean
+        percent:
+          type: [number, 'null']
+        baseLabel:
+          type: [string, 'null']
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementThresholdRow'
+        total:
+          oneOf:
+            - $ref: '#/components/schemas/AgreementThresholdRow'
+            - type: 'null'
+    AgreementReport:
+      type: object
+      required: [generatedAt, from, to, notes, columns, rows, totals, byOrganization, byKind, byExecutor, byLevel, threshold]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        notes:
+          type: array
+          items:
+            type: string
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementReportColumn'
+        rows:
+          type: array
+          description: Значения строк в порядке columns; числа — числами, пустое — null
+          items:
+            type: array
+            items:
+              type: [string, number, 'null']
+        totals:
+          $ref: '#/components/schemas/AgreementReportTotals'
+        byOrganization:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementReportGroup'
+        byKind:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementReportGroup'
+        byExecutor:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementReportGroup'
+        byLevel:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgreementReportGroup'
+        threshold:
+          $ref: '#/components/schemas/AgreementThresholdSummary'
     AgreementActivityKind:
       type: object
-      required: [id, name, sortOrder, archived, version]
+      required: [id, name, sortOrder, archived, version, requiredAttributes]
       properties:
+        requiredAttributes:
+          type: array
+          description: Обязательные атрибуты мероприятия этого вида; по умолчанию пусто
+          items:
+            $ref: '#/components/schemas/AgreementActivityAttribute'
         id:
           type: string
           format: uuid
@@ -11875,6 +14701,12 @@ components:
           maxLength: 200
         archived:
           type: boolean
+        requiredAttributes:
+          type: [array, 'null']
+          maxItems: 10
+          description: Обязательные атрибуты; пусто (null) — прежний набор сохраняется
+          items:
+            $ref: '#/components/schemas/AgreementActivityAttribute'
     AgreementSummary:
       type: object
       required: [id, organizationId, number, concludedOn, validUntil, sentOn, plannedKind, plannedOn, status, statusChangedAt,
@@ -12144,8 +14976,34 @@ components:
     AgreementActivity:
       type: object
       required: [id, agreementId, kindId, kindName, title, unit, plannedVolume, actualVolume, plannedStart, plannedEnd,
-                 actualStart, actualEnd, responsibleProfileId, responsibleName, status, version, interactions, attachments]
+                 actualStart, actualEnd, responsibleProfileId, responsibleName, status, version, interactions, attachments,
+                 educationLevelId, educationLevelName, participants, unitId, cost, executorId, executorName, documentNote]
       properties:
+        educationLevelId:
+          type: [string, 'null']
+          format: uuid
+        educationLevelName:
+          type: [string, 'null']
+        participants:
+          type: [integer, 'null']
+          minimum: 0
+          description: Охват — число участников
+        unitId:
+          type: [string, 'null']
+          format: uuid
+          description: Единица из справочника; по ней подбирается ставка
+        cost:
+          type: [number, 'null']
+          description: Стоимость или оценка, рублей
+        executorId:
+          type: [string, 'null']
+          format: uuid
+          description: Исполнитель — организация группы компаний из справочника
+        executorName:
+          type: [string, 'null']
+        documentNote:
+          type: [string, 'null']
+          description: Подтверждающий документ — реквизиты (акт, письмо, номер и дата)
         id:
           type: string
           format: uuid
@@ -12254,6 +15112,25 @@ components:
           items:
             type: string
             format: uuid
+        educationLevelId:
+          type: [string, 'null']
+          format: uuid
+        participants:
+          type: [integer, 'null']
+          minimum: 0
+        unitId:
+          type: [string, 'null']
+          format: uuid
+          description: Единица из справочника; её название заменяет unit
+        cost:
+          type: [number, 'null']
+          minimum: 0
+        executorId:
+          type: [string, 'null']
+          format: uuid
+        documentNote:
+          type: [string, 'null']
+          maxLength: 500
     AgreementLinkedWork:
       type: object
       required: [id, title]
@@ -12615,8 +15492,16 @@ components:
           description: Когда адресат подтвердил получение этой версии
     PartnerReceipt:
       type: object
-      required: [receiptNumber, kind, message, fileName, fileState, submittedAt, decision, decisionReason]
+      required: [responseId, receiptNumber, kind, message, fileName, fileState, submittedAt, decision, decisionReason,
+                 downloadable]
       properties:
+        responseId:
+          type: string
+          format: uuid
+          description: Ответ координатора; по нему скачивается свой файл ответа (идентификатор файла не отдаётся)
+        downloadable:
+          type: boolean
+          description: Файл ответа загрузил этот координатор, антивирус пропустил его и файл не удалён
         receiptNumber:
           type: string
           description: Номер квитанции
@@ -14435,6 +17320,9 @@ components:
         missingDocuments:
           type: boolean
           description: Сейчас на текущем этапе не хватает обязательного документа (сигнал «нет документов»)
+        stageNormDays:
+          type: [integer, 'null']
+          description: Норматив текущего этапа шаблона в днях; null — действует общий порог «долго на этапе»
     WorkLearning:
       type: object
       required: [runs, participants, signals, signalTitles]
@@ -14533,7 +17421,9 @@ components:
             $ref: '#/components/schemas/AgreementRegistryRow'
         routes:
           type: array
-          description: Маршруты строк для матрицы «программа × этап»; этапы шаблона по порядку, затем этапы работ вне шаблона
+          description: >
+            Маршруты строк для матрицы «программа × этап»; этапы шаблона по порядку, этапы карточек — на своём месте,
+            этапы прежних версий шаблона — в конце
           items:
             $ref: '#/components/schemas/WorkControlRoute'
     WorkControlRoute:
@@ -14552,6 +17442,13 @@ components:
         formerStages:
           type: array
           description: Этапы работ, которых нет в текущей версии шаблона (прежние версии); стоят в конце stages
+          items:
+            type: string
+        cardStages:
+          type: array
+          description: >
+            Этапы, которые КАМ добавил в маршрут своей карточки; стоят в stages после этапа, за которым идут в карточке,
+            и не считаются прежними
           items:
             type: string
     OrganizationPath:
@@ -14579,6 +17476,10 @@ components:
           type: string
         optional:
           type: boolean
+        enteredAt:
+          type: [string, 'null']
+          format: date-time
+          description: Последний вход на этап по истории; null — на этап не входили (впереди или пропущен)
     OrganizationPathWork:
       type: object
       required: [interactionId, title, status, products, stages, stageName, stagePosition, due, problems, risks, createdAt]
@@ -15155,7 +18056,7 @@ components:
     ReminderDigest:
       type: object
       required: [enabled, generatedAt, upcomingDays, overdueTotal, dueTodayTotal, upcomingTotal, overdue, upcoming, expiringLicenses, trainingCycles, licenseExpiresBy,
-        qualificationDue, agreementNoticeDays, expiringAgreements, feed, unassignedAfterBlock]
+        qualificationDue, agreementNoticeDays, expiringAgreements, feed, unassignedAfterBlock, frdoDue, agreementReporting]
       properties:
         enabled:
           type: boolean
@@ -15198,6 +18099,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ReminderQualification'
+        frdoDue:
+          type: array
+          description: Удостоверения, сведения о которых пора передать в ФРДО (срок и «за сколько дней» — настройки учёта людей и часов)
+          items:
+            $ref: '#/components/schemas/ReminderFrdo'
         agreementNoticeDays:
           type: integer
           minimum: 0
@@ -15216,6 +18122,8 @@ components:
             не назначен. У КАМ всегда пусто
           items:
             $ref: '#/components/schemas/ReminderUnassigned'
+        agreementReporting:
+          $ref: '#/components/schemas/AgreementReportingReminders'
     ReminderUnassigned:
       type: object
       required: [organizationId, organizationName, previousOwnerName, unassignedAt]
@@ -15728,8 +18636,13 @@ components:
           format: uuid
         type:
           type: string
+          description: >
+            DOCUMENT_ADDED, AGREEMENT_STATUS_CHANGED и CYCLE_STARTED — события из соседних таблиц: документ, не привязанный
+            к переходу или комментарию; создание и смена статуса договора этой работы; запуск нового цикла (в обеих карточках).
+            У них есть link, а id и commandId — идентификатор документа, события договора или другой карточки цикла
           enum: [CREATED, TRANSITIONED, COMMENTED, STAGES_EDITED, PLAN_UPDATED, DETAILS_UPDATED, STATUS_CHANGED,
-                 AGREEMENT_UPDATED, ATTACHMENT_DELETED, STAGE_COMPLETED, STAGE_COMPLETION_CLEARED]
+                 AGREEMENT_UPDATED, ATTACHMENT_DELETED, STAGE_COMPLETED, STAGE_COMPLETION_CLEARED,
+                 DOCUMENT_ADDED, AGREEMENT_STATUS_CHANGED, CYCLE_STARTED]
         stageId:
           type: string
           format: uuid
@@ -15772,6 +18685,35 @@ components:
         preparedByAgent:
           type: boolean
           description: Событие записано по плану ИИ-агента, который подтвердил сотрудник (ключ повтора agent-plan:<id>)
+        importSource:
+          type: [string, 'null']
+          description: >-
+            Событие перенесено импортом истории: файл и строка. actorDisplayName у такого события — администратор,
+            выполнивший загрузку; occurredAt — дата события из файла
+        importAuthor:
+          type: [string, 'null']
+          description: Автор события из файла — сотрудник по логину или «импорт»; null у событий, сделанных в CRM
+        link:
+          description: Документ, договор или карточка другого цикла у событий из соседних таблиц; у остальных null
+          anyOf:
+            - $ref: '#/components/schemas/InteractionEventLink'
+            - type: 'null'
+    InteractionEventLink:
+      type: object
+      required: [kind, id, label]
+      properties:
+        kind:
+          type: string
+          enum: [ATTACHMENT, AGREEMENT, INTERACTION]
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: [string, 'null']
+          format: uuid
+          description: Вуз договора или карточки — для адреса ссылки
+        label:
+          type: string
     WorkflowStageInput:
       type: object
       required: [name, order, optional]
@@ -15803,6 +18745,13 @@ components:
           description: Коды обязательных видов документов из справочника «Виды документов»
           items:
             type: string
+        normDays:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 3650
+          description: >-
+            Норматив этапа в днях; «долго на этапе» в «Контроле», отчётах и сигналах берёт его, а без него — общий порог
+            STUCK_DAYS. Правка действует на идущие работы сразу: этап работы находит норматив по этапу шаблона
     WorkflowTransitionInput:
       type: object
       required: [fromOrder, toOrder, commentRequired]
@@ -15893,7 +18842,7 @@ components:
     InteractionKind:
       type: object
       required: [id, name, description, active, templateId, templateName, sortOrder, version, teamTemplateId, teamTemplateName,
-                 defaultKind]
+                 defaultKind, interactionCount]
       properties:
         id:
           type: string
@@ -15925,6 +18874,10 @@ components:
           description: Шаблон команды текущего руководителя или сотрудника для этого вида
         teamTemplateName:
           type: [string, 'null']
+        interactionCount:
+          type: integer
+          format: int64
+          description: Число незавершённых взаимодействий этого вида; администратор видит его при отключении вида
     InteractionKindRequest:
       type: object
       required: [name]
@@ -15960,7 +18913,8 @@ components:
           description: Шаблон команды или общий; null — вернуться к шаблону вида
     InteractionKindRule:
       type: object
-      required: [id, kindId, kindName, organizationType, programId, programName, productId, productName, priority, version]
+      required: [id, kindId, kindName, organizationType, programId, programName, productId, productName, priority, version, active,
+                 kindActive]
       properties:
         id:
           type: string
@@ -15987,6 +18941,12 @@ components:
           type: integer
         version:
           type: integer
+        active:
+          type: boolean
+          description: false — правило временно отключено и не подбирает вид
+        kindActive:
+          type: boolean
+          description: Действует ли вид правила; правило отключённого вида не подбирает вид и двойником не считается
     InteractionKindRuleRequest:
       type: object
       required: [kindId]
@@ -16011,6 +18971,9 @@ components:
           minimum: 1
           maximum: 1000
           description: Меньший номер — выше приоритет; по умолчанию 100
+        active:
+          type: [boolean, 'null']
+          description: false — временно отключить правило, не удаляя; null — правило действует
     InteractionKindResolution:
       type: object
       required: [kindId, kindName, kindSource, templateId, templateName, templateSource]
@@ -16255,7 +19218,7 @@ components:
           minimum: 0
     InteractionRoute:
       type: object
-      required: [templateId, templateName, version, latestVersion]
+      required: [templateId, templateName, version, latestVersion, fromPreviousKind]
       properties:
         templateId:
           type: string
@@ -16268,6 +19231,9 @@ components:
         latestVersion:
           type: integer
           minimum: 1
+        fromPreviousKind:
+          type: boolean
+          description: Вид карточки меняли, а маршрут остался от прежнего вида (смена вида этапы не меняет)
     CrmProfile:
       type: object
       required: [id, displayName, role, teamId, teamName, active, enrolmentOperator, pendingActivation, accessRevision, version]
@@ -16458,11 +19424,48 @@ components:
           format: date-time
     BackupStatus:
       type: object
-      required: [lastBackupAt]
+      required: [lastBackupAt, lastBackupBytes, backupFailure, lastRestoreCheckAt, lastRestoreCheckSeconds, restoreCheckFailure, warnings]
       properties:
         lastBackupAt:
           type: [string, 'null']
           format: date-time
+          description: Время последней успешной копии; null — копий ещё не было или стенд восстановлен из копии
+        lastBackupBytes:
+          type: [integer, 'null']
+          format: int64
+          description: Размер последней успешной копии в байтах
+        backupFailure:
+          oneOf:
+            - $ref: '#/components/schemas/BackupFailure'
+            - type: 'null'
+          description: Последний запуск копирования завершился сбоем
+        lastRestoreCheckAt:
+          type: [string, 'null']
+          format: date-time
+          description: Время последней успешной проверки восстановления
+        lastRestoreCheckSeconds:
+          type: [integer, 'null']
+          format: int64
+          description: Сколько секунд заняло восстановление при последней успешной проверке
+        restoreCheckFailure:
+          oneOf:
+            - $ref: '#/components/schemas/BackupFailure'
+            - type: 'null'
+          description: Последняя проверка восстановления завершилась сбоем
+        warnings:
+          type: array
+          items:
+            type: string
+            enum: [BACKUP_MISSING, BACKUP_STALE, BACKUP_FAILED, RESTORE_CHECK_MISSING, RESTORE_CHECK_STALE, RESTORE_CHECK_FAILED]
+    BackupFailure:
+      type: object
+      required: [at, message]
+      properties:
+        at:
+          type: [string, 'null']
+          format: date-time
+        message:
+          type: string
     CrmProfileEvent:
       type: object
       required: [id, profileId, commandId, actorProfileId, actorDisplayName, previousDisplayName, displayName, previousRole, role, previousTeamId, previousTeamName, teamId, teamName, previousActive, active, previousEnrolmentOperator, enrolmentOperator, requestId, version, occurredAt]
@@ -16925,11 +19928,54 @@ components:
           type: [string, 'null']
         interactionTitle:
           type: string
+    ImportSettings:
+      type: object
+      required: [defaultStepText, defaultStepDays]
+      properties:
+        defaultStepText:
+          type: string
+          minLength: 1
+          maxLength: 500
+        defaultStepDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+    MissingStepsRequest:
+      type: object
+      required: [interactionIds]
+      properties:
+        interactionIds:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: string
+            format: uuid
+        nextAction:
+          type: [string, 'null']
+          maxLength: 500
+        dueDays:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 365
+    MissingStepsResult:
+      type: object
+      required: [assigned, skipped, nextAction, nextActionAt]
+      properties:
+        assigned:
+          type: integer
+        skipped:
+          type: integer
+        nextAction:
+          type: string
+        nextActionAt:
+          type: string
+          format: date-time
     CatalogImportProfile:
       type: string
-      enum: [AGREEMENT, DIRECTION_PROGRAM, VENDOR_CONTACTS]
+      enum: [AGREEMENT, DIRECTION_PROGRAM, VENDOR_CONTACTS, INTERACTION_HISTORY, UNIVERSITY_AGREEMENT]
       description: >-
-        AGREEMENT загружает десять полей каталога ТЗ; DIRECTION_PROGRAM загружает направления и программы по устойчивым ключам; VENDOR_CONTACTS загружает поставщиков, продукты и контакты поставщиков в формате файла поставщиков организатора.
+        AGREEMENT загружает десять полей каталога ТЗ; DIRECTION_PROGRAM загружает направления и программы по устойчивым ключам; VENDOR_CONTACTS загружает поставщиков, продукты и контакты поставщиков в формате файла поставщиков организатора; INTERACTION_HISTORY загружает события истории взаимодействий с их датами (комментарий, переход этапа, контакт, шаг) с пометкой «импорт»; UNIVERSITY_AGREEMENT загружает договоры школы и вуза с предметом и планом мероприятий.
     CatalogImportRowTarget:
       type: object
       description: >-
@@ -16955,7 +20001,7 @@ components:
         columns:
           type: object
           description: >-
-            Соответствие поля импорта заголовку книги. AGREEMENT требует organizationName, vendorName и productName и принимает contractNumber, licenseSigned, licenseExpiryYear, transferStatus, managerName, contactName, comment, organizationType, organizationExternalKey, vendorExternalKey, productExternalKey, agreementExternalKey, contactExternalKey, contactPosition, contactEmail, contactPhone, interactionId и programName (ИТ-программа из справочника; строки одного вуза и программы дают одно взаимодействие, без колонки organizationType тип нового вуза берётся из названия). Недостающие внешние ключи выводятся из нормализованных имён. DIRECTION_PROGRAM требует directionExternalKey и directionName и принимает programExternalKey, programName и programDirectionRef. VENDOR_CONTACTS требует vendorName и принимает productNames, vendorContactName, vendorContactPhone, vendorContactEmail и vendorContactChannels.
+            Соответствие поля импорта заголовку книги. AGREEMENT требует organizationName, vendorName и productName и принимает contractNumber, licenseSigned, licenseExpiryYear, transferStatus, managerName, contactName, comment, organizationType, organizationExternalKey, vendorExternalKey, productExternalKey, agreementExternalKey, contactExternalKey, contactPosition, contactEmail, contactPhone, interactionId и programName (ИТ-программа из справочника; строки одного вуза и программы дают одно взаимодействие, без колонки organizationType тип нового вуза берётся из названия). Недостающие внешние ключи выводятся из нормализованных имён. DIRECTION_PROGRAM требует directionExternalKey и directionName и принимает programExternalKey, programName и programDirectionRef. VENDOR_CONTACTS требует vendorName и принимает productNames, vendorContactName, vendorContactPhone, vendorContactEmail и vendorContactChannels. INTERACTION_HISTORY требует organizationName, eventDate и eventType и принимает organizationExternalKey, interactionTitle, interactionExternalKey, interactionId, stageName, eventText, eventAuthor (логин сотрудника или «импорт»), contactChannel, stepDueDate и rowKey. UNIVERSITY_AGREEMENT требует organizationName и agreementNumber и принимает organizationExternalKey, agreementStatus, concludedOn, validUntil, sentOn, parties, programNames, productNames, directionNames, activityKind, activityTitle, activityUnit, activityPlannedVolume, activityPlannedStart, activityPlannedEnd и activityStatus.
           additionalProperties:
             type: string
             minLength: 1
@@ -16979,6 +20025,11 @@ components:
           description: >-
             Команда для новых вузов без ФИО менеджера: такой вуз создаётся в ней со статусом «Требует назначения».
             Без команды строка остаётся ошибкой.
+        stageFromHistory:
+          type: [boolean, 'null']
+          description: >-
+            Только INTERACTION_HISTORY. true — после применения этап карточки ставится по самому позднему переходу из
+            файла, если после него в карточке не было других переходов.
     CatalogImportSheet:
       type: object
       required: [name, headers, hidden]
@@ -17188,8 +20239,18 @@ components:
         (команда APPLY_SOURCE_RECORD: Moodle, сайт), null, если таких событий нет; колонки по договору показывают само значение для одного продукта и пары
         «продукт: значение» для нескольких. EVENTS допускает EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE,
         FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND допускает DIRECTION, PROGRAM,
-        APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, COMPLETION_BASIS, PARALLEL_RUNS,
+        DEMAND_RANK, DEMAND_INDEX, DEMAND_CONTRIBUTIONS, DEMAND_COVERAGE, DEMAND_TREND,
+        APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, ENROLLED_GROWTH, LEARNERS_COMPLETED, COMPLETION_SHARE, COMPLETION_BASIS,
+        ACTIVITY_SHARE, UNIVERSITY_DEMAND, PARALLEL_RUNS,
         MARKET_VACANCIES, MARKET_TREND; заголовки колонок DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков.
+        Индекс востребованности (паспорт М17): DEMAND_INDEX — 0–100 с одним знаком, сумма вкладов компонентов «Прирост
+        записанных» (ENROLLED_GROWTH, участия к прошлому периоду той же длины), «Доля завершивших» (при покрытии статусов не
+        ниже порога сигналов LMS), «Активность за 7 дней» (ACTIVITY_SHARE, только свежие наблюдения), «Спрос вузов»
+        (UNIVERSITY_DEMAND — взаимодействия по программе, созданные в периоде) и «Оплаты открытого набора»; вклад — вес ×
+        процентиль среди программ выборки, вес компонента без данных делится между остальными. DEMAND_RANK — место (равные
+        индексы делят место), DEMAND_CONTRIBUTIONS — текст «почему такое место», DEMAND_COVERAGE — доля веса с данными и
+        пометки малой базы и устаревших данных, DEMAND_TREND — изменение индекса и места к прошлому периоду. При отсутствии
+        данных Moodle или покрытии ниже порога DEMAND_RANK и DEMAND_INDEX — null («данных недостаточно»), а не 0.
         COMPLETION_SHARE — C / (C + N) по участиям с известным статусом завершения, COMPLETION_BASIS — основание этой доли
         («C из C + N с известным статусом; данные по C + N из P», плюс «потоков без данных: K», если у части потоков периода
         нет наблюдения на дату; программа только с такими потоками — «нет данных…», без потоков в периоде — null).
@@ -17215,7 +20276,8 @@ components:
       enum: [ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK,
              MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, EVENT_AT, EVENT_TYPE, FROM_STAGE, COMMENT, AUTHOR,
              APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, COMPLETION_BASIS,
-             PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND, VENDORS, CONTRACT_NUMBER,
+             PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND, DEMAND_RANK, DEMAND_INDEX, DEMAND_CONTRIBUTIONS, DEMAND_COVERAGE,
+             DEMAND_TREND, ENROLLED_GROWTH, ACTIVITY_SHARE, UNIVERSITY_DEMAND, VENDORS, CONTRACT_NUMBER,
              LICENSE_SIGNED, LICENSE_EXPIRY_YEAR,
              TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON, TEAM, COMPLETED, MEDIAN_DAYS, P90_DAYS, AVG_DAYS, MAX_DAYS, CURRENT,
              CURRENT_MAX_DAYS,
@@ -17226,7 +20288,7 @@ components:
     ReportFilters:
       type: object
       description: >
-        Пустой список с флагом include=false оставляет измерение без фильтрации, включая строки без значения. includeNo* добавляет к выбранным id строки без значения. managerIds и includeNoManager используют текущего ответственного организации в PORTFOLIO и DEMAND и снимок ответственного события в EVENTS. DEMAND отклоняет productIds, includeNoProduct, stages, workStatuses и flags с 400 VALIDATION_ERROR.
+        Пустой список с флагом include=false оставляет измерение без фильтрации, включая строки без значения. includeNo* добавляет к выбранным id строки без значения. managerIds и includeNoManager используют текущего ответственного организации в PORTFOLIO и DEMAND и снимок ответственного события в EVENTS. DEMAND отклоняет productIds, includeNoProduct, stages, workStatuses и flags с 400 VALIDATION_ERROR; kindIds в DEMAND отбирает только «Спрос вузов».
       properties:
         organizationIds:
           type: array
@@ -17253,7 +20315,7 @@ components:
         kindIds:
           type: array
           maxItems: 500
-          description: Виды взаимодействия; недоступно для DEMAND и AGREEMENTS
+          description: Виды взаимодействия; недоступно для AGREEMENTS; в DEMAND отбирает только компонент «Спрос вузов» (UNIVERSITY_DEMAND)
           items:
             type: string
             format: uuid
@@ -17385,9 +20447,9 @@ components:
             $ref: '#/components/schemas/ReportColumn'
         sortBy:
           description: >
-            Только для DEMAND: APPLICATIONS (по умолчанию), PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED
-            или PARALLEL_RUNS; строки сортируются по этому показателю по убыванию, «нет данных» — в конце, затем по
-            названию программы. Остальные виды отклоняют его с 400 VALIDATION_ERROR.
+            Только для DEMAND: DEMAND_INDEX (по умолчанию — по месту, «данных недостаточно» в конце), APPLICATIONS,
+            PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED или PARALLEL_RUNS; строки сортируются по этому
+            показателю по убыванию, «нет данных» — в конце, затем по названию программы. Остальные виды отклоняют его с 400 VALIDATION_ERROR.
           oneOf:
             - $ref: '#/components/schemas/ReportColumn'
             - type: 'null'
@@ -17491,7 +20553,8 @@ components:
           type: string
           description: >
             Текст для пустых значений: «Не указано» для направления, программы, продуктов и менеджера, «нет данных»
-            для APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS и PARALLEL_RUNS
+            для APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS и PARALLEL_RUNS, «данных недостаточно» для
+            DEMAND_RANK и DEMAND_INDEX
     ReportPreview:
       type: object
       required: [kind, generatedAt, notes, columns, items, page, size, total]
@@ -17998,6 +21061,61 @@ components:
         encryptionAvailable:
           type: boolean
           description: Задан ключ SOURCES_SETTINGS_KEY, и токен можно сохранять на экране
+    DemandIndexWeights:
+      type: object
+      required: [growthWeight, completionWeight, activityWeight, universityWeight, paymentsWeight, minCoveragePercent, smallBase]
+      properties:
+        growthWeight:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Вес «Прирост записанных»
+        completionWeight:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Вес «Доля завершивших»
+        activityWeight:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Вес «Активность за 7 дней»
+        universityWeight:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Вес «Спрос вузов»
+        paymentsWeight:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Вес «Оплаты открытого набора»
+        minCoveragePercent:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Доля веса с данными, ниже которой программа получает «данных недостаточно»
+        smallBase:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: Меньше этого числа участий — пометка «малая база»
+    DemandIndexSettings:
+      type: object
+      required: [current, defaults, saved, updatedAt, updatedByName]
+      properties:
+        current:
+          $ref: '#/components/schemas/DemandIndexWeights'
+        defaults:
+          $ref: '#/components/schemas/DemandIndexWeights'
+        saved:
+          type: boolean
+          description: Значения сохранены администратором; false — действуют значения по умолчанию
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+        updatedByName:
+          type: [string, 'null']
     LaborMarketSettingsUpdate:
       type: object
       properties:
@@ -19005,7 +22123,7 @@ components:
                  LEARNER_RESTRICTED, LEARNER_RESTRICTION_LIFTED, PAID_ORDERS_UPLOADED, LEARNERS_SYNCED,
                  LEARNER_LIST_VIEWED, LEARNER_SEARCHED, LEARNER_VIEWED, LEARNER_FIELDS_REVEALED, LEARNER_CHANGED,
                  LEARNER_ENROLMENTS_MOVED, LEARNER_TEMPLATE_PREVIEWED, LEARNER_TEMPLATE_IMPORTED, LMS_ROSTER_EXPORTED,
-                 LMS_ROSTER_MARKED, STREAM_END_DATE_CHANGED, TEACHER_ROSTER_EXPORTED, TEACHER_ROSTER_MARKED,
+                 LMS_ROSTER_MARKED, STREAM_END_DATE_CHANGED, STREAM_MOODLE_COURSE_CHANGED, TEACHER_ROSTER_EXPORTED, TEACHER_ROSTER_MARKED,
                  AGENT_TOOL_CALLED, AGENT_PLAN_PREPARED, AGENT_PLAN_APPLIED, AGENT_PLAN_REJECTED,
                  AGENT_PLAN_EXPIRED, AGENT_PLAN_STALE, AGENT_PLAN_FAILED,
                  MAX_SETTINGS_CHANGED, MAX_LINK_REQUESTED, MAX_LINKED, MAX_LINK_REJECTED, MAX_UNLINKED, MAX_SESSION_STARTED,
@@ -19014,7 +22132,10 @@ components:
                  LMS_API_TRANSFER, LMS_API_MOVE,
                  LOGIN_FAILED, ACCOUNT_LOCKOUT_RELEASED, ORGANIZATION_RECORD_CHANGED, CATALOG_CHANGED, CATALOG_IMPORT_APPLIED,
                  WORKFLOW_TEMPLATE_CHANGED, WORKFLOW_ROLLOUT_APPLIED, INTERACTION_KIND_CHANGED,
-                 INTERACTION_KIND_RULE_CHANGED, SOURCE_MAPPING_CHANGED,
+                 INTERACTION_KIND_RULE_CHANGED, DEMAND_INDEX_SETTINGS_CHANGED, AGREEMENT_REPORTING_CHANGED,
+                 AGREEMENT_ACTIVITY_LIST_CHANGED, AGREEMENT_ACTIVITY_STATUS_CHANGED, SOURCE_MAPPING_CHANGED,
+                 PEOPLE_SETTINGS_CHANGED, PEOPLE_RECORD_CHANGED, PEOPLE_IMPORT_APPLIED,
+                 SYSTEM_SETTING_CHANGED, PERSONAL_DATA_REQUEST_CHANGED, PERSONAL_DATA_REQUESTS_EXPORTED, CONSENT_CHANGED,
                  MAIL_SETTINGS_CHANGED, MAIL_CONNECTION_CHECKED, MAIL_TEST_SENT, MAIL_LETTER_VIEWED, MAIL_OUTBOX_REQUEUED,
                  MAIL_OUTBOX_CANCELLED, MAIL_INVITATION_SENT, MAIL_INVITATION_REDEEMED, MAIL_SUBJECT_REPORT_SENT]
         actionLabel:
@@ -19191,7 +22312,7 @@ components:
           format: date-time
     SubjectSearchResult:
       type: object
-      required: [contacts, profiles, mentions, attachments, sourceRecords, learners, truncated]
+      required: [contacts, profiles, mentions, attachments, sourceRecords, learners, peopleRecords, truncated]
       properties:
         contacts:
           type: array
@@ -19217,6 +22338,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SubjectLearner'
+        peopleRecords:
+          type: array
+          description: Записи учёта людей и часов, где субъект указан по ФИО или почте
+          items:
+            $ref: '#/components/schemas/SubjectPersonRecord'
         truncated:
           type: boolean
           description: Некоторые списки были обрезаны по лимиту отображения; сузьте поиск
@@ -19327,6 +22453,19 @@ components:
           items:
             type: string
             format: uuid
+        peopleRecords:
+          type: array
+          maxItems: 200
+          description: Записи учёта людей и часов с видом роли субъекта в записи
+          items:
+            type: object
+            required: [id, kind]
+            properties:
+              id:
+                type: string
+                format: uuid
+              kind:
+                $ref: '#/components/schemas/SubjectPersonRecordKind'
         reason:
           $ref: '#/components/schemas/PersonalDataReason'
         comment:
@@ -19336,8 +22475,12 @@ components:
     AnonymizationResult:
       type: object
       required: [contacts, profiles, mentions, attachmentsRenamed, sourceRecords, technicalRecords, attachmentsDeleted,
-                 reportFilesDeleted, learners, reportFilesMarked]
+                 reportFilesDeleted, learners, reportFilesMarked, peopleRecords]
       properties:
+        peopleRecords:
+          type: integer
+          minimum: 0
+          description: Обезличено записей учёта людей и часов
         reportFilesMarked:
           type: integer
           minimum: 0
@@ -19372,10 +22515,309 @@ components:
         learners:
           type: integer
           minimum: 0
+    SystemSetting:
+      type: object
+      required: [key, group, title, unit, min, max, value, defaultValue, saved, updatedAt, updatedByName]
+      properties:
+        key:
+          type: string
+          enum: [RETENTION_REPORT_FILES, RETENTION_INACTIVE_CONTACTS, RETENTION_DISMISSED_PROFILES, RETENTION_AUDIT_EVENTS,
+                 RETENTION_AGENT_PLANS, RETENTION_LEARNER_PROFILES, RETENTION_MAIL_LETTERS, RETENTION_MAX_INBOX,
+                 RETENTION_MAX_OUTBOX, RETENTION_PERSONAL_DATA_REQUESTS, STUCK_DAYS, SOURCES_STALE_HOURS,
+                 LMS_COMPLETION_COVERAGE, PERSONAL_DATA_RESPONSE_DAYS, PERSONAL_DATA_RESPONSE_WORKING_DAYS, PERSONAL_DATA_REMIND_DAYS,
+                 CONSENTS_CONTACTS,
+                 CONSENTS_LEARNERS]
+        group:
+          type: string
+          enum: [RETENTION, SIGNALS, PRIVACY]
+        title:
+          type: string
+        unit:
+          type: string
+          enum: [DAYS, HOURS, MONTHS, PERCENT, FLAG]
+          description: FLAG — 0 выключено, 1 включено
+        min:
+          type: integer
+        max:
+          type: integer
+        value:
+          type: integer
+          description: Действующее значение
+        defaultValue:
+          type: integer
+          description: Значение конфигурации сервера; действует, пока настройку не изменили
+        saved:
+          type: boolean
+          description: Значение изменено на экране
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+        updatedByName:
+          type: [string, 'null']
+    SystemSettingUpdate:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: integer
+    ModuleStatus:
+      type: object
+      required: [code, title, variable, enabled, lastSuccessAt, lastSuccess, errors, lastError]
+      properties:
+        code:
+          type: string
+          enum: [MAX, MCP, MAIL, MOODLE_WRITE, ENROLMENT, PARTNER]
+        title:
+          type: string
+        variable:
+          type: string
+          description: Переменная окружения, которой администратор сервера включает модуль
+        enabled:
+          type: boolean
+        lastSuccessAt:
+          type: [string, 'null']
+          format: date-time
+        lastSuccess:
+          type: [string, 'null']
+          description: Что было последней успешной операцией
+        errors:
+          type: [integer, 'null']
+          description: Ошибки за 7 дней; null — модуль ошибок не записывает
+        lastError:
+          type: [string, 'null']
+    PersonalDataRequestKind:
+      type: string
+      enum: [INFORMATION, RECTIFICATION, DELETION, CONSENT_WITHDRAWAL]
+    PersonalDataRequestStatus:
+      type: string
+      enum: [NEW, IN_PROGRESS, DONE, REJECTED]
+    PersonalDataExecution:
+      type: object
+      required: [auditEventId, label, occurredAt, details]
+      properties:
+        auditEventId:
+          type: [string, 'null']
+          format: uuid
+        label:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        details:
+          type: [string, 'null']
+    PersonalDataRequest:
+      type: object
+      required: [id, receivedOn, subjectName, kind, channel, dueOn, assigneeId, assigneeName, status, completedOn, execution, note,
+                 dueState]
+      properties:
+        id:
+          type: string
+          format: uuid
+        receivedOn:
+          type: string
+          format: date
+        subjectName:
+          type: string
+        kind:
+          $ref: '#/components/schemas/PersonalDataRequestKind'
+        channel:
+          type: string
+        dueOn:
+          type: string
+          format: date
+        assigneeId:
+          type: [string, 'null']
+          format: uuid
+        assigneeName:
+          type: [string, 'null']
+        status:
+          $ref: '#/components/schemas/PersonalDataRequestStatus'
+        completedOn:
+          type: [string, 'null']
+          format: date
+        execution:
+          oneOf:
+            - $ref: '#/components/schemas/PersonalDataExecution'
+            - type: 'null'
+        note:
+          type: [string, 'null']
+        dueState:
+          type: [string, 'null']
+          enum: [SOON, OVERDUE, null]
+          description: SOON — срок в пределах PERSONAL_DATA_REMIND_DAYS, OVERDUE — истёк; у закрытых — null
+    PersonalDataRequestInput:
+      type: object
+      required: [receivedOn, subjectName, kind, channel]
+      properties:
+        receivedOn:
+          type: string
+          format: date
+        subjectName:
+          type: string
+          maxLength: 300
+        kind:
+          $ref: '#/components/schemas/PersonalDataRequestKind'
+        channel:
+          type: string
+          maxLength: 200
+        dueOn:
+          type: [string, 'null']
+          format: date
+        assigneeId:
+          type: [string, 'null']
+          format: uuid
+        status:
+          oneOf:
+            - $ref: '#/components/schemas/PersonalDataRequestStatus'
+            - type: 'null'
+        completedOn:
+          type: [string, 'null']
+          format: date
+        auditEventId:
+          type: [string, 'null']
+          format: uuid
+        note:
+          type: [string, 'null']
+          maxLength: 1000
+    PersonalDataRequests:
+      type: object
+      required: [requests, executions, assignees, responseDays, workingDays, remindDays]
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/PersonalDataRequest'
+        executions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PersonalDataExecution'
+        assignees:
+          type: array
+          description: Действующие администраторы — кого можно назначить исполнителем
+          items:
+            $ref: '#/components/schemas/PersonalDataAssignee'
+        responseDays:
+          type: integer
+        workingDays:
+          type: boolean
+          description: Срок ответа по умолчанию считается в рабочих днях (пн–пт, праздники не учитываются)
+        remindDays:
+          type: integer
+    AdminReminders:
+      type: object
+      required: [personalDataRequests, remindDays]
+      properties:
+        personalDataRequests:
+          type: array
+          items:
+            $ref: '#/components/schemas/PersonalDataRequest'
+        remindDays:
+          type: integer
+    ConsentSubjectType:
+      type: string
+      enum: [CONTACT, LEARNER]
+    Consent:
+      type: object
+      required: [id, subjectType, subjectId, givenOn, basis, document, withdrawnOn, authorName, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        subjectType:
+          $ref: '#/components/schemas/ConsentSubjectType'
+        subjectId:
+          type: string
+          format: uuid
+        givenOn:
+          type: string
+          format: date
+        basis:
+          type: string
+        document:
+          type: [string, 'null']
+        withdrawnOn:
+          type: [string, 'null']
+          format: date
+        authorName:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+    ConsentInput:
+      type: object
+      required: [givenOn, basis]
+      properties:
+        givenOn:
+          type: string
+          format: date
+        basis:
+          type: string
+          maxLength: 300
+        document:
+          type: [string, 'null']
+          maxLength: 300
+        withdrawnOn:
+          type: [string, 'null']
+          format: date
+    Consents:
+      type: object
+      required: [enabled, consents]
+      properties:
+        enabled:
+          type: boolean
+        consents:
+          type: array
+          items:
+            $ref: '#/components/schemas/Consent'
+    ConsentSettings:
+      type: object
+      required: [contacts, learners]
+      properties:
+        contacts:
+          type: boolean
+        learners:
+          type: boolean
+    PersonalDataAssignee:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    RouteVersionsRow:
+      type: object
+      required: [teamId, teamName, templateId, templateName, latestVersion, versions, outdatedWorks]
+      properties:
+        teamId:
+          type: string
+          format: uuid
+        teamName:
+          type: string
+        templateId:
+          type: string
+          format: uuid
+        templateName:
+          type: string
+        latestVersion:
+          type: integer
+        versions:
+          type: array
+          items:
+            type: object
+            required: [version, works]
+            properties:
+              version:
+                type: integer
+              works:
+                type: integer
+        outdatedWorks:
+          type: integer
     RetentionPolicy:
       type: object
       required: [reportFilesDays, inactiveContactsDays, dismissedProfilesDays, auditEventsDays, agentPlansDays,
-                 learnerProfilesTerm, schedule, lastRun, learners]
+                 learnerProfilesTerm, personalDataRequestsDays, schedule, lastRun, learners]
       properties:
         reportFilesDays:
           type: integer
@@ -19400,6 +22842,10 @@ components:
           description: >-
             Срок хранения анкеты слушателя после окончания последнего потока, для отображения, например «3 г.»;
             настраивается APP_RETENTION_LEARNER_PROFILES как период ISO-8601
+        personalDataRequestsDays:
+          type: integer
+          minimum: 0
+          description: Через сколько дней после исполнения удаляется закрытое обращение субъекта ПДн
         schedule:
           type: string
           description: Spring cron-выражение, московское время
@@ -19438,7 +22884,7 @@ components:
     RetentionRun:
       type: object
       required: [appliedAt, reportFilesDeleted, contactsAnonymized, profilesAnonymized, learnersAnonymized,
-                 auditEventsDeleted, agentPlansExpired, agentPlansDeleted]
+                 auditEventsDeleted, agentPlansExpired, agentPlansDeleted, personalDataRequestsDeleted]
       properties:
         appliedAt:
           type: string
@@ -19463,6 +22909,9 @@ components:
           minimum: 0
           description: Ожидавшие подтверждения планы ИИ-агента, срок которых истёк; переведены в EXPIRED
         agentPlansDeleted:
+          type: integer
+          minimum: 0
+        personalDataRequestsDeleted:
           type: integer
           minimum: 0
     MaxPreferences:
@@ -19517,7 +22966,8 @@ components:
           format: date-time
     MailTopic:
       type: string
-      enum: [DIGEST, ASSIGNMENT, AGREEMENT, ISSUES, PARTNER_REPLIES, AGENT_PLANS, SITE_REQUEST, UNASSIGNED, WEEKLY, ADMIN_ALERTS]
+      enum: [DIGEST, ASSIGNMENT, AGREEMENT, ISSUES, PARTNER_REPLIES, AGENT_PLANS, SITE_REQUEST, UNASSIGNED, WEEKLY, PARTNER_ACCEPTED,
+             ADMIN_ALERTS]
     MailPreferences:
       type: object
       required: [topics]
@@ -19546,7 +22996,7 @@ components:
             $ref: '#/components/schemas/MailTopic'
     MailQueueCounts:
       type: object
-      required: [queued, errors, sent, dropped, cancelled]
+      required: [queued, errors, sent, logged, dropped, cancelled]
       properties:
         queued:
           type: integer
@@ -19554,7 +23004,10 @@ components:
           type: integer
         sent:
           type: integer
-          description: Отправлено за 24 часа
+          description: Отправлено через SMTP за 24 часа
+        logged:
+          type: integer
+          description: Записано в журнал без отправки (режим «Без отправки») за 24 часа; наружу не уходило
         dropped:
           type: integer
           description: Не отправлено за 24 часа (устарело, получатель или вуз недоступны, тема отключена)
@@ -19647,7 +23100,7 @@ components:
           format: uuid
         kind:
           type: string
-          enum: [INVITATION, PASSWORD_RESET, DIGEST, ASSIGNMENT, AGREEMENT_CORRECTION, AGREEMENT_EXPIRY, ISSUE_ASSIGNED, ISSUE_RESOLVED, PARTNER_REQUEST, PARTNER_RETURNED, PARTNER_REPLY, SITE_REQUEST, AGENT_PLAN, ORGANIZATIONS_UNASSIGNED, WEEKLY_SUMMARY, ADMIN_SOURCE_FAILURE, ADMIN_PENDING_ACTIVATION, ADMIN_DAILY, TEST, SUBJECT_REPORT]
+          enum: [INVITATION, PASSWORD_RESET, DIGEST, ASSIGNMENT, AGREEMENT_CORRECTION, AGREEMENT_EXPIRY, ISSUE_ASSIGNED, ISSUE_RESOLVED, PARTNER_REQUEST, PARTNER_RETURNED, PARTNER_ACCEPTED, PARTNER_REPLY, SITE_REQUEST, AGENT_PLAN, ORGANIZATIONS_UNASSIGNED, WEEKLY_SUMMARY, ADMIN_SOURCE_FAILURE, ADMIN_PENDING_ACTIVATION, ADMIN_DAILY, TEST, SUBJECT_REPORT]
         kindTitle:
           type: string
         recipient:
@@ -19664,7 +23117,7 @@ components:
         transport:
           type: [string, 'null']
           enum: [STUB, SMTP, null]
-          description: STUB — «отправлено (заглушка)», наружу не уходило
+          description: STUB — «в журнале (без отправки)», наружу не уходило
         attempts:
           type: integer
         createdAt:
@@ -19880,7 +23333,7 @@ components:
           $ref: '#/components/schemas/ReminderFeed'
         due:
           type: string
-          enum: [OVERDUE, TODAY, THIS_WEEK, LATER, NO_NEXT_STEP]
+          enum: [OVERDUE, TODAY, THIS_WEEK, REST_OF_WEEK, LATER, NO_NEXT_STEP]
         items:
           $ref: '#/components/schemas/PageInteraction'
     MaxAppCard:
@@ -19975,5 +23428,699 @@ components:
         nextActionAt:
           type: string
           format: date-time
+    HourUnit:
+      type: string
+      enum: [ACADEMIC, ASTRONOMICAL]
+      description: ACADEMIC — академический час (45 минут), ASTRONOMICAL — астрономический (60 минут)
+    PeopleSettings:
+      type: object
+      required: [teachingUnit, internshipUnit, qualificationUnit, frdoDeadlineDays, frdoNoticeDays, saved, updatedAt, updatedByName]
+      properties:
+        teachingUnit:
+          $ref: '#/components/schemas/HourUnit'
+        internshipUnit:
+          $ref: '#/components/schemas/HourUnit'
+        qualificationUnit:
+          $ref: '#/components/schemas/HourUnit'
+        frdoDeadlineDays:
+          type: [integer, 'null']
+          description: Срок передачи сведений в ФРДО в днях от даты удостоверения; null — срок не задан
+        frdoNoticeDays:
+          type: integer
+          minimum: 0
+          maximum: 90
+        saved:
+          type: boolean
+          description: false — действуют значения по умолчанию
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+        updatedByName:
+          type: [string, 'null']
+    PeopleSettingsRequest:
+      type: object
+      required: [teachingUnit, internshipUnit, qualificationUnit, frdoNoticeDays]
+      properties:
+        teachingUnit:
+          $ref: '#/components/schemas/HourUnit'
+        internshipUnit:
+          $ref: '#/components/schemas/HourUnit'
+        qualificationUnit:
+          $ref: '#/components/schemas/HourUnit'
+        frdoDeadlineDays:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 365
+        frdoNoticeDays:
+          type: integer
+          minimum: 0
+          maximum: 90
+    TeachingInput:
+      type: object
+      required: [discipline, startsOn, endsOn, hours]
+      properties:
+        interactionId:
+          type: [string, 'null']
+          format: uuid
+        agreementId:
+          type: [string, 'null']
+          format: uuid
+        agreementActivityId:
+          type: [string, 'null']
+          format: uuid
+          description: Мероприятие плана договора вуза
+        discipline:
+          type: string
+          maxLength: 300
+          description: Дисциплина или программа
+        performerProfileId:
+          type: [string, 'null']
+          format: uuid
+          description: Сотрудник из справочника; если не задан — нужен performerName
+        performerName:
+          type: [string, 'null']
+          maxLength: 300
+          description: ФИО исполнителя группы компаний
+        performerCompany:
+          type: [string, 'null']
+          maxLength: 300
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+        hours:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 10000
+        hourUnit:
+          oneOf:
+            - $ref: '#/components/schemas/HourUnit'
+            - type: 'null'
+        studentGroup:
+          type: [string, 'null']
+          maxLength: 300
+        confirmationStatus:
+          type: [string, 'null']
+          enum: [NOT_REQUESTED, REQUESTED, CONFIRMED, REJECTED, null]
+        confirmationDocument:
+          type: [string, 'null']
+          maxLength: 300
+        confirmedOn:
+          type: [string, 'null']
+          format: date
+        version:
+          type: [integer, 'null']
+          description: Обязательна при изменении
+    TeachingRecord:
+      type: object
+      required: [id, organizationId, organizationName, interactionId, interactionTitle, agreementId, agreementNumber,
+                 agreementActivityId, agreementActivityTitle, discipline, performerProfileId, performerName, performerCompany,
+                 startsOn, endsOn, hours, hourUnit, studentGroup, confirmationStatus, confirmationDocument, confirmedOn,
+                 version, updatedByName, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        interactionId:
+          type: [string, 'null']
+          format: uuid
+        interactionTitle:
+          type: [string, 'null']
+        agreementId:
+          type: [string, 'null']
+          format: uuid
+        agreementNumber:
+          type: [string, 'null']
+        agreementActivityId:
+          type: [string, 'null']
+          format: uuid
+        agreementActivityTitle:
+          type: [string, 'null']
+        discipline:
+          type: string
+        performerProfileId:
+          type: [string, 'null']
+          format: uuid
+        performerName:
+          type: string
+          description: Имя сотрудника из справочника или ФИО исполнителя группы компаний
+        performerCompany:
+          type: [string, 'null']
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+        hours:
+          type: number
+        hourUnit:
+          $ref: '#/components/schemas/HourUnit'
+        studentGroup:
+          type: [string, 'null']
+        confirmationStatus:
+          type: string
+          enum: [NOT_REQUESTED, REQUESTED, CONFIRMED, REJECTED]
+        confirmationDocument:
+          type: [string, 'null']
+        confirmedOn:
+          type: [string, 'null']
+          format: date
+        version:
+          type: integer
+        updatedByName:
+          type: [string, 'null']
+        updatedAt:
+          type: string
+          format: date-time
+    InternshipInput:
+      type: object
+      required: [internName, internKind, place, startsOn, endsOn, internHours]
+      properties:
+        interactionId:
+          type: [string, 'null']
+          format: uuid
+        agreementActivityId:
+          type: [string, 'null']
+          format: uuid
+        internName:
+          type: string
+          maxLength: 300
+        internKind:
+          type: string
+          enum: [STUDENT, TEACHER]
+        place:
+          type: string
+          maxLength: 300
+          description: Подразделение или исполнитель, где проходит стажировка
+        mentorProfileId:
+          type: [string, 'null']
+          format: uuid
+        mentorName:
+          type: [string, 'null']
+          maxLength: 300
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+        internHours:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 10000
+        mentorHours:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 10000
+        hourUnit:
+          oneOf:
+            - $ref: '#/components/schemas/HourUnit'
+            - type: 'null'
+        result:
+          type: [string, 'null']
+          enum: [PLANNED, IN_PROGRESS, COMPLETED, NOT_COMPLETED, null]
+        employed:
+          type: [boolean, 'null']
+        document:
+          type: [string, 'null']
+          maxLength: 300
+        version:
+          type: [integer, 'null']
+    InternshipRecord:
+      type: object
+      required: [id, organizationId, organizationName, interactionId, interactionTitle, agreementActivityId, agreementActivityTitle,
+                 internName, internKind, place, mentorProfileId, mentorName, startsOn, endsOn, internHours, mentorHours, hourUnit,
+                 result, employed, document, anonymized, version, updatedByName, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        interactionId:
+          type: [string, 'null']
+          format: uuid
+        interactionTitle:
+          type: [string, 'null']
+        agreementActivityId:
+          type: [string, 'null']
+          format: uuid
+        agreementActivityTitle:
+          type: [string, 'null']
+        internName:
+          type: string
+        internKind:
+          type: string
+          enum: [STUDENT, TEACHER]
+        place:
+          type: string
+        mentorProfileId:
+          type: [string, 'null']
+          format: uuid
+        mentorName:
+          type: [string, 'null']
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+        internHours:
+          type: number
+        mentorHours:
+          type: [number, 'null']
+        hourUnit:
+          $ref: '#/components/schemas/HourUnit'
+        result:
+          type: string
+          enum: [PLANNED, IN_PROGRESS, COMPLETED, NOT_COMPLETED]
+        employed:
+          type: boolean
+        document:
+          type: [string, 'null']
+        anonymized:
+          type: boolean
+        version:
+          type: integer
+        updatedByName:
+          type: [string, 'null']
+        updatedAt:
+          type: string
+          format: date-time
+    QualificationInput:
+      type: object
+      required: [program, startsOn, endsOn, hours]
+      properties:
+        interactionId:
+          type: [string, 'null']
+          format: uuid
+        agreementActivityId:
+          type: [string, 'null']
+          format: uuid
+        teacherRosterId:
+          type: [string, 'null']
+          format: uuid
+          description: Список на курс LMS (поток Moodle) этого вуза
+        contactId:
+          type: [string, 'null']
+          format: uuid
+        personName:
+          type: [string, 'null']
+          maxLength: 300
+          description: Обязательно, если не выбран контакт
+        personEmail:
+          type: [string, 'null']
+          maxLength: 254
+        program:
+          type: string
+          maxLength: 300
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+        hours:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 10000
+        hourUnit:
+          oneOf:
+            - $ref: '#/components/schemas/HourUnit'
+            - type: 'null'
+        result:
+          type: [string, 'null']
+          enum: [IN_PROGRESS, CERTIFIED, NOT_CERTIFIED, null]
+        certificateNumber:
+          type: [string, 'null']
+          maxLength: 100
+        certificateDate:
+          type: [string, 'null']
+          format: date
+        frdoSubmittedOn:
+          type: [string, 'null']
+          format: date
+          description: Дата передачи сведений в ФРДО; только для аттестованных
+        version:
+          type: [integer, 'null']
+    QualificationRecord:
+      type: object
+      required: [id, organizationId, organizationName, interactionId, interactionTitle, agreementActivityId, agreementActivityTitle,
+                 teacherRosterId, teacherRosterTitle, contactId, personName, personEmail, program, startsOn, endsOn, hours,
+                 hourUnit, result, certificateNumber, certificateDate, frdoSubmittedOn, frdoDueOn, frdoOverdue, anonymized,
+                 version, updatedByName, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        interactionId:
+          type: [string, 'null']
+          format: uuid
+        interactionTitle:
+          type: [string, 'null']
+        agreementActivityId:
+          type: [string, 'null']
+          format: uuid
+        agreementActivityTitle:
+          type: [string, 'null']
+        teacherRosterId:
+          type: [string, 'null']
+          format: uuid
+        teacherRosterTitle:
+          type: [string, 'null']
+        contactId:
+          type: [string, 'null']
+          format: uuid
+        personName:
+          type: string
+        personEmail:
+          type: [string, 'null']
+        program:
+          type: string
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+        hours:
+          type: number
+        hourUnit:
+          $ref: '#/components/schemas/HourUnit'
+        result:
+          type: string
+          enum: [IN_PROGRESS, CERTIFIED, NOT_CERTIFIED]
+        certificateNumber:
+          type: [string, 'null']
+        certificateDate:
+          type: [string, 'null']
+          format: date
+        frdoSubmittedOn:
+          type: [string, 'null']
+          format: date
+        frdoDueOn:
+          type: [string, 'null']
+          format: date
+          description: Срок передачи в ФРДО; null, если срок не задан в настройках или нет удостоверения
+        frdoOverdue:
+          type: boolean
+        anonymized:
+          type: boolean
+        version:
+          type: integer
+        updatedByName:
+          type: [string, 'null']
+        updatedAt:
+          type: string
+          format: date-time
+    PeopleOption:
+      type: object
+      required: [id, title]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+    PeopleContactOption:
+      type: object
+      required: [id, name, email]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: [string, 'null']
+    PeopleActivityOption:
+      type: object
+      required: [id, agreementId, agreementNumber, title, kindName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        agreementId:
+          type: string
+          format: uuid
+        agreementNumber:
+          type: string
+        title:
+          type: string
+        kindName:
+          type: [string, 'null']
+    PeopleOptions:
+      type: object
+      required: [employees, interactions, agreements, activities, teacherRosters, teachers]
+      properties:
+        employees:
+          type: array
+          items:
+            $ref: '#/components/schemas/PeopleOption'
+        interactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PeopleOption'
+        agreements:
+          type: array
+          items:
+            $ref: '#/components/schemas/PeopleOption'
+        activities:
+          type: array
+          items:
+            $ref: '#/components/schemas/PeopleActivityOption'
+        teacherRosters:
+          type: array
+          items:
+            $ref: '#/components/schemas/PeopleOption'
+        teachers:
+          type: array
+          items:
+            $ref: '#/components/schemas/PeopleContactOption'
+    PeopleOverview:
+      type: object
+      required: [organizationId, canEdit, settings, teaching, internships, qualifications, options]
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+        canEdit:
+          type: boolean
+        settings:
+          $ref: '#/components/schemas/PeopleSettings'
+        teaching:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeachingRecord'
+        internships:
+          type: array
+          items:
+            $ref: '#/components/schemas/InternshipRecord'
+        qualifications:
+          type: array
+          items:
+            $ref: '#/components/schemas/QualificationRecord'
+        options:
+          $ref: '#/components/schemas/PeopleOptions'
+    PeopleImportResult:
+      type: object
+      required: [applied, rows, created, errors]
+      properties:
+        applied:
+          type: boolean
+        rows:
+          type: integer
+        created:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: object
+            required: [row, message]
+            properties:
+              row:
+                type: integer
+              message:
+                type: string
+    PeopleHoursRow:
+      type: object
+      required: [key, title, records, hours]
+      properties:
+        key:
+          type: string
+        title:
+          type: string
+        records:
+          type: integer
+        hours:
+          type: number
+    PeopleReport:
+      type: object
+      required: [from, to, generatedAt, teaching, internships, qualifications, notes]
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        generatedAt:
+          type: string
+          format: date-time
+        teaching:
+          type: object
+          required: [unit, records, hours, confirmedHours, byOrganization, byPerformer, byMonth]
+          properties:
+            unit:
+              $ref: '#/components/schemas/HourUnit'
+            records:
+              type: integer
+            hours:
+              type: number
+            confirmedHours:
+              type: number
+            byOrganization:
+              type: array
+              items:
+                $ref: '#/components/schemas/PeopleHoursRow'
+            byPerformer:
+              type: array
+              items:
+                $ref: '#/components/schemas/PeopleHoursRow'
+            byMonth:
+              type: array
+              items:
+                $ref: '#/components/schemas/PeopleHoursRow'
+        internships:
+          type: object
+          required: [unit, interns, students, teachers, completed, employed, internHours, mentorHours, byOrganization, byPlace]
+          properties:
+            unit:
+              $ref: '#/components/schemas/HourUnit'
+            interns:
+              type: integer
+            students:
+              type: integer
+            teachers:
+              type: integer
+            completed:
+              type: integer
+            employed:
+              type: integer
+            internHours:
+              type: number
+            mentorHours:
+              type: number
+            byOrganization:
+              type: array
+              items:
+                $ref: '#/components/schemas/PeopleHoursRow'
+            byPlace:
+              type: array
+              items:
+                $ref: '#/components/schemas/PeopleHoursRow'
+        qualifications:
+          type: object
+          required: [unit, people, certified, notCertified, inProgress, hours, frdoSubmitted, frdoPending, frdoOverdue,
+                     frdoDeadlineDays, byOrganization, byProgram]
+          properties:
+            unit:
+              $ref: '#/components/schemas/HourUnit'
+            people:
+              type: integer
+            certified:
+              type: integer
+            notCertified:
+              type: integer
+            inProgress:
+              type: integer
+            hours:
+              type: number
+            frdoSubmitted:
+              type: integer
+            frdoPending:
+              type: integer
+            frdoOverdue:
+              type: integer
+            frdoDeadlineDays:
+              type: [integer, 'null']
+            byOrganization:
+              type: array
+              items:
+                $ref: '#/components/schemas/PeopleHoursRow'
+            byProgram:
+              type: array
+              items:
+                $ref: '#/components/schemas/PeopleHoursRow'
+        notes:
+          type: array
+          items:
+            type: string
+    ReminderFrdo:
+      type: object
+      required: [qualificationId, organizationId, organizationName, program, certificateNumber, certificateDate, dueOn]
+      description: Удостоверение выдано, сведения в ФРДО не переданы, срок передачи подходит или прошёл
+      properties:
+        qualificationId:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        program:
+          type: string
+        certificateNumber:
+          type: [string, 'null']
+        certificateDate:
+          type: string
+          format: date
+        dueOn:
+          type: string
+          format: date
+    SubjectPersonRecord:
+      type: object
+      required: [id, kind, organizationName, name, details, startsOn, endsOn, anonymized]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/SubjectPersonRecordKind'
+        organizationName:
+          type: string
+        name:
+          type: string
+        details:
+          type: [string, 'null']
+          description: Дисциплина, место стажировки или программа
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+        anonymized:
+          type: boolean
+    SubjectPersonRecordKind:
+      type: string
+      enum: [TEACHING_PERFORMER, INTERN, MENTOR, QUALIFICATION]
 security:
   - cookieAuth: []

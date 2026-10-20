@@ -53,7 +53,7 @@ export const AssignDialog = ({ organization, profileId, onClose, onAssigned, onR
   organization: Organization | null
   profileId: string
   onClose: () => void
-  onAssigned: () => void
+  onAssigned: (organization: Organization) => void
   onReload: () => Promise<void>
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void

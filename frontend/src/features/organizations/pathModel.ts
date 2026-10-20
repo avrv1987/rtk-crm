@@ -49,17 +49,33 @@ export const pathGroups = (works: PathWork[], sort: PathSort): PathGroup[] => {
     .map((group) => ({ ...group, works: [...group.works].sort(byStatusAndDate) }))
 }
 
-export type SegmentState = 'done' | 'current' | 'ahead'
+export type SegmentState = 'done' | 'current' | 'ahead' | 'skipped'
 
-export const pathSegments = (work: PathWork): { name: string; optional: boolean; state: SegmentState }[] => (
-  work.stages.map((stage, index) => ({
-    name: stage.name,
-    optional: stage.optional,
-    state: index + 1 < work.stagePosition || work.status === 'COMPLETED' && index + 1 === work.stagePosition
-      ? 'done'
+const segmentLabels: Record<SegmentState, string> = {
+  done: 'пройден',
+  current: 'текущий',
+  ahead: 'впереди',
+  skipped: 'пропущен: на этап не входили'
+}
+
+// Этап до текущего, на который по истории не входили, — пропущен, а не пройден. Пока сервер не прислал даты
+// входа (enteredAt отсутствует у всех этапов), всё до текущего считается пройденным, как раньше.
+export const pathSegments = (work: PathWork): { name: string; optional: boolean; state: SegmentState; title: string }[] => {
+  const known = work.stages.some((stage) => stage.enteredAt !== undefined)
+  return work.stages.map((stage, index) => {
+    const passed = index + 1 < work.stagePosition || work.status === 'COMPLETED' && index + 1 === work.stagePosition
+    const state: SegmentState = passed
+      ? known && !stage.enteredAt ? 'skipped' : 'done'
       : index + 1 === work.stagePosition ? 'current' : 'ahead'
-  }))
-)
+    const entered = stage.enteredAt ? `, вход ${formatMoscowDateTime(stage.enteredAt)}` : ''
+    return {
+      name: stage.name,
+      optional: stage.optional,
+      state,
+      title: `${index + 1}. ${stage.name}${stage.optional ? ' (необязательный)' : ''}: ${segmentLabels[state]}${state === 'skipped' ? '' : entered}`
+    }
+  })
+}
 
 export const stageLine = (work: PathWork) => [
   work.stages.length > 0 && work.stagePosition > 0 ? `Этап ${work.stagePosition} из ${work.stages.length}: ${work.stageName}` : `Этап: ${work.stageName}`,

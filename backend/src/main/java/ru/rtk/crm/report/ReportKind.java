@@ -68,6 +68,14 @@ import static ru.rtk.crm.report.ReportColumn.STAGE_POSITION;
 import static ru.rtk.crm.report.ReportColumn.TRANSITIONS;
 import static ru.rtk.crm.report.ReportColumn.LMS_CHECK;
 import static ru.rtk.crm.report.ReportColumn.LMS_LEARNING;
+import static ru.rtk.crm.report.ReportColumn.DEMAND_RANK;
+import static ru.rtk.crm.report.ReportColumn.DEMAND_INDEX;
+import static ru.rtk.crm.report.ReportColumn.DEMAND_CONTRIBUTIONS;
+import static ru.rtk.crm.report.ReportColumn.DEMAND_COVERAGE;
+import static ru.rtk.crm.report.ReportColumn.DEMAND_TREND;
+import static ru.rtk.crm.report.ReportColumn.ENROLLED_GROWTH;
+import static ru.rtk.crm.report.ReportColumn.ACTIVITY_SHARE;
+import static ru.rtk.crm.report.ReportColumn.UNIVERSITY_DEMAND;
 
 import java.util.List;
 import java.util.stream.Stream;
@@ -96,8 +104,9 @@ public enum ReportKind {
             "востребованность",
             "заявки",
             "Число заявок",
-            List.of(DIRECTION, PROGRAM, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE,
-                    COMPLETION_BASIS, PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND),
+            List.of(DIRECTION, PROGRAM, DEMAND_RANK, DEMAND_INDEX, DEMAND_CONTRIBUTIONS, DEMAND_COVERAGE, DEMAND_TREND, APPLICATIONS,
+                    PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, ENROLLED_GROWTH, LEARNERS_COMPLETED, COMPLETION_SHARE, COMPLETION_BASIS,
+                    ACTIVITY_SHARE, UNIVERSITY_DEMAND, PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND),
             List.of()
     ),
     SNAPSHOT(
@@ -121,9 +130,10 @@ public enum ReportKind {
             "менеджеры",
             "взаимодействия",
             "Число взаимодействий",
-            List.of(MANAGER, ORGANIZATION, PRODUCTS, PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS,
-                    NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS, LMS_LEARNING, LMS_CHECK),
-            List.of(TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM, RISK,
+            // Н5 (2.5.3): «Взаимодействие» видно сразу — две работы одного вуза иначе различаются только программой.
+            List.of(MANAGER, ORGANIZATION, INTERACTION, PRODUCTS, PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS,
+                    PERIOD_COMMENTS, NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS, LMS_LEARNING, LMS_CHECK),
+            List.of(TEAM, DIRECTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM, RISK,
                     AGREEMENT_STATUS, AGREEMENT)
     ),
     AGREEMENTS(

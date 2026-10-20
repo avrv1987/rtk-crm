@@ -31,7 +31,7 @@ public final class InteractionKindTestSchema {
         jdbc.execute("""
                 CREATE TABLE IF NOT EXISTS interaction_kind_rules (
                     id UUID PRIMARY KEY, kind_id UUID NOT NULL, organization_type VARCHAR(32), program_id UUID, product_id UUID,
-                    priority INTEGER DEFAULT 100 NOT NULL, version INTEGER DEFAULT 0 NOT NULL,
+                    priority INTEGER DEFAULT 100 NOT NULL, active BOOLEAN DEFAULT TRUE NOT NULL, version INTEGER DEFAULT 0 NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
                 )

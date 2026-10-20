@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { apiClient, type WorkflowTemplate } from '../../shared/api/client'
 import { HintButton } from '../../shared/ui/HintButton'
 import { CommandError, useAccessErrorHandler, useCommandKey } from '../agreements/agreementUi'
-import { interactionKindsApi, type InteractionKind } from '../interactions/interactionKinds'
+import { interactionKindsApi, templateStagesLine, type InteractionKind } from '../interactions/interactionKinds'
 import './adminUi.css'
 
 type Props = {
@@ -94,6 +94,11 @@ export const InteractionKindTeamTemplates = ({ onSessionExpired, onProfileUnavai
                     <option value="">Как у вида</option>
                     {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
                   </select>
+                  {templateStagesLine(templates.find((template) => template.id === (kind.teamTemplateId ?? kind.templateId))) && (
+                    <span className="admin-table__sub">
+                      {templateStagesLine(templates.find((template) => template.id === (kind.teamTemplateId ?? kind.templateId)))}
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}

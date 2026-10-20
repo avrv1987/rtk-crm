@@ -217,6 +217,9 @@ export const InteractionDetailsForm = ({
           )}
           {kinds.map((kind) => <option key={kind.id} value={kind.id}>{kind.name}</option>)}
         </select>
+        {kinds.find((kind) => kind.id === values.kindId)?.description && (
+          <small>{kinds.find((kind) => kind.id === values.kindId)?.description}</small>
+        )}
         {values.kindId !== current.kindId && (
           <small>
             Маршрут карточки не изменится: мастер версий переводит карточку только на новую версию её же шаблона. Чтобы работать по

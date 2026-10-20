@@ -13,6 +13,7 @@ import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { LmsRosterDialog } from './LmsRosterDialog'
 import { enrolmentHref } from './enrolmentRoute'
 import { QuestionnaireImportDialog } from './QuestionnaireImportDialog'
+import { StreamMoodleCourse } from './StreamMoodleCourse'
 import {
   type AccessErrorReporter,
   fieldCodeLabels,
@@ -195,6 +196,13 @@ export const EnrolmentStreamView = ({ streamId, onOpenLearner, onAccessError }: 
         </button>
         <p>Хранить до: {stream.keepUntil === null ? 'срок не определён' : formatIsoDate(stream.keepUntil)}</p>
       </div>
+      <StreamMoodleCourse
+        key={stream.version}
+        stream={stream}
+        onSaved={(saved) => setState({ kind: 'ready', data: { ...state.data, stream: saved } })}
+        onConflict={() => void load()}
+        onAccessError={onAccessError}
+      />
       <ConfirmDialog
         open={endDateState.kind === 'confirming'}
         title="Дата окончания уже прошла"

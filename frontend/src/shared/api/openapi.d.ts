@@ -1761,6 +1761,361 @@ export interface paths {
         patch: operations["updateAgreementActivityKind"];
         trace?: never;
     };
+    "/api/agreement-reporting/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Настройки отчётности по соглашениям
+         * @description Период (календарный или учебный год), срок ответа вуза на перечень («молчание»), горизонт напоминаний, порог и база свода по исполнителям, шаблон выгрузки отчёта, сроки отчётного цикла, перечень обязательных атрибутов мероприятия и текущий период. Читают все сотрудники; представитель вуза — 403.
+         */
+        get: operations["getAgreementReportingSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agreement-reporting/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Сохранить настройки отчётности по соглашениям
+         * @description Только ADMIN. Срок ответа вуза пустой — согласования «молчанием» нет; порог включается только с указанным процентом. Прежние и новые значения пишутся в журнал (AGREEMENT_REPORTING_CHANGED).
+         */
+        put: operations["saveAgreementReportingSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agreement-reporting/template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Сохранить шаблон выгрузки отчёта по соглашениям
+         * @description Только ADMIN. Набор, порядок и подписи колонок строк отчёта — для экрана, XLSX, PDF и JSON.
+         */
+        put: operations["saveAgreementReportTemplate"];
+        post?: never;
+        /** Вернуть колонки отчёта по соглашениям по умолчанию */
+        delete: operations["resetAgreementReportTemplate"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agreement-reporting/deadlines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Сохранить сроки отчётного цикла
+         * @description Только ADMIN. Список заменяется целиком; пустой список — сроков нет. Ежегодный срок повторяется в тот же день и месяц.
+         */
+        put: operations["saveAgreementReportingDeadlines"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agreement-reporting/references": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Справочники отчётности — исполнители, уровни образования, единицы */
+        get: operations["listAgreementReportingReferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agreement-reporting/references": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Добавить значение справочника отчётности */
+        post: operations["createAgreementReportingReference"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agreement-reporting/references/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить значение справочника отчётности
+         * @description Переименовать, перенести в архив или вернуть, задать базу исполнителя для порога
+         */
+        patch: operations["updateAgreementReportingReference"];
+        trace?: never;
+    };
+    "/api/agreement-reporting/rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ставки оценки мероприятий
+         * @description Вид мероприятия × единица (× уровень образования) → ставка в рублях за единицу с даты начала действия
+         */
+        get: operations["listAgreementRates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agreement-reporting/rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Добавить ставку оценки */
+        post: operations["createAgreementRate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/agreement-reporting/rates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Удалить ставку оценки */
+        delete: operations["deleteAgreementRate"];
+        options?: never;
+        head?: never;
+        /** Изменить ставку оценки */
+        patch: operations["updateAgreementRate"];
+        trace?: never;
+    };
+    "/api/agreement-reporting/reminders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Напоминания отчётности по соглашениям
+         * @description Сроки отчётного цикла в ближайшие reminderDays дней и перечни вузов области доступа, которые на согласовании или возвращены. Те же данные приходят в колокольчике (ReminderDigest.agreementReporting).
+         */
+        get: operations["getAgreementReportingReminders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/{id}/activity-lists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Перечни мероприятий вуза
+         * @description Перечни на период, текущий период по настройке и признак coordinatorAvailable (у вуза есть координатор с доступом к кабинету). Перечни, у которых истёк срок ответа вуза, при обращении переходят в «согласован без ответа».
+         */
+        get: operations["listActivityLists"];
+        put?: never;
+        /**
+         * Сформировать перечень мероприятий из плана договоров
+         * @description КАМ своих вузов и руководитель команды. Период — год по настройке (календарный или учебный). Без activityIds в перечень входят все мероприятия договоров вуза на период, кроме отменённых и отклонённых и договоров «Расторгнут».
+         */
+        post: operations["createActivityList"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/activity-lists/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Перечень мероприятий с позициями и историей */
+        get: operations["getActivityList"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить проект или возвращённый перечень
+         * @description Название и состав; без activityIds перечень заново собирается из плана договоров на тот же период
+         */
+        patch: operations["updateActivityList"];
+        trace?: never;
+    };
+    "/api/activity-lists/{id}/transitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Отправить перечень вузу или отметить ответ вуза
+         * @description SEND — отправить проект или возвращённый перечень; срок ответа — дата отправки плюс срок из настроек (для повторной отправки — срок повторного ответа, если задан). APPROVE и RETURN — отметка КАМ об ответе вуза, только у вуза без координатора; RETURN требует комментарий. Каждое действие пишется в историю перечня и журнал.
+         */
+        post: operations["transitionActivityList"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/partner/activity-lists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Перечни мероприятий своего вуза в кабинете вуза
+         * @description Только PARTNER при включённом кабинете вуза. Все перечни вуза, кроме проектов, с позициями и историей.
+         */
+        get: operations["listPartnerActivityLists"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/partner/activity-lists/{id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Согласовать или вернуть перечень мероприятий
+         * @description Координатор своего вуза; только перечень на согласовании. RETURN требует комментарий.
+         */
+        post: operations["decidePartnerActivityList"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/agreement-reporting": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Отчёт по соглашениям за период
+         * @description Строки — мероприятия планов договоров за период (колонки по шаблону выгрузки, значения типизированы: числа — числами), своды по вузам, видам, исполнителям и уровням, свод по исполнителям против порога (если включён). Без дат — текущий период по настройке. Область данных как у реестра договоров; администратор и вуз — 403.
+         */
+        get: operations["getAgreementReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/agreement-reporting/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Скачать отчёт по соглашениям в XLSX, PDF или JSON
+         * @description Те же строки и своды, что на экране; скачивание пишется в журнал (REPORT_DOWNLOADED)
+         */
+        get: operations["downloadAgreementReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/organizations/{id}/agreements": {
         parameters: {
             query?: never;
@@ -2282,7 +2637,7 @@ export interface paths {
         };
         /**
          * Действующие виды взаимодействия
-         * @description Для формы создания карточки и отборов; teamTemplate* — шаблон команды текущего пользователя для вида
+         * @description Для формы создания карточки и отборов; teamTemplate* — шаблон команды текущего пользователя для вида. Отборам нужны и отключённые виды: их карточки остаются, поэтому includeInactive=true добавляет их с active=false.
          */
         get: operations["listInteractionKinds"];
         put?: never;
@@ -2679,8 +3034,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Время последней резервной копии
-         * @description Только администратор. scripts/backup.sh после успешной копии оставляет отметку времени в томе вложений; в саму копию отметка не входит. null — копий ещё не было, отметка не записалась или стенд восстановлен из копии.
+         * Последняя резервная копия и проверка восстановления
+         * @description Только администратор. scripts/backup.sh, backup-scheduled.sh и restore-check.sh оставляют отметки в томе вложений; в саму копию отметки не входят. Предупреждения считает сервер: копии нет больше суток, проверки восстановления — больше 35 дней, последний запуск завершился сбоем.
          */
         get: operations["getBackupStatus"];
         put?: never;
@@ -3138,6 +3493,332 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Настройки системы
+         * @description Только ADMIN. Сроки хранения, пороги сигналов и учёт по ПДн: действующее значение, значение конфигурации сервера (по умолчанию), кто и когда изменил. Без правки действует значение конфигурации.
+         */
+        get: operations["getSystemSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/settings/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Изменить настройку
+         * @description Только ADMIN. Значение — целое в пределах min–max настройки. Действует сразу, без перезапуска: расчёты читают настройку при каждом обращении. Прежнее и новое значения пишутся в журнал (SYSTEM_SETTING_CHANGED).
+         */
+        put: operations["updateSystemSetting"];
+        post?: never;
+        /**
+         * Вернуть значение конфигурации
+         * @description Только ADMIN. Удаляет правку; запись в журнале «было → стало».
+         */
+        delete: operations["resetSystemSetting"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/modules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Состояние модулей
+         * @description Только ADMIN. Какие модули включены, переменная окружения включения и исправность: последняя успешная операция и ошибки за 7 дней. Включает модули администратор сервера, экран только показывает.
+         */
+        get: operations["getModuleStatuses"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/reminders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Напоминания администратора
+         * @description Только ADMIN. Открытые обращения субъектов ПДн, срок ответа которых истёк или наступает в ближайшие дни.
+         */
+        get: operations["getAdminReminders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/personal-data/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Журнал обращений субъектов ПДн
+         * @description Только ADMIN. Обращения (сначала открытые, по сроку ответа) и последние записи журнала об исполнении — выгрузке, уточнении, ограничении, обезличивании, — к которым можно привязать обращение.
+         */
+        get: operations["listPersonalDataRequests"];
+        put?: never;
+        /**
+         * Зарегистрировать обращение
+         * @description Только ADMIN. Без dueOn срок ответа — дата поступления плюс настройка PERSONAL_DATA_RESPONSE_DAYS (в календарных или, при PERSONAL_DATA_RESPONSE_WORKING_DAYS, в рабочих днях пн–пт без праздников); без assigneeId исполнитель — автор. В журнал (PERSONAL_DATA_REQUEST_CHANGED) пишутся вид, канал, срок и статус, без имени субъекта.
+         */
+        post: operations["createPersonalDataRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/personal-data/requests/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Изменить обращение
+         * @description Только ADMIN. Статусы DONE и REJECTED требуют даты исполнения (по умолчанию сегодня); auditEventId — запись журнала об исполнении из списка executions.
+         */
+        put: operations["updatePersonalDataRequest"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/personal-data/requests/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Выгрузить журнал обращений
+         * @description Только ADMIN. CSV в UTF-8 с разделителем «;»; выгрузка пишется в журнал (PERSONAL_DATA_REQUESTS_EXPORTED).
+         */
+        get: operations["exportPersonalDataRequests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/personal-data/consents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Согласия субъекта
+         * @description Только ADMIN, только чтение: записывают согласия КАМ в карточке контакта и менеджер учебного процесса в анкете. enabled — включён ли учёт согласий для вида субъекта (настройки CONSENTS_CONTACTS и CONSENTS_LEARNERS); при выключенном учёте записи не показываются.
+         */
+        get: operations["listConsents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/consent-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Включён ли учёт согласий
+         * @description Любой вошедший сотрудник; интерфейс показывает блок согласий только при включённом учёте.
+         */
+        get: operations["getConsentSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/{id}/contacts/{contactId}/consents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Согласия субъекта
+         * @description Все, кто видит вуз. enabled — включён ли учёт для вида субъекта; при выключенном учёте записей нет.
+         */
+        get: operations["listContactConsents"];
+        put?: never;
+        /**
+         * Записать согласие
+         * @description Как правка контакта: KAM (USER) и LEADER с вузом в своей области. Только при включённом учёте (иначе 404) и у действующей записи: ограниченная или обезличенная — 409. Пишется в журнал (CONSENT_CHANGED) без имени субъекта.
+         */
+        post: operations["createContactConsent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/{id}/contacts/{contactId}/consents/{consentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Изменить согласие или отметить отзыв
+         * @description Как правка контакта: KAM (USER) и LEADER с вузом в своей области. Те же условия, что при записи.
+         */
+        put: operations["updateContactConsent"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/learners/{id}/consents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Согласия субъекта
+         * @description Менеджер учебного процесса (флаг). enabled — включён ли учёт для вида субъекта; при выключенном учёте записей нет.
+         */
+        get: operations["listLearnerConsents"];
+        put?: never;
+        /**
+         * Записать согласие
+         * @description Менеджер учебного процесса (флаг). Только при включённом учёте (иначе 404) и у действующей записи: ограниченная или обезличенная — 409. Пишется в журнал (CONSENT_CHANGED) без имени субъекта.
+         */
+        post: operations["createLearnerConsent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/enrolment/learners/{id}/consents/{consentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Изменить согласие или отметить отзыв
+         * @description Менеджер учебного процесса (флаг). Те же условия, что при записи.
+         */
+        put: operations["updateLearnerConsent"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow-route-versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Какая команда на какой версии маршрута
+         * @description ADMIN и MANAGEMENT — все команды, LEADER — своя (для него это напоминание перевести работы). Незавершённые работы по команде, шаблону и версии; outdatedWorks — работы на версиях старше последней. Без вузов и названий работ.
+         */
+        get: operations["getRouteVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/demand-index/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Веса индекса востребованности программ
+         * @description Только ADMIN. Действующие веса компонентов индекса востребованности (паспорт М17), порог покрытия и порог малой базы; без сохранённых значений действуют значения по умолчанию.
+         */
+        get: operations["getDemandIndexSettings"];
+        /**
+         * Сохранить веса индекса востребованности
+         * @description Только ADMIN. Веса — целые от 0 до 100 с суммой 100, порог покрытия — 1–100 %, малая база — 0–10 000 участий. Прежние и новые значения пишутся в журнал (DEMAND_INDEX_SETTINGS_CHANGED); отчёт «Востребованность программ» сразу считает по новым весам.
+         */
+        put: operations["updateDemandIndexSettings"];
+        post?: never;
+        /**
+         * Вернуть веса индекса востребованности по умолчанию
+         * @description Только ADMIN. Удаляет сохранённые значения; запись в журнале с прежними значениями.
+         */
+        delete: operations["resetDemandIndexSettings"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/labor-market/check": {
         parameters: {
             query?: never;
@@ -3572,6 +4253,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/import-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Шаг по умолчанию при импорте
+         * @description Только ADMIN. Текст и срок в днях шага, который получают карточки, созданные импортом, и карточки массового действия руководителя «Задать шаг карточкам без шага». По умолчанию «Связаться с вузом», 7 дней.
+         */
+        get: operations["getImportSettings"];
+        /**
+         * Сохранить шаг по умолчанию при импорте
+         * @description Только ADMIN. Текст до 500 символов, срок 1–365 дней. Изменение пишется в журнал (IMPORT_SETTINGS_CHANGED).
+         */
+        put: operations["updateImportSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/work/control/missing-steps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Задать шаг карточкам без шага
+         * @description Только руководитель команды (LEADER). Карточки из отбора «Контроля»; шаг получают только карточки своей команды, которые по правилу «Контроля» всё ещё «Без шага или срока» (уже введённый текст шага сохраняется). Без текста и срока берётся шаг по умолчанию при импорте. Каждая карточка пишет событие плана, операция — запись журнала MISSING_STEPS_ASSIGNED. Повтор с тем же ключом возвращает прежний результат.
+         */
+        post: operations["assignMissingSteps"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/imports/inspect": {
         parameters: {
             query?: never;
@@ -3581,7 +4306,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Прочитать листы и заголовки файла импорта */
+        /**
+         * Прочитать листы и заголовки файла импорта
+         * @description Только ADMIN. Книга XLS или XLSX либо файл CSV (UTF-8 или Windows-1251, разделитель «;», «,» или табуляция; файл CSV читается как один лист «CSV»).
+         */
         post: operations["inspectCatalogImport"];
         delete?: never;
         options?: never;
@@ -3844,6 +4572,26 @@ export interface paths {
         patch: operations["updateEnrolmentStream"];
         trace?: never;
     };
+    "/api/enrolment/streams/{id}/moodle-course": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Уточнить курс и группу Moodle потока
+         * @description Решение владельца 21.10: по умолчанию курс потока берётся из сопоставлений программы, а здесь его можно задать явно — передача и перенос в Moodle используют уточнение. Менеджер учебного процесса или администратор. Номера с Moodle не сверяются: неверный курс покажет ошибка строки при передаче. Изменение пишется в журнал (STREAM_MOODLE_COURSE_CHANGED).
+         */
+        put: operations["updateEnrolmentStreamMoodleCourse"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/enrolment/streams/{id}/learners": {
         parameters: {
             query?: never;
@@ -4015,7 +4763,7 @@ export interface paths {
         put?: never;
         /**
          * Передать партию в Moodle через API
-         * @description Только менеджер учебного процесса и только при MOODLE_WRITE_ENABLED=true с токеном MOODLE_WRITE_TOKEN; иначе 400. По каждой не принятой строке: core_user_get_users_by_field (почта), при отсутствии — core_user_create_users (логин — почта, фамилия, имя, почта; другие поля анкеты не уходят), при расхождении имени — core_user_update_users; enrol_manual_enrol_users на курс потока с ролью студента; core_group_add_group_members, если у курса одна сопоставленная группа; затем сверка core_enrol_get_enrolled_users. Курс — из сопоставлений Moodle программы потока; нет курса — ошибка строки «нет курса для потока». Строка «принята» только после сверки; отказ Moodle — ошибка строки с кодом Moodle. Moodle недоступен или отклонил токен — передача останавливается, оставшиеся строки ждут (stoppedReason). Повтор отправляет только не принятые строки. Журнал — LMS_API_TRANSFER без персональных данных.
+         * @description Только менеджер учебного процесса и только при MOODLE_WRITE_ENABLED=true с токеном MOODLE_WRITE_TOKEN; иначе 400. По каждой не принятой строке: core_user_get_users_by_field (почта), при отсутствии — core_user_create_users (логин — почта, фамилия, имя, почта; другие поля анкеты не уходят), при расхождении имени — core_user_update_users; enrol_manual_enrol_users на курс потока с ролью студента; core_group_add_group_members, если у курса одна сопоставленная группа; затем сверка core_enrol_get_enrolled_users. Курс — из сопоставлений Moodle программы потока; нет курса — ошибка строки «нет курса для потока». Строка «принята» только после сверки; отказ Moodle — ошибка строки с кодом Moodle. Moodle недоступен или отклонил токен — передача останавливается, оставшиеся строки ждут (stoppedReason). Повтор отправляет только не принятые строки. Журнал — LMS_API_TRANSFER без персональных данных. Курс — явное уточнение потока, если оно задано (moodleCourseId), иначе сопоставления. Логин — по правилу APP_ENROLMENT_LMS_LOGIN (по умолчанию почта в нижнем регистре). Слушатель, перенесённый из другого потока и ждущий «Перенести в Moodle», не отправляется: строка получает ошибку с подсказкой. Строки, принятые по прежним отметкам (источник LEGACY), сверяются без записи в Moodle: пользователь с почтой слушателя найден на курсе — строка подтверждается (источник API, confirmed), иначе остаётся с пометкой.
          */
         post: operations["transferEnrolmentBatchToMoodle"];
         delete?: never;
@@ -4035,7 +4783,7 @@ export interface paths {
         put?: never;
         /**
          * Перенести слушателя между курсами Moodle
-         * @description Только менеджер учебного процесса, при включённой записи в Moodle и только для зачисления из очереди «перенос после передачи». enrol_manual_unenrol_users с курса прежнего потока, enrol_manual_enrol_users на курс нового, сверка; затем сверка снимается. Пользователь Moodle ищется по почте; нет или несколько — 400, перенос вручную. Журнал — LMS_API_MOVE.
+         * @description Только менеджер учебного процесса, при включённой записи в Moodle и только для зачисления из очереди «перенос после передачи». Сначала enrol_manual_enrol_users на курс нового потока и группа, сверка; потом enrol_manual_unenrol_users с курса прежнего (или core_group_delete_group_members из группы прежнего потока того же курса) и сверка снятия; затем сверка снимается. Сбой на шаге — 400, состояние записано в причину сверки, повтор доводит перенос. Пользователь Moodle ищется по почте; нет или несколько — 400, перенос вручную. Журнал — LMS_API_MOVE.
          */
         post: operations["moveEnrolmentInMoodle"];
         delete?: never;
@@ -4053,7 +4801,7 @@ export interface paths {
         };
         /**
          * Очередь зачисления — что обработать сегодня
-         * @description Только менеджер учебного процесса. Группы по всем потокам: MISSING_DATA — нет обязательных для LMS сведений; AMBIGUOUS_MATCH — та же почта или телефон у другого слушателя потока; READY — готово к передаче; NOT_SENT — файл сформирован, партия не отмечена переданной; AWAITING_RESULT — ожидается результат LMS; LMS_ERROR — ошибка LMS; MOVED_AFTER_TRANSFER — перенос в другой поток после выгрузки, нужна сверка LMS; CHANGED_AFTER_TRANSFER — анкета изменена после передачи. В группе total и до 50 строк. Анкеты с ограниченной обработкой и обезличенные в очереди передачи не показываются. Просмотр пишется в журнал.
+         * @description Только менеджер учебного процесса. Группы по всем потокам: MISSING_DATA — нет обязательных для LMS сведений; AMBIGUOUS_MATCH — та же почта или телефон у другого слушателя потока; READY — готово к передаче; NOT_SENT — файл сформирован, партия не отмечена переданной; AWAITING_RESULT — ожидается результат LMS; LMS_ERROR — ошибка LMS; MOVED_AFTER_TRANSFER — перенос в другой поток после выгрузки, нужна сверка LMS; CHANGED_AFTER_TRANSFER — анкета изменена после передачи. В группе total и до limit строк (по умолчанию 50). streamId отбирает один поток, kind — одну группу (в остальных группах строк нет, счётчики есть), offset листает строки группы kind. Анкеты с ограниченной обработкой и обезличенные в очереди передачи не показываются. Просмотр пишется в журнал.
          */
         get: operations["getEnrolmentQueue"];
         put?: never;
@@ -4220,6 +4968,26 @@ export interface paths {
          * @description Пока кабинет вуза выключен (MODULE_PARTNER_ENABLED=false, по умолчанию), метод отвечает 404 всем. Только для роли PARTNER. Документ своего вуза с флагом «Доступен вузу» и статусом CLEAN; иначе 404. Скачивание записывается в журнал безопасности.
          */
         get: operations["downloadPartnerDocument"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/partner/responses/{id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Скачать свой файл ответа на запрос школы
+         * @description Только для роли PARTNER (решение владельца 21.10). Файл ответа, который отправил этот координатор, по запросу его контакта и вуза, в любом статусе запроса; только после антивирусной проверки (CLEAN) и если файл не удалён. Чужие ответы и внутренние файлы школы — 404. Скачивание записывается в журнал безопасности.
+         */
+        get: operations["downloadPartnerResponseFile"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4693,7 +5461,7 @@ export interface paths {
         };
         /**
          * Мои уведомления на почту
-         * @description Любой активный сотрудник. Темы, доступные роли, и адрес учётной записи Keycloak, на который приходят письма. Менеджеру учебного процесса и представителю вуза тем нет.
+         * @description Любой активный сотрудник и координатор вуза. Темы, доступные роли, и адрес учётной записи Keycloak, на который приходят письма. Менеджеру учебного процесса тем нет; координатору вуза — одна тема PARTNER_ACCEPTED (школа приняла его ответ).
          */
         get: operations["getMailPreferences"];
         /**
@@ -4722,7 +5490,7 @@ export interface paths {
         get: operations["getMailSettings"];
         /**
          * Сохранить настройки почты
-         * @description Только ADMIN. Режим (заглушка или SMTP), сервер, порт, шифрование, логин, пароль, отправитель. Пароль шифруется ключом SOURCES_SETTINGS_KEY; пустое поле пароля оставляет прежний, clearPassword удаляет. Журнал — MAIL_SETTINGS_CHANGED без пароля и логина.
+         * @description Только ADMIN. Режим (без отправки или SMTP), сервер, порт, шифрование, логин, пароль, отправитель. Пароль шифруется ключом SOURCES_SETTINGS_KEY; пустое поле пароля оставляет прежний, clearPassword удаляет. Журнал — MAIL_SETTINGS_CHANGED без пароля и логина.
          */
         put: operations["updateMailSettings"];
         post?: never;
@@ -4743,7 +5511,7 @@ export interface paths {
         put?: never;
         /**
          * Проверить подключение к почтовому серверу
-         * @description Только ADMIN. Заглушка — всегда успех; SMTP — подключение и вход на сервер. Журнал — MAIL_CONNECTION_CHECKED.
+         * @description Только ADMIN. Без отправки — всегда успех; SMTP — подключение и вход на сервер. Журнал — MAIL_CONNECTION_CHECKED.
          */
         post: operations["checkMailConnection"];
         delete?: never;
@@ -4959,7 +5727,7 @@ export interface paths {
         };
         /**
          * «Моя работа» в мини-приложении
-         * @description Итоги групп — лента ReminderFeed (как колокольчик и «Моя работа» в CRM); список — серверная страница по 20 взаимодействий выбранной группы срока по Москве, total — полное число.
+         * @description Итоги групп — лента ReminderFeed (как колокольчик и «Моя работа» в CRM); список — серверная страница по 20 взаимодействий выбранной группы срока по Москве, total — полное число. Итоги считаются одним запросом, без остальных напоминаний колокольчика.
          */
         get: operations["getMaxAppWork"];
         put?: never;
@@ -5042,6 +5810,253 @@ export interface paths {
          * @description Только руководитель команды, только чтение; КАМ — 403.
          */
         get: operations["getMaxAppControl"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/{id}/people": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Учёт людей и часов по вузу
+         * @description Преподавание сотрудниками, стажировки и повышение квалификации преподавателей вуза; с interactionId — только записи этого взаимодействия. Читают КАМ (свои вузы), руководитель (вузы команды) и «Руководство» (все); администратор и представитель вуза — 403, чужой или неизвестный вуз — 404. Справочные значения формы (options) приходят только тем, кто может менять записи (canEdit).
+         */
+        get: operations["getOrganizationPeople"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/{id}/university-teaching": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Добавить запись о преподавании сотрудником в вузе
+         * @description Только КАМ и руководитель с доступом к вузу; вуз не в архиве. Исполнитель — сотрудник из справочника (performerProfileId) или исполнитель группы компаний (performerName и performerCompany). Мероприятие плана договора (agreementActivityId) должно относиться к договору этого вуза; договор подставляется по мероприятию. Единица часа по умолчанию — из настроек. Журнал — PEOPLE_RECORD_CHANGED без ФИО.
+         */
+        post: operations["createUniversityTeaching"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/university-teaching/{recordId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Изменить запись о преподавании сотрудником
+         * @description Те же правила, что при создании; version — текущая версия записи, иначе 409 VERSION_CONFLICT.
+         */
+        put: operations["updateUniversityTeaching"];
+        post?: never;
+        /** Удалить запись о преподавании сотрудником */
+        delete: operations["deleteUniversityTeaching"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/{id}/internships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Добавить запись о стажировке
+         * @description Только КАМ и руководитель с доступом к вузу. Стажёр — студент или преподаватель этого вуза; наставник — сотрудник из справочника (mentorProfileId) или ФИО текстом. Единица часа по умолчанию — из настроек (обычно астрономический час). ФИО стажёра — персональные данные: входят в выгрузку субъекта и обезличиваются администратором.
+         */
+        post: operations["createInternship"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/internships/{recordId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Изменить запись о стажировке
+         * @description Обезличенную запись изменить нельзя (400), только удалить. Чужая версия — 409 VERSION_CONFLICT.
+         */
+        put: operations["updateInternship"];
+        post?: never;
+        /** Удалить запись о стажировке */
+        delete: operations["deleteInternship"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/{id}/teacher-qualifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Добавить запись о повышении квалификации преподавателя
+         * @description Только КАМ и руководитель с доступом к вузу. Преподаватель — контакт вуза (contactId, ФИО и почта подставляются) или ФИО текстом. Список на курс LMS (teacherRosterId) — связь с потоком Moodle, если он есть. Отметка frdoSubmittedOn допустима только у аттестованных. Срок передачи в ФРДО — дата удостоверения плюс срок из настроек; без настройки срок не считается.
+         */
+        post: operations["createTeacherQualification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/teacher-qualifications/{recordId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Изменить запись о повышении квалификации
+         * @description Обезличенную запись изменить нельзя (400), только удалить. Чужая версия — 409 VERSION_CONFLICT.
+         */
+        put: operations["updateTeacherQualification"];
+        post?: never;
+        /** Удалить запись о повышении квалификации */
+        delete: operations["deleteTeacherQualification"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/teacher-qualifications/import-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Скачать шаблон XLSX списка повышения квалификации
+         * @description Пустой шаблон с колонками и листом пояснений; доступен сотрудникам, представителю вуза — 403.
+         */
+        get: operations["downloadTeacherQualificationTemplate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organizations/{id}/teacher-qualifications/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Загрузить список повышения квалификации из XLSX
+         * @description Файл по шаблону (до 2 МиБ, до 1000 строк). Колонки ищутся по заголовку. Загрузка «всё или ничего»: при любой ошибке в строках ничего не создаётся, ответ перечисляет ошибки по номерам строк. dryRun=true — только проверка. Преподаватель связывается с контактом вуза по совпадающей почте. Журнал — PEOPLE_IMPORT_APPLIED.
+         */
+        post: operations["importTeacherQualifications"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/people-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Настройки учёта людей и часов
+         * @description Единицы часа по умолчанию и срок передачи сведений в ФРДО; читают все сотрудники.
+         */
+        get: operations["getPeopleSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/people-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Сохранить настройки учёта людей и часов
+         * @description Только ADMIN. Единицы часа (академический — 45 минут, астрономический — 60 минут) для преподавания, стажировок и повышения квалификации; срок передачи сведений в ФРДО (1–365 дней, пусто — срок не считается) и за сколько дней напоминать (0–90). Прежние и новые значения — в журнал PEOPLE_SETTINGS_CHANGED.
+         */
+        put: operations["updatePeopleSettings"];
+        post?: never;
+        /**
+         * Вернуть настройки учёта людей и часов по умолчанию
+         * @description Только ADMIN. Записи журнала PEOPLE_SETTINGS_CHANGED с прежними значениями.
+         */
+        delete: operations["resetPeopleSettings"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/people": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Отчёт «Люди и часы» за период
+         * @description Часы преподавания сотрудниками по вузам, исполнителям и месяцам; стажировки (стажёры, часы стажёров и наставников); повышение квалификации (аттестованы, переданы в ФРДО, просрочка). Запись входит, если её период пересекается с отчётным; часы приведены к единице из настроек. Область данных как у карточек; администратор и представитель вуза — 403. Без дат — с 1 января по сегодня.
+         */
+        get: operations["getPeopleReport"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5318,6 +6333,13 @@ export interface components {
         };
         EnrolmentQueue: {
             moodleWriteAvailable: boolean;
+            /** @description Потоки, у которых есть строки в очереди (без отбора), и число строк по всем группам */
+            streams: {
+                /** Format: uuid */
+                id: string;
+                title: string;
+                total: number;
+            }[];
             groups: {
                 kind: components["schemas"]["EnrolmentQueueKind"];
                 total: number;
@@ -5348,6 +6370,29 @@ export interface components {
             exported: number;
             transferred: number;
             pending: number;
+            /**
+             * Format: int64
+             * @description Явное уточнение курса Moodle; null — курс по сопоставлениям программы потока
+             */
+            moodleCourseId: number | null;
+            /**
+             * Format: int64
+             * @description Группа Moodle при явном уточнении курса; null — группа по сопоставлениям или без группы
+             */
+            moodleGroupId: number | null;
+        };
+        StreamMoodleCourseUpdate: {
+            version: number;
+            /**
+             * Format: int64
+             * @description Номер курса Moodle; null снимает уточнение
+             */
+            courseId?: number | null;
+            /**
+             * Format: int64
+             * @description Номер группы Moodle; только вместе с курсом
+             */
+            groupId?: number | null;
         };
         EnrolmentCounters: {
             /** @description Анкет в CRM без обезличенных */
@@ -5714,9 +6759,25 @@ export interface components {
             name: string;
             role: components["schemas"]["AgreementStageRole"];
         };
+        WorkActiveAgreement: {
+            /** Format: uuid */
+            id: string;
+            number: string;
+            /** Format: date */
+            concludedOn?: string | null;
+            /**
+             * Format: date
+             * @description Срок действия; null — бессрочный
+             */
+            validUntil?: string | null;
+            /** @description Договор связан с этой работой */
+            linked: boolean;
+        };
         WorkAgreements: {
             /** @description Номер действующего договора школы с вузом (любого, не только связанного с работой); по нему правило договора пропускает переход */
             activeAgreementNumber: string | null;
+            /** @description Действующий договор, которым выполнено правило договора: связанный с работой, иначе самый свежий по смене статуса договор вуза; null, если действующего нет */
+            activeAgreement?: components["schemas"]["WorkActiveAgreement"] | null;
             /** Format: uuid */
             interactionId: string;
             /** Format: uuid */
@@ -5803,11 +6864,371 @@ export interface components {
          */
         AgreementPlanKind: "SIGNING" | "RENEWAL";
         /**
-         * @description PLANNED запланировано, IN_PROGRESS выполняется, DONE выполнено, CANCELLED отменено
+         * @description PLANNED запланировано, IN_PROGRESS выполняется, DONE проведено, CONFIRMED подтверждено вузом, REJECTED отклонено, CANCELLED отменено
          * @enum {string}
          */
-        AgreementActivityStatus: "PLANNED" | "IN_PROGRESS" | "DONE" | "CANCELLED";
+        AgreementActivityStatus: "PLANNED" | "IN_PROGRESS" | "DONE" | "CONFIRMED" | "REJECTED" | "CANCELLED";
+        /**
+         * @description Атрибут мероприятия, который вид мероприятия может сделать обязательным. UNIT_QUANTITY — единица и количество по плану (у проведённого — и факт), DOCUMENT — подтверждающий документ (только у проведённого и подтверждённого)
+         * @enum {string}
+         */
+        AgreementActivityAttribute: "EDUCATION_LEVEL" | "PARTICIPANTS" | "UNIT_QUANTITY" | "COST" | "EXECUTOR" | "DOCUMENT";
+        /**
+         * @description EXECUTOR исполнитель (организация группы компаний), EDUCATION_LEVEL уровень образования, UNIT единица
+         * @enum {string}
+         */
+        AgreementReferenceCategory: "EXECUTOR" | "EDUCATION_LEVEL" | "UNIT";
+        AgreementReferenceItem: {
+            /** Format: uuid */
+            id: string;
+            category: components["schemas"]["AgreementReferenceCategory"];
+            name: string;
+            /** @description Только у исполнителя — база для свода против порога, рублей */
+            baseAmount: number | null;
+            sortOrder: number;
+            archived: boolean;
+            version: number;
+        };
+        AgreementReferenceCreate: {
+            category: components["schemas"]["AgreementReferenceCategory"];
+            name: string;
+            baseAmount?: number | null;
+        };
+        AgreementReferenceUpdate: {
+            version: number;
+            name: string;
+            archived: boolean;
+            baseAmount?: number | null;
+        };
+        AgreementRate: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            kindId: string;
+            kindName: string;
+            /** Format: uuid */
+            unitId: string;
+            unitName: string;
+            /**
+             * Format: uuid
+             * @description Пусто — ставка для любого уровня
+             */
+            educationLevelId: string | null;
+            educationLevelName: string | null;
+            /** Format: date */
+            effectiveFrom: string;
+            /** @description Рублей за единицу */
+            rate: number;
+            version: number;
+        };
+        AgreementRateInput: {
+            /** @description Обязательно при изменении */
+            version?: number | null;
+            /** Format: uuid */
+            kindId: string;
+            /** Format: uuid */
+            unitId: string;
+            /** Format: uuid */
+            educationLevelId?: string | null;
+            /** Format: date */
+            effectiveFrom: string;
+            rate: number;
+        };
+        /**
+         * @description CALENDAR календарный год, ACADEMIC учебный год с месяца academicYearStartMonth
+         * @enum {string}
+         */
+        AgreementReportingPeriodKind: "CALENDAR" | "ACADEMIC";
+        AgreementReportingSettings: {
+            periodKind: components["schemas"]["AgreementReportingPeriodKind"];
+            academicYearStartMonth: number;
+            /** @description Срок ответа вуза на перечень, календарных дней; пусто — без согласования «молчанием» */
+            silenceDays: number | null;
+            /** @description Срок ответа на повторно отправленный перечень; пусто — как silenceDays */
+            repeatSilenceDays: number | null;
+            /** @description За сколько дней напоминать о сроках отчётного цикла */
+            reminderDays: number;
+            thresholdEnabled: boolean;
+            thresholdPercent: number | null;
+            /** @description Общая база порога, рублей; пусто — сумма баз исполнителей */
+            thresholdBase: number | null;
+            thresholdBaseLabel: string | null;
+        };
+        AgreementReportingSettingsInput: {
+            periodKind: components["schemas"]["AgreementReportingPeriodKind"];
+            academicYearStartMonth: number;
+            silenceDays?: number | null;
+            repeatSilenceDays?: number | null;
+            reminderDays: number;
+            thresholdEnabled: boolean;
+            thresholdPercent?: number | null;
+            thresholdBase?: number | null;
+            thresholdBaseLabel?: string | null;
+        };
+        AgreementReportColumn: {
+            /** @description ORGANIZATION, AGREEMENT, KIND, TITLE, EDUCATION_LEVEL, EXECUTOR, STATUS, PERIOD, UNIT, PLANNED_VOLUME, ACTUAL_VOLUME, PARTICIPANTS, COST, RATE, PLANNED_VALUATION, ACTUAL_VALUATION, DOCUMENT, RESPONSIBLE */
+            code: string;
+            /** @description Подпись колонки; пусто — подпись по умолчанию */
+            title: string | null;
+        };
+        AgreementReportColumnOption: {
+            code: string;
+            defaultTitle: string;
+        };
+        AgreementReportTemplateInput: {
+            columns: components["schemas"]["AgreementReportColumn"][];
+        };
+        AgreementReportingDeadline: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: date */
+            dueOn: string;
+            /** @description Что сдаётся */
+            deliverable: string | null;
+            /** @description Повторяется ежегодно в тот же день и месяц */
+            annual: boolean;
+        };
+        AgreementReportingDeadlineInput: {
+            name: string;
+            /** Format: date */
+            dueOn: string;
+            deliverable?: string | null;
+            annual?: boolean | null;
+        };
+        AgreementReportingDeadlinesInput: {
+            deadlines: components["schemas"]["AgreementReportingDeadlineInput"][];
+        };
+        AgreementActivityAttributeOption: {
+            code: components["schemas"]["AgreementActivityAttribute"];
+            title: string;
+        };
+        AgreementReportingPeriod: {
+            year: number;
+            /** Format: date */
+            from: string;
+            /** Format: date */
+            to: string;
+            label: string;
+        };
+        AgreementReportingSettingsView: {
+            settings: components["schemas"]["AgreementReportingSettings"];
+            columns: components["schemas"]["AgreementReportColumn"][];
+            defaultColumns: boolean;
+            availableColumns: components["schemas"]["AgreementReportColumnOption"][];
+            deadlines: components["schemas"]["AgreementReportingDeadline"][];
+            attributes: components["schemas"]["AgreementActivityAttributeOption"][];
+            currentPeriod: components["schemas"]["AgreementReportingPeriod"];
+            /** Format: date-time */
+            updatedAt: string | null;
+            updatedByName: string | null;
+        };
+        AgreementDeadlineReminder: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /**
+             * Format: date
+             * @description Ближайшая дата (у ежегодного срока — в этом или следующем году)
+             */
+            dueOn: string;
+            deliverable: string | null;
+            daysLeft: number;
+        };
+        /**
+         * @description DRAFT проект, REVIEW на согласовании, APPROVED согласован, APPROVED_SILENTLY согласован без ответа, RETURNED возвращён
+         * @enum {string}
+         */
+        ActivityListStatus: "DRAFT" | "REVIEW" | "APPROVED" | "APPROVED_SILENTLY" | "RETURNED";
+        /**
+         * @description SEND отправить вузу, APPROVE согласовать, RETURN вернуть на доработку
+         * @enum {string}
+         */
+        ActivityListAction: "SEND" | "APPROVE" | "RETURN";
+        AgreementListReminder: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            title: string;
+            status: components["schemas"]["ActivityListStatus"];
+            /** Format: date */
+            reviewDueOn: string | null;
+        };
+        AgreementReportingReminders: {
+            reminderDays: number;
+            deadlines: components["schemas"]["AgreementDeadlineReminder"][];
+            lists: components["schemas"]["AgreementListReminder"][];
+        };
+        ActivityListSummary: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            title: string;
+            /** Format: date */
+            periodFrom: string;
+            /** Format: date */
+            periodTo: string;
+            periodLabel: string;
+            status: components["schemas"]["ActivityListStatus"];
+            reviewRound: number;
+            /** Format: date */
+            sentOn: string | null;
+            /**
+             * Format: date
+             * @description Последний день срока ответа вуза; пусто — срок не задан
+             */
+            reviewDueOn: string | null;
+            /** Format: date */
+            decidedOn: string | null;
+            itemCount: number;
+            version: number;
+        };
+        ActivityListItem: {
+            /**
+             * Format: uuid
+             * @description Пусто, если мероприятие потом удалили из плана; позиция перечня остаётся
+             */
+            activityId: string | null;
+            agreementNumber: string;
+            kindName: string;
+            title: string;
+            educationLevel: string | null;
+            executor: string | null;
+            unit: string | null;
+            plannedVolume: number | null;
+            participants: number | null;
+            cost: number | null;
+            /** Format: date */
+            periodStart: string | null;
+            /** Format: date */
+            periodEnd: string | null;
+        };
+        ActivityListEvent: {
+            /** Format: uuid */
+            id: string;
+            fromStatus: components["schemas"]["ActivityListStatus"] | null;
+            toStatus: components["schemas"]["ActivityListStatus"];
+            /** @enum {string} */
+            channel: "KAM" | "COORDINATOR" | "SYSTEM";
+            comment: string | null;
+            actorName: string | null;
+            /** Format: date-time */
+            occurredAt: string;
+        };
+        ActivityList: {
+            summary: components["schemas"]["ActivityListSummary"];
+            items: components["schemas"]["ActivityListItem"][];
+            /** @description Новые сверху */
+            history: components["schemas"]["ActivityListEvent"][];
+            coordinatorAvailable: boolean;
+            /** @description Действия, доступные текущему пользователю */
+            actions: components["schemas"]["ActivityListAction"][];
+        };
+        ActivityListsView: {
+            coordinatorAvailable: boolean;
+            currentPeriod: components["schemas"]["AgreementReportingPeriod"];
+            lists: components["schemas"]["ActivityListSummary"][];
+        };
+        ActivityListCreate: {
+            title?: string | null;
+            /** @description Год начала периода (для учебного года — год, в котором он начинается) */
+            year: number;
+            activityIds?: string[] | null;
+        };
+        ActivityListUpdate: {
+            version: number;
+            title: string;
+            activityIds?: string[] | null;
+        };
+        ActivityListTransition: {
+            version: number;
+            action: components["schemas"]["ActivityListAction"];
+            comment?: string | null;
+            /**
+             * Format: date
+             * @description Дата ответа вуза для отметки КАМ; пусто — сегодня
+             */
+            respondedOn?: string | null;
+        };
+        PartnerActivityListDecision: {
+            version: number;
+            /** @enum {string} */
+            decision: "APPROVE" | "RETURN";
+            comment?: string | null;
+        };
+        AgreementReportQuantity: {
+            unit: string;
+            planned: number;
+            actual: number;
+        };
+        AgreementReportGroup: {
+            /**
+             * Format: uuid
+             * @description Пусто — «Не указан»
+             */
+            id: string | null;
+            name: string;
+            activities: number;
+            participants: number;
+            quantities: components["schemas"]["AgreementReportQuantity"][];
+            cost: number;
+            plannedValuation: number;
+            actualValuation: number;
+        };
+        AgreementReportTotals: {
+            organizations: number;
+            activities: number;
+            participants: number;
+            cost: number;
+            plannedValuation: number;
+            actualValuation: number;
+            /** @description Мероприятий без подходящей ставки */
+            withoutRate: number;
+        };
+        AgreementThresholdRow: {
+            /** Format: uuid */
+            executorId: string | null;
+            name: string;
+            plannedValuation: number;
+            actualValuation: number;
+            base: number | null;
+            /** @description База × порог / 100 */
+            required: number | null;
+            plannedMet: boolean | null;
+            actualMet: boolean | null;
+        };
+        AgreementThresholdSummary: {
+            enabled: boolean;
+            percent: number | null;
+            baseLabel: string | null;
+            rows: components["schemas"]["AgreementThresholdRow"][];
+            total: components["schemas"]["AgreementThresholdRow"] | null;
+        };
+        AgreementReport: {
+            /** Format: date-time */
+            generatedAt: string;
+            /** Format: date */
+            from: string;
+            /** Format: date */
+            to: string;
+            notes: string[];
+            columns: components["schemas"]["AgreementReportColumn"][];
+            /** @description Значения строк в порядке columns; числа — числами, пустое — null */
+            rows: (string | number | null)[][];
+            totals: components["schemas"]["AgreementReportTotals"];
+            byOrganization: components["schemas"]["AgreementReportGroup"][];
+            byKind: components["schemas"]["AgreementReportGroup"][];
+            byExecutor: components["schemas"]["AgreementReportGroup"][];
+            byLevel: components["schemas"]["AgreementReportGroup"][];
+            threshold: components["schemas"]["AgreementThresholdSummary"];
+        };
         AgreementActivityKind: {
+            /** @description Обязательные атрибуты мероприятия этого вида; по умолчанию пусто */
+            requiredAttributes: components["schemas"]["AgreementActivityAttribute"][];
             /** Format: uuid */
             id: string;
             name: string;
@@ -5822,6 +7243,8 @@ export interface components {
             version: number;
             name: string;
             archived: boolean;
+            /** @description Обязательные атрибуты; пусто (null) — прежний набор сохраняется */
+            requiredAttributes?: components["schemas"]["AgreementActivityAttribute"][] | null;
         };
         AgreementSummary: {
             /** Format: uuid */
@@ -5966,6 +7389,26 @@ export interface components {
         };
         AgreementActivity: {
             /** Format: uuid */
+            educationLevelId: string | null;
+            educationLevelName: string | null;
+            /** @description Охват — число участников */
+            participants: number | null;
+            /**
+             * Format: uuid
+             * @description Единица из справочника; по ней подбирается ставка
+             */
+            unitId: string | null;
+            /** @description Стоимость или оценка, рублей */
+            cost: number | null;
+            /**
+             * Format: uuid
+             * @description Исполнитель — организация группы компаний из справочника
+             */
+            executorId: string | null;
+            executorName: string | null;
+            /** @description Подтверждающий документ — реквизиты (акт, письмо, номер и дата) */
+            documentNote: string | null;
+            /** Format: uuid */
             id: string;
             /** Format: uuid */
             agreementId: string;
@@ -6022,6 +7465,18 @@ export interface components {
             interactionIds?: string[];
             /** @description Документы CLEAN работ той же организации; список заменяет текущие связи */
             attachmentIds?: string[];
+            /** Format: uuid */
+            educationLevelId?: string | null;
+            participants?: number | null;
+            /**
+             * Format: uuid
+             * @description Единица из справочника; её название заменяет unit
+             */
+            unitId?: string | null;
+            cost?: number | null;
+            /** Format: uuid */
+            executorId?: string | null;
+            documentNote?: string | null;
         };
         AgreementLinkedWork: {
             /** Format: uuid */
@@ -6219,6 +7674,13 @@ export interface components {
             receivedAt: string | null;
         };
         PartnerReceipt: {
+            /**
+             * Format: uuid
+             * @description Ответ координатора; по нему скачивается свой файл ответа (идентификатор файла не отдаётся)
+             */
+            responseId: string;
+            /** @description Файл ответа загрузил этот координатор, антивирус пропустил его и файл не удалён */
+            downloadable: boolean;
             /** @description Номер квитанции */
             receiptNumber: string;
             /** @enum {string} */
@@ -7175,6 +8637,8 @@ export interface components {
             stageAtEnd?: string | null;
             /** @description Сейчас на текущем этапе не хватает обязательного документа (сигнал «нет документов») */
             missingDocuments: boolean;
+            /** @description Норматив текущего этапа шаблона в днях; null — действует общий порог «долго на этапе» */
+            stageNormDays?: number | null;
         };
         /** @description Последние снимки идущих потоков занятий студентов работы (без учёта периода отчёта) и действующие, не скрытые сигналы LMS. Персональных данных нет. */
         WorkLearning: {
@@ -7220,7 +8684,7 @@ export interface components {
             idleOrganizations?: components["schemas"]["WorkControlIdleOrganization"][] | null;
             /** @description Договоры на согласовании, корректировке и подписании для плитки «Договор на согласовании» — по правилу реестра, в том числе не привязанные к взаимодействию. Без отборов и периода совпадают с реестром; при отборе — договоры вузов из строк и группы «Без работы». Предмет и дата подписания не заполняются */
             agreements?: components["schemas"]["AgreementRegistryRow"][];
-            /** @description Маршруты строк для матрицы «программа × этап»; этапы шаблона по порядку, затем этапы работ вне шаблона */
+            /** @description Маршруты строк для матрицы «программа × этап»; этапы шаблона по порядку, этапы карточек — на своём месте, этапы прежних версий шаблона — в конце */
             routes?: components["schemas"]["WorkControlRoute"][];
         };
         WorkControlRoute: {
@@ -7230,6 +8694,8 @@ export interface components {
             stages: string[];
             /** @description Этапы работ, которых нет в текущей версии шаблона (прежние версии); стоят в конце stages */
             formerStages?: string[];
+            /** @description Этапы, которые КАМ добавил в маршрут своей карточки; стоят в stages после этапа, за которым идут в карточке, и не считаются прежними */
+            cardStages?: string[];
         };
         OrganizationPath: {
             /** Format: uuid */
@@ -7242,6 +8708,11 @@ export interface components {
         OrganizationPathStage: {
             name: string;
             optional: boolean;
+            /**
+             * Format: date-time
+             * @description Последний вход на этап по истории; null — на этап не входили (впереди или пропущен)
+             */
+            enteredAt?: string | null;
         };
         OrganizationPathWork: {
             /** Format: uuid */
@@ -7573,6 +9044,8 @@ export interface components {
             /** @description Год, до которого включительно лицензия считается истекающей; тот же год принимает отбор licenseExpiresBy списка взаимодействий */
             licenseExpiresBy: number;
             qualificationDue: components["schemas"]["ReminderQualification"][];
+            /** @description Удостоверения, сведения о которых пора передать в ФРДО (срок и «за сколько дней» — настройки учёта людей и часов) */
+            frdoDue: components["schemas"]["ReminderFrdo"][];
             /** @description За сколько дней до окончания договор с вузом попадает в напоминания (app.work.agreement-notice-days) */
             agreementNoticeDays: number;
             /** @description Договоры «Действует» области видимости со сроком не позже сегодня + agreementNoticeDays, включая истёкшие */
@@ -7580,6 +9053,7 @@ export interface components {
             feed: components["schemas"]["ReminderFeed"];
             /** @description Только у руководителя команды: вузы, оставшиеся без КАМ после блокировки КАМ без передачи, за 30 дней, пока КАМ не назначен. У КАМ всегда пусто */
             unassignedAfterBlock: components["schemas"]["ReminderUnassigned"][];
+            agreementReporting: components["schemas"]["AgreementReportingReminders"];
         };
         ReminderUnassigned: {
             /** Format: uuid */
@@ -7850,8 +9324,11 @@ export interface components {
         InteractionEvent: {
             /** Format: uuid */
             id: string;
-            /** @enum {string} */
-            type: "CREATED" | "TRANSITIONED" | "COMMENTED" | "STAGES_EDITED" | "PLAN_UPDATED" | "DETAILS_UPDATED" | "STATUS_CHANGED" | "AGREEMENT_UPDATED" | "ATTACHMENT_DELETED" | "STAGE_COMPLETED" | "STAGE_COMPLETION_CLEARED";
+            /**
+             * @description DOCUMENT_ADDED, AGREEMENT_STATUS_CHANGED и CYCLE_STARTED — события из соседних таблиц: документ, не привязанный к переходу или комментарию; создание и смена статуса договора этой работы; запуск нового цикла (в обеих карточках). У них есть link, а id и commandId — идентификатор документа, события договора или другой карточки цикла
+             * @enum {string}
+             */
+            type: "CREATED" | "TRANSITIONED" | "COMMENTED" | "STAGES_EDITED" | "PLAN_UPDATED" | "DETAILS_UPDATED" | "STATUS_CHANGED" | "AGREEMENT_UPDATED" | "ATTACHMENT_DELETED" | "STAGE_COMPLETED" | "STAGE_COMPLETION_CLEARED" | "DOCUMENT_ADDED" | "AGREEMENT_STATUS_CHANGED" | "CYCLE_STARTED";
             /** Format: uuid */
             stageId: string;
             stageNameSnapshot: string;
@@ -7876,6 +9353,24 @@ export interface components {
             occurredAt: string;
             /** @description Событие записано по плану ИИ-агента, который подтвердил сотрудник (ключ повтора agent-plan:<id>) */
             preparedByAgent?: boolean;
+            /** @description Событие перенесено импортом истории: файл и строка. actorDisplayName у такого события — администратор, выполнивший загрузку; occurredAt — дата события из файла */
+            importSource?: string | null;
+            /** @description Автор события из файла — сотрудник по логину или «импорт»; null у событий, сделанных в CRM */
+            importAuthor?: string | null;
+            /** @description Документ, договор или карточка другого цикла у событий из соседних таблиц; у остальных null */
+            link?: components["schemas"]["InteractionEventLink"] | null;
+        };
+        InteractionEventLink: {
+            /** @enum {string} */
+            kind: "ATTACHMENT" | "AGREEMENT" | "INTERACTION";
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description Вуз договора или карточки — для адреса ссылки
+             */
+            organizationId?: string | null;
+            label: string;
         };
         WorkflowStageInput: {
             name: string;
@@ -7892,6 +9387,8 @@ export interface components {
             lmsRole?: components["schemas"]["StageLmsRole"] | null;
             /** @description Коды обязательных видов документов из справочника «Виды документов» */
             documentKinds?: string[] | null;
+            /** @description Норматив этапа в днях; «долго на этапе» в «Контроле», отчётах и сигналах берёт его, а без него — общий порог STUCK_DAYS. Правка действует на идущие работы сразу: этап работы находит норматив по этапу шаблона */
+            normDays?: number | null;
         };
         WorkflowTransitionInput: {
             fromOrder: number;
@@ -7951,6 +9448,11 @@ export interface components {
              */
             teamTemplateId: string | null;
             teamTemplateName: string | null;
+            /**
+             * Format: int64
+             * @description Число незавершённых взаимодействий этого вида; администратор видит его при отключении вида
+             */
+            interactionCount: number;
         };
         InteractionKindRequest: {
             /** @description Обязательна при изменении */
@@ -7987,6 +9489,10 @@ export interface components {
             productName: string | null;
             priority: number;
             version: number;
+            /** @description false — правило временно отключено и не подбирает вид */
+            active: boolean;
+            /** @description Действует ли вид правила; правило отключённого вида не подбирает вид и двойником не считается */
+            kindActive: boolean;
         };
         InteractionKindRuleRequest: {
             version?: number | null;
@@ -8000,6 +9506,8 @@ export interface components {
             productId?: string | null;
             /** @description Меньший номер — выше приоритет; по умолчанию 100 */
             priority?: number | null;
+            /** @description false — временно отключить правило, не удаляя; null — правило действует */
+            active?: boolean | null;
         };
         InteractionKindResolution: {
             /** Format: uuid */
@@ -8126,6 +9634,8 @@ export interface components {
             templateName: string;
             version: number;
             latestVersion: number;
+            /** @description Вид карточки меняли, а маршрут остался от прежнего вида (смена вида этапы не меняет) */
+            fromPreviousKind: boolean;
         };
         CrmProfile: {
             /** Format: uuid */
@@ -8238,8 +9748,36 @@ export interface components {
             lastFailureAt: string | null;
         };
         BackupStatus: {
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Время последней успешной копии; null — копий ещё не было или стенд восстановлен из копии
+             */
             lastBackupAt: string | null;
+            /**
+             * Format: int64
+             * @description Размер последней успешной копии в байтах
+             */
+            lastBackupBytes: number | null;
+            /** @description Последний запуск копирования завершился сбоем */
+            backupFailure: components["schemas"]["BackupFailure"] | null;
+            /**
+             * Format: date-time
+             * @description Время последней успешной проверки восстановления
+             */
+            lastRestoreCheckAt: string | null;
+            /**
+             * Format: int64
+             * @description Сколько секунд заняло восстановление при последней успешной проверке
+             */
+            lastRestoreCheckSeconds: number | null;
+            /** @description Последняя проверка восстановления завершилась сбоем */
+            restoreCheckFailure: components["schemas"]["BackupFailure"] | null;
+            warnings: ("BACKUP_MISSING" | "BACKUP_STALE" | "BACKUP_FAILED" | "RESTORE_CHECK_MISSING" | "RESTORE_CHECK_STALE" | "RESTORE_CHECK_FAILED")[];
+        };
+        BackupFailure: {
+            /** Format: date-time */
+            at: string | null;
+            message: string;
         };
         CrmProfileEvent: {
             /** Format: uuid */
@@ -8480,11 +10018,27 @@ export interface components {
             contractNumber: string | null;
             interactionTitle: string;
         };
+        ImportSettings: {
+            defaultStepText: string;
+            defaultStepDays: number;
+        };
+        MissingStepsRequest: {
+            interactionIds: string[];
+            nextAction?: string | null;
+            dueDays?: number | null;
+        };
+        MissingStepsResult: {
+            assigned: number;
+            skipped: number;
+            nextAction: string;
+            /** Format: date-time */
+            nextActionAt: string;
+        };
         /**
-         * @description AGREEMENT загружает десять полей каталога ТЗ; DIRECTION_PROGRAM загружает направления и программы по устойчивым ключам; VENDOR_CONTACTS загружает поставщиков, продукты и контакты поставщиков в формате файла поставщиков организатора.
+         * @description AGREEMENT загружает десять полей каталога ТЗ; DIRECTION_PROGRAM загружает направления и программы по устойчивым ключам; VENDOR_CONTACTS загружает поставщиков, продукты и контакты поставщиков в формате файла поставщиков организатора; INTERACTION_HISTORY загружает события истории взаимодействий с их датами (комментарий, переход этапа, контакт, шаг) с пометкой «импорт»; UNIVERSITY_AGREEMENT загружает договоры школы и вуза с предметом и планом мероприятий.
          * @enum {string}
          */
-        CatalogImportProfile: "AGREEMENT" | "DIRECTION_PROGRAM" | "VENDOR_CONTACTS";
+        CatalogImportProfile: "AGREEMENT" | "DIRECTION_PROGRAM" | "VENDOR_CONTACTS" | "INTERACTION_HISTORY" | "UNIVERSITY_AGREEMENT";
         /** @description Опциональный явный выбор записи для одной строки книги. Явный id имеет приоритет над внешними ключами и именами как при предпросмотре, так и при применении. */
         CatalogImportRowTarget: {
             /** Format: uuid */
@@ -8500,7 +10054,7 @@ export interface components {
             productAgreementId?: string | null;
         };
         CatalogImportMapping: {
-            /** @description Соответствие поля импорта заголовку книги. AGREEMENT требует organizationName, vendorName и productName и принимает contractNumber, licenseSigned, licenseExpiryYear, transferStatus, managerName, contactName, comment, organizationType, organizationExternalKey, vendorExternalKey, productExternalKey, agreementExternalKey, contactExternalKey, contactPosition, contactEmail, contactPhone, interactionId и programName (ИТ-программа из справочника; строки одного вуза и программы дают одно взаимодействие, без колонки organizationType тип нового вуза берётся из названия). Недостающие внешние ключи выводятся из нормализованных имён. DIRECTION_PROGRAM требует directionExternalKey и directionName и принимает programExternalKey, programName и programDirectionRef. VENDOR_CONTACTS требует vendorName и принимает productNames, vendorContactName, vendorContactPhone, vendorContactEmail и vendorContactChannels. */
+            /** @description Соответствие поля импорта заголовку книги. AGREEMENT требует organizationName, vendorName и productName и принимает contractNumber, licenseSigned, licenseExpiryYear, transferStatus, managerName, contactName, comment, organizationType, organizationExternalKey, vendorExternalKey, productExternalKey, agreementExternalKey, contactExternalKey, contactPosition, contactEmail, contactPhone, interactionId и programName (ИТ-программа из справочника; строки одного вуза и программы дают одно взаимодействие, без колонки organizationType тип нового вуза берётся из названия). Недостающие внешние ключи выводятся из нормализованных имён. DIRECTION_PROGRAM требует directionExternalKey и directionName и принимает programExternalKey, programName и programDirectionRef. VENDOR_CONTACTS требует vendorName и принимает productNames, vendorContactName, vendorContactPhone, vendorContactEmail и vendorContactChannels. INTERACTION_HISTORY требует organizationName, eventDate и eventType и принимает organizationExternalKey, interactionTitle, interactionExternalKey, interactionId, stageName, eventText, eventAuthor (логин сотрудника или «импорт»), contactChannel, stepDueDate и rowKey. UNIVERSITY_AGREEMENT требует organizationName и agreementNumber и принимает organizationExternalKey, agreementStatus, concludedOn, validUntil, sentOn, parties, programNames, productNames, directionNames, activityKind, activityTitle, activityUnit, activityPlannedVolume, activityPlannedStart, activityPlannedEnd и activityStatus. */
             columns: {
                 [key: string]: string;
             };
@@ -8517,6 +10071,8 @@ export interface components {
              * @description Команда для новых вузов без ФИО менеджера: такой вуз создаётся в ней со статусом «Требует назначения». Без команды строка остаётся ошибкой.
              */
             unassignedTeamId?: string | null;
+            /** @description Только INTERACTION_HISTORY. true — после применения этап карточки ставится по самому позднему переходу из файла, если после него в карточке не было других переходов. */
+            stageFromHistory?: boolean | null;
         };
         CatalogImportSheet: {
             name: string;
@@ -8627,18 +10183,18 @@ export interface components {
          */
         InteractionFlag: "WAITING_UNIVERSITY" | "WAITING_RTK" | "PROBLEM" | "RISK" | "RISK_OR_PROBLEM";
         /**
-         * @description PORTFOLIO допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON; DAYS_ON_STAGE — число полных дней от последнего входа на текущий этап (от создания, если карточка ни разу не входила на него через переход) до момента формирования отчёта; LAST_EVENT_AT — последнее событие работы без автоматических записей источников (команда APPLY_SOURCE_RECORD: Moodle, сайт), null, если таких событий нет; колонки по договору показывают само значение для одного продукта и пары «продукт: значение» для нескольких. EVENTS допускает EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE, FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND допускает DIRECTION, PROGRAM, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED, COMPLETION_SHARE, COMPLETION_BASIS, PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND; заголовки колонок DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков. COMPLETION_SHARE — C / (C + N) по участиям с известным статусом завершения, COMPLETION_BASIS — основание этой доли («C из C + N с известным статусом; данные по C + N из P», плюс «потоков без данных: K», если у части потоков периода нет наблюдения на дату; программа только с такими потоками — «нет данных…», без потоков в периоде — null). MARKET_VACANCIES — число открытых вакансий по ИТ-направлению программы в последнем месячном срезе периода, MARKET_TREND — изменение этого числа в процентах от последнего среза до начала периода (если его нет — от первого среза периода) до последнего среза периода; оба показателя считаются только для направлений с признаком «Учитывать спрос рынка труда», у остальных значение «не применяется», при отсутствии срезов — null («нет данных»); в общий показатель не входят. PAID_ORDERS считает различные номера оплаченных заказов, а PAID_STREAMS — различные пары «курс и поток» применённых записей paid_order сервисной организации «Открытый набор (физлица)», видимой каждому USER и LEADER; период отчёта к ним не применяется, поскольку сайт не передаёт дату оплаты. SNAPSHOT допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT. DURATION допускает TEAM, PROGRAM, STAGE, COMPLETED, MEDIAN_DAYS, P90_DAYS, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; дни — десятичные числа с одним знаком после запятой; MEDIAN_DAYS и P90_DAYS — медиана и 90-й процентиль (ближайший ранг) завершённых прохождений, их число — COMPLETED. AGREEMENTS допускает ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS, PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS. MANAGER_WORK допускает MANAGER, ORGANIZATION, PRODUCTS, PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS, NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS, LMS_LEARNING, LMS_CHECK, TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM, RISK, AGREEMENT_STATUS, AGREEMENT; с tile IDLE колонки всегда MANAGER, TEAM, ORGANIZATION, LAST_STAFF_ACTION — только для этой плитки (строка — вуз без идущего взаимодействия, LAST_STAFF_ACTION — последнее действие сотрудника по вузу, «не зафиксировано», если его нет); LMS_LEARNING и LMS_CHECK — текущие данные LMS по идущим потокам и сверка этапа с ними, AGREEMENT_STATUS и AGREEMENT — статус и номер последнего связанного договора с вузом («Нет», если договора нет).
+         * @description PORTFOLIO допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, DAYS_ON_STAGE, WORK_STATUS, WAITING, PROBLEM, RISK, MANAGER, CREATED_AT, LAST_EVENT_AT, NEXT_ACTION, NEXT_ACTION_AT, VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON; DAYS_ON_STAGE — число полных дней от последнего входа на текущий этап (от создания, если карточка ни разу не входила на него через переход) до момента формирования отчёта; LAST_EVENT_AT — последнее событие работы без автоматических записей источников (команда APPLY_SOURCE_RECORD: Moodle, сайт), null, если таких событий нет; колонки по договору показывают само значение для одного продукта и пары «продукт: значение» для нескольких. EVENTS допускает EVENT_AT, ORGANIZATION, INTERACTION, EVENT_TYPE, FROM_STAGE, STAGE, COMMENT, AUTHOR, MANAGER, DIRECTION, PROGRAM, PRODUCTS. DEMAND допускает DIRECTION, PROGRAM, DEMAND_RANK, DEMAND_INDEX, DEMAND_CONTRIBUTIONS, DEMAND_COVERAGE, DEMAND_TREND, APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, ENROLLED_GROWTH, LEARNERS_COMPLETED, COMPLETION_SHARE, COMPLETION_BASIS, ACTIVITY_SHARE, UNIVERSITY_DEMAND, PARALLEL_RUNS, MARKET_VACANCIES, MARKET_TREND; заголовки колонок DEMAND несут период заявок, последнее наблюдение Moodle и дату параллельных запусков. Индекс востребованности (паспорт М17): DEMAND_INDEX — 0–100 с одним знаком, сумма вкладов компонентов «Прирост записанных» (ENROLLED_GROWTH, участия к прошлому периоду той же длины), «Доля завершивших» (при покрытии статусов не ниже порога сигналов LMS), «Активность за 7 дней» (ACTIVITY_SHARE, только свежие наблюдения), «Спрос вузов» (UNIVERSITY_DEMAND — взаимодействия по программе, созданные в периоде) и «Оплаты открытого набора»; вклад — вес × процентиль среди программ выборки, вес компонента без данных делится между остальными. DEMAND_RANK — место (равные индексы делят место), DEMAND_CONTRIBUTIONS — текст «почему такое место», DEMAND_COVERAGE — доля веса с данными и пометки малой базы и устаревших данных, DEMAND_TREND — изменение индекса и места к прошлому периоду. При отсутствии данных Moodle или покрытии ниже порога DEMAND_RANK и DEMAND_INDEX — null («данных недостаточно»), а не 0. COMPLETION_SHARE — C / (C + N) по участиям с известным статусом завершения, COMPLETION_BASIS — основание этой доли («C из C + N с известным статусом; данные по C + N из P», плюс «потоков без данных: K», если у части потоков периода нет наблюдения на дату; программа только с такими потоками — «нет данных…», без потоков в периоде — null). MARKET_VACANCIES — число открытых вакансий по ИТ-направлению программы в последнем месячном срезе периода, MARKET_TREND — изменение этого числа в процентах от последнего среза до начала периода (если его нет — от первого среза периода) до последнего среза периода; оба показателя считаются только для направлений с признаком «Учитывать спрос рынка труда», у остальных значение «не применяется», при отсутствии срезов — null («нет данных»); в общий показатель не входят. PAID_ORDERS считает различные номера оплаченных заказов, а PAID_STREAMS — различные пары «курс и поток» применённых записей paid_order сервисной организации «Открытый набор (физлица)», видимой каждому USER и LEADER; период отчёта к ним не применяется, поскольку сайт не передаёт дату оплаты. SNAPSHOT допускает ORGANIZATION, INTERACTION, DIRECTION, PROGRAM, PRODUCTS, STAGE, MANAGER, CREATED_AT, LAST_EVENT_AT. DURATION допускает TEAM, PROGRAM, STAGE, COMPLETED, MEDIAN_DAYS, P90_DAYS, AVG_DAYS, MAX_DAYS, CURRENT, CURRENT_MAX_DAYS; дни — десятичные числа с одним знаком после запятой; MEDIAN_DAYS и P90_DAYS — медиана и 90-й процентиль (ближайший ранг) завершённых прохождений, их число — COMPLETED. AGREEMENTS допускает ORGANIZATION, AGREEMENT, AGREEMENT_STATUS, AGREEMENT_TERM, ACTIVITY_KIND, ACTIVITY, PLANNED_VOLUME, ACTUAL_VOLUME, VOLUME_UNIT, PLANNED_DATES, ACTUAL_DATES, MANAGER, ACTIVITY_STATUS, PARTICIPANTS, WORKS, CONFIRMATIONS, CONFIRMATION_LINKS. MANAGER_WORK допускает MANAGER, ORGANIZATION, PRODUCTS, PROGRAM, STAGE_AT_START, STAGE_AT_END, TRANSITIONS, PERIOD_COMMENTS, NEXT_ACTION, NEXT_ACTION_AT, OVERDUE_DAYS, LMS_LEARNING, LMS_CHECK, TEAM, DIRECTION, INTERACTION, STAGE_POSITION, DUE_STATE, DAYS_ON_STAGE, WORK_STATUS, PROBLEM, RISK, AGREEMENT_STATUS, AGREEMENT; с tile IDLE колонки всегда MANAGER, TEAM, ORGANIZATION, LAST_STAFF_ACTION — только для этой плитки (строка — вуз без идущего взаимодействия, LAST_STAFF_ACTION — последнее действие сотрудника по вузу, «не зафиксировано», если его нет); LMS_LEARNING и LMS_CHECK — текущие данные LMS по идущим потокам и сверка этапа с ними, AGREEMENT_STATUS и AGREEMENT — статус и номер последнего связанного договора с вузом («Нет», если договора нет).
          * @enum {string}
          */
-        ReportColumn: "ORGANIZATION" | "INTERACTION" | "DIRECTION" | "PROGRAM" | "PRODUCTS" | "STAGE" | "DAYS_ON_STAGE" | "WORK_STATUS" | "WAITING" | "PROBLEM" | "RISK" | "MANAGER" | "CREATED_AT" | "LAST_EVENT_AT" | "NEXT_ACTION" | "NEXT_ACTION_AT" | "EVENT_AT" | "EVENT_TYPE" | "FROM_STAGE" | "COMMENT" | "AUTHOR" | "APPLICATIONS" | "PAID_ORDERS" | "PAID_STREAMS" | "PARTICIPANTS" | "LEARNERS_COMPLETED" | "COMPLETION_SHARE" | "COMPLETION_BASIS" | "PARALLEL_RUNS" | "MARKET_VACANCIES" | "MARKET_TREND" | "VENDORS" | "CONTRACT_NUMBER" | "LICENSE_SIGNED" | "LICENSE_EXPIRY_YEAR" | "TRANSFER_STATUS" | "MATERIALS_TRANSFERRED_ON" | "TEAM" | "COMPLETED" | "MEDIAN_DAYS" | "P90_DAYS" | "AVG_DAYS" | "MAX_DAYS" | "CURRENT" | "CURRENT_MAX_DAYS" | "AGREEMENT" | "AGREEMENT_STATUS" | "AGREEMENT_TERM" | "ACTIVITY_KIND" | "ACTIVITY" | "PLANNED_VOLUME" | "ACTUAL_VOLUME" | "VOLUME_UNIT" | "PLANNED_DATES" | "ACTUAL_DATES" | "ACTIVITY_STATUS" | "WORKS" | "CONFIRMATIONS" | "CONFIRMATION_LINKS" | "STAGE_AT_START" | "STAGE_AT_END" | "STAGE_POSITION" | "TRANSITIONS" | "PERIOD_COMMENTS" | "DUE_STATE" | "OVERDUE_DAYS" | "LMS_LEARNING" | "LMS_CHECK" | "LAST_STAFF_ACTION";
-        /** @description Пустой список с флагом include=false оставляет измерение без фильтрации, включая строки без значения. includeNo* добавляет к выбранным id строки без значения. managerIds и includeNoManager используют текущего ответственного организации в PORTFOLIO и DEMAND и снимок ответственного события в EVENTS. DEMAND отклоняет productIds, includeNoProduct, stages, workStatuses и flags с 400 VALIDATION_ERROR. */
+        ReportColumn: "ORGANIZATION" | "INTERACTION" | "DIRECTION" | "PROGRAM" | "PRODUCTS" | "STAGE" | "DAYS_ON_STAGE" | "WORK_STATUS" | "WAITING" | "PROBLEM" | "RISK" | "MANAGER" | "CREATED_AT" | "LAST_EVENT_AT" | "NEXT_ACTION" | "NEXT_ACTION_AT" | "EVENT_AT" | "EVENT_TYPE" | "FROM_STAGE" | "COMMENT" | "AUTHOR" | "APPLICATIONS" | "PAID_ORDERS" | "PAID_STREAMS" | "PARTICIPANTS" | "LEARNERS_COMPLETED" | "COMPLETION_SHARE" | "COMPLETION_BASIS" | "PARALLEL_RUNS" | "MARKET_VACANCIES" | "MARKET_TREND" | "DEMAND_RANK" | "DEMAND_INDEX" | "DEMAND_CONTRIBUTIONS" | "DEMAND_COVERAGE" | "DEMAND_TREND" | "ENROLLED_GROWTH" | "ACTIVITY_SHARE" | "UNIVERSITY_DEMAND" | "VENDORS" | "CONTRACT_NUMBER" | "LICENSE_SIGNED" | "LICENSE_EXPIRY_YEAR" | "TRANSFER_STATUS" | "MATERIALS_TRANSFERRED_ON" | "TEAM" | "COMPLETED" | "MEDIAN_DAYS" | "P90_DAYS" | "AVG_DAYS" | "MAX_DAYS" | "CURRENT" | "CURRENT_MAX_DAYS" | "AGREEMENT" | "AGREEMENT_STATUS" | "AGREEMENT_TERM" | "ACTIVITY_KIND" | "ACTIVITY" | "PLANNED_VOLUME" | "ACTUAL_VOLUME" | "VOLUME_UNIT" | "PLANNED_DATES" | "ACTUAL_DATES" | "ACTIVITY_STATUS" | "WORKS" | "CONFIRMATIONS" | "CONFIRMATION_LINKS" | "STAGE_AT_START" | "STAGE_AT_END" | "STAGE_POSITION" | "TRANSITIONS" | "PERIOD_COMMENTS" | "DUE_STATE" | "OVERDUE_DAYS" | "LMS_LEARNING" | "LMS_CHECK" | "LAST_STAFF_ACTION";
+        /** @description Пустой список с флагом include=false оставляет измерение без фильтрации, включая строки без значения. includeNo* добавляет к выбранным id строки без значения. managerIds и includeNoManager используют текущего ответственного организации в PORTFOLIO и DEMAND и снимок ответственного события в EVENTS. DEMAND отклоняет productIds, includeNoProduct, stages, workStatuses и flags с 400 VALIDATION_ERROR; kindIds в DEMAND отбирает только «Спрос вузов». */
         ReportFilters: {
             organizationIds?: string[];
             directionIds?: string[];
             includeNoDirection?: boolean;
             programIds?: string[];
             includeNoProgram?: boolean;
-            /** @description Виды взаимодействия; недоступно для DEMAND и AGREEMENTS */
+            /** @description Виды взаимодействия; недоступно для AGREEMENTS; в DEMAND отбирает только компонент «Спрос вузов» (UNIVERSITY_DEMAND) */
             kindIds?: string[];
             productIds?: string[];
             includeNoProduct?: boolean;
@@ -8692,7 +10248,7 @@ export interface components {
             filters?: components["schemas"]["ReportFilters"];
             /** @description Отсутствие или пустое значение означает столбцы по умолчанию для вида в порядке по умолчанию: для PORTFOLIO все столбцы, кроме относящихся к соглашению (VENDORS, CONTRACT_NUMBER, LICENSE_SIGNED, LICENSE_EXPIRY_YEAR, TRANSFER_STATUS, MATERIALS_TRANSFERRED_ON), которые возвращаются только при явном указании; для EVENTS и DEMAND — все столбцы */
             columns?: components["schemas"]["ReportColumn"][];
-            /** @description Только для DEMAND: APPLICATIONS (по умолчанию), PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED или PARALLEL_RUNS; строки сортируются по этому показателю по убыванию, «нет данных» — в конце, затем по названию программы. Остальные виды отклоняют его с 400 VALIDATION_ERROR. */
+            /** @description Только для DEMAND: DEMAND_INDEX (по умолчанию — по месту, «данных недостаточно» в конце), APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS, LEARNERS_COMPLETED или PARALLEL_RUNS; строки сортируются по этому показателю по убыванию, «нет данных» — в конце, затем по названию программы. Остальные виды отклоняют его с 400 VALIDATION_ERROR. */
             sortBy?: components["schemas"]["ReportColumn"] | null;
         };
         ReportRequest: components["schemas"]["ReportPreviewRequest"] & {
@@ -8739,7 +10295,7 @@ export interface components {
         ReportColumnView: {
             id: components["schemas"]["ReportColumn"];
             title: string;
-            /** @description Текст для пустых значений: «Не указано» для направления, программы, продуктов и менеджера, «нет данных» для APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS и PARALLEL_RUNS */
+            /** @description Текст для пустых значений: «Не указано» для направления, программы, продуктов и менеджера, «нет данных» для APPLICATIONS, PAID_ORDERS, PAID_STREAMS, PARTICIPANTS и PARALLEL_RUNS, «данных недостаточно» для DEMAND_RANK и DEMAND_INDEX */
             emptyText: string;
         };
         ReportPreview: {
@@ -8996,6 +10552,31 @@ export interface components {
             updatedByName: string | null;
             /** @description Задан ключ SOURCES_SETTINGS_KEY, и токен можно сохранять на экране */
             encryptionAvailable: boolean;
+        };
+        DemandIndexWeights: {
+            /** @description Вес «Прирост записанных» */
+            growthWeight: number;
+            /** @description Вес «Доля завершивших» */
+            completionWeight: number;
+            /** @description Вес «Активность за 7 дней» */
+            activityWeight: number;
+            /** @description Вес «Спрос вузов» */
+            universityWeight: number;
+            /** @description Вес «Оплаты открытого набора» */
+            paymentsWeight: number;
+            /** @description Доля веса с данными, ниже которой программа получает «данных недостаточно» */
+            minCoveragePercent: number;
+            /** @description Меньше этого числа участий — пометка «малая база» */
+            smallBase: number;
+        };
+        DemandIndexSettings: {
+            current: components["schemas"]["DemandIndexWeights"];
+            defaults: components["schemas"]["DemandIndexWeights"];
+            /** @description Значения сохранены администратором; false — действуют значения по умолчанию */
+            saved: boolean;
+            /** Format: date-time */
+            updatedAt: string | null;
+            updatedByName: string | null;
         };
         LaborMarketSettingsUpdate: {
             /** @description Пустое значение отключает источник */
@@ -9571,7 +11152,7 @@ export interface components {
             occurredAt: string;
             category: components["schemas"]["AuditCategory"];
             /** @enum {string} */
-            action: "PROFILE_CHANGED" | "ACTIVATION_REQUESTED" | "KAM_ASSIGNED" | "KAM_CHANGED" | "KAM_UNASSIGNED" | "ORGANIZATION_TEAM_CHANGED" | "AGREEMENT_PLAN_CHANGED" | "TEAM_CREATED" | "TEAM_RENAMED" | "TEAM_ARCHIVED" | "TEAM_RESTORED" | "SYNC_STARTED" | "SOURCE_SETTINGS_CHANGED" | "ATTACHMENT_DOWNLOADED" | "ATTACHMENT_PREVIEWED" | "ENROLMENT_OPERATOR_CHANGED" | "REPORT_DOWNLOADED" | "JOURNAL_EXPORTED" | "CONFIRMATIONS_DOWNLOADED" | "SUBJECT_SEARCHED" | "SUBJECT_EXPORTED" | "CONTACT_RECTIFIED" | "CONTACT_RESTRICTED" | "CONTACT_RESTRICTION_LIFTED" | "SUBJECT_ANONYMIZED" | "RETENTION_APPLIED" | "ACCOUNT_DISABLED" | "ACCOUNT_ENABLED" | "ACCOUNT_SYNC_FAILED" | "ACCOUNT_CREATED" | "ACCOUNT_PASSWORD_RESET" | "ACCOUNT_SESSIONS_ENDED" | "ACCOUNT_EMAIL_CHANGED" | "ACCOUNT_SECOND_FACTOR_RESET" | "ACCOUNT_ROLES_MIGRATED" | "ACCOUNT_ROLE_RECONCILED" | "LOGIN_SUCCEEDED" | "LOGIN_DENIED" | "LOGOUT" | "PROFILES_EXPORTED" | "CRM_EVENTS_REQUEUED" | "LEARNER_RESTRICTED" | "LEARNER_RESTRICTION_LIFTED" | "PAID_ORDERS_UPLOADED" | "LEARNERS_SYNCED" | "LEARNER_LIST_VIEWED" | "LEARNER_SEARCHED" | "LEARNER_VIEWED" | "LEARNER_FIELDS_REVEALED" | "LEARNER_CHANGED" | "LEARNER_ENROLMENTS_MOVED" | "LEARNER_TEMPLATE_PREVIEWED" | "LEARNER_TEMPLATE_IMPORTED" | "LMS_ROSTER_EXPORTED" | "LMS_ROSTER_MARKED" | "STREAM_END_DATE_CHANGED" | "TEACHER_ROSTER_EXPORTED" | "TEACHER_ROSTER_MARKED" | "AGENT_TOOL_CALLED" | "AGENT_PLAN_PREPARED" | "AGENT_PLAN_APPLIED" | "AGENT_PLAN_REJECTED" | "AGENT_PLAN_EXPIRED" | "AGENT_PLAN_STALE" | "AGENT_PLAN_FAILED" | "MAX_SETTINGS_CHANGED" | "MAX_LINK_REQUESTED" | "MAX_LINKED" | "MAX_LINK_REJECTED" | "MAX_UNLINKED" | "MAX_SESSION_STARTED" | "MAX_CHANGE" | "MAX_OUTBOX_REQUEUED" | "PARTNER_REQUEST_CREATED" | "PARTNER_REQUEST_CHANGED" | "PARTNER_RESPONSE_SUBMITTED" | "PARTNER_RESPONSE_REVIEWED" | "PARTNER_MATERIAL_RECEIVED" | "LMS_RESULTS_RECORDED" | "LMS_RECONCILED" | "LMS_API_TRANSFER" | "LMS_API_MOVE" | "LOGIN_FAILED" | "ACCOUNT_LOCKOUT_RELEASED" | "ORGANIZATION_RECORD_CHANGED" | "CATALOG_CHANGED" | "CATALOG_IMPORT_APPLIED" | "WORKFLOW_TEMPLATE_CHANGED" | "WORKFLOW_ROLLOUT_APPLIED" | "INTERACTION_KIND_CHANGED" | "INTERACTION_KIND_RULE_CHANGED" | "SOURCE_MAPPING_CHANGED" | "MAIL_SETTINGS_CHANGED" | "MAIL_CONNECTION_CHECKED" | "MAIL_TEST_SENT" | "MAIL_LETTER_VIEWED" | "MAIL_OUTBOX_REQUEUED" | "MAIL_OUTBOX_CANCELLED" | "MAIL_INVITATION_SENT" | "MAIL_INVITATION_REDEEMED" | "MAIL_SUBJECT_REPORT_SENT";
+            action: "PROFILE_CHANGED" | "ACTIVATION_REQUESTED" | "KAM_ASSIGNED" | "KAM_CHANGED" | "KAM_UNASSIGNED" | "ORGANIZATION_TEAM_CHANGED" | "AGREEMENT_PLAN_CHANGED" | "TEAM_CREATED" | "TEAM_RENAMED" | "TEAM_ARCHIVED" | "TEAM_RESTORED" | "SYNC_STARTED" | "SOURCE_SETTINGS_CHANGED" | "ATTACHMENT_DOWNLOADED" | "ATTACHMENT_PREVIEWED" | "ENROLMENT_OPERATOR_CHANGED" | "REPORT_DOWNLOADED" | "JOURNAL_EXPORTED" | "CONFIRMATIONS_DOWNLOADED" | "SUBJECT_SEARCHED" | "SUBJECT_EXPORTED" | "CONTACT_RECTIFIED" | "CONTACT_RESTRICTED" | "CONTACT_RESTRICTION_LIFTED" | "SUBJECT_ANONYMIZED" | "RETENTION_APPLIED" | "ACCOUNT_DISABLED" | "ACCOUNT_ENABLED" | "ACCOUNT_SYNC_FAILED" | "ACCOUNT_CREATED" | "ACCOUNT_PASSWORD_RESET" | "ACCOUNT_SESSIONS_ENDED" | "ACCOUNT_EMAIL_CHANGED" | "ACCOUNT_SECOND_FACTOR_RESET" | "ACCOUNT_ROLES_MIGRATED" | "ACCOUNT_ROLE_RECONCILED" | "LOGIN_SUCCEEDED" | "LOGIN_DENIED" | "LOGOUT" | "PROFILES_EXPORTED" | "CRM_EVENTS_REQUEUED" | "LEARNER_RESTRICTED" | "LEARNER_RESTRICTION_LIFTED" | "PAID_ORDERS_UPLOADED" | "LEARNERS_SYNCED" | "LEARNER_LIST_VIEWED" | "LEARNER_SEARCHED" | "LEARNER_VIEWED" | "LEARNER_FIELDS_REVEALED" | "LEARNER_CHANGED" | "LEARNER_ENROLMENTS_MOVED" | "LEARNER_TEMPLATE_PREVIEWED" | "LEARNER_TEMPLATE_IMPORTED" | "LMS_ROSTER_EXPORTED" | "LMS_ROSTER_MARKED" | "STREAM_END_DATE_CHANGED" | "STREAM_MOODLE_COURSE_CHANGED" | "TEACHER_ROSTER_EXPORTED" | "TEACHER_ROSTER_MARKED" | "AGENT_TOOL_CALLED" | "AGENT_PLAN_PREPARED" | "AGENT_PLAN_APPLIED" | "AGENT_PLAN_REJECTED" | "AGENT_PLAN_EXPIRED" | "AGENT_PLAN_STALE" | "AGENT_PLAN_FAILED" | "MAX_SETTINGS_CHANGED" | "MAX_LINK_REQUESTED" | "MAX_LINKED" | "MAX_LINK_REJECTED" | "MAX_UNLINKED" | "MAX_SESSION_STARTED" | "MAX_CHANGE" | "MAX_OUTBOX_REQUEUED" | "PARTNER_REQUEST_CREATED" | "PARTNER_REQUEST_CHANGED" | "PARTNER_RESPONSE_SUBMITTED" | "PARTNER_RESPONSE_REVIEWED" | "PARTNER_MATERIAL_RECEIVED" | "LMS_RESULTS_RECORDED" | "LMS_RECONCILED" | "LMS_API_TRANSFER" | "LMS_API_MOVE" | "LOGIN_FAILED" | "ACCOUNT_LOCKOUT_RELEASED" | "ORGANIZATION_RECORD_CHANGED" | "CATALOG_CHANGED" | "CATALOG_IMPORT_APPLIED" | "WORKFLOW_TEMPLATE_CHANGED" | "WORKFLOW_ROLLOUT_APPLIED" | "INTERACTION_KIND_CHANGED" | "INTERACTION_KIND_RULE_CHANGED" | "DEMAND_INDEX_SETTINGS_CHANGED" | "AGREEMENT_REPORTING_CHANGED" | "AGREEMENT_ACTIVITY_LIST_CHANGED" | "AGREEMENT_ACTIVITY_STATUS_CHANGED" | "SOURCE_MAPPING_CHANGED" | "PEOPLE_SETTINGS_CHANGED" | "PEOPLE_RECORD_CHANGED" | "PEOPLE_IMPORT_APPLIED" | "SYSTEM_SETTING_CHANGED" | "PERSONAL_DATA_REQUEST_CHANGED" | "PERSONAL_DATA_REQUESTS_EXPORTED" | "CONSENT_CHANGED" | "MAIL_SETTINGS_CHANGED" | "MAIL_CONNECTION_CHECKED" | "MAIL_TEST_SENT" | "MAIL_LETTER_VIEWED" | "MAIL_OUTBOX_REQUEUED" | "MAIL_OUTBOX_CANCELLED" | "MAIL_INVITATION_SENT" | "MAIL_INVITATION_REDEEMED" | "MAIL_SUBJECT_REPORT_SENT";
             actionLabel: string;
             /**
              * Format: uuid
@@ -9678,6 +11259,8 @@ export interface components {
             attachments: components["schemas"]["SubjectAttachment"][];
             sourceRecords: components["schemas"]["SubjectSourceRecord"][];
             learners: components["schemas"]["SubjectLearner"][];
+            /** @description Записи учёта людей и часов, где субъект указан по ФИО или почте */
+            peopleRecords: components["schemas"]["SubjectPersonRecord"][];
             /** @description Некоторые списки были обрезаны по лимиту отображения; сузьте поиск */
             truncated: boolean;
         };
@@ -9725,11 +11308,19 @@ export interface components {
             profileIds?: string[];
             attachmentIds?: string[];
             learnerIds?: string[];
+            /** @description Записи учёта людей и часов с видом роли субъекта в записи */
+            peopleRecords?: {
+                /** Format: uuid */
+                id: string;
+                kind: components["schemas"]["SubjectPersonRecordKind"];
+            }[];
             reason?: components["schemas"]["PersonalDataReason"];
             /** @description Номер обращения или пояснение; обязателен при основании OTHER */
             comment?: string | null;
         };
         AnonymizationResult: {
+            /** @description Обезличено записей учёта людей и часов */
+            peopleRecords: number;
             /** @description Готовые отчёты, файл которых проверить на данные субъекта не удалось: файл не удаляется, отчёт помечается «требует пересоздания» (ошибка REPORT_NEEDS_REBUILD). Удаляются (reportFilesDeleted) только отчёты, в файле которых субъект найден. */
             reportFilesMarked: number;
             contacts: number;
@@ -9742,6 +11333,167 @@ export interface components {
             reportFilesDeleted: number;
             learners: number;
         };
+        SystemSetting: {
+            /** @enum {string} */
+            key: "RETENTION_REPORT_FILES" | "RETENTION_INACTIVE_CONTACTS" | "RETENTION_DISMISSED_PROFILES" | "RETENTION_AUDIT_EVENTS" | "RETENTION_AGENT_PLANS" | "RETENTION_LEARNER_PROFILES" | "RETENTION_MAIL_LETTERS" | "RETENTION_MAX_INBOX" | "RETENTION_MAX_OUTBOX" | "RETENTION_PERSONAL_DATA_REQUESTS" | "STUCK_DAYS" | "SOURCES_STALE_HOURS" | "LMS_COMPLETION_COVERAGE" | "PERSONAL_DATA_RESPONSE_DAYS" | "PERSONAL_DATA_RESPONSE_WORKING_DAYS" | "PERSONAL_DATA_REMIND_DAYS" | "CONSENTS_CONTACTS" | "CONSENTS_LEARNERS";
+            /** @enum {string} */
+            group: "RETENTION" | "SIGNALS" | "PRIVACY";
+            title: string;
+            /**
+             * @description FLAG — 0 выключено, 1 включено
+             * @enum {string}
+             */
+            unit: "DAYS" | "HOURS" | "MONTHS" | "PERCENT" | "FLAG";
+            min: number;
+            max: number;
+            /** @description Действующее значение */
+            value: number;
+            /** @description Значение конфигурации сервера; действует, пока настройку не изменили */
+            defaultValue: number;
+            /** @description Значение изменено на экране */
+            saved: boolean;
+            /** Format: date-time */
+            updatedAt: string | null;
+            updatedByName: string | null;
+        };
+        SystemSettingUpdate: {
+            value: number;
+        };
+        ModuleStatus: {
+            /** @enum {string} */
+            code: "MAX" | "MCP" | "MAIL" | "MOODLE_WRITE" | "ENROLMENT" | "PARTNER";
+            title: string;
+            /** @description Переменная окружения, которой администратор сервера включает модуль */
+            variable: string;
+            enabled: boolean;
+            /** Format: date-time */
+            lastSuccessAt: string | null;
+            /** @description Что было последней успешной операцией */
+            lastSuccess: string | null;
+            /** @description Ошибки за 7 дней; null — модуль ошибок не записывает */
+            errors: number | null;
+            lastError: string | null;
+        };
+        /** @enum {string} */
+        PersonalDataRequestKind: "INFORMATION" | "RECTIFICATION" | "DELETION" | "CONSENT_WITHDRAWAL";
+        /** @enum {string} */
+        PersonalDataRequestStatus: "NEW" | "IN_PROGRESS" | "DONE" | "REJECTED";
+        PersonalDataExecution: {
+            /** Format: uuid */
+            auditEventId: string | null;
+            label: string;
+            /** Format: date-time */
+            occurredAt: string;
+            details: string | null;
+        };
+        PersonalDataRequest: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date */
+            receivedOn: string;
+            subjectName: string;
+            kind: components["schemas"]["PersonalDataRequestKind"];
+            channel: string;
+            /** Format: date */
+            dueOn: string;
+            /** Format: uuid */
+            assigneeId: string | null;
+            assigneeName: string | null;
+            status: components["schemas"]["PersonalDataRequestStatus"];
+            /** Format: date */
+            completedOn: string | null;
+            execution: components["schemas"]["PersonalDataExecution"] | null;
+            note: string | null;
+            /**
+             * @description SOON — срок в пределах PERSONAL_DATA_REMIND_DAYS, OVERDUE — истёк; у закрытых — null
+             * @enum {string|null}
+             */
+            dueState: "SOON" | "OVERDUE" | null;
+        };
+        PersonalDataRequestInput: {
+            /** Format: date */
+            receivedOn: string;
+            subjectName: string;
+            kind: components["schemas"]["PersonalDataRequestKind"];
+            channel: string;
+            /** Format: date */
+            dueOn?: string | null;
+            /** Format: uuid */
+            assigneeId?: string | null;
+            status?: components["schemas"]["PersonalDataRequestStatus"] | null;
+            /** Format: date */
+            completedOn?: string | null;
+            /** Format: uuid */
+            auditEventId?: string | null;
+            note?: string | null;
+        };
+        PersonalDataRequests: {
+            requests: components["schemas"]["PersonalDataRequest"][];
+            executions: components["schemas"]["PersonalDataExecution"][];
+            /** @description Действующие администраторы — кого можно назначить исполнителем */
+            assignees: components["schemas"]["PersonalDataAssignee"][];
+            responseDays: number;
+            /** @description Срок ответа по умолчанию считается в рабочих днях (пн–пт, праздники не учитываются) */
+            workingDays: boolean;
+            remindDays: number;
+        };
+        AdminReminders: {
+            personalDataRequests: components["schemas"]["PersonalDataRequest"][];
+            remindDays: number;
+        };
+        /** @enum {string} */
+        ConsentSubjectType: "CONTACT" | "LEARNER";
+        Consent: {
+            /** Format: uuid */
+            id: string;
+            subjectType: components["schemas"]["ConsentSubjectType"];
+            /** Format: uuid */
+            subjectId: string;
+            /** Format: date */
+            givenOn: string;
+            basis: string;
+            document: string | null;
+            /** Format: date */
+            withdrawnOn: string | null;
+            authorName: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ConsentInput: {
+            /** Format: date */
+            givenOn: string;
+            basis: string;
+            document?: string | null;
+            /** Format: date */
+            withdrawnOn?: string | null;
+        };
+        Consents: {
+            enabled: boolean;
+            consents: components["schemas"]["Consent"][];
+        };
+        ConsentSettings: {
+            contacts: boolean;
+            learners: boolean;
+        };
+        PersonalDataAssignee: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        RouteVersionsRow: {
+            /** Format: uuid */
+            teamId: string;
+            teamName: string;
+            /** Format: uuid */
+            templateId: string;
+            templateName: string;
+            latestVersion: number;
+            versions: {
+                version: number;
+                works: number;
+            }[];
+            outdatedWorks: number;
+        };
         RetentionPolicy: {
             reportFilesDays: number;
             inactiveContactsDays: number;
@@ -9751,6 +11503,8 @@ export interface components {
             agentPlansDays: number;
             /** @description Срок хранения анкеты слушателя после окончания последнего потока, для отображения, например «3 г.»; настраивается APP_RETENTION_LEARNER_PROFILES как период ISO-8601 */
             learnerProfilesTerm: string;
+            /** @description Через сколько дней после исполнения удаляется закрытое обращение субъекта ПДн */
+            personalDataRequestsDays: number;
             /** @description Spring cron-выражение, московское время */
             schedule: string;
             lastRun: components["schemas"]["AuditEntry"] | null;
@@ -9781,6 +11535,7 @@ export interface components {
             /** @description Ожидавшие подтверждения планы ИИ-агента, срок которых истёк; переведены в EXPIRED */
             agentPlansExpired: number;
             agentPlansDeleted: number;
+            personalDataRequestsDeleted: number;
         };
         MaxPreferences: {
             /** @description Утренняя сводка в 9:00 по рабочим дням */
@@ -9812,7 +11567,7 @@ export interface components {
             expiresAt: string;
         };
         /** @enum {string} */
-        MailTopic: "DIGEST" | "ASSIGNMENT" | "AGREEMENT" | "ISSUES" | "PARTNER_REPLIES" | "AGENT_PLANS" | "SITE_REQUEST" | "UNASSIGNED" | "WEEKLY" | "ADMIN_ALERTS";
+        MailTopic: "DIGEST" | "ASSIGNMENT" | "AGREEMENT" | "ISSUES" | "PARTNER_REPLIES" | "AGENT_PLANS" | "SITE_REQUEST" | "UNASSIGNED" | "WEEKLY" | "PARTNER_ACCEPTED" | "ADMIN_ALERTS";
         MailPreferences: {
             /** @description Почта учётной записи Keycloak; null — не указана или Keycloak недоступен */
             email?: string | null;
@@ -9828,8 +11583,10 @@ export interface components {
         MailQueueCounts: {
             queued: number;
             errors: number;
-            /** @description Отправлено за 24 часа */
+            /** @description Отправлено через SMTP за 24 часа */
             sent: number;
+            /** @description Записано в журнал без отправки (режим «Без отправки») за 24 часа; наружу не уходило */
+            logged: number;
             /** @description Не отправлено за 24 часа (устарело, получатель или вуз недоступны, тема отключена) */
             dropped: number;
             /** @description Отменено администратором за 24 часа */
@@ -9878,7 +11635,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            kind: "INVITATION" | "PASSWORD_RESET" | "DIGEST" | "ASSIGNMENT" | "AGREEMENT_CORRECTION" | "AGREEMENT_EXPIRY" | "ISSUE_ASSIGNED" | "ISSUE_RESOLVED" | "PARTNER_REQUEST" | "PARTNER_RETURNED" | "PARTNER_REPLY" | "SITE_REQUEST" | "AGENT_PLAN" | "ORGANIZATIONS_UNASSIGNED" | "WEEKLY_SUMMARY" | "ADMIN_SOURCE_FAILURE" | "ADMIN_PENDING_ACTIVATION" | "ADMIN_DAILY" | "TEST" | "SUBJECT_REPORT";
+            kind: "INVITATION" | "PASSWORD_RESET" | "DIGEST" | "ASSIGNMENT" | "AGREEMENT_CORRECTION" | "AGREEMENT_EXPIRY" | "ISSUE_ASSIGNED" | "ISSUE_RESOLVED" | "PARTNER_REQUEST" | "PARTNER_RETURNED" | "PARTNER_ACCEPTED" | "PARTNER_REPLY" | "SITE_REQUEST" | "AGENT_PLAN" | "ORGANIZATIONS_UNASSIGNED" | "WEEKLY_SUMMARY" | "ADMIN_SOURCE_FAILURE" | "ADMIN_PENDING_ACTIVATION" | "ADMIN_DAILY" | "TEST" | "SUBJECT_REPORT";
             kindTitle: string;
             /** @description Маска адреса; у ещё не отправленного письма сотруднику — null (адрес берётся из Keycloak при отправке) */
             recipient?: string | null;
@@ -9888,7 +11645,7 @@ export interface components {
             /** @enum {string} */
             status: "QUEUED" | "SENT" | "ERROR" | "DROPPED" | "CANCELLED";
             /**
-             * @description STUB — «отправлено (заглушка)», наружу не уходило
+             * @description STUB — «в журнале (без отправки)», наружу не уходило
              * @enum {string|null}
              */
             transport?: "STUB" | "SMTP" | null;
@@ -10008,7 +11765,7 @@ export interface components {
         MaxAppWork: {
             feed: components["schemas"]["ReminderFeed"];
             /** @enum {string} */
-            due: "OVERDUE" | "TODAY" | "THIS_WEEK" | "LATER" | "NO_NEXT_STEP";
+            due: "OVERDUE" | "TODAY" | "THIS_WEEK" | "REST_OF_WEEK" | "LATER" | "NO_NEXT_STEP";
             items: components["schemas"]["PageInteraction"];
         };
         MaxAppCard: {
@@ -10053,6 +11810,372 @@ export interface components {
             /** Format: date-time */
             nextActionAt: string;
         };
+        /**
+         * @description ACADEMIC — академический час (45 минут), ASTRONOMICAL — астрономический (60 минут)
+         * @enum {string}
+         */
+        HourUnit: "ACADEMIC" | "ASTRONOMICAL";
+        PeopleSettings: {
+            teachingUnit: components["schemas"]["HourUnit"];
+            internshipUnit: components["schemas"]["HourUnit"];
+            qualificationUnit: components["schemas"]["HourUnit"];
+            /** @description Срок передачи сведений в ФРДО в днях от даты удостоверения; null — срок не задан */
+            frdoDeadlineDays: number | null;
+            frdoNoticeDays: number;
+            /** @description false — действуют значения по умолчанию */
+            saved: boolean;
+            /** Format: date-time */
+            updatedAt: string | null;
+            updatedByName: string | null;
+        };
+        PeopleSettingsRequest: {
+            teachingUnit: components["schemas"]["HourUnit"];
+            internshipUnit: components["schemas"]["HourUnit"];
+            qualificationUnit: components["schemas"]["HourUnit"];
+            frdoDeadlineDays?: number | null;
+            frdoNoticeDays: number;
+        };
+        TeachingInput: {
+            /** Format: uuid */
+            interactionId?: string | null;
+            /** Format: uuid */
+            agreementId?: string | null;
+            /**
+             * Format: uuid
+             * @description Мероприятие плана договора вуза
+             */
+            agreementActivityId?: string | null;
+            /** @description Дисциплина или программа */
+            discipline: string;
+            /**
+             * Format: uuid
+             * @description Сотрудник из справочника; если не задан — нужен performerName
+             */
+            performerProfileId?: string | null;
+            /** @description ФИО исполнителя группы компаний */
+            performerName?: string | null;
+            performerCompany?: string | null;
+            /** Format: date */
+            startsOn: string;
+            /** Format: date */
+            endsOn: string;
+            hours: number;
+            hourUnit?: components["schemas"]["HourUnit"] | null;
+            studentGroup?: string | null;
+            /** @enum {string|null} */
+            confirmationStatus?: "NOT_REQUESTED" | "REQUESTED" | "CONFIRMED" | "REJECTED" | null;
+            confirmationDocument?: string | null;
+            /** Format: date */
+            confirmedOn?: string | null;
+            /** @description Обязательна при изменении */
+            version?: number | null;
+        };
+        TeachingRecord: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            /** Format: uuid */
+            interactionId: string | null;
+            interactionTitle: string | null;
+            /** Format: uuid */
+            agreementId: string | null;
+            agreementNumber: string | null;
+            /** Format: uuid */
+            agreementActivityId: string | null;
+            agreementActivityTitle: string | null;
+            discipline: string;
+            /** Format: uuid */
+            performerProfileId: string | null;
+            /** @description Имя сотрудника из справочника или ФИО исполнителя группы компаний */
+            performerName: string;
+            performerCompany: string | null;
+            /** Format: date */
+            startsOn: string;
+            /** Format: date */
+            endsOn: string;
+            hours: number;
+            hourUnit: components["schemas"]["HourUnit"];
+            studentGroup: string | null;
+            /** @enum {string} */
+            confirmationStatus: "NOT_REQUESTED" | "REQUESTED" | "CONFIRMED" | "REJECTED";
+            confirmationDocument: string | null;
+            /** Format: date */
+            confirmedOn: string | null;
+            version: number;
+            updatedByName: string | null;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        InternshipInput: {
+            /** Format: uuid */
+            interactionId?: string | null;
+            /** Format: uuid */
+            agreementActivityId?: string | null;
+            internName: string;
+            /** @enum {string} */
+            internKind: "STUDENT" | "TEACHER";
+            /** @description Подразделение или исполнитель, где проходит стажировка */
+            place: string;
+            /** Format: uuid */
+            mentorProfileId?: string | null;
+            mentorName?: string | null;
+            /** Format: date */
+            startsOn: string;
+            /** Format: date */
+            endsOn: string;
+            internHours: number;
+            mentorHours?: number | null;
+            hourUnit?: components["schemas"]["HourUnit"] | null;
+            /** @enum {string|null} */
+            result?: "PLANNED" | "IN_PROGRESS" | "COMPLETED" | "NOT_COMPLETED" | null;
+            employed?: boolean | null;
+            document?: string | null;
+            version?: number | null;
+        };
+        InternshipRecord: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            /** Format: uuid */
+            interactionId: string | null;
+            interactionTitle: string | null;
+            /** Format: uuid */
+            agreementActivityId: string | null;
+            agreementActivityTitle: string | null;
+            internName: string;
+            /** @enum {string} */
+            internKind: "STUDENT" | "TEACHER";
+            place: string;
+            /** Format: uuid */
+            mentorProfileId: string | null;
+            mentorName: string | null;
+            /** Format: date */
+            startsOn: string;
+            /** Format: date */
+            endsOn: string;
+            internHours: number;
+            mentorHours: number | null;
+            hourUnit: components["schemas"]["HourUnit"];
+            /** @enum {string} */
+            result: "PLANNED" | "IN_PROGRESS" | "COMPLETED" | "NOT_COMPLETED";
+            employed: boolean;
+            document: string | null;
+            anonymized: boolean;
+            version: number;
+            updatedByName: string | null;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        QualificationInput: {
+            /** Format: uuid */
+            interactionId?: string | null;
+            /** Format: uuid */
+            agreementActivityId?: string | null;
+            /**
+             * Format: uuid
+             * @description Список на курс LMS (поток Moodle) этого вуза
+             */
+            teacherRosterId?: string | null;
+            /** Format: uuid */
+            contactId?: string | null;
+            /** @description Обязательно, если не выбран контакт */
+            personName?: string | null;
+            personEmail?: string | null;
+            program: string;
+            /** Format: date */
+            startsOn: string;
+            /** Format: date */
+            endsOn: string;
+            hours: number;
+            hourUnit?: components["schemas"]["HourUnit"] | null;
+            /** @enum {string|null} */
+            result?: "IN_PROGRESS" | "CERTIFIED" | "NOT_CERTIFIED" | null;
+            certificateNumber?: string | null;
+            /** Format: date */
+            certificateDate?: string | null;
+            /**
+             * Format: date
+             * @description Дата передачи сведений в ФРДО; только для аттестованных
+             */
+            frdoSubmittedOn?: string | null;
+            version?: number | null;
+        };
+        QualificationRecord: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            /** Format: uuid */
+            interactionId: string | null;
+            interactionTitle: string | null;
+            /** Format: uuid */
+            agreementActivityId: string | null;
+            agreementActivityTitle: string | null;
+            /** Format: uuid */
+            teacherRosterId: string | null;
+            teacherRosterTitle: string | null;
+            /** Format: uuid */
+            contactId: string | null;
+            personName: string;
+            personEmail: string | null;
+            program: string;
+            /** Format: date */
+            startsOn: string;
+            /** Format: date */
+            endsOn: string;
+            hours: number;
+            hourUnit: components["schemas"]["HourUnit"];
+            /** @enum {string} */
+            result: "IN_PROGRESS" | "CERTIFIED" | "NOT_CERTIFIED";
+            certificateNumber: string | null;
+            /** Format: date */
+            certificateDate: string | null;
+            /** Format: date */
+            frdoSubmittedOn: string | null;
+            /**
+             * Format: date
+             * @description Срок передачи в ФРДО; null, если срок не задан в настройках или нет удостоверения
+             */
+            frdoDueOn: string | null;
+            frdoOverdue: boolean;
+            anonymized: boolean;
+            version: number;
+            updatedByName: string | null;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        PeopleOption: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+        };
+        PeopleContactOption: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            email: string | null;
+        };
+        PeopleActivityOption: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            agreementId: string;
+            agreementNumber: string;
+            title: string;
+            kindName: string | null;
+        };
+        PeopleOptions: {
+            employees: components["schemas"]["PeopleOption"][];
+            interactions: components["schemas"]["PeopleOption"][];
+            agreements: components["schemas"]["PeopleOption"][];
+            activities: components["schemas"]["PeopleActivityOption"][];
+            teacherRosters: components["schemas"]["PeopleOption"][];
+            teachers: components["schemas"]["PeopleContactOption"][];
+        };
+        PeopleOverview: {
+            /** Format: uuid */
+            organizationId: string;
+            canEdit: boolean;
+            settings: components["schemas"]["PeopleSettings"];
+            teaching: components["schemas"]["TeachingRecord"][];
+            internships: components["schemas"]["InternshipRecord"][];
+            qualifications: components["schemas"]["QualificationRecord"][];
+            options: components["schemas"]["PeopleOptions"];
+        };
+        PeopleImportResult: {
+            applied: boolean;
+            rows: number;
+            created: number;
+            errors: {
+                row: number;
+                message: string;
+            }[];
+        };
+        PeopleHoursRow: {
+            key: string;
+            title: string;
+            records: number;
+            hours: number;
+        };
+        PeopleReport: {
+            /** Format: date */
+            from: string;
+            /** Format: date */
+            to: string;
+            /** Format: date-time */
+            generatedAt: string;
+            teaching: {
+                unit: components["schemas"]["HourUnit"];
+                records: number;
+                hours: number;
+                confirmedHours: number;
+                byOrganization: components["schemas"]["PeopleHoursRow"][];
+                byPerformer: components["schemas"]["PeopleHoursRow"][];
+                byMonth: components["schemas"]["PeopleHoursRow"][];
+            };
+            internships: {
+                unit: components["schemas"]["HourUnit"];
+                interns: number;
+                students: number;
+                teachers: number;
+                completed: number;
+                employed: number;
+                internHours: number;
+                mentorHours: number;
+                byOrganization: components["schemas"]["PeopleHoursRow"][];
+                byPlace: components["schemas"]["PeopleHoursRow"][];
+            };
+            qualifications: {
+                unit: components["schemas"]["HourUnit"];
+                people: number;
+                certified: number;
+                notCertified: number;
+                inProgress: number;
+                hours: number;
+                frdoSubmitted: number;
+                frdoPending: number;
+                frdoOverdue: number;
+                frdoDeadlineDays: number | null;
+                byOrganization: components["schemas"]["PeopleHoursRow"][];
+                byProgram: components["schemas"]["PeopleHoursRow"][];
+            };
+            notes: string[];
+        };
+        /** @description Удостоверение выдано, сведения в ФРДО не переданы, срок передачи подходит или прошёл */
+        ReminderFrdo: {
+            /** Format: uuid */
+            qualificationId: string;
+            /** Format: uuid */
+            organizationId: string;
+            organizationName: string;
+            program: string;
+            certificateNumber: string | null;
+            /** Format: date */
+            certificateDate: string;
+            /** Format: date */
+            dueOn: string;
+        };
+        SubjectPersonRecord: {
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["SubjectPersonRecordKind"];
+            organizationName: string;
+            name: string;
+            /** @description Дисциплина, место стажировки или программа */
+            details: string | null;
+            /** Format: date */
+            startsOn: string;
+            /** Format: date */
+            endsOn: string;
+            anonymized: boolean;
+        };
+        /** @enum {string} */
+        SubjectPersonRecordKind: "TEACHING_PERFORMER" | "INTERN" | "MENTOR" | "QUALIFICATION";
     };
     responses: {
         /** @description Ошибка валидации или формата запроса */
@@ -10184,6 +12307,9 @@ export interface components {
         };
     };
     parameters: {
+        PeopleRecordId: string;
+        /** @description Текущая версия записи; чужая — 409 VERSION_CONFLICT */
+        PeopleRecordVersion: number;
         /** @description Начало периода (по умолчанию — первое число месяца 11 месяцев назад); не больше 60 месяцев */
         LearningDynamicsFrom: string;
         /** @description Конец периода включительно; дата позже сегодняшней обрезается сегодняшним днём (по умолчанию — сегодня) */
@@ -11272,6 +13398,8 @@ export interface operations {
                 productId?: string[];
                 /** @description Вид взаимодействия */
                 kindId?: string[];
+                /** @description Тип организации — тот же отбор, что в отчётах; сужает и строки, и вузы «Без работы» */
+                organizationType?: "UNIVERSITY" | "SCHOOL" | "COLLEGE" | "OPEN_ENROLLMENT";
                 managerId?: string[];
                 /** @description Название этапа на конец периода (без периода — текущий этап) */
                 stage?: string[];
@@ -11996,8 +14124,8 @@ export interface operations {
                 sort?: components["parameters"]["InteractionSort"];
                 /** @description Часть названия взаимодействия, вуза, ИТ-программы или продукта без учёта регистра */
                 q?: string;
-                /** @description Одна работа попадает ровно в одно из OVERDUE, NO_NEXT_STEP, THIS_WEEK, LATER — то же правило, что у «Контроля». OVERDUE — срок следующего шага прошёл, даже если текст шага не задан; TODAY — шаг и срок заданы, срок не прошёл и приходится на сегодня по Москве; THIS_WEEK — шаг и срок заданы, срок не прошёл и приходится на текущую неделю по Москве (понедельник–воскресенье), включая сегодня; LATER — шаг задан, срок после текущей недели; NO_NEXT_STEP — срок не прошёл, но нет текста шага или его срока */
-                due?: "OVERDUE" | "TODAY" | "THIS_WEEK" | "LATER" | "NO_NEXT_STEP";
+                /** @description Одна работа попадает ровно в одно из OVERDUE, NO_NEXT_STEP, THIS_WEEK, LATER — то же правило, что у «Контроля». OVERDUE — срок следующего шага прошёл, даже если текст шага не задан; TODAY — шаг и срок заданы, срок не прошёл и приходится на сегодня по Москве; THIS_WEEK — шаг и срок заданы, срок не прошёл и приходится на текущую неделю по Москве (понедельник–воскресенье), включая сегодня; REST_OF_WEEK — то же, но без сегодняшнего дня (THIS_WEEK минус TODAY); LATER — шаг задан, срок после текущей недели; NO_NEXT_STEP — срок не прошёл, но нет текста шага или его срока */
+                due?: "OVERDUE" | "TODAY" | "THIS_WEEK" | "REST_OF_WEEK" | "LATER" | "NO_NEXT_STEP";
                 /** @description Точное название текущего этапа */
                 stage?: string;
                 /** @description Статус работы; без параметра показываются только активные работы, ALL снимает отбор */
@@ -13523,6 +15651,675 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getAgreementReportingSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Настройки */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementReportingSettingsView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    saveAgreementReportingSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementReportingSettingsInput"];
+            };
+        };
+        responses: {
+            /** @description Сохранённые настройки */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementReportingSettingsView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    saveAgreementReportTemplate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementReportTemplateInput"];
+            };
+        };
+        responses: {
+            /** @description Сохранённые настройки */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementReportingSettingsView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resetAgreementReportTemplate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Настройки с колонками по умолчанию */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementReportingSettingsView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    saveAgreementReportingDeadlines: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementReportingDeadlinesInput"];
+            };
+        };
+        responses: {
+            /** @description Сохранённые настройки */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementReportingSettingsView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listAgreementReportingReferences: {
+        parameters: {
+            query?: {
+                includeArchived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Значения всех трёх справочников, упорядоченные по справочнику и порядку */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementReferenceItem"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createAgreementReportingReference: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementReferenceCreate"];
+            };
+        };
+        responses: {
+            /** @description Значение добавлено в конец справочника */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementReferenceItem"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateAgreementReportingReference: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementReferenceUpdate"];
+            };
+        };
+        responses: {
+            /** @description Значение изменено */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementReferenceItem"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listAgreementRates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ставки */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementRate"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createAgreementRate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementRateInput"];
+            };
+        };
+        responses: {
+            /** @description Ставка добавлена */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementRate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteAgreementRate: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ставка удалена */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateAgreementRate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementRateInput"];
+            };
+        };
+        responses: {
+            /** @description Ставка изменена */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementRate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAgreementReportingReminders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Напоминания */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementReportingReminders"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listActivityLists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Перечни вуза */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityListsView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createActivityList: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActivityListCreate"];
+            };
+        };
+        responses: {
+            /** @description Проект перечня */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getActivityList: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Перечень */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateActivityList: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActivityListUpdate"];
+            };
+        };
+        responses: {
+            /** @description Перечень */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    transitionActivityList: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActivityListTransition"];
+            };
+        };
+        responses: {
+            /** @description Перечень после действия */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listPartnerActivityLists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Перечни; Cache-Control no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityList"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    decidePartnerActivityList: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PartnerActivityListDecision"];
+            };
+        };
+        responses: {
+            /** @description Перечень после решения */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAgreementReport: {
+        parameters: {
+            query?: {
+                /** @description Начало периода (по умолчанию 1 января текущего года, МСК) */
+                from?: components["parameters"]["AgreementPeriodFrom"];
+                /** @description Конец периода включительно (по умолчанию сегодня, МСК) */
+                to?: components["parameters"]["AgreementPeriodTo"];
+                organizationId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Отчёт */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgreementReport"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    downloadAgreementReport: {
+        parameters: {
+            query: {
+                format: "XLSX" | "PDF" | "JSON";
+                /** @description Начало периода (по умолчанию 1 января текущего года, МСК) */
+                from?: components["parameters"]["AgreementPeriodFrom"];
+                /** @description Конец периода включительно (по умолчанию сегодня, МСК) */
+                to?: components["parameters"]["AgreementPeriodTo"];
+                organizationId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Файл; Content-Disposition содержит имя файла в UTF-8 (filename*) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "application/pdf": string;
+                    "application/json": components["schemas"]["AgreementReport"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["CrmProfileRequired"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listOrganizationAgreements: {
         parameters: {
             query?: never;
@@ -14541,14 +17338,16 @@ export interface operations {
     };
     listInteractionKinds: {
         parameters: {
-            query?: never;
+            query?: {
+                includeInactive?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Действующие виды в порядке справочника */
+            /** @description Виды в порядке справочника; без includeInactive — только действующие */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15445,7 +18244,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Отметка последней копии */
+            /** @description Отметки копии и проверки восстановления */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -16446,6 +19245,598 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getSystemSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Все настройки */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemSetting"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateSystemSetting: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SystemSettingUpdate"];
+            };
+        };
+        responses: {
+            /** @description Все настройки после сохранения */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemSetting"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resetSystemSetting: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Все настройки после сброса */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemSetting"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getModuleStatuses: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Модули */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModuleStatus"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAdminReminders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Напоминания */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminReminders"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listPersonalDataRequests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Журнал обращений */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalDataRequests"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createPersonalDataRequest: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonalDataRequestInput"];
+            };
+        };
+        responses: {
+            /** @description Обращение */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalDataRequest"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updatePersonalDataRequest: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonalDataRequestInput"];
+            };
+        };
+        responses: {
+            /** @description Обращение */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalDataRequest"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    exportPersonalDataRequests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Файл журнала обращений; Content-Disposition содержит имя файла в UTF-8 (filename*) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listConsents: {
+        parameters: {
+            query: {
+                subjectType: components["schemas"]["ConsentSubjectType"];
+                subjectId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Согласия */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Consents"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getConsentSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Настройки учёта */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentSettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listContactConsents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                contactId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Согласия */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Consents"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createContactConsent: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: string;
+                contactId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentInput"];
+            };
+        };
+        responses: {
+            /** @description Согласие */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Consent"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateContactConsent: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: string;
+                contactId: string;
+                consentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentInput"];
+            };
+        };
+        responses: {
+            /** @description Согласие */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Consent"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listLearnerConsents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Согласия */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Consents"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createLearnerConsent: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentInput"];
+            };
+        };
+        responses: {
+            /** @description Согласие */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Consent"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateLearnerConsent: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: string;
+                consentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentInput"];
+            };
+        };
+        responses: {
+            /** @description Согласие */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Consent"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getRouteVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Сводка */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteVersionsRow"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDemandIndexSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Действующие и исходные значения */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemandIndexSettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateDemandIndexSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DemandIndexWeights"];
+            };
+        };
+        responses: {
+            /** @description Действующие значения после сохранения */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemandIndexSettings"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resetDemandIndexSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Значения по умолчанию восстановлены */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     checkLaborMarketConnection: {
         parameters: {
             query?: never;
@@ -17210,6 +20601,93 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getImportSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Действующая настройка */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportSettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateImportSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportSettings"];
+            };
+        };
+        responses: {
+            /** @description Настройка после сохранения */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportSettings"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    assignMissingSteps: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MissingStepsRequest"];
+            };
+        };
+        responses: {
+            /** @description Сколько карточек получили шаг и сколько пропущено */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MissingStepsResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     inspectCatalogImport: {
         parameters: {
             query?: never;
@@ -17688,6 +21166,42 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    updateEnrolmentStreamMoodleCourse: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamMoodleCourseUpdate"];
+            };
+        };
+        responses: {
+            /** @description Поток с уточнением курса */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrolmentStream"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listEnrolmentStreamLearners: {
         parameters: {
             query?: never;
@@ -18001,6 +21515,8 @@ export interface operations {
                         sent: number;
                         accepted: number;
                         failed: number;
+                        /** @description Строки прежнего учёта (источник LEGACY), которые сверка нашла на курсе Moodle и подтвердила */
+                        confirmed: number;
                         stoppedReason: string | null;
                     };
                 };
@@ -18054,7 +21570,12 @@ export interface operations {
     };
     getEnrolmentQueue: {
         parameters: {
-            query?: never;
+            query?: {
+                streamId?: string;
+                kind?: components["schemas"]["EnrolmentQueueKind"];
+                offset?: number;
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -18363,6 +21884,33 @@ export interface operations {
         };
     };
     downloadPartnerDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Файл */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    downloadPartnerResponseFile: {
         parameters: {
             query?: never;
             header?: never;
@@ -19616,7 +23164,8 @@ export interface operations {
     getMaxAppWork: {
         parameters: {
             query?: {
-                due?: "OVERDUE" | "TODAY" | "THIS_WEEK" | "LATER" | "NO_NEXT_STEP";
+                /** @description Группа срока. Без параметра сервер берёт первую непустую группу в порядке OVERDUE, TODAY, REST_OF_WEEK, NO_NEXT_STEP, LATER (всё пусто — TODAY) и возвращает выбранную в поле due ответа. Группа «На неделе» мини-приложения — REST_OF_WEEK (неделя без сегодняшнего дня), её итог — feed.thisWeek − feed.today. */
+                due?: "OVERDUE" | "TODAY" | "THIS_WEEK" | "REST_OF_WEEK" | "LATER" | "NO_NEXT_STEP";
                 page?: number;
             };
             header?: never;
@@ -19753,6 +23302,511 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getOrganizationPeople: {
+        parameters: {
+            query?: {
+                interactionId?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Записи, настройки единиц часов и справочные значения */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PeopleOverview"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createUniversityTeaching: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeachingInput"];
+            };
+        };
+        responses: {
+            /** @description Запись создана */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeachingRecord"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateUniversityTeaching: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                recordId: components["parameters"]["PeopleRecordId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeachingInput"];
+            };
+        };
+        responses: {
+            /** @description Запись сохранена */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeachingRecord"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteUniversityTeaching: {
+        parameters: {
+            query: {
+                /** @description Текущая версия записи; чужая — 409 VERSION_CONFLICT */
+                version: components["parameters"]["PeopleRecordVersion"];
+            };
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                recordId: components["parameters"]["PeopleRecordId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Запись удалена */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createInternship: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InternshipInput"];
+            };
+        };
+        responses: {
+            /** @description Запись создана */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternshipRecord"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateInternship: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                recordId: components["parameters"]["PeopleRecordId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InternshipInput"];
+            };
+        };
+        responses: {
+            /** @description Запись сохранена */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternshipRecord"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteInternship: {
+        parameters: {
+            query: {
+                /** @description Текущая версия записи; чужая — 409 VERSION_CONFLICT */
+                version: components["parameters"]["PeopleRecordVersion"];
+            };
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                recordId: components["parameters"]["PeopleRecordId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Запись удалена */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createTeacherQualification: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QualificationInput"];
+            };
+        };
+        responses: {
+            /** @description Запись создана */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualificationRecord"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateTeacherQualification: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                recordId: components["parameters"]["PeopleRecordId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QualificationInput"];
+            };
+        };
+        responses: {
+            /** @description Запись сохранена */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualificationRecord"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteTeacherQualification: {
+        parameters: {
+            query: {
+                /** @description Текущая версия записи; чужая — 409 VERSION_CONFLICT */
+                version: components["parameters"]["PeopleRecordVersion"];
+            };
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                recordId: components["parameters"]["PeopleRecordId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Запись удалена */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    downloadTeacherQualificationTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Шаблон XLSX */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    importTeacherQualifications: {
+        parameters: {
+            query?: {
+                interactionId?: string;
+                teacherRosterId?: string;
+                dryRun?: boolean;
+            };
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * Format: binary
+                     * @description Книга XLSX по шаблону
+                     */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Итог проверки или загрузки */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PeopleImportResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getPeopleSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Действующие настройки */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PeopleSettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updatePeopleSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PeopleSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Сохранённые настройки */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PeopleSettings"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    resetPeopleSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение token из GET /api/csrf для текущей сессии. Без заголовка или с чужим значением запрос отклоняется с 403 FORBIDDEN. */
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Действуют значения по умолчанию */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getPeopleReport: {
+        parameters: {
+            query?: {
+                from?: string;
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Итоги отчёта */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PeopleReport"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["ContactInteractionMutationForbidden"];
             500: components["responses"]["InternalError"];
         };
     };

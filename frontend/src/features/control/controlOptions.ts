@@ -1,7 +1,7 @@
 import { apiClient, type Organization } from '../../shared/api/client'
 import { organizationTypeLabels } from '../organizations/OrganizationForm'
 import type { FilterOption } from '../reports/ReportControls'
-import { interactionKindsApi } from '../interactions/interactionKinds'
+import { interactionKindsApi, kindFilterLabel } from '../interactions/interactionKinds'
 
 export type ControlOptions = {
   organizations: FilterOption[]
@@ -38,7 +38,7 @@ export const loadControlOptions = async (): Promise<ControlOptions> => {
     loadAllPages((page) => apiClient.listProducts({ page, size: 100, state: 'ALL' })),
     apiClient.listReportManagers(),
     apiClient.listReportStages(),
-    interactionKindsApi.available()
+    interactionKindsApi.forFilters()
   ])
   return {
     organizations: organizations.map((organization) => ({
@@ -50,7 +50,7 @@ export const loadControlOptions = async (): Promise<ControlOptions> => {
     directions: catalogOptions(directions),
     programs: catalogOptions(programs),
     products: catalogOptions(products),
-    kinds: kinds.map((kind) => ({ id: kind.id, label: kind.name })),
+    kinds: kinds.map((kind) => ({ id: kind.id, label: kindFilterLabel(kind) })),
 
     managers: managers.map((manager) => ({
       id: manager.id,

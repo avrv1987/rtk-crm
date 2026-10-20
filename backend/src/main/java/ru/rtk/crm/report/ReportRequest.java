@@ -37,6 +37,7 @@ public record ReportRequest(
             ReportColumn.MANAGER, ReportColumn.TEAM, ReportColumn.ORGANIZATION, ReportColumn.LAST_STAFF_ACTION);
     private static final Set<ReportColumn> PAYMENT_COLUMNS = EnumSet.of(ReportColumn.PAID_ORDERS, ReportColumn.PAID_STREAMS);
     private static final Set<ReportColumn> DEMAND_SORTS = EnumSet.of(
+            ReportColumn.DEMAND_INDEX,
             ReportColumn.APPLICATIONS,
             ReportColumn.PAID_ORDERS,
             ReportColumn.PAID_STREAMS,
@@ -119,7 +120,7 @@ public record ReportRequest(
                 format,
                 groupBy,
                 kind == ReportKind.DEMAND && (sortBy == null || !payments && PAYMENT_COLUMNS.contains(sortBy))
-                        ? ReportColumn.APPLICATIONS : sortBy,
+                        ? ReportColumn.DEMAND_INDEX : sortBy,
                 normalizedAsOf,
                 chartType,
                 seriesBy
@@ -212,11 +213,6 @@ public record ReportRequest(
                     "filters.stages", "Фильтр по этапам недоступен для отчёта «Востребованность программ»"
             );
         }
-        if (!normalizedFilters.kindIds().isEmpty()) {
-            throw new InteractionValidationException(
-                    "filters.kindIds", "Фильтр по виду взаимодействия недоступен для отчёта «Востребованность программ»"
-            );
-        }
         if (!normalizedFilters.workStatuses().isEmpty()) {
             throw new InteractionValidationException(
                     "filters.workStatuses", "Фильтр по состоянию взаимодействия недоступен для отчёта «Востребованность программ»"
@@ -239,8 +235,8 @@ public record ReportRequest(
         }
         if (sortBy != null && !DEMAND_SORTS.contains(sortBy)) {
             throw new InteractionValidationException(
-                    "sortBy", "Сортировать можно по заявкам, оплаченным заявкам, потокам с оплатами, обучающимся, завершившим или"
-                            + " параллельным потокам"
+                    "sortBy", "Сортировать можно по индексу востребованности, заявкам, оплаченным заявкам, потокам с оплатами,"
+                            + " обучающимся, завершившим или параллельным потокам"
             );
         }
     }
@@ -310,6 +306,21 @@ public record ReportRequest(
 
     public boolean periodNotEnded() {
         return to != null && to.isAfter(LocalDate.now(ZONE));
+    }
+
+    // Прошлый период той же длины вплотную перед текущим — база тренда и прироста записанных (М17). Без начала
+    // периода сравнивать не с чем.
+    public ReportRequest previousPeriod() {
+        if (from == null) {
+            return null;
+        }
+        LocalDate end = to == null ? LocalDate.now(ZONE) : to;
+        long days = java.time.temporal.ChronoUnit.DAYS.between(from, end) + 1;
+        if (days < 1) {
+            return null;
+        }
+        return new ReportRequest(kind, from.minusDays(days), from.minusDays(1), periodBasis, filters, List.of(ReportColumn.PROGRAM),
+                format, null, sortBy, asOf, null, null);
     }
 
     public OffsetDateTime learningAt() {

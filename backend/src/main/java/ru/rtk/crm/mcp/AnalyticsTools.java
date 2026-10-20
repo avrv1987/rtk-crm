@@ -28,6 +28,7 @@ import ru.rtk.crm.mcp.McpTools.Page;
 import ru.rtk.crm.mcp.McpTools.Result;
 import ru.rtk.crm.report.LearningDynamics;
 import ru.rtk.crm.report.LearningDynamicsService;
+import ru.rtk.crm.report.ReportAgreementFilters;
 import ru.rtk.crm.report.ReportFilters;
 import ru.rtk.crm.report.ReportFormat;
 import ru.rtk.crm.report.ReportKind;
@@ -36,6 +37,7 @@ import ru.rtk.crm.report.ReportRequest;
 import ru.rtk.crm.report.ReportService;
 import ru.rtk.crm.report.SigningPlan;
 import ru.rtk.crm.report.SigningPlanService;
+import ru.rtk.crm.settings.SystemSettings;
 import ru.rtk.crm.work.LearningTrend;
 import ru.rtk.crm.work.LearningTrendService;
 import ru.rtk.crm.work.LmsSignalModels.LmsSignal;
@@ -53,7 +55,7 @@ class AnalyticsTools {
     static final String PASSPORTS_RESOURCE = "mcp/metrics.md";
     private static final Pattern CODE = Pattern.compile("[МM](\\d{2})");
     private static final Pattern FIELD = Pattern.compile("^- \\*\\*(.+?)\\.?\\*\\* (.*)$");
-    private static final String PASSPORTS = " Паспорта показателей — docs/metrics.md (инструмент metric_passport): ";
+    private static final String PASSPORTS = " Паспорта показателей — инструмент metric_passport: ";
     private static final Map<String, Object> LIMIT = integerProperty("Строк в списке, по умолчанию 25", 1, 200);
 
     private final LearningDynamicsService learningDynamicsService;
@@ -64,6 +66,7 @@ class AnalyticsTools {
     private final LmsSignalProperties lmsSignalProperties;
     private final McpProperties properties;
     private final String passports;
+    private final SystemSettings settings;
 
     AnalyticsTools(
             LearningDynamicsService learningDynamicsService,
@@ -72,7 +75,8 @@ class AnalyticsTools {
             ReportService reportService,
             SigningPlanService signingPlanService,
             LmsSignalProperties lmsSignalProperties,
-            McpProperties properties
+            McpProperties properties,
+            SystemSettings settings
     ) {
         this.learningDynamicsService = learningDynamicsService;
         this.lmsSignalService = lmsSignalService;
@@ -82,6 +86,7 @@ class AnalyticsTools {
         this.lmsSignalProperties = lmsSignalProperties;
         this.properties = properties;
         this.passports = readPassports();
+        this.settings = settings;
     }
 
     List<Definition> definitions() {
@@ -109,9 +114,10 @@ class AnalyticsTools {
                         schema(Map.of("days", integerProperty("Длина периода, дней; по умолчанию как на экране", 7, 730))),
                         McpTools.LEADERS, this::learningTrend),
                 new Definition("program_demand", "Востребованность программ",
-                        "Отчёт «Востребованность программ»: заявки, оплаты, потоки и обучение отдельными колонками, как в "
-                                + "отчёте; общего рейтинга нет. Заголовки колонок говорят источник и дату среза." + PASSPORTS
-                                + "М12.",
+                        "Отчёт «Востребованность программ»: место и индекс востребованности программы с вкладом компонентов, "
+                                + "покрытием и трендом к прошлому периоду, а рядом — заявки, оплаты, потоки и обучение отдельными "
+                                + "колонками, как в отчёте и файле. Заголовки колонок говорят источник и дату среза." + PASSPORTS
+                                + "М12, М17.",
                         schema(Map.of(
                                 "from", property("string", "Начало периода, ГГГГ-ММ-ДД"),
                                 "to", property("string", "Конец периода включительно, ГГГГ-ММ-ДД"),
@@ -119,6 +125,7 @@ class AnalyticsTools {
                                 "directionIds", LeaderTools.list("Направления", "uuid"),
                                 "programIds", LeaderTools.list("Программы", "uuid"),
                                 "managerIds", LeaderTools.list("КАМ вуза", "uuid"),
+                                "kindIds", LeaderTools.list("Виды взаимодействия: отбирают только компонент «Спрос вузов»", "uuid"),
                                 "organizationType", McpTools.enumProperty("Тип организации", "UNIVERSITY", "SCHOOL", "COLLEGE"),
                                 "limit", LIMIT)),
                         McpTools.LEADERS, this::programDemand),
@@ -131,7 +138,7 @@ class AnalyticsTools {
                                 "limit", LIMIT)),
                         McpTools.LEADERS, this::signingPlan),
                 new Definition("metric_passport", "Паспорт показателя",
-                        "Паспорт показателя из docs/metrics.md по коду М01–М14: вопрос, объект счёта, числитель и знаменатель, "
+                        "Паспорт показателя по коду М01–М17: вопрос, объект счёта, числитель и знаменатель, "
                                 + "время, фильтры, поведение при неизвестном, как считается сейчас и расхождение.",
                         schema(Map.of("code", property("string", "Код показателя, например М03")), "code"),
                         McpTools.KAM_AND_MANAGEMENT, this::metricPassport)
@@ -184,7 +191,7 @@ class AnalyticsTools {
         Map<String, Object> freshness = new LinkedHashMap<>();
         freshness.put("signals", signals.items().size());
         freshness.put("stale", signals.items().stream().filter(LmsSignal::stale).count());
-        freshness.put("freshWithinHours", lmsSignalProperties.staleAfter().toHours());
+        freshness.put("freshWithinHours", lmsSignalProperties.with(settings).staleAfter().toHours());
         Map<String, Object> basis = basis(signals.calculatedAt(), null, null, Map.of(), List.of(), "М12", "М13");
         basis.put("freshness", freshness);
         Map<String, Object> data = new LinkedHashMap<>();
@@ -228,7 +235,8 @@ class AnalyticsTools {
         }
         ReportFilters filters = new ReportFilters(LeaderTools.ids(args, "organizationIds"), LeaderTools.ids(args, "directionIds"), false,
                 LeaderTools.ids(args, "programIds"), false, List.of(), false, LeaderTools.ids(args, "managerIds"), false, List.of(),
-                organizationType);
+                organizationType, List.of(), List.of(), ReportAgreementFilters.none(), List.of(), null, null, null, null,
+                LeaderTools.ids(args, "kindIds"));
         LocalDate from = args.date("from", null);
         LocalDate to = args.date("to", null);
         ReportPreview preview = reportService.preview(profile,
@@ -238,15 +246,19 @@ class AnalyticsTools {
         putIfPresent(applied, "directionIds", filters.directionIds());
         putIfPresent(applied, "programIds", filters.programIds());
         putIfPresent(applied, "managerIds", filters.managerIds());
+        putIfPresent(applied, "kindIds", filters.kindIds());
         putIfPresent(applied, "organizationType", organizationType);
         Page<Map<String, Object>> rows = Page.of(preview.items(), preview.total(), limit);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("columns", preview.columns().stream().map(column -> Map.of("key", column.id().name(), "title", column.title())).toList());
         data.put("rows", rows);
-        data.put("basis", basis(preview.generatedAt(), from, to, applied, preview.notes(), "М12"));
+        data.put("basis", basis(preview.generatedAt(), from, to, applied, preview.notes(), "М12", "М17"));
         return new Result(data, rows.returned(), List.of(
                 "Колонки — как в отчёте и файле; ключ строки — key колонки. Пустое значение — нет данных источника, а не 0.",
-                "Строки в порядке отчёта; общего рейтинга программ нет: заявки, оплаты и обучение — разные вопросы."));
+                "Строки по месту (DEMAND_RANK): индекс DEMAND_INDEX 0–100 — сумма вкладов компонентов DEMAND_CONTRIBUTIONS "
+                        + "(процентиль среди программ выборки × вес); пустое место — «данных недостаточно», а не последнее место.",
+                "Индекс говорит о спросе и ходе обучения, а не о качестве программы; заявки, оплаты и обучение остаются "
+                        + "отдельными колонками и друг на друга не делятся."));
     }
 
     private Result signingPlan(CrmProfile profile, Args args) {
@@ -273,11 +285,11 @@ class AnalyticsTools {
         String requested = args.text("code");
         Matcher code = requested == null ? null : CODE.matcher(requested.strip().toUpperCase(java.util.Locale.ROOT));
         if (code == null || !code.matches()) {
-            throw new InteractionValidationException("code", "Укажите код показателя М01–М14");
+            throw new InteractionValidationException("code", "Укажите код показателя М01–М17");
         }
         Map<String, Object> passport = passport(passports, "М" + code.group(1));
         if (passport == null) {
-            throw new InteractionValidationException("code", "Такого показателя нет: доступны М01–М14");
+            throw new InteractionValidationException("code", "Такого показателя нет: доступны М01–М17");
         }
         return new Result(passport, 1, List.of(
                 "Паспорт — целевое определение; «Как считается сейчас» и «Расхождение» говорят, чем текущий расчёт от него "
@@ -302,7 +314,7 @@ class AnalyticsTools {
             passport.put("code", code);
             passport.put("title", lines[index].substring(("## " + code + ".").length()).strip());
             passport.put("fields", fields);
-            passport.put("source", "docs/metrics.md");
+            passport.put("source", "metric_passport");
             return passport;
         }
         return null;
@@ -348,7 +360,7 @@ class AnalyticsTools {
         basis.put("metrics", List.of(metrics));
         basis.put("serviceNotes", serviceNotes);
         basis.put("calculatedAt", calculatedAt);
-        basis.put("passports", "docs/metrics.md");
+        basis.put("passports", "metric_passport");
         return basis;
     }
 

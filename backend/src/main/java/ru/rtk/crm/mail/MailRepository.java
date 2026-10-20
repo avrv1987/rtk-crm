@@ -291,7 +291,9 @@ public class MailRepository {
                 SELECT
                     (SELECT COUNT(*) FROM mail_outbox WHERE status = 'QUEUED') AS queued,
                     (SELECT COUNT(*) FROM mail_outbox WHERE status = 'ERROR') AS errors,
-                    (SELECT COUNT(*) FROM mail_outbox WHERE status = 'SENT' AND sent_at >= :since) AS sent,
+                    (SELECT COUNT(*) FROM mail_outbox WHERE status = 'SENT' AND sent_at >= :since
+                        AND (transport IS NULL OR transport <> 'STUB')) AS sent,
+                    (SELECT COUNT(*) FROM mail_outbox WHERE status = 'SENT' AND sent_at >= :since AND transport = 'STUB') AS logged,
                     (SELECT COUNT(*) FROM mail_outbox WHERE status = 'DROPPED' AND created_at >= :since) AS dropped,
                     (SELECT COUNT(*) FROM mail_outbox WHERE status = 'CANCELLED' AND created_at >= :since) AS cancelled
                 """)
@@ -489,7 +491,8 @@ public class MailRepository {
     ) {
     }
 
-    public record QueueCounts(long queued, long errors, long sent, long dropped, long cancelled) {
+    // sent — ушло наружу (SMTP); logged — в режиме «Без отправки» только записано в журнал.
+    public record QueueCounts(long queued, long errors, long sent, long logged, long dropped, long cancelled) {
     }
 
     public record Invitation(UUID id, UUID profileId, OffsetDateTime expiresAt, OffsetDateTime redeemedAt) {

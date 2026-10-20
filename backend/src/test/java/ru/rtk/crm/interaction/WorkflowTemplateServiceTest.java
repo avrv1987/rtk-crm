@@ -71,6 +71,25 @@ class WorkflowTemplateServiceTest {
         jdbcTemplate.update("DELETE FROM teams");
     }
 
+    // Норматив этапа необязателен, хранится у этапа шаблона и попадает в версию маршрута.
+    @Test
+    void stageNormIsOptionalBoundedAndStoredWithTheTemplate() {
+        assertThatThrownBy(() -> workflowTemplateService.create(leaderA, new WorkflowTemplateRequest("Норматив ноль", List.of(
+                new WorkflowStageInput("Старт", 0, false, null, null, null, null, 0),
+                new WorkflowStageInput("Финиш", 1, false, null)
+        ), List.of(new WorkflowTransitionInput(0, 1, false)), null, null), "norm-zero"))
+                .isInstanceOfSatisfying(InteractionValidationException.class, exception ->
+                        assertThat(exception.getMessage()).contains("Норматив этапа 1"));
+        WorkflowTemplate created = workflowTemplateService.create(leaderA, new WorkflowTemplateRequest("С нормативом", List.of(
+                new WorkflowStageInput("Старт", 0, false, null, null, null, null, 14),
+                new WorkflowStageInput("Финиш", 1, false, null)
+        ), List.of(new WorkflowTransitionInput(0, 1, false)), null, null), "norm-create");
+        WorkflowTemplate stored = workflowTemplateService.getManaged(leaderA, created.id());
+        assertThat(stored.stages()).extracting(WorkflowTemplateStage::normDays).containsExactly(14, null);
+        assertThat(jdbcTemplate.queryForObject("SELECT content FROM workflow_template_versions WHERE template_id = ?", String.class,
+                created.id())).contains("\"normDays\":14");
+    }
+
     @Test
     void validatesTemplateGraphAndClonesTeamScopedCrudWithReplay() {
         assertThatThrownBy(() -> workflowTemplateService.create(
@@ -458,7 +477,7 @@ class WorkflowTemplateServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS workflow_template_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
+                CREATE TABLE IF NOT EXISTS workflow_template_stages (norm_days INTEGER, requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
                     id UUID PRIMARY KEY,
                     template_id UUID NOT NULL,
                     stage_order INTEGER NOT NULL,

@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
+import ru.rtk.crm.settings.SystemSettings;
 import ru.rtk.crm.work.LmsSignalModels.LmsSignalType;
 import ru.rtk.crm.work.LmsSignalModels.WorkLearning;
 import ru.rtk.crm.work.LmsSignalRepository.Activity;
@@ -33,16 +34,19 @@ import ru.rtk.crm.work.LmsSignalRepository.SignalSource;
 public class LmsWorkLearningService {
     private final OrganizationRepository organizationRepository;
     private final LmsSignalRepository repository;
-    private final LmsSignalProperties properties;
+    private final LmsSignalProperties configured;
+    private final SystemSettings settings;
 
     public LmsWorkLearningService(
             OrganizationRepository organizationRepository,
             LmsSignalRepository repository,
-            LmsSignalProperties properties
+            LmsSignalProperties properties,
+            SystemSettings settings
     ) {
         this.organizationRepository = organizationRepository;
         this.repository = repository;
-        this.properties = properties;
+        this.configured = properties;
+        this.settings = settings;
     }
 
     @Transactional(readOnly = true)
@@ -58,11 +62,13 @@ public class LmsWorkLearningService {
                 .filter(source -> wanted.contains(source.interactionId()))
                 .collect(Collectors.groupingBy(SignalSource::interactionId, LinkedHashMap::new, Collectors.toList()));
         Map<UUID, WorkLearning> result = new HashMap<>();
-        byWork.forEach((interactionId, sources) -> result.put(interactionId, learning(sources, dismissals, now)));
+        LmsSignalProperties properties = configured.with(settings);
+        byWork.forEach((interactionId, sources) -> result.put(interactionId, learning(sources, dismissals, now, properties)));
         return result;
     }
 
-    private WorkLearning learning(List<SignalSource> sources, Map<String, Boolean> dismissals, OffsetDateTime now) {
+    private static WorkLearning learning(List<SignalSource> sources, Map<String, Boolean> dismissals, OffsetDateTime now,
+                                         LmsSignalProperties properties) {
         LocalDate today = LmsSignalService.today(now);
         List<SignalSource> running = sources.stream().filter(source -> LmsSignalService.running(source, today)).toList();
         int participants = running.stream().mapToInt(SignalSource::participants).sum();

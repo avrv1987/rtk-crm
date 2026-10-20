@@ -3,7 +3,7 @@ import { ApiError, apiClient, type MailJournalPage, type MailJournalRow, type Ma
 import { formatMoscowDateTime } from '../../shared/format/datetime'
 import { Pagination } from '../../shared/ui/Pagination'
 import { handledSessionError, type SessionHandlers } from '../admin/adminShared'
-import { defaultPort, draftOf, passwordStateText, rowStatusText, securityText, statusText, updateOf, type MailDraft } from './mailAdmin'
+import { defaultPort, draftOf, passwordStateText, queueDayText, rowStatusText, securityText, statusText, updateOf, type MailDraft } from './mailAdmin'
 import './mail.css'
 
 const PAGE_SIZE = 20
@@ -99,12 +99,12 @@ const MailAdminContent = (handlers: SessionHandlers) => {
       <h2 id="mail-admin-title">Почта</h2>
       <dl className="mail-admin__facts">
         <dt>Режим</dt>
-        <dd>{settings.mode === 'STUB' ? 'заглушка: письма собираются и сохраняются в журнал, наружу не уходят' : `SMTP ${settings.host ?? ''}:${settings.port ?? ''}`}</dd>
+        <dd>{settings.mode === 'STUB' ? 'без отправки: письма собираются и сохраняются в журнал, наружу не уходят' : `SMTP ${settings.host ?? ''}:${settings.port ?? ''}`}</dd>
         <dt>Проверка</dt>
         <dd>{settings.checkedAt ? `${settings.checkOk ? 'успешно' : 'ошибка'} ${dateTime(settings.checkedAt)}${settings.checkMessage ? ` — ${settings.checkMessage}` : ''}` : 'не проверялось'}</dd>
         <dt>Очередь</dt>
         <dd>
-          ждут {settings.queue.queued}, с ошибкой {settings.queue.errors}; за сутки отправлено {settings.queue.sent},
+          ждут {settings.queue.queued}, с ошибкой {settings.queue.errors}; за сутки {queueDayText(settings.mode, settings.queue)},
           не отправлено {settings.queue.dropped}, отменено {settings.queue.cancelled}
         </dd>
       </dl>
@@ -123,7 +123,7 @@ const MailAdminContent = (handlers: SessionHandlers) => {
         <fieldset className="mail-admin__mode" disabled={busy}>
           <legend>Режим</legend>
           <label>
-            <input type="radio" name="mail-mode" checked={!smtp} onChange={() => set({ mode: 'STUB' })} /> Заглушка
+            <input type="radio" name="mail-mode" checked={!smtp} onChange={() => set({ mode: 'STUB' })} /> Без отправки
           </label>
           <label>
             <input type="radio" name="mail-mode" checked={smtp} onChange={() => set({ mode: 'SMTP' })} /> SMTP-сервер

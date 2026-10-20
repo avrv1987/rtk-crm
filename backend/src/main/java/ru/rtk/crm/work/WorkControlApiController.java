@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import ru.rtk.crm.access.CurrentProfileService;
+import ru.rtk.crm.catalog.OrganizationType;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.report.ManagerAt;
 import ru.rtk.crm.report.ManagerWorkChange;
@@ -47,7 +48,7 @@ public class WorkControlApiController {
                 ids(managers.stream().filter(value -> !UNASSIGNED.equals(value)).toList(), "managerId"),
                 managers.contains(UNASSIGNED),
                 values(params, "stage"),
-                null
+                organizationType(params)
         ).withChange(change(params)).withManagerAt(managerAt(params)).withKinds(ids(params, "kindId"));
 
         return workControlService.control(
@@ -100,6 +101,19 @@ public class WorkControlApiController {
             return ManagerAt.PERIOD_END;
         }
         throw new InteractionValidationException("mode", "Режим «Контроля» — NOW или PERIOD");
+    }
+
+    // Тип организации — тот же отбор, что в отчётах: «Контроль» и его выгрузка показывают одни и те же вузы.
+    private static OrganizationType organizationType(MultiValueMap<String, String> params) {
+        List<String> values = values(params, "organizationType");
+        if (values.isEmpty()) {
+            return null;
+        }
+        try {
+            return OrganizationType.valueOf(values.getFirst().strip());
+        } catch (IllegalArgumentException exception) {
+            throw new InteractionValidationException("organizationType", "Такой тип организации не поддерживается");
+        }
     }
 
     private static ManagerWorkChange change(MultiValueMap<String, String> params) {

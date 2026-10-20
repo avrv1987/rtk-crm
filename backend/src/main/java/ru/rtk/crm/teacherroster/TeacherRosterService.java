@@ -28,6 +28,7 @@ import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationStatus;
 import ru.rtk.crm.catalog.PersonalDataStatus;
 import ru.rtk.crm.enrolment.LmsRosterWorkbookWriter;
+import ru.rtk.crm.enrolment.LmsLogin;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.teacherroster.TeacherRosterModels.FileFormat;
@@ -62,13 +63,16 @@ public class TeacherRosterService {
     private final OrganizationRepository organizationRepository;
     private final AuditJournalRepository auditJournalRepository;
     private final LmsRosterWorkbookWriter writer;
+    private final LmsLogin lmsLogin;
 
     public TeacherRosterService(
             TeacherRosterRepository repository,
             OrganizationRepository organizationRepository,
             AuditJournalRepository auditJournalRepository,
-            LmsRosterWorkbookWriter writer
+            LmsRosterWorkbookWriter writer,
+            LmsLogin lmsLogin
     ) {
+        this.lmsLogin = lmsLogin;
         this.repository = repository;
         this.organizationRepository = organizationRepository;
         this.auditJournalRepository = auditJournalRepository;
@@ -296,15 +300,15 @@ public class TeacherRosterService {
     }
 
     /**
-     * CSV штатной загрузки пользователей Moodle (tool_uploaduser): латинские имена полей, логин — почта в нижнем регистре.
+     * CSV штатной загрузки пользователей Moodle (tool_uploaduser): латинские имена полей, логин — по правилу LmsLogin (по умолчанию почта в нижнем регистре).
      * Курс и группа берутся из списка как есть: Moodle ищет курс по краткому имени, группу — по названию. Первый символ
      * ячейки со знаком формулы экранируется, чтобы файл можно было открыть в Excel без исполнения формул.
      */
-    private static byte[] moodleCsv(RosterRow roster, List<TeacherRosterMember> rows) {
+    private byte[] moodleCsv(RosterRow roster, List<TeacherRosterMember> rows) {
         StringBuilder csv = new StringBuilder("\uFEFF").append(MOODLE_CSV_HEADER).append("\r\n");
         for (TeacherRosterMember member : rows) {
             String email = member.email().strip();
-            csv.append(String.join(",", cell(email.toLowerCase(Locale.ROOT)), cell(member.firstName()), cell(member.lastName()),
+            csv.append(String.join(",", cell(lmsLogin.of(email)), cell(member.firstName()), cell(member.lastName()),
                     cell(email), cell(roster.lmsCourse()), cell(roster.lmsGroup()), cell("student"))).append("\r\n");
         }
         return csv.toString().getBytes(StandardCharsets.UTF_8);

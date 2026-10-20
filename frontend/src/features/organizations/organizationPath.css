@@ -113,6 +113,11 @@
   background: var(--color-success);
 }
 
+.org-path__segment--skipped {
+  background: transparent;
+  border: 1px dashed var(--color-border-control);
+}
+
 .org-path__segment--current {
   background: var(--color-action);
 }

@@ -8,7 +8,12 @@ import {
 } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { accessHandled, errorText, fieldErrors, formatDate, requestIdOf, todayIso } from '../sources/sourceFormat'
-import { interactionKindsApi, type InteractionKind } from '../interactions/interactionKinds'
+import {
+  cycleRouteHint,
+  interactionKindsApi,
+  type InteractionKind,
+  type InteractionKindResolution
+} from '../interactions/interactionKinds'
 import '../sources/sources.css'
 
 type InteractionCyclesProps = {
@@ -72,6 +77,7 @@ export const InteractionCycles = ({
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<Draft>({ title: '', startsOn: todayIso(), templateId: '', kindId: '' })
   const [start, setStart] = useState<StartState>({ kind: 'idle' })
+  const [resolution, setResolution] = useState<InteractionKindResolution | null>(null)
   const startKey = useRef<string | null>(null)
 
   const handled = useCallback(
@@ -130,6 +136,23 @@ export const InteractionCycles = ({
     }
     // openForm зависит от карточки, а запрос формы одноразовый: реагируем только на запрос и загрузку цикла.
   }, [formRequested, state.kind])
+
+  // Тот же расчёт, что выполнит сервер: форма показывает, какой вид и маршрут получит новый цикл.
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    let active = true
+    interactionKindsApi.resolve({
+      organizationId: interaction.organizationId,
+      kindId: draft.kindId || undefined,
+      programId: interaction.programId ?? undefined,
+      productIds: interaction.productIds
+    }).then((loaded) => active && setResolution(loaded)).catch(() => active && setResolution(null))
+    return () => {
+      active = false
+    }
+  }, [open, draft.kindId, interaction.organizationId, interaction.programId, interaction.productIds])
 
   const update = (patch: Partial<Draft>) => {
     startKey.current = null
@@ -218,6 +241,9 @@ export const InteractionCycles = ({
               <option value="">Подобрать по правилам</option>
               {kinds.map((kind) => <option key={kind.id} value={kind.id}>{kind.name}</option>)}
             </select>
+            {kinds.find((kind) => kind.id === (draft.kindId || resolution?.kindId))?.description && (
+              <small>{kinds.find((kind) => kind.id === (draft.kindId || resolution?.kindId))?.description}</small>
+            )}
           </label>
           <label>
             Шаблон этапов
@@ -233,6 +259,11 @@ export const InteractionCycles = ({
               ))}
             </select>
           </label>
+          {cycleRouteHint(resolution, draft.templateId === '' ? null : templates.find((template) => template.id === draft.templateId)?.name ?? null) && (
+            <p className="source-form__wide" role="note">
+              {cycleRouteHint(resolution, draft.templateId === '' ? null : templates.find((template) => template.id === draft.templateId)?.name ?? null)}
+            </p>
+          )}
           <div className="source-form__actions">
             <button type="submit" disabled={start.kind === 'saving'}>
               {start.kind === 'saving' ? 'Создаём…' : 'Создать новый цикл'}

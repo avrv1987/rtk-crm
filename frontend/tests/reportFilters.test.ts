@@ -36,6 +36,7 @@ test('отбор, которого вид отчёта не применяет, 
   const selection = { ...base, programIds: ['p'], productIds: ['x'], stages: ['Встреча'], flags: ['RISK' as const], minDaysOnStage: '3' }
   assert.equal(activeFilterCount(selection), 0)
   assert.equal(filterVisibility('DEMAND').products, false)
+  assert.equal(filterVisibility('DEMAND').kinds, true)
   assert.equal(filterVisibility('MANAGER_WORK').agreement, false)
   assert.equal(filterVisibility('PORTFOLIO').agreement, true)
 })

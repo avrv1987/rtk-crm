@@ -64,6 +64,12 @@ public class InteractionKindService {
         return repository.findKinds(profile.teamId(), true);
     }
 
+    // Для фильтров списков и отчётов: отключённый вид остаётся у карточек, поэтому по нему тоже нужно отбирать.
+    @Transactional(readOnly = true)
+    public List<InteractionKind> availableWithInactive(CrmProfile profile) {
+        return repository.findKinds(profile.teamId(), false);
+    }
+
     @Transactional(readOnly = true)
     public List<InteractionKind> managed(CrmProfile profile) {
         requireKindReader(profile);
@@ -165,7 +171,7 @@ public class InteractionKindService {
         return idempotent(profile, CommandOperation.CREATE_INTERACTION_KIND_RULE, idempotencyKey, values, InteractionKindRule.class, () -> {
             UUID id = UUID.randomUUID();
             repository.insertRule(id, values.kindId(), values.organizationType(), values.programId(), values.productId(),
-                    values.priority(), OffsetDateTime.now());
+                    values.priority(), values.active(), OffsetDateTime.now());
             InteractionKindRule created = repository.findRule(id).orElseThrow(InteractionKindNotFoundException::new);
             journal(profile, AuditAction.INTERACTION_KIND_RULE_CHANGED, "INTERACTION_KIND_RULE", id, created.kindName(),
                     "добавлено: " + describe(created));
@@ -183,7 +189,7 @@ public class InteractionKindService {
         return idempotent(profile, CommandOperation.UPDATE_INTERACTION_KIND_RULE, idempotencyKey,
                 new UpdateRuleCommand(ruleId, version, values), InteractionKindRule.class, () -> {
                     if (!repository.updateRule(ruleId, version, values.kindId(), values.organizationType(), values.programId(),
-                            values.productId(), values.priority(), OffsetDateTime.now())) {
+                            values.productId(), values.priority(), values.active(), OffsetDateTime.now())) {
                         throw InteractionConflictException.version(current.version());
                     }
                     InteractionKindRule updated = repository.findRule(ruleId).orElseThrow(InteractionKindNotFoundException::new);
@@ -242,6 +248,12 @@ public class InteractionKindService {
             return new ResolvedRoute(kind.kindId(), null);
         }
         return new ResolvedRoute(kind.kindId(), chooseTemplate(kind.kindId(), organizationId, true).template());
+    }
+
+    /** Вид, который правила дают записи источника (сайт, Moodle): по нему ищется карточка для записи. */
+    @Transactional(readOnly = true)
+    public UUID sourceKind(UUID organizationId, UUID programId, List<UUID> productIds) {
+        return chooseKind(organizationId, null, programId, productIds == null ? List.of() : productIds).kindId();
     }
 
     String kindName(UUID kindId) {
@@ -355,14 +367,20 @@ public class InteractionKindService {
         if (priority < 1 || priority > 1000) {
             throw new InteractionValidationException("priority", "Приоритет — целое число от 1 до 1000");
         }
-        return new RuleValues(request.kindId(), request.organizationType(), request.programId(), request.productId(), priority);
+        return new RuleValues(request.kindId(), request.organizationType(), request.programId(), request.productId(), priority,
+                request.active() == null || request.active());
     }
 
     // Два правила с теми же условиями и тем же приоритетом: одно из них никогда не сработает (Н-15). Частичные
-    // пересечения не запрещаются — форма показывает, какое правило выиграет.
+    // пересечения не запрещаются — форма показывает, какое правило выиграет. Отключённое правило и правило
+    // отключённого вида не действуют, поэтому двойником не считаются (аудит видов, Н-2).
     private void requireNoTwin(RuleValues values, UUID exceptId) {
+        if (!values.active()) {
+            return;
+        }
         repository.findRules().stream()
                 .filter(rule -> !rule.id().equals(exceptId))
+                .filter(rule -> rule.active() && rule.kindActive())
                 .filter(rule -> rule.priority() == values.priority()
                         && Objects.equals(rule.organizationType(), values.organizationType())
                         && Objects.equals(rule.programId(), values.programId())
@@ -387,7 +405,7 @@ public class InteractionKindService {
                 + (rule.organizationType() == null ? "" : ", тип " + rule.organizationType().name())
                 + (rule.programName() == null ? "" : ", программа «" + rule.programName() + "»")
                 + (rule.productName() == null ? "" : ", продукт «" + rule.productName() + "»")
-                + ", приоритет " + rule.priority();
+                + ", приоритет " + rule.priority() + (rule.active() ? "" : ", отключено");
     }
 
     private void journal(CrmProfile profile, AuditAction action, String objectType, UUID objectId, String name, String details) {
@@ -471,7 +489,7 @@ public class InteractionKindService {
     }
 
     private record RuleValues(UUID kindId, ru.rtk.crm.catalog.OrganizationType organizationType, UUID programId, UUID productId,
-                              int priority) {
+                              int priority, boolean active) {
     }
 
     private record UpdateKindCommand(UUID kindId, int version, KindValues values) {

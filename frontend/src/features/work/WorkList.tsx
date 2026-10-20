@@ -15,7 +15,7 @@ import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { FilterChips, type ActiveChip } from '../control/FilterFields'
 import { InteractionMarkBadges } from '../interactions/InteractionMarkBadges'
-import { interactionKindsApi, type InteractionKind } from '../interactions/interactionKinds'
+import { interactionKindsApi, kindFilterLabel, type InteractionKind } from '../interactions/interactionKinds'
 import { issuesHref } from '../issues/issueModel'
 import {
   activeFilterCount,
@@ -190,7 +190,7 @@ export const WorkList = ({ role, path, initialQuery, refreshSignal, title, onTot
         apiClient.listReportStages(),
         loadAllPages((page) => apiClient.listOrganizations({ page, size: 100, sort: 'name,asc' })),
         seesTeamWork ? apiClient.listReportManagers() : Promise.resolve([]),
-        interactionKindsApi.available(),
+        interactionKindsApi.forFilters(),
         loadAllPages((page) => apiClient.listPrograms({ page, size: 100, state: 'ALL' })),
         loadAllPages((page) => apiClient.listProducts({ page, size: 100, state: 'ALL' }))
       ])
@@ -381,7 +381,7 @@ export const WorkList = ({ role, path, initialQuery, refreshSignal, title, onTot
             {filters.kindId.length > 0 && !kindOptions.some((kind) => kind.id === filters.kindId) && (
               <option value={filters.kindId}>Выбранный ранее вид</option>
             )}
-            {kindOptions.map((kind) => <option key={kind.id} value={kind.id}>{kind.name}</option>)}
+            {kindOptions.map((kind) => <option key={kind.id} value={kind.id}>{kindFilterLabel(kind)}</option>)}
           </select>
         </label>
         <label>

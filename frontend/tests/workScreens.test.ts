@@ -120,9 +120,10 @@ test('плитка и порог «долго на этапе» живут в а
   const query = controlQuery(filters, { tile: 'OVERDUE', stuckDays: 14 })
   assert.equal(query, 'manager=m1&from=2026-10-01&to=2026-10-31&tile=OVERDUE&stuck=14')
   assert.deepEqual(controlViewFromQuery(query), { tile: 'OVERDUE', stuckDays: 14 })
-  assert.equal(controlQuery(emptyControlFilters, { tile: null, stuckDays: defaultStuckDays }), '')
-  assert.deepEqual(controlViewFromQuery('tile=EVERYTHING&stuck=-3'), { tile: null, stuckDays: defaultStuckDays })
-  assert.deepEqual(controlViewFromQuery('view=list&due=OVERDUE'), { tile: null, stuckDays: defaultStuckDays })
+  // Без порога в адресе действует порог из «Настроек» администратора: его присылает сервер.
+  assert.equal(controlQuery(emptyControlFilters, { tile: null, stuckDays: null }), '')
+  assert.deepEqual(controlViewFromQuery('tile=EVERYTHING&stuck=-3'), { tile: null, stuckDays: null })
+  assert.deepEqual(controlViewFromQuery('view=list&due=OVERDUE'), { tile: null, stuckDays: null })
   assert.equal(panelFilterCount({ ...filters, stage: ['Встреча'] }), 2, 'период не входит в число на кнопке «Фильтры»')
 })
 

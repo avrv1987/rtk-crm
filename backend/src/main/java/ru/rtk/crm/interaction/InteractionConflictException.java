@@ -14,6 +14,10 @@ public class InteractionConflictException extends RuntimeException {
         return new InteractionConflictException("VERSION_CONFLICT", "Запрос вузу уже изменили", currentVersion);
     }
 
+    public static InteractionConflictException peopleRecordVersion(int currentVersion) {
+        return new InteractionConflictException("VERSION_CONFLICT", "Запись уже изменили; обновите список", currentVersion);
+    }
+
     public static InteractionConflictException stateConflict(String message) {
         return new InteractionConflictException("CONFLICT", message, null);
     }

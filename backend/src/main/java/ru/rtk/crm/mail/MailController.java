@@ -33,9 +33,10 @@ class MailController {
         this.invitationService = invitationService;
     }
 
+    // Настройки тем открыты и координатору вуза: у него одна отключаемая тема — «Школа приняла мой ответ».
     @GetMapping("/api/mail/preferences")
     MailSettingsService.Preferences preferences(@AuthenticationPrincipal OidcUser user) {
-        return settingsService.preferences(currentProfileService.requireActiveProfile(user));
+        return settingsService.preferences(currentProfileService.requireSessionProfile(user));
     }
 
     @PutMapping("/api/mail/preferences")
@@ -43,7 +44,7 @@ class MailController {
             @AuthenticationPrincipal OidcUser user,
             @RequestBody(required = false) MailSettingsService.PreferencesUpdate body
     ) {
-        return settingsService.savePreferences(currentProfileService.requireActiveProfile(user), body);
+        return settingsService.savePreferences(currentProfileService.requireSessionProfile(user), body);
     }
 
     @GetMapping("/api/mail/admin/settings")

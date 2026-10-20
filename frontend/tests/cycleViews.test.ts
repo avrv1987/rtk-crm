@@ -96,10 +96,10 @@ test('щелчок по ячейке открывает список с отбо
 })
 
 test('вид «Списком» и «Этапы» живут в адресе рядом с отборами', () => {
-  assert.equal(controlQuery(emptyControlFilters, { tile: null, stuckDays: 30, display: 'stages' }), 'display=stages')
-  assert.equal(controlQuery(emptyControlFilters, { tile: null, stuckDays: 30, display: 'managers' }), '')
-  assert.deepEqual(controlViewFromQuery('display=list&team=t'), { tile: null, stuckDays: 30, team: 't', display: 'list' })
-  assert.deepEqual(controlViewFromQuery('display=чужое'), { tile: null, stuckDays: 30 })
+  assert.equal(controlQuery(emptyControlFilters, { tile: null, stuckDays: null, display: 'stages' }), 'display=stages')
+  assert.equal(controlQuery(emptyControlFilters, { tile: null, stuckDays: null, display: 'managers' }), '')
+  assert.deepEqual(controlViewFromQuery('display=list&team=t'), { tile: null, stuckDays: null, team: 't', display: 'list' })
+  assert.deepEqual(controlViewFromQuery('display=чужое'), { tile: null, stuckDays: null })
   assert.equal(controlStateFromHash('#/control?display=list&program=g1')?.filters.programId[0], 'g1')
 })
 

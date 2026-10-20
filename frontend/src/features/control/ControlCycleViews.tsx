@@ -55,7 +55,9 @@ const RouteTable = ({ route, axis, stuckDays, severalRoutes, onPick }: {
           <th scope="col">{axis === 'PROGRAM' ? 'ИТ-программа' : 'Продукт'}</th>
           {route.stages.map((stage, index) => route.former[index]
             ? <th key={stage} scope="col" title={`${stage} — этапа нет в текущей версии маршрута`}>{stage} <small>(прежний этап)</small></th>
-            : <th key={stage} scope="col" title={stage}><span>{index + 1}</span> {stage}</th>)}
+            : route.card[index]
+              ? <th key={stage} scope="col" title={`${stage} — этап добавлен в маршрут отдельных взаимодействий`}>{stage} <small>(этап карточки)</small></th>
+              : <th key={stage} scope="col" title={stage}><span>{route.numbers[index]}</span> {stage}</th>)}
           <th scope="col">Всего</th>
         </tr>
       </thead>
@@ -109,7 +111,7 @@ const RouteCards = ({ route, axis, stuckDays, severalRoutes, onPick }: {
           <ol className="cycle-card__stages">
             {row.cells.map((value, index) => value.works === 0 ? null : (
               <li key={route.stages[index]} value={index + 1}>
-                <span className="cycle-card__stage">{route.stages[index]}{route.former[index] ? ' (прежний этап)' : ''}</span>
+                <span className="cycle-card__stage">{route.stages[index]}{route.former[index] ? ' (прежний этап)' : route.card[index] ? ' (этап карточки)' : ''}</span>
                 <CellValue
                   value={value}
                   label={`${row.label}, ${route.stages[index]}`}

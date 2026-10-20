@@ -10,7 +10,8 @@ export type FilterGroupId =
 export const filterVisibility = (kind: ReportKind) => ({
   programs: kind !== 'AGREEMENTS',
   products: kind !== 'DEMAND' && kind !== 'AGREEMENTS',
-  kinds: kind !== 'DEMAND' && kind !== 'AGREEMENTS',
+  // В «Востребованности» вид взаимодействия отбирает только компонент «Спрос вузов».
+  kinds: kind !== 'AGREEMENTS',
   stages: kind !== 'DEMAND' && kind !== 'AGREEMENTS',
   agreement: kind !== 'DEMAND' && kind !== 'AGREEMENTS' && kind !== 'MANAGER_WORK',
   workStatuses: kind === 'PORTFOLIO',

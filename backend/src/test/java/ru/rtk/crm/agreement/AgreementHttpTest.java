@@ -68,6 +68,7 @@ class AgreementHttpTest {
         createSchema();
         AgreementTestSchema.create(jdbcTemplate);
         AgreementTestSchema.createWorkTables(jdbcTemplate);
+        AgreementTestSchema.createReporting(jdbcTemplate);
         AgreementTestSchema.clear(jdbcTemplate);
         for (String table : List.of("audit_events", "command_idempotency_records", "agreements", "organizations", "crm_user_profiles",
                 "teams")) {

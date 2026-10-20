@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import ru.rtk.crm.access.CurrentProfileService;
+import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.security.RequestId;
 
 @RestController
@@ -92,6 +94,18 @@ public class EnrolmentApiController {
             HttpServletRequest request
     ) {
         return streamService.update(currentProfileService.requireActiveProfile(user), id, update, idempotencyKey,
+                RequestId.from(request));
+    }
+
+    @PutMapping("/streams/{id}/moodle-course")
+    public EnrolmentStreamView updateStreamMoodleCourse(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody(required = false) StreamMoodleCourseUpdate update,
+            HttpServletRequest request
+    ) {
+        return streamService.updateMoodleCourse(currentProfileService.requireActiveProfile(user), id, update, idempotencyKey,
                 RequestId.from(request));
     }
 
@@ -216,8 +230,39 @@ public class EnrolmentApiController {
     }
 
     @GetMapping("/queue")
-    public ResponseEntity<EnrolmentQueue> queue(@AuthenticationPrincipal OidcUser user, HttpServletRequest request) {
-        return noStore(batchService.queue(currentProfileService.requireActiveProfile(user), RequestId.from(request)));
+    public ResponseEntity<EnrolmentQueue> queue(
+            @AuthenticationPrincipal OidcUser user,
+            @RequestParam(name = "streamId", required = false) String streamId,
+            @RequestParam(name = "kind", required = false) String kind,
+            @RequestParam(name = "offset", required = false) String offset,
+            @RequestParam(name = "limit", required = false) String limit,
+            HttpServletRequest request
+    ) {
+        return noStore(batchService.queue(currentProfileService.requireActiveProfile(user), RequestId.from(request),
+                streamId == null || streamId.isBlank() ? null : EnrolmentAccess.parseId(streamId),
+                queueKind(kind), number(offset, "offset", 0), number(limit, "limit", EnrolmentBatchService.QUEUE_ITEMS)));
+    }
+
+    private static EnrolmentQueueKind queueKind(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return EnrolmentQueueKind.valueOf(value.strip());
+        } catch (IllegalArgumentException exception) {
+            throw new InteractionValidationException("kind", "Такой группы очереди нет");
+        }
+    }
+
+    private static int number(String value, String field, int fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value.strip());
+        } catch (NumberFormatException exception) {
+            throw new InteractionValidationException(field, "Укажите целое число");
+        }
     }
 
     @PostMapping("/enrolments/{id}/lms-reconciled")

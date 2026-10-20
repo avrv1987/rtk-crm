@@ -12,6 +12,7 @@ import {
   type LearnerSummary
 } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { ConsentsBlock, consentSettings } from '../admin/ConsentsBlock'
 import {
   type AccessErrorReporter,
   type LearnerFieldGroupConfig,
@@ -397,7 +398,8 @@ export const LearnerCardView = ({ learnerId, initialNotice, onNavigateLearner, o
   const [state, setState] = useState<CardState>({ kind: 'loading' })
   const [revealed, setRevealed] = useState<Partial<Record<LearnerFieldGroup, Record<string, string>>>>({})
   const [notice, setNotice] = useState<string | null>(initialNotice ?? null)
-  const [tab, setTab] = useState<'enrolments' | 'history'>('enrolments')
+  const [tab, setTab] = useState<'enrolments' | 'history' | 'consents'>('enrolments')
+  const [consentsOn, setConsentsOn] = useState(false)
   const [history, setHistory] = useState<HistoryState>({ kind: 'idle' })
   const [moveProposal, setMoveProposal] = useState<MoveProposal | null>(null)
 
@@ -418,6 +420,19 @@ export const LearnerCardView = ({ learnerId, initialNotice, onNavigateLearner, o
     void load()
   }, [load])
 
+  // Вкладка согласий есть, только если оператор включил их учёт для слушателей.
+  useEffect(() => {
+    let active = true
+    void consentSettings().then((flags) => {
+      if (active) {
+        setConsentsOn(flags.learners)
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [])
+
   const loadHistory = async () => {
     setHistory({ kind: 'loading' })
     try {
@@ -431,7 +446,7 @@ export const LearnerCardView = ({ learnerId, initialNotice, onNavigateLearner, o
     }
   }
 
-  const openTab = (next: 'enrolments' | 'history') => {
+  const openTab = (next: 'enrolments' | 'history' | 'consents') => {
     setTab(next)
     if (next === 'history' && history.kind === 'idle') {
       void loadHistory()
@@ -545,7 +560,14 @@ export const LearnerCardView = ({ learnerId, initialNotice, onNavigateLearner, o
       <div className="enrolment__tabs">
         <button type="button" aria-pressed={tab === 'enrolments'} onClick={() => openTab('enrolments')}>Зачисления</button>
         <button type="button" aria-pressed={tab === 'history'} onClick={() => openTab('history')}>История</button>
+        {consentsOn && (
+          <button type="button" aria-pressed={tab === 'consents'} onClick={() => openTab('consents')}>Согласия</button>
+        )}
       </div>
+
+      {tab === 'consents' && consentsOn && (
+        <ConsentsBlock scope={{ kind: 'learner', learnerId: learner.id }} canEdit={editable} onAccessError={onAccessError} />
+      )}
 
       {tab === 'enrolments' && (
         learner.enrolments.length === 0 ? <p>Зачислений нет.</p> : (

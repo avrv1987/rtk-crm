@@ -45,6 +45,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import ru.rtk.crm.enrolment.EnrolmentBatchTestSchema;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
+@org.springframework.context.annotation.Import(ru.rtk.crm.settings.TestSystemSettings.class)
 @SpringBootTest(properties = {
         "spring.flyway.enabled=false",
         "spring.datasource.url=jdbc:h2:mem:access-management;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
@@ -900,7 +901,8 @@ class AccessManagementHttpTest {
                     course_name VARCHAR(1333) NOT NULL,
                     stream_no INTEGER NOT NULL,
                     ends_on DATE,
-                    version INTEGER NOT NULL DEFAULT 0
+                    version INTEGER NOT NULL DEFAULT 0,
+                    moodle_course_id BIGINT, moodle_group_id BIGINT
                 )
                 """);
         jdbcTemplate.execute("""

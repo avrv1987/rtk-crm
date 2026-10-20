@@ -30,7 +30,8 @@ export const emptyControlFilters: ControlFilters = {
   from: '',
   to: '',
   change: '',
-  mode: 'NOW'
+  mode: 'NOW',
+  organizationType: ''
 }
 
 export const changeOptions: { id: ManagerWorkChange | ''; label: string }[] = [
@@ -79,6 +80,12 @@ const changeFrom = (value: string): ManagerWorkChange | '' => (
   changeOptions.find((option) => option.id !== '' && option.id === value)?.id ?? ''
 )
 
+export const controlOrganizationTypes = ['UNIVERSITY', 'COLLEGE', 'SCHOOL'] as const
+
+const organizationTypeFrom = (value: string): ControlFilters['organizationType'] => (
+  controlOrganizationTypes.find((type) => type === value) ?? ''
+)
+
 // Адрес «Контроля» (#/control?…) вводит и правит пользователь, поэтому разбор терпим: неверные даты и
 // неизвестное значение «change» молча отбрасываются, а не ломают экран; списки читаются повторяющимися
 // параметрами. Идентификаторы, которых нет в справочниках, экран отбрасывает после загрузки списков.
@@ -99,6 +106,7 @@ export const controlFiltersFromQuery = (query: string): ControlFilters => {
     from: date('from'),
     to: date('to'),
     change: changeFrom(params.get('change') ?? ''),
+    organizationType: organizationTypeFrom(params.get('type') ?? ''),
     // Без периода режим всегда «Сейчас»: КАМ «на конец периода» без периода не определён.
     mode: params.get('mode') === 'period' && (date('from') !== '' || date('to') !== '') ? 'PERIOD' : 'NOW'
   }
@@ -137,6 +145,9 @@ export const controlQueryFromFilters = (filters: ControlFilters): string => {
   if (filters.change !== '') {
     params.set('change', filters.change)
   }
+  if (filters.organizationType !== '') {
+    params.set('type', filters.organizationType)
+  }
   if (filters.mode === 'PERIOD' && hasPeriod(filters)) {
     params.set('mode', 'period')
   }
@@ -146,6 +157,7 @@ export const controlQueryFromFilters = (filters: ControlFilters): string => {
 export const hasPeriod = (filters: ControlFilters) => filters.from !== '' || filters.to !== ''
 
 export const activeControlFilterCount = (filters: ControlFilters) => [
+  filters.organizationType !== '',
   filters.productId.length > 0,
   filters.kindId.length > 0,
   filters.programId.length > 0,
@@ -242,7 +254,7 @@ export const toExportRequest = (
   filters: ControlFilters,
   format: ReportFormat,
   withTeams: boolean,
-  view: ControlView = { tile: null, stuckDays: defaultStuckDays }
+  view: ControlView = { tile: null, stuckDays: null }
 ): ReportRequest => ({
   kind: 'MANAGER_WORK',
   from: filters.from === '' ? null : filters.from,
@@ -250,6 +262,7 @@ export const toExportRequest = (
   format,
   filters: {
     organizationIds: filters.organizationId,
+    organizationType: filters.organizationType === '' ? null : filters.organizationType,
     directionIds: filters.directionId,
     programIds: filters.programId,
     productIds: filters.productId,
@@ -291,7 +304,8 @@ const controlTileKeys: readonly ControlTile[] = ['OVERDUE', 'THIS_WEEK', 'NO_NEX
 
 export type ControlView = {
   tile: ControlTile | null
-  stuckDays: number
+  // null — порог «долго на этапе» из «Настроек» администратора (сервер присылает его в stuckDays сводки).
+  stuckDays: number | null
   // Команда из сводки «Руководства»: число в строке команды открывает её строки (отбор на экране, как плитка).
   team?: string | null
   // Вид доски: по менеджерам (по умолчанию), матрица «программа × этап» или одним списком — над теми же строками.
@@ -308,7 +322,7 @@ export const controlViewFromQuery = (query: string): ControlView => {
   const display = displays.find((value) => value === params.get('display'))
   return {
     tile: controlTileKeys.find((key) => key === tile) ?? null,
-    stuckDays: Number.isInteger(stuck) && stuck > 0 && stuck <= 3650 ? stuck : defaultStuckDays,
+    stuckDays: Number.isInteger(stuck) && stuck > 0 && stuck <= 3650 ? stuck : null,
     ...(team === '' ? {} : { team }),
     ...(display === undefined ? {} : { display })
   }
@@ -321,7 +335,7 @@ export const controlQuery = (filters: ControlFilters, view: ControlView): string
   if (view.tile !== null) {
     params.set('tile', view.tile)
   }
-  if (view.stuckDays !== defaultStuckDays) {
+  if (view.stuckDays !== null) {
     params.set('stuck', String(view.stuckDays))
   }
   if (view.team !== undefined && view.team !== null) {
@@ -346,9 +360,12 @@ export const controlStateFromHash = (hash: string): { filters: ControlFilters; v
 const isActiveWork = (item: Pick<WorkControlItem, 'status'>) => item.status !== 'COMPLETED' && item.status !== 'PAUSED'
 
 // Этап договора, пока договор на согласовании, не считается застрявшим: там действуют пороги согласования
-// (как на сервере, ManagerWorkReport.matches).
-export const isStuck = (item: Pick<WorkControlItem, 'status' | 'daysOnStage' | 'stageUnderApproval'>, stuckDays: number) => (
-  isActiveWork(item) && !item.stageUnderApproval && (item.daysOnStage ?? 0) >= stuckDays
+// (как на сервере, ManagerWorkReport.matches). Норматив этапа шаблона важнее общего порога.
+export const isStuck = (
+  item: Pick<WorkControlItem, 'status' | 'daysOnStage' | 'stageUnderApproval'> & { stageNormDays?: number | null },
+  stuckDays: number
+) => (
+  isActiveWork(item) && !item.stageUnderApproval && (item.daysOnStage ?? 0) >= (item.stageNormDays ?? stuckDays)
 )
 
 // agreementOrganizations — вузы с договором на согласовании по правилу реестра (WorkControl.agreements): плитка
@@ -494,7 +511,7 @@ export const panelFilterCount = (filters: ControlFilters) => [
   filters.organizationId,
   filters.managerId,
   filters.stage
-].filter((values) => values.length > 0).length
+].filter((values) => values.length > 0).length + (filters.organizationType === '' ? 0 : 1)
 
 // Отчёт «Работа менеджеров» плиток не знает: плитку, не перенесённую в отчёт, он называет по параметру skipped, чтобы
 // пользователь не принял неполную выборку за ту же самую.
@@ -540,7 +557,7 @@ export const reportSelectionFromControl = (selection: ReportSelection, query: st
     from: filters.from,
     to: filters.to,
     organizationIds: filters.organizationId,
-    organizationType: '',
+    organizationType: filters.organizationType,
     directionIds: filters.directionId,
     includeNoDirection: false,
     programIds: filters.programId,
@@ -580,3 +597,10 @@ export const tileShownCount = (shown: WorkControl, tile: ControlTile | null): nu
   }
   return tile === 'IDLE' ? shown.idleOrganizations?.length ?? 0 : allWorks(shown).length
 }
+
+// Карточки отбора «Контроля» без шага или срока — для «Задать шаг карточкам без шага»; сервер ещё раз проверит каждую
+// и пропустит те, где шаг уже появился.
+export const missingStepIds = (control: WorkControl) => control.teams
+  .flatMap((team) => team.managers.flatMap((manager) => manager.works))
+  .filter((work) => work.due === 'NO_NEXT_STEP')
+  .map((work) => work.interactionId)

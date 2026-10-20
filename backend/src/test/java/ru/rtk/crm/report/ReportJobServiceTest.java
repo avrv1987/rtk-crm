@@ -358,6 +358,8 @@ class ReportJobServiceTest {
 
     // Н-РТ-1 (2.5): при одновременной отправке десяти заказов квота не превышается — принято ровно пять.
     @Test
+    // Без транзакции теста: иначе профиль из setUp не зафиксирован, потоки его не видят и блокировать им нечего.
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void concurrentSubmissionsDoNotExceedUserQuota() throws Exception {
         ReportJobService idle = new ReportJobService(reportService, reportJobRepository, new ReportJobExecutor(reportProperties) {
             @Override
@@ -389,6 +391,8 @@ class ReportJobServiceTest {
             assertThat(reportJobRepository.countUnfinished(MANAGER_A_PROFILE.id())).isEqualTo(ReportJobService.MAX_UNFINISHED_PER_USER);
         } finally {
             pool.shutdownNow();
+            pool.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+            ReportTestData.createSchema(jdbcTemplate);
         }
     }
 

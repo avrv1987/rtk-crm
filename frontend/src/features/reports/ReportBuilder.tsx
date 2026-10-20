@@ -110,6 +110,22 @@ const cellText = (value: unknown, column: ReportColumn) => {
   return typeof value === 'number' ? value.toLocaleString('ru-RU') : String(value)
 }
 
+// «Почему такое место»: вклад каждого компонента индекса строкой списка, раскрывается по нажатию (М17).
+const cellContent = (value: unknown, column: ReportPreview['columns'][number]) => {
+  if (value === null || value === undefined) {
+    return column.emptyText
+  }
+  if (column.id === 'DEMAND_CONTRIBUTIONS') {
+    return (
+      <details className="report-contributions">
+        <summary>Почему такое место</summary>
+        <ul>{String(value).split('; ').map((part) => <li key={part}>{part}</li>)}</ul>
+      </details>
+    )
+  }
+  return cellText(value, column.id)
+}
+
 const focusResult = (id: string) => {
   const target = document.getElementById(id)
   if (target === null) {
@@ -424,6 +440,13 @@ export const ReportBuilder = ({
                       {previewState.preview.notes.map((note) => <li key={note}>{note}</li>)}
                     </ul>
                   )}
+                  {previewState.preview.kind === 'DEMAND' && (
+                    <p className="reports__method">
+                      Место и индекс востребованности (0–100) — методика М17: каждый компонент сравнивается с другими
+                      программами выборки (процентиль) и умножается на вес. «Данных недостаточно» — не последнее место, а
+                      нехватка данных Moodle. <a href="#/help?section=help-demand-index">Как считается индекс</a>
+                    </p>
+                  )}
                   {previewState.preview.total === 0 ? (
                     <p className="report-empty">По выбранному периоду и фильтрам строк нет. Измените период или снимите часть фильтров.</p>
                   ) : (
@@ -441,9 +464,7 @@ export const ReportBuilder = ({
                                 {previewState.preview.columns.map((column) => {
                                   const value = row[column.id]
                                   return (
-                                    <td key={column.id}>
-                                      {value === null || value === undefined ? column.emptyText : cellText(value, column.id)}
-                                    </td>
+                                    <td key={column.id}>{cellContent(value, column)}</td>
                                   )
                                 })}
                               </tr>

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { apiClient, isAccessDenied, type AgentPlanListItem, type ReminderDigest } from '../../shared/api/client'
+import { apiClient, isAccessDenied, type AgentPlanListItem, type ReminderDigest, type RouteVersionsRow } from '../../shared/api/client'
 import { getModules } from '../../shared/modules'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { kindLabels } from '../agentPlans/agentPlan'
+import { hasReportingReminders, ReportingReminderList } from '../agreements/ReportingReminderList'
+import { outdatedRoutes } from '../admin/adminSettings'
 import { listPartnerReviewQueue, type PartnerReviewItem } from '../partner/partnerApi'
 import { partnerRequestStatusLabels } from '../partner/partnerRequestModel'
 import { type AccessHandlers, formatDate, formatDateTime, handledAccessError, requestIdOf, todayIso } from './workShared'
@@ -11,6 +13,8 @@ import './workControl.css'
 type ReminderCenterProps = AccessHandlers & {
   profileId: string
   refreshKey: string
+  /** Руководитель видит напоминание о работах команды на прежних версиях маршрута. */
+  leader?: boolean
 }
 
 type DigestState =
@@ -48,6 +52,8 @@ const rememberShown = (profileId: string) => {
 const reminderCount = (digest: ReminderDigest) => (
   digest.overdueTotal + digest.upcomingTotal + digest.expiringLicenses.length + digest.trainingCycles.length
   + digest.qualificationDue.length + digest.expiringAgreements.length + digest.unassignedAfterBlock.length
+  + (digest.frdoDue?.length ?? 0)
+  + (digest.agreementReporting?.deadlines.length ?? 0) + (digest.agreementReporting?.lists.length ?? 0)
 )
 
 const cardLink = (organizationId: string, interactionId: string) => `#/organizations/${organizationId}/${interactionId}`
@@ -70,13 +76,14 @@ export const ReminderAgreements = ({ agreements }: { agreements: ReminderDigest[
   )
 }
 
-export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProfileUnavailable }: ReminderCenterProps) => {
+export const ReminderCenter = ({ profileId, refreshKey, leader = false, onSessionExpired, onProfileUnavailable }: ReminderCenterProps) => {
   const [state, setState] = useState<DigestState>({ kind: 'loading' })
   const [settingState, setSettingState] = useState<SettingState>({ kind: 'idle' })
   const [open, setOpen] = useState(false)
   const [fresh, setFresh] = useState(false)
   const [partnerReview, setPartnerReview] = useState<PartnerReviewItem[]>([])
   const [agentPlans, setAgentPlans] = useState<AgentPlanListItem[]>([])
+  const [staleRoutes, setStaleRoutes] = useState<RouteVersionsRow[]>([])
   const rootRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -102,6 +109,16 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
           })
           .catch(() => setPartnerReview([]))
       }
+      // Работы команды на прежних версиях маршрута — отдельно: сбой сводки не скрывает остальные напоминания.
+      if (leader) {
+        apiClient.getRouteVersions()
+          .then((rows) => {
+            if (version === requestVersion.current) {
+              setStaleRoutes(outdatedRoutes(rows))
+            }
+          })
+          .catch(() => setStaleRoutes([]))
+      }
       // Планы ИИ-агента, ждущие подтверждения, — тоже отдельно и только при включённом MCP.
       if (getModules().mcp) {
         apiClient.listAgentPlans()
@@ -118,7 +135,7 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
       }
       setState({ kind: 'failed', requestId: requestIdOf(error) })
     }
-  }, [onProfileUnavailable, onSessionExpired, profileId])
+  }, [leader, onProfileUnavailable, onSessionExpired, profileId])
 
   useEffect(() => {
     void load()
@@ -278,6 +295,22 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
                 <a href="#/agent-plans">Все планы</a>
               </section>
             )}
+            {staleRoutes.length > 0 && (
+              <section aria-labelledby={`${titleId}-routes`}>
+                <h3 id={`${titleId}-routes`}>Работы на прежних версиях маршрута</h3>
+                <ul className="reminder-center__list">
+                  {staleRoutes.map((row) => (
+                    <li key={row.templateId}>
+                      <a href="#/admin/workflow-templates">{row.templateName}</a>
+                      <span className="status status--missing">
+                        Работ на прежних версиях: {row.outdatedWorks}; последняя версия — {row.latestVersion}. Обновите работы до неё
+                        в «Истории версий»
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
             {state.digest.unassignedAfterBlock.length > 0 && (
               <section aria-labelledby={`${titleId}-unassigned`}>
                 <h3 id={`${titleId}-unassigned`}>Вузы без КАМ после блокировки</h3>
@@ -292,6 +325,12 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
                     </li>
                   ))}
                 </ul>
+              </section>
+            )}
+            {hasReportingReminders(state.digest.agreementReporting) && (
+              <section aria-labelledby={`${titleId}-reporting`}>
+                <h3 id={`${titleId}-reporting`}>Отчётность по соглашениям</h3>
+                <ReportingReminderList reminders={state.digest.agreementReporting} listClassName="reminder-center__list" />
               </section>
             )}
             <section aria-labelledby={`${titleId}-overdue`}>
@@ -384,6 +423,22 @@ export const ReminderCenter = ({ profileId, refreshKey, onSessionExpired, onProf
                 </ul>
               )}
             </section>
+            {(state.digest.frdoDue?.length ?? 0) > 0 && (
+              <section aria-labelledby={`${titleId}-frdo`}>
+                <h3 id={`${titleId}-frdo`}>Передать сведения в ФРДО</h3>
+                <ul className="reminder-center__list">
+                  {state.digest.frdoDue.map((item) => (
+                    <li key={item.qualificationId}>
+                      <a href={`#/organizations/${item.organizationId}`}>{item.organizationName}</a>
+                      <span>{item.program}{item.certificateNumber === null ? '' : `, удостоверение № ${item.certificateNumber}`}</span>
+                      <span className={item.dueOn < todayIso() ? 'status status--overdue' : 'status status--missing'}>
+                        Срок передачи {formatDate(item.dueOn)}; карточка вуза → «Люди и часы»
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
             <label className="checkbox-field reminder-center__setting">
               <input
                 type="checkbox"

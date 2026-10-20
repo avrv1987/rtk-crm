@@ -45,9 +45,23 @@ public class PartnerCabinetApiController {
             @PathVariable String id,
             HttpServletRequest request
     ) {
-        PartnerDownload download = partnerCabinetService.download(
+        return file(partnerCabinetService.download(
                 currentProfileService.requirePartnerProfile(user), parseId(id), RequestId.from(request)
-        );
+        ));
+    }
+
+    @GetMapping("/responses/{id}/file")
+    public ResponseEntity<StreamingResponseBody> responseFile(
+            @AuthenticationPrincipal OidcUser user,
+            @PathVariable String id,
+            HttpServletRequest request
+    ) {
+        return file(partnerCabinetService.downloadOwnResponse(
+                currentProfileService.requirePartnerProfile(user), parseId(id), RequestId.from(request)
+        ));
+    }
+
+    private static ResponseEntity<StreamingResponseBody> file(PartnerDownload download) {
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(download.document().mediaType()))
                 .contentLength(download.document().sizeBytes())

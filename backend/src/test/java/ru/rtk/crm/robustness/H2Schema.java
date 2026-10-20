@@ -23,7 +23,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 // - переносы данных (INSERT/UPDATE/WITH) с функциями PostgreSQL пропускаются: на пустой базе им нечего переносить;
 // - безымянные CHECK PostgreSQL называет «таблица_столбец_check», H2 — по-своему, поэтому такой DROP CONSTRAINT
 //   снимает CHECK по имени столбца.
-final class H2Schema {
+public final class H2Schema {
     private static final Pattern VERSION = Pattern.compile("V(\\d+)__");
     private static final Pattern PARTIAL_INDEX = Pattern.compile("(?is)^\\s*CREATE\\s+(UNIQUE\\s+)?INDEX\\b.*\\)\\s*WHERE\\b.*");
     private static final Pattern INDEX = Pattern.compile("(?is)^\\s*CREATE\\s+(UNIQUE\\s+)?INDEX\\b.*");
@@ -36,7 +36,7 @@ final class H2Schema {
     private H2Schema() {
     }
 
-    static void apply(JdbcTemplate jdbc) throws IOException {
+    public static void apply(JdbcTemplate jdbc) throws IOException {
         List<Resource> files = new ArrayList<>(List.of(
                 new PathMatchingResourcePatternResolver().getResources("classpath:db/migration/V*.sql")));
         files.sort(Comparator.comparingInt(H2Schema::version));

@@ -10,7 +10,7 @@ import {
   type BatchResultsApplied,
   type EnrolmentBatch
 } from './enrolmentBatchApi'
-import { batchResultText } from './enrolmentQueueModel'
+import { batchResultText, legacyNote, legacyUnverified, moodleBatchAction } from './enrolmentQueueModel'
 import { enrolmentHref } from './enrolmentRoute'
 import { type AccessErrorReporter, formatDateTime, learnerFullName, responseErrorMessage } from './enrolmentShared'
 
@@ -94,6 +94,7 @@ export const EnrolmentBatchView = ({ batchId, onAccessError }: EnrolmentBatchVie
 
   const { batch } = state
   const selectable = batch.items.filter((item) => item.result !== 'ACCEPTED')
+  const moodleAction = moodleBatchAction(batch)
   return (
     <section className="enrolment" aria-labelledby="enrolment-batch-title">
       <div>
@@ -129,15 +130,16 @@ export const EnrolmentBatchView = ({ batchId, onAccessError }: EnrolmentBatchVie
           <input type="file" accept=".csv,.xlsx,.xls" disabled={busy} onChange={(event) => setProtocol(event.target.files?.[0] ?? null)} />
         </label>
         <button type="submit" disabled={busy || protocol === null}>Загрузить протокол</button>
-        {batch.moodleTransferAvailable && batch.accepted < batch.rows && (
+        {moodleAction !== null && (
           <button type="button" disabled={busy} onClick={() => void run(async () => {
             const result = await transferBatchToMoodle(batchId, commandKey)
+            const confirmed = result.confirmed > 0 ? ` Сверено с Moodle строк прежнего учёта: ${result.confirmed}.` : ''
             setMoodleNote(result.stoppedReason === null
-              ? `Отправлено в Moodle строк: ${result.sent}; принято ${result.accepted}, ошибок ${result.failed}.`
+              ? `Отправлено в Moodle строк: ${result.sent}; принято ${result.accepted}, ошибок ${result.failed}.${confirmed}`
               : `Передача остановлена: ${result.stoppedReason}. Принято ${result.accepted}; остальные строки ждут, повторите позже.`)
-            return { batch: result.batch, changed: result.accepted + result.failed, skipped: [] }
+            return { batch: result.batch, changed: result.accepted + result.failed + result.confirmed, skipped: [] }
           })}>
-            Передать через Moodle
+            {moodleAction === 'transfer' ? 'Передать через Moodle' : 'Сверить с Moodle'}
           </button>
         )}
         {batch.sentAt === null && (
@@ -213,7 +215,10 @@ export const EnrolmentBatchView = ({ batchId, onAccessError }: EnrolmentBatchVie
                   {item.learnerVersion !== null && item.currentLearnerVersion !== null && item.currentLearnerVersion > item.learnerVersion
                     && ' (анкету изменили после выгрузки)'}
                 </td>
-                <td>{batchResultText[item.result]}{item.error !== null && `: ${item.error}`}</td>
+                <td>
+                  {batchResultText[item.result]}{item.error !== null && `: ${item.error}`}
+                  {legacyUnverified(item) && <span className="enrolment__hint"> · {legacyNote}</span>}
+                </td>
               </tr>
             ))}
           </tbody>

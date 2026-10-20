@@ -55,6 +55,30 @@ public class AgreementException extends RuntimeException {
         return new AgreementException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "Вид мероприятия уже изменили", currentVersion);
     }
 
+    public static AgreementException referenceNotFound() {
+        return new AgreementException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Значение справочника не найдено", null);
+    }
+
+    public static AgreementException referenceVersion(int currentVersion) {
+        return new AgreementException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "Значение справочника уже изменили", currentVersion);
+    }
+
+    public static AgreementException rateNotFound() {
+        return new AgreementException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Ставка не найдена", null);
+    }
+
+    public static AgreementException rateVersion(int currentVersion) {
+        return new AgreementException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "Ставку уже изменили", currentVersion);
+    }
+
+    public static AgreementException listNotFound() {
+        return new AgreementException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Перечень мероприятий не найден или недоступен", null);
+    }
+
+    public static AgreementException listVersion(int currentVersion) {
+        return new AgreementException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "Перечень мероприятий уже изменили", currentVersion);
+    }
+
     public static AgreementException confirmationLimit(int limit) {
         return new AgreementException(
                 HttpStatus.UNPROCESSABLE_ENTITY,

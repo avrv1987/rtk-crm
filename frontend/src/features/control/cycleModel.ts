@@ -27,6 +27,10 @@ export type MatrixRoute = {
   stages: string[]
   // Этап прежней версии шаблона: в текущем маршруте его нет, поэтому без номера и с пометкой.
   former: boolean[]
+  // Этап, который КАМ добавил в маршрут своей карточки: стоит на своём месте, без номера шаблона и с пометкой.
+  card: boolean[]
+  // Номер этапа в шаблоне; у этапов карточек и прежних версий — null.
+  numbers: (number | null)[]
   rows: MatrixRow[]
   // Итог по этапу считает каждое взаимодействие один раз, даже если у него несколько продуктов.
   totals: MatrixCell[]
@@ -66,6 +70,17 @@ const axisKeys = (item: WorkControlItem, axis: MatrixAxis): { id: string | null;
 }
 
 const noTemplate = '-'
+
+type RouteLike = NonNullable<WorkControl['routes']>[number]
+
+const isFormer = (route: RouteLike | undefined, stage: string) => route !== undefined
+  && !(route.cardStages ?? []).includes(stage)
+  && (!route.stages.includes(stage) || (route.formerStages ?? []).includes(stage))
+
+const templateNumbers = (route: RouteLike | undefined, stages: string[]) => {
+  let number = 0
+  return stages.map((stage) => (isFormer(route, stage) || (route?.cardStages ?? []).includes(stage) ? null : ++number))
+}
 
 // Матрица «программа (или продукт) × этап» из уже полученных строк «Контроля»: те же отборы, права и режим, что у плиток.
 // Маршруты разные у разных видов взаимодействия, поэтому таблица строится отдельно по каждому маршруту, столбцы —
@@ -112,7 +127,9 @@ export const stageMatrix = (control: WorkControl, axis: MatrixAxis, stuckDays: n
       name: route?.templateName ?? 'Без шаблона маршрута',
       kindIds: [...new Set(routeItems.flatMap((item) => (item.kindId ? [item.kindId] : [])))],
       stages,
-      former: stages.map((stage) => route !== undefined && (!route.stages.includes(stage) || (route.formerStages ?? []).includes(stage))),
+      former: stages.map((stage) => isFormer(route, stage)),
+      card: stages.map((stage) => (route?.cardStages ?? []).includes(stage)),
+      numbers: templateNumbers(route, stages),
       rows: [...rows.entries()]
         .sort(([, a], [, b]) => Number(a.id === null) - Number(b.id === null) || a.label.localeCompare(b.label, 'ru'))
         .map(([rowKey, row]) => ({

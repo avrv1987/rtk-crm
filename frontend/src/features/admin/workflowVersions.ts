@@ -1,6 +1,6 @@
 import { lmsRoleLabels, lmsRoles, stagePropertiesOf, type StageLmsRole, type StagePropertiesInput } from '../documents/stageProperties.ts'
 
-export type RouteStage = { id: string; name: string; order: number; optional: boolean } & StagePropertiesInput
+export type RouteStage = { id: string; name: string; order: number; optional: boolean; normDays?: number | null } & StagePropertiesInput
 export type RouteTransition = { fromStageId: string; toStageId: string; commentRequired: boolean }
 export type Route = { name: string; stages: RouteStage[]; transitions: RouteTransition[] }
 
@@ -13,6 +13,7 @@ export type FileStage = {
   requiresAgreement?: boolean
   lmsRole?: StageLmsRole | null
   documentKinds?: string[]
+  normDays?: number
 }
 export type FileTransition = { from: number; to: number; commentRequired: boolean }
 export type RouteFile = {
@@ -56,7 +57,8 @@ export const routeToFile = (route: Route, sourceVersion?: number): RouteFile => 
         optional: stage.optional,
         ...(properties.requiresAgreement ? { requiresAgreement: true } : {}),
         ...(properties.lmsRole === null ? {} : { lmsRole: properties.lmsRole }),
-        ...(properties.documentKinds.length === 0 ? {} : { documentKinds: properties.documentKinds })
+        ...(properties.documentKinds.length === 0 ? {} : { documentKinds: properties.documentKinds }),
+        ...(typeof stage.normDays === 'number' ? { normDays: stage.normDays } : {})
       }
     }),
     transitions: route.transitions.flatMap((transition) => {
@@ -95,7 +97,9 @@ export const parseRouteFile = (text: string): { file: RouteFile } | { error: str
       || (stage.requiresAgreement !== undefined && typeof stage.requiresAgreement !== 'boolean')
       || (stage.lmsRole !== undefined && stage.lmsRole !== null && !lmsRoles.includes(stage.lmsRole as StageLmsRole))
       || (stage.documentKinds !== undefined && (!Array.isArray(stage.documentKinds)
-        || stage.documentKinds.some((code) => typeof code !== 'string')))) {
+        || stage.documentKinds.some((code) => typeof code !== 'string')))
+      || (stage.normDays !== undefined && (!Number.isInteger(stage.normDays) || (stage.normDays as number) < 1
+        || (stage.normDays as number) > 3650))) {
       return { error: `Этап ${position + 1} в файле заполнен неверно.` }
     }
     stages.push({
@@ -104,7 +108,8 @@ export const parseRouteFile = (text: string): { file: RouteFile } | { error: str
       optional: stage.optional,
       ...(stage.requiresAgreement === true ? { requiresAgreement: true } : {}),
       ...(typeof stage.lmsRole === 'string' ? { lmsRole: stage.lmsRole as StageLmsRole } : {}),
-      ...(Array.isArray(stage.documentKinds) ? { documentKinds: [...new Set(stage.documentKinds as string[])] } : {})
+      ...(Array.isArray(stage.documentKinds) ? { documentKinds: [...new Set(stage.documentKinds as string[])] } : {}),
+      ...(typeof stage.normDays === 'number' ? { normDays: stage.normDays } : {})
     })
   }
   if (!Array.isArray(value.transitions) || value.transitions.length > 1000) {
@@ -194,7 +199,9 @@ export const diffRoutes = (before: Route, after: Route): RouteDiff => {
       const parts = [
         was.requiresAgreement === now.requiresAgreement ? null : now.requiresAgreement ? 'нужен действующий договор' : 'договор больше не нужен',
         was.lmsRole === now.lmsRole ? null : `роль для LMS: ${now.lmsRole === null ? 'без связи с LMS' : lmsRoleLabels[now.lmsRole]}`,
-        [...was.documentKinds].sort().join() === [...now.documentKinds].sort().join() ? null : `обязательных документов: ${now.documentKinds.length}`
+        [...was.documentKinds].sort().join() === [...now.documentKinds].sort().join() ? null : `обязательных документов: ${now.documentKinds.length}`,
+        (previous.normDays ?? null) === (stage.normDays ?? null) ? null
+          : `норматив: ${stage.normDays === null || stage.normDays === undefined ? 'общий порог' : `${stage.normDays} дн.`}`
       ].filter((part): part is string => part !== null)
       return parts.length === 0 ? [] : [`«${stage.name}» — ${parts.join(', ')}`]
     }),

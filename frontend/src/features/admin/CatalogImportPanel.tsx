@@ -15,6 +15,7 @@ import {
 import { HintButton } from '../../shared/ui/HintButton'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { importSteps, importStepOf, parseTransferStatuses } from './catalogImportSteps'
+import { ImportSettingsBlock } from './ImportSettingsBlock'
 import './adminUi.css'
 import './catalogs.css'
 import './catalogImport.css'
@@ -88,6 +89,45 @@ const vendorContactFields: MappingField[] = [
   field('vendorContactChannels', 'Способ связи', false, false, ['Канал связи', 'Предпочтительный способ связи'])
 ]
 
+// Профиль «История взаимодействий»: события прошлых периодов с датами; синонимы — названия столбцов выгрузок CRM.
+const historyFields: MappingField[] = [
+  field('organizationName', 'Вуз', true, false, ['Название ВУЗа', 'ВУЗ', 'Организация', 'Компания']),
+  field('eventDate', 'Дата события', true, false, ['Дата', 'Дата и время', 'Дата активности']),
+  field('eventType', 'Тип события', true, false, ['Тип', 'Тип активности', 'Вид события']),
+  field('interactionTitle', 'Взаимодействие', false, false, ['Сделка', 'Название взаимодействия', 'Название сделки']),
+  field('stageName', 'Этап', false, false, ['Этап воронки', 'Стадия']),
+  field('eventText', 'Текст', false, false, ['Комментарий', 'Описание', 'Содержание']),
+  field('eventAuthor', 'Автор', false, false, ['Логин автора', 'Логин']),
+  field('contactChannel', 'Канал', false, false, ['Канал связи']),
+  field('stepDueDate', 'Срок шага', false, false, ['Срок']),
+  field('rowKey', 'Ключ строки', false, false, ['ID активности', 'ID события']),
+  field('interactionExternalKey', 'Ключ взаимодействия', false, true, ['ID сделки', 'Ключ сделки']),
+  field('organizationExternalKey', 'Ключ вуза', false, true),
+  field('interactionId', 'UUID взаимодействия', false, true)
+]
+
+// Профиль «Договоры с вузами»: строка — договор и, если заполнено, одно мероприятие его плана.
+const universityAgreementFields: MappingField[] = [
+  field('organizationName', 'Вуз', true, false, ['Название ВУЗа', 'ВУЗ', 'Организация', 'Компания']),
+  field('agreementNumber', 'Номер договора', true, false, ['Номер', '№ договора']),
+  field('agreementStatus', 'Статус', false, false, ['Статус договора']),
+  field('concludedOn', 'Дата подписания', false, false, ['Дата заключения']),
+  field('validUntil', 'Действует до', false, false, ['Срок действия', 'Дата окончания']),
+  field('programNames', 'Программы', false, false, ['ИТ-программы', 'Программа']),
+  field('productNames', 'Продукты', false, false, ['ИТ-продукты', 'Продукт']),
+  field('activityKind', 'Вид мероприятия', false, false),
+  field('activityTitle', 'Мероприятие', false, false, ['Название мероприятия']),
+  field('activityPlannedVolume', 'Плановый объём', false, false, ['План']),
+  field('activityStatus', 'Статус мероприятия', false, false),
+  field('sentOn', 'Дата отправки на согласование', false, true, ['Дата отправки']),
+  field('parties', 'Стороны', false, true),
+  field('directionNames', 'Направления', false, true, ['ИТ-направления', 'Направление']),
+  field('activityUnit', 'Единица', false, true, ['Единица измерения']),
+  field('activityPlannedStart', 'Плановое начало', false, true),
+  field('activityPlannedEnd', 'Плановое окончание', false, true),
+  field('organizationExternalKey', 'Ключ вуза', false, true)
+]
+
 const targetFields: Array<{ key: keyof CatalogImportRowTarget; label: string }> = [
   { key: 'organizationId', label: 'UUID вуза' },
   { key: 'managerProfileId', label: 'UUID КАМ' },
@@ -118,21 +158,25 @@ const extraLabels: Record<string, string> = {
   unassignedTeamId: 'Команда для организаций без КАМ',
   archiveAgreementIds: 'Записи для архивирования',
   templateId: 'Шаблон процесса',
+  historyEvent: 'Событие истории',
+  stageFromHistory: 'Этап по истории',
   body: 'Запрос'
 }
 
 const fieldLabels: Record<string, string> = Object.fromEntries(
-  [...vendorContactFields, ...agreementFields, ...directionProgramFields].map((mappingField) => [mappingField.key, mappingField.label])
+  [...historyFields, ...universityAgreementFields, ...vendorContactFields, ...agreementFields, ...directionProgramFields]
+    .map((mappingField) => [mappingField.key, mappingField.label])
 )
 
 const indexedProductKey = /^product(\d+)ExternalKey$/
 
-const labelOf = (key: string) => {
+// Подпись берётся сначала из полей выбранного профиля: один ключ (organizationName) в разных профилях подписан по-разному.
+const labelOf = (key: string, profile: CatalogImportProfile) => {
   const indexedProduct = key.match(indexedProductKey)
   if (indexedProduct) {
     return `Ключ ПО № ${indexedProduct[1]}`
   }
-  return fieldLabels[key] ?? extraLabels[key] ?? key
+  return fieldsFor(profile).find((mappingField) => mappingField.key === key)?.label ?? fieldLabels[key] ?? extraLabels[key] ?? key
 }
 
 const fieldsFor = (profile: CatalogImportProfile) => {
@@ -141,6 +185,10 @@ const fieldsFor = (profile: CatalogImportProfile) => {
       return agreementFields
     case 'VENDOR_CONTACTS':
       return vendorContactFields
+    case 'INTERACTION_HISTORY':
+      return historyFields
+    case 'UNIVERSITY_AGREEMENT':
+      return universityAgreementFields
     default:
       return directionProgramFields
   }
@@ -218,13 +266,13 @@ const errorMessage = (state: ErrorState) => {
   return state.error instanceof Error ? state.error.message : 'Не удалось связаться с сервисом. Повторите попытку позже.'
 }
 
-const describeValues = (values: Record<string, string>) => {
+const describeValues = (values: Record<string, string>, profile: CatalogImportProfile) => {
   const pairs = Object.entries(values)
-  return pairs.length === 0 ? '—' : pairs.map(([key, value]) => `${labelOf(key)}: ${value || '—'}`).join('; ')
+  return pairs.length === 0 ? '—' : pairs.map(([key, value]) => `${labelOf(key, profile)}: ${value || '—'}`).join('; ')
 }
 
-const describeErrors = (errors: Record<string, string>) => Object.entries(errors)
-  .map(([key, message]) => `${labelOf(key)}: ${message}`)
+const describeErrors = (errors: Record<string, string>, profile: CatalogImportProfile) => Object.entries(errors)
+  .map(([key, message]) => `${labelOf(key, profile)}: ${message}`)
 
 const cleanTargets = (targets: Record<string, CatalogImportRowTarget>) => {
   const cleaned: Record<string, CatalogImportRowTarget> = {}
@@ -286,6 +334,7 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
   const [archiveAgreementIds, setArchiveAgreementIds] = useState<string[]>([])
   const [openRows, setOpenRows] = useState<string[]>([])
   const [mappingOpen, setMappingOpen] = useState(true)
+  const [stageFromHistory, setStageFromHistory] = useState(false)
   const applyKey = useRef<string | null>(null)
   const unassignedId = useId()
 
@@ -363,7 +412,7 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
     event.preventDefault()
     if (file === null || busy !== null) {
       if (file === null) {
-        setError({ action: 'inspect', error: new Error('Выберите файл XLS или XLSX.') })
+        setError({ action: 'inspect', error: new Error('Выберите файл XLS, XLSX или CSV.') })
       }
       return
     }
@@ -432,7 +481,8 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
       columns: mappedColumns,
       rowTargets: cleanTargets(rowTargets),
       transferStatuses: transferStatuses.statuses,
-      unassignedTeamId: profile === 'AGREEMENT' && unassignedTeamId.length > 0 ? unassignedTeamId : null
+      unassignedTeamId: profile === 'AGREEMENT' && unassignedTeamId.length > 0 ? unassignedTeamId : null,
+      stageFromHistory: profile === 'INTERACTION_HISTORY' && stageFromHistory ? true : null
     }
     setBusy('preview')
     setError(null)
@@ -537,7 +587,7 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
       <div className="page-title">
         <h2 id="catalog-import-title">Импорт из Excel</h2>
         <HintButton label="О разделе">
-          Загрузите XLS или XLSX с десятью полями ТЗ: столбцы с привычными названиями сопоставятся сами. ФИО менеджера ищется среди активных КАМ без учёта регистра, пробелов и «ё»; если совпадений несколько, выберите нужного КАМ прямо в строке протокола. Несколько ответственных от вуза в одной ячейке разделяйте «;» или переводом строки — каждый станет отдельным контактом. Изменения сохраняются только после проверки протокола и подтверждения.
+          Загрузите XLS, XLSX или CSV. Профиль «Каталог по ТЗ» — десять полей ТЗ: столбцы с привычными названиями сопоставятся сами. ФИО менеджера ищется среди активных КАМ без учёта регистра, пробелов и «ё»; если совпадений несколько, выберите нужного КАМ прямо в строке протокола. Несколько ответственных от вуза в одной ячейке разделяйте «;» или переводом строки — каждый станет отдельным контактом. Изменения сохраняются только после проверки протокола и подтверждения.
         </HintButton>
       </div>
 
@@ -559,14 +609,28 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
         <a href="/vendor-contacts-template.xlsx" download>
           Скачать шаблон «Вендоры, продукты и контакты» (формат файла организатора, вымышленные контакты)
         </a>
+        <a href="/history-import-template.xlsx" download>
+          Скачать шаблон «История взаимодействий»
+        </a>
+        <a href="/agreements-import-template.xlsx" download>
+          Скачать шаблон «Договоры с вузами»
+        </a>
+        <a href="/flow-transfer-template.xlsx" download>
+          Скачать формат переноса из другой CRM (листы «Вузы», «История», «Договоры»)
+        </a>
+        <HintButton label="О переносе из другой CRM">
+          Выгрузите из прежней системы вузы и контакты, историю и договоры в эти три листа и загрузите их по очереди: лист «Вузы» — профилем «Каталог по ТЗ», затем «История» и «Договоры» своими профилями. Порядок описан в инструкции администратора.
+        </HintButton>
       </div>
+
+      <ImportSettingsBlock onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
 
       <form className="import-block import-file" onSubmit={(event) => void inspect(event)}>
         <label>
-          Файл XLS или XLSX
+          Файл XLS, XLSX или CSV
           <input
             type="file"
-            accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            accept=".xls,.xlsx,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             onChange={selectFile}
           />
         </label>
@@ -576,6 +640,8 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
             <option value="AGREEMENT">Каталог по ТЗ (10 полей)</option>
             <option value="DIRECTION_PROGRAM">Направления и программы</option>
             <option value="VENDOR_CONTACTS">Вендоры, продукты и контакты</option>
+            <option value="INTERACTION_HISTORY">История взаимодействий</option>
+            <option value="UNIVERSITY_AGREEMENT">Договоры с вузами</option>
           </select>
         </label>
         <button type="submit" className={hasSheets ? 'button--secondary' : undefined} disabled={file === null || busy !== null}>
@@ -651,6 +717,37 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
                   </label>
                 </details>
               )}
+              {profile !== 'AGREEMENT' && advancedFields.length > 0 && (
+                <details className="admin-more">
+                  <summary>Дополнительно: ключи и необязательные поля</summary>
+                  <div className="import-grid">
+                    {advancedFields.map((mappingField) => (
+                      <ColumnSelect
+                        key={mappingField.key}
+                        mappingField={mappingField}
+                        headers={selectedSheet.headers}
+                        value={columns[mappingField.key] ?? ''}
+                        disabled={busy !== null}
+                        onChange={updateColumn}
+                      />
+                    ))}
+                  </div>
+                </details>
+              )}
+              {profile === 'INTERACTION_HISTORY' && (
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={stageFromHistory}
+                    disabled={busy !== null}
+                    onChange={(event) => {
+                      setStageFromHistory(event.target.checked)
+                      clearPlan()
+                    }}
+                  />
+                  Поставить этап карточки по последнему переходу из файла (если после него в CRM переходов не было)
+                </label>
+              )}
               {profile === 'AGREEMENT' && (
                 <div className="import-field">
                   <div className="import-field__head">
@@ -695,7 +792,7 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
           <p>{errorMessage(error)}</p>
           {error.error instanceof ApiError && Object.entries(error.error.fieldErrors ?? {}).length > 0 && (
             <ul>
-              {describeErrors(error.error.fieldErrors ?? {}).map((message) => <li key={message}>{message}</li>)}
+              {describeErrors(error.error.fieldErrors ?? {}, profile).map((message) => <li key={message}>{message}</li>)}
             </ul>
           )}
           {error.error instanceof ApiError && <SupportDetails requestId={error.error.requestId} code={error.error.code} />}
@@ -761,7 +858,7 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
                       <span className={`admin-chip${rowStatusTone[row.status]}`}>{rowStatusLabel(row.status)}</span>
                     </td>
                     <td data-label="Сообщения" className="import-table__messages">
-                      {Object.entries(row.fieldErrors).length === 0 ? '—' : describeErrors(row.fieldErrors).join('; ')}
+                      {Object.entries(row.fieldErrors).length === 0 ? '—' : describeErrors(row.fieldErrors, profile).join('; ')}
                       {row.managerCandidates.length > 0 && importPlan.status === 'PREVIEWED' && (
                         <label className="import-candidate">
                           Выберите КАМ для строки {row.rowNumber}
@@ -796,9 +893,9 @@ export const CatalogImportPanel = ({ onSessionExpired, onProfileUnavailable }: C
                       <td colSpan={5}>
                         <dl className="import-values">
                           <dt>Было</dt>
-                          <dd>{describeValues(row.oldValues)}</dd>
+                          <dd>{describeValues(row.oldValues, profile)}</dd>
                           <dt>Станет</dt>
-                          <dd>{describeValues(row.newValues)}</dd>
+                          <dd>{describeValues(row.newValues, profile)}</dd>
                         </dl>
                       </td>
                     </tr>

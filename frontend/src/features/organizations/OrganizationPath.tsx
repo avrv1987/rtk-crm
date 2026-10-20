@@ -46,7 +46,7 @@ const WorkRow = ({ work, organizationId }: { work: PathWork; organizationId: str
             <span
               key={`${index}:${segment.name}`}
               className={`org-path__segment org-path__segment--${segment.state}${segment.optional ? ' org-path__segment--optional' : ''}`}
-              title={`${index + 1}. ${segment.name}${segment.optional ? ' (необязательный)' : ''}`}
+              title={segment.title}
             />
           ))}
         </span>

@@ -33,12 +33,7 @@ export type ConfirmationQuery = {
 
 export { agreementStatusLabels } from './agreementModel'
 
-export const activityStatusLabels: Record<ActivityStatus, string> = {
-  PLANNED: 'Запланировано',
-  IN_PROGRESS: 'Выполняется',
-  DONE: 'Выполнено',
-  CANCELLED: 'Отменено'
-}
+export { activityStatusLabels, activityStatuses } from './reportingModel'
 
 const dateFormatter = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short' })
 
@@ -85,7 +80,7 @@ export const agreementsApi = {
     `/api/agreement-activity-kinds${includeArchived ? '?includeArchived=true' : ''}`
   ),
   createKind: (name: string, key: string) => apiClient.command<ActivityKind>('/api/admin/agreement-activity-kinds', { name }, key),
-  updateKind: (id: string, payload: { version: number; name: string; archived: boolean }, key: string) => (
+  updateKind: (id: string, payload: components['schemas']['AgreementActivityKindUpdate'], key: string) => (
     apiClient.command<ActivityKind>(`/api/admin/agreement-activity-kinds/${path(id)}`, payload, key, 'PATCH')
   ),
   list: (organizationId: Organization['id']) => apiClient.request<AgreementSummary[]>(`/api/organizations/${path(organizationId)}/agreements`),

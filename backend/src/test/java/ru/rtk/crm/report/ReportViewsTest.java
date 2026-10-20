@@ -37,6 +37,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.interaction.InteractionWorkStatus;
 import ru.rtk.crm.module.ModuleProperties;
 
 @JdbcTest(properties = {
@@ -91,6 +92,55 @@ class ReportViewsTest {
                 StatisticsGroupBy.MONTH, from, to, PeriodBasis.ACTIVE, null, null, null)))
                 .isInstanceOfSatisfying(InteractionValidationException.class,
                         exception -> assertThat(exception.field()).isEqualTo("groupBy"));
+    }
+
+    // Н05: «Активные в периоде» и отбор по состоянию в «Состоянии на дату» — по истории смены статуса, а не по сегодняшнему.
+    @Test
+    void activeInPeriodAndSnapshotStatusFollowStatusHistory() {
+        UUID completedBefore = work("Завершено в августе", "2026-08-02T10:00:00+03:00");
+        statusEvent(completedBefore, "COMPLETED", "2026-08-20T10:00:00+03:00");
+        UUID pausedBefore = work("Приостановлено в августе", "2026-08-03T10:00:00+03:00");
+        statusEvent(pausedBefore, "PAUSED", "2026-08-21T10:00:00+03:00");
+        UUID reopened = work("Возобновлено в сентябре", "2026-08-04T10:00:00+03:00");
+        statusEvent(reopened, "COMPLETED", "2026-08-22T10:00:00+03:00");
+        statusEvent(reopened, "ACTIVE", "2026-09-08T10:00:00+03:00");
+        UUID completedLater = work("Завершено в октябре", "2026-08-05T10:00:00+03:00");
+        statusEvent(completedLater, "COMPLETED", "2026-10-02T10:00:00+03:00");
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'COMPLETED' WHERE id IN (?, ?)", completedBefore, completedLater);
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'PAUSED' WHERE id = ?", pausedBefore);
+        LocalDate from = LocalDate.parse("2026-09-06");
+        LocalDate to = LocalDate.parse("2026-09-12");
+
+        assertThat(ids(LEADER_A_PROFILE, portfolio(from, to, PeriodBasis.ACTIVE))).containsExactlyInAnyOrder(
+                INTERACTION_TWO_PRODUCTS, INTERACTION_WITHOUT_LINKS, pausedBefore, reopened, completedLater);
+        assertThat(reportService.preview(LEADER_A_PROFILE, portfolio(from, to, PeriodBasis.ACTIVE), 0, 50).total()).isEqualTo(5);
+
+        LocalDate tenth = LocalDate.parse("2026-09-10");
+        assertThat(ids(LEADER_A_PROFILE, snapshot(tenth, statuses(InteractionWorkStatus.ACTIVE)))).containsExactlyInAnyOrder(
+                INTERACTION_TWO_PRODUCTS, INTERACTION_WITHOUT_LINKS, reopened, completedLater);
+        assertThat(ids(LEADER_A_PROFILE, snapshot(tenth, statuses(InteractionWorkStatus.COMPLETED))))
+                .containsExactly(completedBefore);
+        assertThat(reportService.statistics(LEADER_A_PROFILE, new StatisticsRequest(ReportKind.SNAPSHOT, StatisticsGroupBy.STAGE,
+                null, null, null, statuses(InteractionWorkStatus.PAUSED), tenth, null)).total()).isEqualTo(1);
+    }
+
+    private UUID work(String title, String createdAt) {
+        UUID id = UUID.randomUUID();
+        ReportTestData.interaction(jdbcTemplate, id, ORGANIZATION_A, title, null, 0, at(createdAt));
+        ReportTestData.event(jdbcTemplate, id, "CREATED", "Поиск контакта", null, null, MANAGER_A, at(createdAt));
+        return id;
+    }
+
+    private void statusEvent(UUID interactionId, String status, String occurredAt) {
+        ReportTestData.event(jdbcTemplate, interactionId, "STATUS_CHANGED", "Поиск контакта", null, "Смена статуса: " + status,
+                MANAGER_A, at(occurredAt));
+        jdbcTemplate.update("UPDATE interaction_events SET work_status_after = ? WHERE interaction_id = ? AND occurred_at = ?",
+                status, interactionId, at(occurredAt));
+    }
+
+    private static ReportFilters statuses(InteractionWorkStatus status) {
+        return new ReportFilters(List.of(), List.of(), false, List.of(), false, List.of(), false, List.of(), false, List.of(),
+                null, List.of(status), List.of(), ReportAgreementFilters.none(), List.of(), null);
     }
 
     @Test

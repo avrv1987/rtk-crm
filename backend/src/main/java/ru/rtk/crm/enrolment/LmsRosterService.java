@@ -37,6 +37,7 @@ public class LmsRosterService {
     private final AuditJournalRepository auditJournalRepository;
     private final EnrolmentCommands commands;
     private final EnrolmentBatchRepository batchRepository;
+    private final LmsLogin lmsLogin;
 
     LmsRosterService(
             EnrolmentAccess enrolmentAccess,
@@ -46,8 +47,10 @@ public class LmsRosterService {
             LmsRosterWorkbookWriter writer,
             AuditJournalRepository auditJournalRepository,
             EnrolmentCommands commands,
-            EnrolmentBatchRepository batchRepository
+            EnrolmentBatchRepository batchRepository,
+            LmsLogin lmsLogin
     ) {
+        this.lmsLogin = lmsLogin;
         this.enrolmentAccess = enrolmentAccess;
         this.streamService = streamService;
         this.enrolmentRepository = enrolmentRepository;
@@ -87,7 +90,7 @@ public class LmsRosterService {
         RosterFormat format = request.format() == null ? RosterFormat.XLSX_TEMPLATE : request.format();
         UUID exportId = UUID.randomUUID();
         OffsetDateTime now = OffsetDateTime.now();
-        byte[] content = format == RosterFormat.MOODLE_CSV ? MoodleCsvWriter.write(profiles) : workbook(profiles);
+        byte[] content = format == RosterFormat.MOODLE_CSV ? MoodleCsvWriter.write(profiles, lmsLogin) : workbook(profiles);
         String checksum = sha256(content);
         String fileName = fileName(stream, format);
         // Партия неизменяема: состав, номер строки в файле и версия анкеты на момент выгрузки записываются один раз.

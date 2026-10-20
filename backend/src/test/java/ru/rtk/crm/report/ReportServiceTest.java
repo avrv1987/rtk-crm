@@ -552,7 +552,7 @@ class ReportServiceTest {
         YearMonth month = YearMonth.from(ReportTestData.TODAY);
 
         assertThat(reportService.document(LEADER_A_PROFILE, demand(null, null, filters(), null)).notes())
-                .anySatisfy(note -> assertThat(note).contains("Спрос рынка труда").contains("в рейтинг спрос не входит")
+                .anySatisfy(note -> assertThat(note).contains("Спрос рынка труда").contains("в индекс востребованности спрос рынка не входит")
                         .contains("срезов источника рынка труда в CRM пока нет"));
 
         ReportTestData.insertMarket(jdbcTemplate, "programming", month, 90, "Тестовый источник");
@@ -569,7 +569,7 @@ class ReportServiceTest {
     void demandRanksProgramsBySiteApplicationsAndMoodleSnapshotsInScopeWithoutZeroForMissingData() {
         ReportTestData.insertDemand(jdbcTemplate);
 
-        assertThat(rows(LEADER_A_PROFILE, demand(null, null, filters(), null)))
+        assertThat(rows(LEADER_A_PROFILE, demand(null, null, filters(), ReportColumn.APPLICATIONS)))
                 .extracting(ReportRow::programName, ReportRow::applications, ReportRow::participants, ReportRow::parallelRuns)
                 .containsExactly(
                         tuple("Java-разработчик", 5L, 8L, 2L),
@@ -587,10 +587,10 @@ class ReportServiceTest {
                 filters(), null)))
                 .extracting(ReportRow::programName, ReportRow::participants, ReportRow::parallelRuns)
                 .containsExactlyInAnyOrder(tuple("Java-разработчик", 8L, 2L), tuple("Анализ данных", 3L, 0L));
-        assertThat(rows(LEADER_A_PROFILE, demand(ReportTestData.RUN_ENDS, null, filters(), null)))
+        assertThat(rows(LEADER_A_PROFILE, demand(ReportTestData.RUN_ENDS, null, filters(), ReportColumn.APPLICATIONS)))
                 .extracting(ReportRow::programName, ReportRow::participants)
                 .containsExactly(tuple("Анализ данных", 3L));
-        assertThat(rows(MANAGER_A_PROFILE, demand(null, null, filters(), null)))
+        assertThat(rows(MANAGER_A_PROFILE, demand(null, null, filters(), ReportColumn.APPLICATIONS)))
                 .extracting(ReportRow::programName, ReportRow::applications)
                 .containsExactly(tuple(null, 4L), tuple("Java-разработчик", 3L));
         assertThat(rows(MANAGER_A_PROFILE, demand(null, null, filters(), ReportColumn.PARTICIPANTS)))
@@ -603,7 +603,7 @@ class ReportServiceTest {
                 .extracting(ReportRow::applications, ReportRow::participants)
                 .containsExactly(tuple(7L, 4L));
         assertThat(rows(ADMIN_PROFILE, demand(null, null, filters(), null))).isEmpty();
-        assertThat(rows(LEADER_A_PROFILE, demand(SEPTEMBER_FIRST, SEPTEMBER_LAST, filters(), null)))
+        assertThat(rows(LEADER_A_PROFILE, demand(SEPTEMBER_FIRST, SEPTEMBER_LAST, filters(), ReportColumn.APPLICATIONS)))
                 .filteredOn(row -> row.applications() != null)
                 .extracting(ReportRow::programName, ReportRow::applications)
                 .containsExactly(tuple(null, 4L), tuple("Java-разработчик", 3L));
@@ -611,18 +611,26 @@ class ReportServiceTest {
                 .extracting(ReportRow::applications, ReportRow::participants)
                 .containsExactly(tuple(5L, 8L));
 
-        ReportPreview preview = reportService.preview(LEADER_A_PROFILE, demand(null, null, filters(), null), 0, 50);
+        ReportPreview preview = reportService.preview(LEADER_A_PROFILE, demand(null, null, filters(), ReportColumn.APPLICATIONS), 0, 50);
         assertThat(preview.total()).isEqualTo(3);
         assertThat(preview.columns()).extracting(ReportColumnView::id, ReportColumnView::emptyText).containsExactly(
                 tuple(ReportColumn.DIRECTION, ReportColumn.UNSPECIFIED),
                 tuple(ReportColumn.PROGRAM, ReportColumn.UNSPECIFIED),
+                tuple(ReportColumn.DEMAND_RANK, DemandIndex.INSUFFICIENT),
+                tuple(ReportColumn.DEMAND_INDEX, DemandIndex.INSUFFICIENT),
+                tuple(ReportColumn.DEMAND_CONTRIBUTIONS, ""),
+                tuple(ReportColumn.DEMAND_COVERAGE, ""),
+                tuple(ReportColumn.DEMAND_TREND, ReportColumn.NO_DATA),
                 tuple(ReportColumn.APPLICATIONS, ReportColumn.NO_DATA),
                 tuple(ReportColumn.PAID_ORDERS, ReportColumn.NO_DATA),
                 tuple(ReportColumn.PAID_STREAMS, ReportColumn.NO_DATA),
                 tuple(ReportColumn.PARTICIPANTS, ReportColumn.NO_DATA),
+                tuple(ReportColumn.ENROLLED_GROWTH, ReportColumn.NO_DATA),
                 tuple(ReportColumn.LEARNERS_COMPLETED, ReportColumn.NO_DATA),
                 tuple(ReportColumn.COMPLETION_SHARE, ReportColumn.NO_DATA),
                 tuple(ReportColumn.COMPLETION_BASIS, "потоков в периоде нет"),
+                tuple(ReportColumn.ACTIVITY_SHARE, ReportColumn.NO_DATA),
+                tuple(ReportColumn.UNIVERSITY_DEMAND, ReportColumn.NO_DATA),
                 tuple(ReportColumn.PARALLEL_RUNS, ReportColumn.NO_DATA),
                 tuple(ReportColumn.MARKET_VACANCIES, ReportColumn.NO_DATA),
                 tuple(ReportColumn.MARKET_TREND, ReportColumn.NO_DATA)
@@ -759,6 +767,85 @@ class ReportServiceTest {
         assertThat(reportService.preview(LEADER_A_PROFILE, new ReportRequest(ReportKind.DEMAND, null, null, null, filters().build(),
                 List.of(ReportColumn.PROGRAM, ReportColumn.APPLICATIONS), null, null, null), 0, 50).notes())
                 .noneMatch(note -> note.startsWith("Доля завершивших"));
+    }
+
+    // М17: место, индекс и вклад компонентов считаются по программам видимой области; без данных Moodle или при малом
+    // покрытии места нет; отбор по виду взаимодействия меняет только спрос вузов.
+    @Test
+    void demandIndexRanksVisibleProgramsWithContributionsAndNoPlaceWithoutData() {
+        ReportTestData.insertDemand(jdbcTemplate);
+        observe("external_key = '2'", 4, 1, 5);
+        observe("external_key = '5:51'", 1, 1, 1);
+        observe("program_id = '" + ReportTestData.PROGRAM_DATA + "'", 0, 3, 1);
+
+        List<ReportRow> leader = rows(LEADER_A_PROFILE, demand(null, null, filters(), null));
+        assertThat(leader).extracting(ReportRow::programName, ReportRow::demandPlace, ReportRow::demandIndex,
+                        ReportRow::universityDemand, ReportRow::activityPercent)
+                .containsExactly(
+                        tuple("Java-разработчик", 1, new java.math.BigDecimal("100.0"), 2L, 75L),
+                        tuple("Анализ данных", 2, new java.math.BigDecimal("0.0"), 0L, 33L),
+                        tuple(null, null, null, null, null));
+        // Без периода прирост не применяется, оплат в выборке нет — 60 из 70 % веса.
+        assertThat(leader.getFirst().demandCoverage()).isEqualTo("86 % веса; малая база: 8 участий");
+        assertThat(leader.getFirst().demandContributions())
+                .contains("Прирост записанных: не применяется")
+                .contains("Доля завершивших: 71 %, процентиль 100 → 41,7")
+                .contains("Оплаты открытого набора: нет данных, вес перераспределён");
+        assertThat(leader.get(2).demandCoverage()).isEqualTo("программа не указана");
+        assertThat(leader).allSatisfy(row -> assertThat(row.demandTrend()).isNull());
+
+        // Вид взаимодействия, которого нет у карточек: спрос вузов обнуляется, остальные компоненты прежние.
+        ru.rtk.crm.interaction.InteractionKindTestSchema.create(jdbcTemplate);
+        ReportFilters byKind = new ReportFilters(List.of(), List.of(), false, List.of(), false, List.of(), false, List.of(), false,
+                List.of(), null, List.of(), List.of(), ReportAgreementFilters.none(), List.of(), null, null, null, null,
+                List.of(UUID.randomUUID()));
+        List<ReportRow> kindRows = reportService.document(LEADER_A_PROFILE,
+                new ReportRequest(ReportKind.DEMAND, null, null, null, byKind, null, null, null, null)).rows();
+        assertThat(kindRows).extracting(ReportRow::universityDemand).containsExactly(0L, 0L, null);
+        assertThat(kindRows.getFirst().demandIndex()).isLessThan(new java.math.BigDecimal("100.0"));
+
+        // КАМ видит только свой вуз: у него одна программа, она в середине шкалы и на первом месте.
+        assertThat(rows(MANAGER_A_PROFILE, demand(null, null, filters(), null)))
+                .extracting(ReportRow::programName, ReportRow::demandPlace, ReportRow::demandIndex)
+                .containsExactly(tuple("Java-разработчик", 1, new java.math.BigDecimal("50.0")), tuple(null, null, null));
+        // У чужого КАМ по программе нет ни доли завершивших, ни активности — места нет, а не ноль.
+        assertThat(rows(MANAGER_B_PROFILE, demand(null, null, filters(), null)))
+                .extracting(ReportRow::demandPlace, ReportRow::demandIndex, ReportRow::demandCoverage)
+                .containsExactly(tuple(null, null, "покрытие 14 % веса — ниже порога 50 %"));
+        assertThat(rows(ADMIN_PROFILE, demand(null, null, filters(), null))).isEmpty();
+    }
+
+    @Test
+    void demandIndexComparesWithThePreviousPeriodOfTheSameLength() {
+        ReportTestData.insertDemand(jdbcTemplate);
+        observe("external_key = '2'", 4, 1, 5);
+        observe("external_key = '5:51'", 1, 1, 1);
+        LocalDate from = ReportTestData.TODAY.minusDays(29);
+        // Наблюдение курса 2, действовавшее в прошлом периоде: 3 обучающихся, статус известен у всех.
+        jdbcTemplate.update("""
+                INSERT INTO learning_observations (mapping_id, observed_from, confirmed_at, participants_count, teachers_count,
+                    completed_count, not_completed_count, unknown_count, groups_count, active_7d_count)
+                SELECT id, ?, ?, 3, 1, 2, 1, 0, 0, 2 FROM source_mappings WHERE external_key = '2'
+                """, from.minusDays(16).atStartOfDay(ReportRequest.ZONE).toOffsetDateTime(),
+                from.atStartOfDay(ReportRequest.ZONE).toOffsetDateTime().minusMinutes(1));
+
+        ReportRequest request = demand(from, ReportTestData.TODAY, filters(), null);
+        List<ReportRow> rows = rows(LEADER_A_PROFILE, request);
+        ReportRow java = rows.stream().filter(row -> "Java-разработчик".equals(row.programName())).findFirst().orElseThrow();
+        assertThat(java.enrolledGrowth()).isEqualTo(5L);
+        assertThat(java.demandPlace()).isEqualTo(1);
+        assertThat(java.demandTrend()).isEqualTo("0,0 (место 1 → 1)");
+        assertThat(reportService.preview(LEADER_A_PROFILE, request, 0, 10).columns()).extracting(ReportColumnView::title)
+                .contains("Тренд к прошлому периоду (" + format(from.minusDays(30)) + "–" + format(from.minusDays(1)) + ")");
+    }
+
+    private void observe(String mapping, int completed, int notCompleted, int active) {
+        jdbcTemplate.update("UPDATE learning_observations SET completed_count = ?, not_completed_count = ?, active_7d_count = ?"
+                + " WHERE mapping_id IN (SELECT id FROM source_mappings WHERE " + mapping + ")", completed, notCompleted, active);
+    }
+
+    private static String format(LocalDate date) {
+        return date.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy"));
     }
 
     private static ReportRequest demand(LocalDate from, LocalDate to, Filters filters, ReportColumn sortBy) {

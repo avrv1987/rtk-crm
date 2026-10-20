@@ -56,7 +56,6 @@ import ru.rtk.crm.interaction.InteractionPage;
 import ru.rtk.crm.interaction.InteractionService;
 import ru.rtk.crm.interaction.InteractionStepCompletionRequest;
 import ru.rtk.crm.work.WorkAccessDeniedException;
-import ru.rtk.crm.work.WorkModels.ReminderDigest;
 import ru.rtk.crm.work.WorkModels.ReminderFeed;
 import ru.rtk.crm.work.WorkService;
 
@@ -137,8 +136,7 @@ class MaxAppHttpTest {
         linkRepository.replaceLink(OPERATOR, 778, "Оператор", now);
         linkRepository.replaceLink(MANAGEMENT, 779, "Руководство", now);
         linkRepository.replaceLink(ADMIN, 780, "Админ", now);
-        when(workService.reminders(any())).thenReturn(new ReminderDigest(true, now, 7, 1, 2, 3, List.of(), List.of(), List.of(),
-                List.of(), 2027, List.of(), 90, List.of(), new ReminderFeed(1, 2, 3, 4, 0, 0, 0)));
+        when(workService.feed(any())).thenReturn(new ReminderFeed(1, 2, 3, 4, 0, 0, 0));
         when(interactionService.list(any(), any(), any())).thenReturn(new InteractionPage(List.of(), 0, 20, 137));
         when(interactionService.get(any(), eq(INTERACTION))).thenReturn(interaction());
     }
@@ -180,8 +178,12 @@ class MaxAppHttpTest {
                 .andExpect(jsonPath("$.items.total").value(137))
                 .andExpect(jsonPath("$.due").value("OVERDUE"));
         ArgumentCaptor<CrmProfile> profile = ArgumentCaptor.forClass(CrmProfile.class);
-        verify(workService).reminders(profile.capture());
+        verify(workService).feed(profile.capture());
+        verify(workService, never()).reminders(any());
         assertThat(profile.getValue().id()).isEqualTo(KAM);
+        mockMvc.perform(get("/api/max/app/work").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.due").value("OVERDUE"));
         mockMvc.perform(get("/api/max/app/me").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.role").value("USER"))
@@ -189,11 +191,21 @@ class MaxAppHttpTest {
     }
 
     @Test
+    void withoutDueTheFirstNonEmptyGroupIsChosenInTheApprovedOrder() {
+        assertThat(MaxApiController.firstGroup(new ReminderFeed(2, 0, 3, 1, 1, 0, 0))).isEqualTo("OVERDUE");
+        assertThat(MaxApiController.firstGroup(new ReminderFeed(0, 1, 3, 1, 1, 0, 0))).isEqualTo("TODAY");
+        assertThat(MaxApiController.firstGroup(new ReminderFeed(0, 0, 3, 1, 1, 0, 0))).isEqualTo("REST_OF_WEEK");
+        assertThat(MaxApiController.firstGroup(new ReminderFeed(0, 0, 0, 1, 1, 0, 0))).isEqualTo("NO_NEXT_STEP");
+        assertThat(MaxApiController.firstGroup(new ReminderFeed(0, 0, 0, 1, 0, 0, 0))).isEqualTo("LATER");
+        assertThat(MaxApiController.firstGroup(new ReminderFeed(0, 0, 0, 0, 0, 3, 1))).isEqualTo("TODAY");
+    }
+
+    @Test
     void requestsWithoutValidBearerAreRejectedAndCookieSessionDoesNotOpenTheApp() throws Exception {
         mockMvc.perform(get("/api/max/app/work")).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("MAX_SESSION_EXPIRED"));
         mockMvc.perform(get("/api/max/app/work").header("Authorization", "Bearer forged")).andExpect(status().isUnauthorized());
         mockMvc.perform(get("/api/max/app/work").with(oidcLogin())).andExpect(status().is4xxClientError());
-        verify(workService, never()).reminders(any());
+        verify(workService, never()).feed(any());
         String token = session(777);
         mockMvc.perform(get("/api/reminders").header("Authorization", "Bearer " + token)).andExpect(status().isUnauthorized());
     }

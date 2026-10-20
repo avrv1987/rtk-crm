@@ -42,6 +42,10 @@ public class CatalogImportWorkbookReader {
     }
 
     public CatalogImportInspectResponse inspect(MultipartFile file) {
+        if (CatalogImportCsv.isCsv(file.getOriginalFilename())) {
+            CatalogImportWorkbookSheet sheet = CatalogImportCsv.read(bytes(file));
+            return new CatalogImportInspectResponse(List.of(new CatalogImportSheet(sheet.name(), sheet.headers())));
+        }
         try {
             checkAggregateZipSize(file);
         } catch (IOException exception) {
@@ -80,6 +84,12 @@ public class CatalogImportWorkbookReader {
     }
 
     public CatalogImportWorkbookSheet read(MultipartFile file, String sheetName) {
+        if (CatalogImportCsv.isCsv(file.getOriginalFilename())) {
+            if (!CatalogImportCsv.SHEET.equals(sheetName)) {
+                throw new InteractionValidationException("sheet", "Лист «" + sheetName + "» не найден в файле");
+            }
+            return CatalogImportCsv.read(bytes(file));
+        }
         try {
             checkAggregateZipSize(file);
         } catch (IOException exception) {
@@ -136,6 +146,14 @@ public class CatalogImportWorkbookReader {
             throw new InteractionValidationException("file", "Книга защищена паролем; сохраните её без пароля");
         } catch (IOException | RuntimeException exception) {
             throw new InteractionValidationException("file", "Файл не читается как книга XLS или XLSX");
+        }
+    }
+
+    private static byte[] bytes(MultipartFile file) {
+        try (InputStream input = file.getInputStream()) {
+            return input.readAllBytes();
+        } catch (IOException exception) {
+            throw new InteractionValidationException("file", "Файл не удалось прочитать");
         }
     }
 

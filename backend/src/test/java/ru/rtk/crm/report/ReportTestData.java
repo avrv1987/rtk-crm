@@ -190,7 +190,7 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
+                CREATE TABLE IF NOT EXISTS interaction_events (import_source VARCHAR(300), import_author VARCHAR(200), contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
                     type VARCHAR(32) NOT NULL,
@@ -211,7 +211,7 @@ final class ReportTestData {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS workflow_template_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
+                CREATE TABLE IF NOT EXISTS workflow_template_stages (norm_days INTEGER, requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
                     id UUID PRIMARY KEY, template_id UUID NOT NULL, stage_order INTEGER NOT NULL, name VARCHAR(200) NOT NULL
                 )
                 """);
@@ -397,10 +397,14 @@ final class ReportTestData {
                     status VARCHAR(32) DEFAULT 'CLEAN' NOT NULL, deleted_at TIMESTAMP WITH TIME ZONE
                 )
                 """);
+        jdbc.execute("CREATE TABLE IF NOT EXISTS demand_index_settings (id SMALLINT PRIMARY KEY, growth_weight INTEGER NOT NULL,"
+                + " completion_weight INTEGER NOT NULL, activity_weight INTEGER NOT NULL, university_weight INTEGER NOT NULL,"
+                + " payments_weight INTEGER NOT NULL, min_coverage_percent INTEGER NOT NULL, small_base INTEGER NOT NULL,"
+                + " updated_by UUID NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL)");
         jdbc.execute("CREATE TABLE IF NOT EXISTS interaction_stage_completions (interaction_id UUID NOT NULL, stage_id UUID NOT NULL,"
                 + " completed_on DATE NOT NULL, event_id UUID NOT NULL, PRIMARY KEY (interaction_id, stage_id))");
         for (String table : new String[]{
-                "interaction_stage_completions", "attachments", "interaction_stage_documents", "lms_signal_dismissals", "interaction_cycles", "interaction_stage_transitions", "labor_market_mappings", "labor_market_snapshots", "learning_observations", "learning_snapshots", "source_mappings", "source_records", "report_jobs", "interaction_event_contacts", "contacts", "interaction_events", "product_transfers", "product_agreements", "interaction_stages",
+                "demand_index_settings", "interaction_stage_completions", "attachments", "interaction_stage_documents", "lms_signal_dismissals", "interaction_cycles", "interaction_stage_transitions", "labor_market_mappings", "labor_market_snapshots", "learning_observations", "learning_snapshots", "source_mappings", "source_records", "report_jobs", "interaction_event_contacts", "contacts", "interaction_events", "product_transfers", "product_agreements", "interaction_stages",
                 "interaction_issues", "interactions", "products", "vendors", "programs", "directions", "organizations", "crm_user_profiles", "teams", "organization_assignment_events",
                 "command_idempotency_records", "saved_reports", "workflow_template_stages", "workflow_templates"
         }) {

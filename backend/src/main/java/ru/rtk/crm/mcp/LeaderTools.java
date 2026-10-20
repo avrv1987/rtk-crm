@@ -44,6 +44,8 @@ import ru.rtk.crm.report.ManagerAt;
 import ru.rtk.crm.report.ManagerWorkDue;
 import ru.rtk.crm.report.ManagerWorkOrganization;
 import ru.rtk.crm.report.ReportFilters;
+import ru.rtk.crm.settings.SystemSetting;
+import ru.rtk.crm.settings.SystemSettings;
 import ru.rtk.crm.work.LmsSignalProperties;
 import ru.rtk.crm.work.WorkAccessDeniedException;
 import ru.rtk.crm.work.WorkControlModels.Control;
@@ -70,8 +72,8 @@ class LeaderTools {
     private static final String MODE_NOW = "NOW";
     private static final String MODE_PERIOD = "PERIOD";
     private static final String MANAGER_UNASSIGNED = "UNASSIGNED";
-    private static final String METRICS_DOC = "docs/metrics.md";
-    private static final String PASSPORTS = " Паспорта показателей — " + METRICS_DOC + ": ";
+    private static final String METRICS_DOC = "metric_passport";
+    private static final String PASSPORTS = " Паспорта показателей — инструмент " + METRICS_DOC + ": ";
     private static final String BASIS_NOTE = "basis — основание расчёта: режим, период, применённые отборы, правило КАМ строки, "
             + "область, считаются ли «Без работы», что берётся только на сейчас, покрытие и свежесть данных обучения в строках, "
             + "время расчёта. Те же параметры на экране «Контроль» и в отчёте «Работа менеджеров» дают те же числа.";
@@ -83,6 +85,7 @@ class LeaderTools {
     private final McpProperties properties;
     private final LmsSignalProperties lmsSignalProperties;
     private final AnalyticsTools analyticsTools;
+    private final SystemSettings settings;
 
     LeaderTools(
             WorkControlService workControlService,
@@ -91,7 +94,8 @@ class LeaderTools {
             WorkProperties workProperties,
             McpProperties properties,
             LmsSignalProperties lmsSignalProperties,
-            AnalyticsTools analyticsTools
+            AnalyticsTools analyticsTools,
+            SystemSettings settings
     ) {
         this.workControlService = workControlService;
         this.workService = workService;
@@ -100,6 +104,7 @@ class LeaderTools {
         this.properties = properties;
         this.lmsSignalProperties = lmsSignalProperties;
         this.analyticsTools = analyticsTools;
+        this.settings = settings;
     }
 
     // Инструменты обучения, востребованности и паспортов (AnalyticsTools) регистрируются отсюда, чтобы не менять общий
@@ -446,7 +451,7 @@ class LeaderTools {
         learning.put("withLmsStreams", works.stream().filter(item -> item.learning() != null && item.learning().runs() > 0).count());
         learning.put("withFreshActivity", works.stream().filter(item -> item.learning() != null && item.learning().active7d() != null)
                 .count());
-        learning.put("freshWithinHours", lmsSignalProperties.staleAfter().toHours());
+        learning.put("freshWithinHours", lmsSignalProperties.with(settings).staleAfter().toHours());
         Map<String, Object> basis = new LinkedHashMap<>();
         basis.put("mode", period ? MODE_PERIOD : MODE_NOW);
         basis.put("from", slice.from());
@@ -506,14 +511,15 @@ class LeaderTools {
     }
 
     private int stuckDays(Args args) {
-        return args.integer("stuckDays", 1, 3650, workProperties.stuckDays());
+        return args.integer("stuckDays", 1, 3650, settings.value(SystemSetting.STUCK_DAYS, workProperties.stuckDays()));
     }
 
     // То же правило, что плитка «На этапе дольше» (ManagerWorkReport.matches и controlModel.isStuck): идущая работа,
-    // и этап договора, пока договор на согласовании, не застрявший — там свои пороги.
+    // и этап договора, пока договор на согласовании, не застрявший — там свои пороги. Норматив этапа важнее порога.
     static boolean stuck(WorkItem item, int stuckDays) {
         return item.status() != InteractionWorkStatus.COMPLETED && item.status() != InteractionWorkStatus.PAUSED
-                && !item.stageUnderApproval() && item.daysOnStage() != null && item.daysOnStage() >= stuckDays;
+                && !item.stageUnderApproval() && item.daysOnStage() != null
+                && item.daysOnStage() >= (item.stageNormDays() == null ? stuckDays : item.stageNormDays());
     }
 
     private static boolean agreementDelayed(WorkItem item) {

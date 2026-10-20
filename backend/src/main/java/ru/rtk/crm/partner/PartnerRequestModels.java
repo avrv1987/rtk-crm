@@ -113,7 +113,9 @@ public final class PartnerRequestModels {
     ) {
     }
 
+    // responseId и downloadable — для скачивания своего файла ответа; идентификатор файла наружу не отдаётся.
     public record PartnerReceipt(
+            UUID responseId,
             String receiptNumber,
             PartnerResponseKind kind,
             String message,
@@ -121,7 +123,8 @@ public final class PartnerRequestModels {
             PartnerFileState fileState,
             OffsetDateTime submittedAt,
             PartnerResponseDecision decision,
-            String decisionReason
+            String decisionReason,
+            boolean downloadable
     ) {
     }
 

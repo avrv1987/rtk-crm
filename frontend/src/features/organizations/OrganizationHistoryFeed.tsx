@@ -157,7 +157,7 @@ export const OrganizationHistoryFeed = ({
                 </p>
               )}
               {item.comment && (
-                <p>{item.kind === 'ASSIGNMENT' ? `Комментарий к передаче: ${item.comment}` : item.comment}</p>
+                <p className="organization-history__comment">{item.kind === 'ASSIGNMENT' ? `Комментарий к передаче: ${item.comment}` : item.comment}</p>
               )}
               {item.changes?.map((change) => <p key={change.field}>{changeText(change)}</p>)}
               <p className="organization-history__actor">Выполнил: {item.actorName?.trim() || 'профиль, выполнивший действие'}</p>

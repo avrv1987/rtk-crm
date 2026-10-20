@@ -79,7 +79,8 @@ public final class WorkControlModels {
             UUID kindId,
             UUID routeId,
             String stageAtEnd,
-            boolean missingDocuments
+            boolean missingDocuments,
+            Integer stageNormDays
     ) {
         public WorkItem(UUID interactionId, UUID organizationId, String organizationName, String title, String direction, String program,
                         List<String> products, String stage, int stagePosition, int stageTotal, Long daysOnStage, String stageAtStart,
@@ -90,7 +91,7 @@ public final class WorkControlModels {
             this(interactionId, organizationId, organizationName, title, direction, program, products, stage, stagePosition, stageTotal,
                     daysOnStage, stageAtStart, nextAction, nextActionAt, due, status, problems, risks, issues, transitions, created,
                     completed, agreementStatus, agreementNumber, agreementValidUntil, learning, agreementApproval, stageUnderApproval,
-                    null, List.of(), null, null, stage, false);
+                    null, List.of(), null, null, stage, false, null);
         }
     }
 

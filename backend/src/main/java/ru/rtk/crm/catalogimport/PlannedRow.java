@@ -1,9 +1,10 @@
 package ru.rtk.crm.catalogimport;
 
-import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 final class PlannedRow {
@@ -43,28 +44,44 @@ final class PlannedRow {
     // Заявка (claim) — «эта строка утверждает о записи X следующее». Две строки об одной записи с разными
     // утверждениями противоречат друг другу, и обе получают конфликт. У договора описание пустое: любая вторая
     // строка про тот же договор недопустима, даже если значения те же, чтобы файл не задавал договор дважды.
+    // Сравниваются все строки записи между собой, а не только с первой: иначе строка, совпавшая с первой
+    // (которая сама в конфликте), прошла бы и применилась без разрешения противоречия.
     static void resolveConflicts(List<PlannedRow> rows) {
-        List<PlannedRow> candidates = rows.stream().filter(row -> !row.hasErrors()).toList();
-        Map<String, PlannedRow> firstByClaim = new HashMap<>();
-        for (PlannedRow row : candidates) {
-            for (Map.Entry<String, Claim> entry : row.claims.entrySet()) {
-                PlannedRow first = firstByClaim.putIfAbsent(entry.getKey(), row);
-                if (first == null) {
-                    continue;
-                }
-                Claim claim = entry.getValue();
-                boolean same = first.claims.get(entry.getKey()).signature().equals(claim.signature());
-                if (claim.description().isEmpty()) {
-                    row.conflict(claim.field(), "Этот договор уже указан в строке " + first.rowNumber);
-                    if (!same) {
-                        first.conflict(claim.field(), "Строка " + row.rowNumber + " задаёт для этого договора другие значения");
-                    }
-                } else if (!same) {
-                    row.conflict(claim.field(), "Противоречит строке " + first.rowNumber + ": " + claim.description());
-                    first.conflict(claim.field(), "Противоречит строке " + row.rowNumber + ": " + claim.description());
-                }
+        Map<String, List<PlannedRow>> byClaim = new LinkedHashMap<>();
+        for (PlannedRow row : rows) {
+            if (row.hasErrors()) {
+                continue;
+            }
+            for (String key : row.claims.keySet()) {
+                byClaim.computeIfAbsent(key, ignored -> new ArrayList<>()).add(row);
             }
         }
+        for (Map.Entry<String, List<PlannedRow>> group : byClaim.entrySet()) {
+            String key = group.getKey();
+            List<PlannedRow> same = group.getValue();
+            if (same.size() < 2) {
+                continue;
+            }
+            PlannedRow first = same.get(0);
+            Claim firstClaim = first.claims.get(key);
+            if (firstClaim.description().isEmpty()) {
+                for (PlannedRow row : same.subList(1, same.size())) {
+                    row.conflict(firstClaim.field(), "Этот договор уже указан в строке " + first.rowNumber);
+                }
+                differing(same, key, firstClaim).ifPresent(other -> first.conflict(firstClaim.field(),
+                        "Строка " + other.rowNumber + " задаёт для этого договора другие значения"));
+                continue;
+            }
+            for (PlannedRow row : same) {
+                Claim claim = row.claims.get(key);
+                differing(same, key, claim).ifPresent(other -> row.conflict(claim.field(),
+                        "Противоречит строке " + other.rowNumber + ": " + claim.description()));
+            }
+        }
+    }
+
+    private static Optional<PlannedRow> differing(List<PlannedRow> rows, String key, Claim claim) {
+        return rows.stream().filter(other -> !other.claims.get(key).signature().equals(claim.signature())).findFirst();
     }
 
     boolean mapped(String field) {

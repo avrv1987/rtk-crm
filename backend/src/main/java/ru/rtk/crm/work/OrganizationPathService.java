@@ -62,7 +62,7 @@ public class OrganizationPathService {
     public record Path(UUID organizationId, OffsetDateTime calculatedAt, int total, List<PathWork> works) {
     }
 
-    public record PathStage(String name, boolean optional) {
+    public record PathStage(String name, boolean optional, OffsetDateTime enteredAt) {
     }
 
     public record PathWork(
@@ -115,6 +115,7 @@ public class OrganizationPathService {
     private PathWork work(InteractionSummary item, List<String> products, WorkAgreementStatus agreement, WorkLearning learning,
                           OffsetDateTime now) {
         List<InteractionStage> stages = interactionRepository.findStages(item.id());
+        Map<UUID, OffsetDateTime> entries = interactionRepository.findStageEntries(item.id());
         int position = 0;
         for (int index = 0; index < stages.size(); index++) {
             if (stages.get(index).id().equals(item.currentStageId())) {
@@ -135,7 +136,7 @@ public class OrganizationPathService {
                 item.programId(),
                 item.programName(),
                 products,
-                stages.stream().map(stage -> new PathStage(stage.name(), stage.optional())).toList(),
+                stages.stream().map(stage -> new PathStage(stage.name(), stage.optional(), entries.get(stage.id()))).toList(),
                 item.currentStageName(),
                 position,
                 days,

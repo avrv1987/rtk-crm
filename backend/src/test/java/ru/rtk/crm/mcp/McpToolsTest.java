@@ -62,6 +62,14 @@ class McpToolsTest {
         assertThat(LeaderTools.stuck(work(InteractionWorkStatus.ACTIVE, null, false), 30)).isFalse();
     }
 
+    // Норматив этапа важнее общего порога в обе стороны: короче — «долго» раньше, длиннее — позже.
+    @Test
+    void stageNormOverridesTheGeneralThreshold() {
+        assertThat(LeaderTools.stuck(normed(6L, 5), 30)).isTrue();
+        assertThat(LeaderTools.stuck(normed(4L, 5), 30)).isFalse();
+        assertThat(LeaderTools.stuck(normed(40L, 60), 30)).isFalse();
+    }
+
     @Test
     void dueGroupFollowsTheCrmRule() {
         OffsetDateTime now = OffsetDateTime.parse("2026-10-14T12:00:00+03:00");
@@ -70,6 +78,16 @@ class McpToolsTest {
         assertThat(KamTools.due(InteractionWorkStatus.ACTIVE, "Позвонить", now.plusDays(2), now)).isEqualTo("THIS_WEEK");
         assertThat(KamTools.due(InteractionWorkStatus.ACTIVE, null, null, now)).isEqualTo("NO_NEXT_STEP");
         assertThat(KamTools.due(InteractionWorkStatus.COMPLETED, "Позвонить", now.minusHours(1), now)).isNull();
+    }
+
+    private static WorkItem normed(long days, int norm) {
+        WorkItem item = work(InteractionWorkStatus.ACTIVE, days, false);
+        return new WorkItem(item.interactionId(), item.organizationId(), item.organizationName(), item.title(), item.direction(),
+                item.program(), item.products(), item.stage(), item.stagePosition(), item.stageTotal(), item.daysOnStage(),
+                item.stageAtStart(), item.nextAction(), item.nextActionAt(), item.due(), item.status(), item.problems(), item.risks(),
+                item.issues(), item.transitions(), item.created(), item.completed(), item.agreementStatus(), item.agreementNumber(),
+                item.agreementValidUntil(), item.learning(), item.agreementApproval(), item.stageUnderApproval(), item.programId(),
+                item.productIds(), item.kindId(), item.routeId(), item.stageAtEnd(), item.missingDocuments(), norm);
     }
 
     private static WorkItem work(InteractionWorkStatus status, Long days, boolean underApproval) {

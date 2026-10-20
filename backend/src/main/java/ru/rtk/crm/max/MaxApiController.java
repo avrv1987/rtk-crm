@@ -100,18 +100,39 @@ class MaxApiController {
         return new Me(profile.role().name(), links.findDisplayName(profile.id()).orElse(null), profile.role() == UserRole.LEADER);
     }
 
-    // Итоги групп — из той же ленты, что колокольчик и «Моя работа»; список — серверная страница выбранной группы.
+    // Итоги групп — тем же запросом, что лента колокольчика и «Моей работы» (WorkService.feed); список — серверная
+    // страница выбранной группы. Без due сервер сам берёт первую непустую группу, и первый экран открывается одним
+    // запросом сразу там, где есть работа.
     @GetMapping("/work")
     Work work(
             @AuthenticationPrincipal MaxSessionFilter.MaxPrincipal principal,
-            @RequestParam(defaultValue = "TODAY") String due,
+            @RequestParam(required = false) String due,
             @RequestParam(defaultValue = "0") int page
     ) {
         CrmProfile profile = principal.profile();
-        ReminderFeed feed = workService.reminders(profile).feed();
-        InteractionPage items = interactionService.list(profile, InteractionFilter.from(null, null, due, null),
+        ReminderFeed feed = workService.feed(profile);
+        String selected = due == null || due.isBlank() ? firstGroup(feed) : due;
+        InteractionPage items = interactionService.list(profile, InteractionFilter.from(null, null, selected, null),
                 InteractionQuery.from(page, PAGE_SIZE, "nextActionAt,asc"));
-        return new Work(feed, due, items);
+        return new Work(feed, selected, items);
+    }
+
+    // Порядок утверждён владельцем: «Без шага» раньше «Позже» — карточку без шага надо поправить, а дальние сроки не
+    // срочны. «На неделе» — без сегодняшнего дня. Всё пусто — «Сегодня» (клиент покажет «Всё сделано»).
+    static String firstGroup(ReminderFeed feed) {
+        if (feed.overdue() > 0) {
+            return "OVERDUE";
+        }
+        if (feed.today() > 0) {
+            return "TODAY";
+        }
+        if (feed.thisWeek() - feed.today() > 0) {
+            return "REST_OF_WEEK";
+        }
+        if (feed.noNextStep() > 0) {
+            return "NO_NEXT_STEP";
+        }
+        return feed.later() > 0 ? "LATER" : "TODAY";
     }
 
     @GetMapping("/interactions/{id}")

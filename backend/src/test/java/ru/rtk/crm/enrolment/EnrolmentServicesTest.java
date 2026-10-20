@@ -72,7 +72,7 @@ import ru.rtk.crm.privacy.RetentionProperties;
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({
+@Import({ru.rtk.crm.settings.TestSystemSettings.class, 
         LearnerService.class,
         LearnerPrivacyService.class,
         LearnerRepository.class,
@@ -93,6 +93,7 @@ import ru.rtk.crm.privacy.RetentionProperties;
         MoodleWriteClient.class,
         LearnerWorkbookReader.class,
         LmsRosterWorkbookWriter.class,
+        LmsLogin.class,
         EnrolmentServicesTest.Configuration.class
 })
 @ExtendWith(OutputCaptureExtension.class)
@@ -111,6 +112,9 @@ class EnrolmentServicesTest {
     private static final String TESTER = "Инженер-тестировщик";
     private static final String BORIS_EMAIL = "boris.vtorov@example.test";
     private static byte[] templateBytes;
+
+    @Autowired
+    private ru.rtk.crm.settings.SystemSettings systemSettings;
 
     @Autowired
     private PaidOrderEnrolment paidOrderEnrolment;
@@ -689,7 +693,7 @@ class EnrolmentServicesTest {
         assertThatThrownBy(() -> questionnaires.preview(ADMIN, stream, template(), "rq")).isInstanceOf(EnrolmentAccessDeniedException.class);
         EnrolmentAccess moduleOff = new EnrolmentAccess(new ModuleProperties(new ModuleProperties.Toggle(false), null), userProfileRepository);
         EnrolmentStreamService offStreams = new EnrolmentStreamService(moduleOff, enrolmentRepository, learnerService,
-                learnerPrivacyService, retentionProperties, auditJournalRepository, commands, batchRepository);
+                learnerPrivacyService, retentionProperties, auditJournalRepository, commands, batchRepository, systemSettings);
         assertThatThrownBy(() -> offStreams.streams(OPERATOR)).isInstanceOf(ModuleDisabledException.class);
         assertThatThrownBy(() -> offStreams.learners(OPERATOR, "not-an-id", "rq")).isInstanceOf(ModuleDisabledException.class);
         assertThat(journal("LEARNER_VIEWED")).isEmpty();
@@ -755,6 +759,14 @@ class EnrolmentServicesTest {
         EnrolmentQueue sent = batches.queue(OPERATOR, "rq");
         assertThat(group(sent, EnrolmentQueueKind.AWAITING_RESULT).total()).isEqualTo(100);
         assertThat(group(sent, EnrolmentQueueKind.AWAITING_RESULT).items()).hasSize(EnrolmentBatchService.QUEUE_ITEMS);
+        // Очередь листается: вторая страница группы продолжает первую, отбор по потоку и группе сохраняет счётчики.
+        EnrolmentQueue second = batches.queue(OPERATOR, "rq", streamId(TESTER, 1), EnrolmentQueueKind.AWAITING_RESULT, 50, 50);
+        assertThat(group(second, EnrolmentQueueKind.AWAITING_RESULT).items()).hasSize(50)
+                .doesNotContainAnyElementsOf(group(sent, EnrolmentQueueKind.AWAITING_RESULT).items());
+        assertThat(group(second, EnrolmentQueueKind.AWAITING_RESULT).total()).isEqualTo(100);
+        assertThat(second.streams()).singleElement().satisfies(item -> assertThat(item.total()).isEqualTo(100));
+        assertThat(group(batches.queue(OPERATOR, "rq", UUID.randomUUID(), null, 0, 50), EnrolmentQueueKind.AWAITING_RESULT).total()).isZero();
+        assertThatThrownBy(() -> batches.queue(OPERATOR, "rq", null, null, 0, 0)).isInstanceOf(InteractionValidationException.class);
         assertThat(streams.learners(OPERATOR, stream, "rq").stream().transferred()).isZero();
 
         StringBuilder protocol = new StringBuilder("строка;результат;ошибка\n");
@@ -1087,6 +1099,294 @@ class EnrolmentServicesTest {
         } finally {
             stub.stop();
         }
+    }
+
+    // D06, Н01: перенос между курсами — сначала новый курс и группа со сверкой, потом снятие со старого. Сбой после
+    // каждого шага (в том числе с потерянным ответом) оставляет слушателя хотя бы на одном курсе и описание состояния в
+    // очереди; повтор с тем же ключом доводит перенос до конца.
+    @Test
+    void moodleMoveBetweenCoursesEnrolsNewFirstAndRetryFinishesAfterFailureAtEachStep() throws Exception {
+        MoodleStub stub = MoodleStub.start();
+        try {
+            moodleTarget(stub);
+            UUID openEnrollment = UUID.randomUUID();
+            jdbcTemplate.update("INSERT INTO organizations (id, type) VALUES (?, 'OPEN_ENROLLMENT')", openEnrollment);
+            mapCourse(PROMPT, openEnrollment, "42", "42:7");
+            mapCourse(TESTER, openEnrollment, "43", "43:8");
+            accept(order("ORD-T-1", PROMPT, 3, "Первова", "Анна", null, "+79000000501", "anna.t@example.test"));
+            LmsRoster roster = rosters.export(OPERATOR, streamId(PROMPT, 3).toString(),
+                    new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+            assertThat(moodle.transfer(OPERATOR, roster.exportId().toString(), "moodle-t", "rq").accepted()).isEqualTo(1);
+            long user = stub.userId("anna.t@example.test");
+            accept(order("ORD-T-1", TESTER, 1, "Первова", "Анна", null, "+79000000501", "anna.t@example.test"));
+            UUID enrolment = group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.MOVED_AFTER_TRANSFER).items().getFirst().enrolmentId();
+
+            stub.failOnce("enrol_manual_enrol_users", true);
+            assertThatThrownBy(() -> moodle.move(OPERATOR, enrolment.toString(), "move-t", "rq"))
+                    .isInstanceOf(InteractionValidationException.class);
+            assertThat(stub.enrolled(42, user)).isTrue();
+            assertThat(stub.calls("enrol_manual_unenrol_users")).isZero();
+            assertThat(movedDetail()).contains(MoodleTransferService.NEW_NOT_CONFIRMED);
+
+            for (String step : List.of("core_group_add_group_members", "core_enrol_get_enrolled_users", "core_group_get_group_members")) {
+                stub.failOnce(step, false);
+                assertThatThrownBy(() -> moodle.move(OPERATOR, enrolment.toString(), "move-t", "rq"))
+                        .isInstanceOf(InteractionValidationException.class);
+                assertThat(stub.enrolled(42, user)).as(step).isTrue();
+                assertThat(stub.calls("enrol_manual_unenrol_users")).as(step).isZero();
+            }
+
+            stub.failOnce("enrol_manual_unenrol_users", false);
+            assertThatThrownBy(() -> moodle.move(OPERATOR, enrolment.toString(), "move-t", "rq"))
+                    .isInstanceOf(InteractionValidationException.class);
+            assertThat(stub.enrolled(42, user)).isTrue();
+            assertThat(stub.enrolled(43, user)).isTrue();
+            assertThat(movedDetail()).contains("на двух курсах").containsOnlyOnce("не завершён");
+
+            // Moodle снял, но ответ потерян: повтор видит, что на старом курсе слушателя нет, и не снимает повторно.
+            stub.failOnce("enrol_manual_unenrol_users", true);
+            assertThatThrownBy(() -> moodle.move(OPERATOR, enrolment.toString(), "move-t", "rq"))
+                    .isInstanceOf(InteractionValidationException.class);
+            assertThat(stub.enrolled(43, user)).isTrue();
+            int unenrolCalls = stub.calls("enrol_manual_unenrol_users");
+
+            MoodleMoveResult move = moodle.move(OPERATOR, enrolment.toString(), "move-t", "rq");
+
+            assertThat(move.courseTo()).isEqualTo(43L);
+            assertThat(stub.enrolled(43, user)).isTrue();
+            assertThat(stub.enrolled(42, user)).isFalse();
+            assertThat(stub.inGroup(8, user)).isTrue();
+            assertThat(stub.calls("enrol_manual_unenrol_users")).isEqualTo(unenrolCalls);
+            assertThat(group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.MOVED_AFTER_TRANSFER).total()).isZero();
+            assertThat(moodle.move(OPERATOR, enrolment.toString(), "move-t", "rq")).isEqualTo(move);
+            assertThat(journal("LMS_API_MOVE")).singleElement().satisfies(entry -> assertThat(entry).contains("42 → 43"));
+        } finally {
+            stub.stop();
+        }
+    }
+
+    // D07, Н02: перенос между группами одного курса — слушатель добавляется в новую группу и убирается только из группы
+    // прежнего потока; со курса не снимается. Сбой снятия из группы — состояние в очереди, повтор завершает.
+    @Test
+    void moodleMoveBetweenGroupsOfOneCourseRemovesOnlyThePreviousGroup() throws Exception {
+        MoodleStub stub = MoodleStub.start();
+        try {
+            moodleTarget(stub);
+            UUID openEnrollment = UUID.randomUUID();
+            jdbcTemplate.update("INSERT INTO organizations (id, type) VALUES (?, 'OPEN_ENROLLMENT')", openEnrollment);
+            mapCourse(PROMPT, openEnrollment, "42", "42:7");
+            mapCourse(TESTER, openEnrollment, "42:8");
+            accept(order("ORD-G-1", PROMPT, 3, "Первова", "Анна", null, "+79000000601", "anna.g@example.test"));
+            LmsRoster roster = rosters.export(OPERATOR, streamId(PROMPT, 3).toString(),
+                    new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+            moodle.transfer(OPERATOR, roster.exportId().toString(), "moodle-g", "rq");
+            long user = stub.userId("anna.g@example.test");
+            assertThat(stub.inGroup(7, user)).isTrue();
+            accept(order("ORD-G-1", TESTER, 1, "Первова", "Анна", null, "+79000000601", "anna.g@example.test"));
+            UUID enrolment = group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.MOVED_AFTER_TRANSFER).items().getFirst().enrolmentId();
+
+            stub.failOnce("core_group_delete_group_members", false);
+            assertThatThrownBy(() -> moodle.move(OPERATOR, enrolment.toString(), "move-g-1", "rq"))
+                    .isInstanceOf(InteractionValidationException.class);
+            assertThat(stub.inGroup(7, user)).isTrue();
+            assertThat(stub.inGroup(8, user)).isTrue();
+            assertThat(movedDetail()).contains(MoodleTransferService.TWO_GROUPS);
+
+            MoodleMoveResult move = moodle.move(OPERATOR, enrolment.toString(), "move-g-2", "rq");
+
+            assertThat(move.courseFrom()).isEqualTo(42L);
+            assertThat(move.courseTo()).isEqualTo(42L);
+            assertThat(stub.inGroup(8, user)).isTrue();
+            assertThat(stub.inGroup(7, user)).isFalse();
+            assertThat(stub.enrolled(42, user)).isTrue();
+            assertThat(stub.calls("enrol_manual_unenrol_users")).isZero();
+            assertThat(stub.bodies()).filteredOn(body -> body.contains("core_group_delete_group_members"))
+                    .allMatch(body -> body.contains("members%5B0%5D%5Bgroupid%5D=7"));
+            assertThat(group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.MOVED_AFTER_TRANSFER).total()).isZero();
+            assertThat(journal("LMS_API_MOVE")).singleElement().satisfies(entry -> assertThat(entry).contains("группа 7 → 8"));
+        } finally {
+            stub.stop();
+        }
+    }
+
+    // D05, Н04: зачисление прошло, но ответ потерян — строка в ошибку, повтор принимает её без второго пользователя.
+    // Сбой сверки оставляет строки «ожидает», отметка «передача идёт» снимается; вторая передача той же партии, пока
+    // идёт первая, отклоняется, а отметка, оставшаяся после сбоя процесса, через срок не мешает.
+    @Test
+    void moodleTransferKeepsPartialStateOutsideTransactionAndRepeatsSafely() throws Exception {
+        MoodleStub stub = MoodleStub.start();
+        try {
+            moodleTarget(stub);
+            UUID openEnrollment = UUID.randomUUID();
+            jdbcTemplate.update("INSERT INTO organizations (id, type) VALUES (?, 'OPEN_ENROLLMENT')", openEnrollment);
+            mapCourse(PROMPT, openEnrollment, "42");
+            accept(order("ORD-P-1", PROMPT, 3, "Первова", "Анна", null, "+79000000701", "anna.p@example.test"));
+            accept(order("ORD-P-2", PROMPT, 3, "Второв", "Борис", null, "+79000000702", "boris.p@example.test"));
+            LmsRoster roster = rosters.export(OPERATOR, streamId(PROMPT, 3).toString(),
+                    new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+            String batch = roster.exportId().toString();
+
+            jdbcTemplate.update("UPDATE enrolment_batches SET moodle_transfer_started_at = ? WHERE id = ?", OffsetDateTime.now(),
+                    roster.exportId());
+            assertThatThrownBy(() -> moodle.transfer(OPERATOR, batch, "moodle-p-0", "rq")).isInstanceOf(InteractionConflictException.class);
+            assertThat(stub.bodies()).isEmpty();
+            jdbcTemplate.update("UPDATE enrolment_batches SET moodle_transfer_started_at = ? WHERE id = ?", OffsetDateTime.now()
+                    .minus(MoodleTransferService.TRANSFER_CLAIM_TTL).minusMinutes(1), roster.exportId());
+
+            stub.failOnce("core_enrol_get_enrolled_users", false);
+            MoodleTransferResult unverified = moodle.transfer(OPERATOR, batch, "moodle-p-0", "rq");
+            assertThat(unverified.stoppedReason()).isNotNull();
+            assertThat(unverified.batch().pending()).isEqualTo(2);
+            assertThat(claim(roster.exportId())).isNull();
+
+            stub.failOnce("enrol_manual_enrol_users", true);
+            MoodleTransferResult partial = moodle.transfer(OPERATOR, batch, "moodle-p-1", "rq");
+            assertThat(partial.accepted()).isEqualTo(1);
+            assertThat(partial.failed()).isEqualTo(1);
+
+            MoodleTransferResult repeat = moodle.transfer(OPERATOR, batch, "moodle-p-2", "rq");
+
+            assertThat(repeat.sent()).isEqualTo(1);
+            assertThat(repeat.batch().accepted()).isEqualTo(2);
+            assertThat(stub.calls("core_user_create_users")).isEqualTo(2);
+            assertThat(claim(roster.exportId())).isNull();
+        } finally {
+            stub.stop();
+        }
+    }
+
+    // D08, Н34: анкету поправили между партией и передачей — в Moodle уходит новое имя, и переданной записывается именно
+    // эта версия; ложной строки «изменена после передачи» нет, а следующая правка её даёт.
+    @Test
+    void moodleTransferRecordsTheLearnerVersionThatWasActuallySent() throws Exception {
+        MoodleStub stub = MoodleStub.start();
+        try {
+            moodleTarget(stub);
+            UUID openEnrollment = UUID.randomUUID();
+            jdbcTemplate.update("INSERT INTO organizations (id, type) VALUES (?, 'OPEN_ENROLLMENT')", openEnrollment);
+            mapCourse(PROMPT, openEnrollment, "42");
+            accept(order("ORD-V-1", PROMPT, 3, "Первова", "Анна", null, "+79000000801", "anna.v@example.test"));
+            LmsRoster roster = rosters.export(OPERATOR, streamId(PROMPT, 3).toString(),
+                    new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+            update(learner("Первова", "Анна"), Map.of("LAST_NAME", "Новикова"), "rename-v");
+            Learner renamed = learner("Новикова", "Анна");
+
+            assertThat(moodle.transfer(OPERATOR, roster.exportId().toString(), "moodle-v", "rq").accepted()).isEqualTo(1);
+
+            assertThat(stub.bodies()).anyMatch(body -> body.contains("core_user_create_users")
+                    && body.contains(java.net.URLEncoder.encode("Новикова", java.nio.charset.StandardCharsets.UTF_8)));
+            assertThat(jdbcTemplate.queryForObject("SELECT lms_synced_version FROM learner_enrolments WHERE learner_id = ?",
+                    Integer.class, renamed.id())).isEqualTo(renamed.version());
+            assertThat(group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.CHANGED_AFTER_TRANSFER).total()).isZero();
+
+            update(renamed, Map.of("SNILS", "123-456-789 64"), "snils-v");
+            assertThat(group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.CHANGED_AFTER_TRANSFER).items()).singleElement()
+                    .satisfies(item -> assertThat(item.detail()).contains("ушла версия " + renamed.version()));
+        } finally {
+            stub.stop();
+        }
+    }
+
+    // Решения владельца 21.10 и Н4 проверки 2.5.3. Курс потока: по программе, явное уточнение задают менеджер учебного
+    // процесса или администратор, передача и перенос берут его. Строки прежнего учёта (LEGACY) сверка с Moodle
+    // подтверждает без записи в Moodle, не найденные остаются с пометкой. Перенесённый слушатель не попадает в «Готово к
+    // передаче» и не уходит партией нового потока, пока перенос не выполнен.
+    @Test
+    void explicitStreamCourseLegacyCheckAndPendingMoveInMoodleTransfer() throws Exception {
+        MoodleStub stub = MoodleStub.start();
+        try {
+            moodleTarget(stub);
+            UUID openEnrollment = UUID.randomUUID();
+            jdbcTemplate.update("INSERT INTO organizations (id, type) VALUES (?, 'OPEN_ENROLLMENT')", openEnrollment);
+            mapCourse(PROMPT, openEnrollment, "42", "42:7");
+            mapCourse(TESTER, openEnrollment, "43", "43:8");
+            accept(order("ORD-L-1", PROMPT, 3, "Первова", "Анна", null, "+79000000601", "anna.l@example.test"));
+            accept(order("ORD-L-2", PROMPT, 3, "Второв", "Борис", null, "+79000000602", "boris.l@example.test"));
+            UUID prompt = streamId(PROMPT, 3);
+            assertThat(moodle.course(prompt)).isEqualTo(new MoodleTransferService.Course(42L, 7L));
+
+            int version = streams.view(prompt).version();
+            EnrolmentStreamView refined = streams.updateMoodleCourse(OPERATOR, prompt.toString(),
+                    new StreamMoodleCourseUpdate(version, 44L, 9L), "mc-1", "rq");
+            assertThat(refined.moodleCourseId()).isEqualTo(44L);
+            assertThat(refined.moodleGroupId()).isEqualTo(9L);
+            assertThat(moodle.course(prompt)).isEqualTo(new MoodleTransferService.Course(44L, 9L));
+            assertThatThrownBy(() -> streams.updateMoodleCourse(KAM, prompt.toString(),
+                    new StreamMoodleCourseUpdate(refined.version(), 45L, null), "mc-kam", "rq")).isInstanceOf(EnrolmentAccessDeniedException.class);
+            assertThatThrownBy(() -> streams.updateMoodleCourse(OPERATOR, prompt.toString(),
+                    new StreamMoodleCourseUpdate(refined.version(), null, 9L), "mc-bad", "rq"))
+                    .isInstanceOfSatisfying(InteractionValidationException.class, exception -> assertThat(exception.field()).isEqualTo("groupId"));
+            assertThatThrownBy(() -> streams.updateMoodleCourse(OPERATOR, prompt.toString(),
+                    new StreamMoodleCourseUpdate(version, 45L, null), "mc-old", "rq")).isInstanceOf(InteractionConflictException.class);
+            EnrolmentStreamView byProgram = streams.updateMoodleCourse(ADMIN, prompt.toString(),
+                    new StreamMoodleCourseUpdate(refined.version(), null, null), "mc-admin", "rq");
+            assertThat(moodle.course(prompt)).isEqualTo(new MoodleTransferService.Course(42L, 7L));
+            streams.updateMoodleCourse(OPERATOR, prompt.toString(), new StreamMoodleCourseUpdate(byProgram.version(), 44L, 9L), "mc-2", "rq");
+            assertThat(journal("STREAM_MOODLE_COURSE_CHANGED")).hasSize(3)
+                    .anySatisfy(entry -> assertThat(entry).contains("по программе → 44, группа 9"));
+
+            LmsRoster roster = rosters.export(OPERATOR, prompt.toString(),
+                    new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+            assertThat(moodle.transfer(OPERATOR, roster.exportId().toString(), "lt-1", "rq").accepted()).isEqualTo(2);
+            long anna = stub.userId("anna.l@example.test");
+            assertThat(stub.enrolled(44, anna)).isTrue();
+            assertThat(stub.inGroup(9, anna)).isTrue();
+            assertThat(stub.enrolled(42, anna)).isFalse();
+
+            jdbcTemplate.update("UPDATE enrolment_batch_items SET result_source = 'LEGACY' WHERE batch_id = ?", roster.exportId());
+            update(learner("Второв", "Борис"), Map.of("EMAIL", "boris.other@example.test"), "boris-email");
+            int creates = stub.calls("core_user_create_users");
+            int enrols = stub.calls("enrol_manual_enrol_users");
+            assertThat(batches.batch(OPERATOR, roster.exportId().toString(), "rq").items())
+                    .extracting(EnrolmentBatchItemView::resultSource).containsOnly("LEGACY");
+            MoodleTransferResult verified = moodle.transfer(OPERATOR, roster.exportId().toString(), "lt-2", "rq");
+            assertThat(verified.sent()).isZero();
+            assertThat(verified.confirmed()).isEqualTo(1);
+            assertThat(stub.calls("core_user_create_users")).isEqualTo(creates);
+            assertThat(stub.calls("enrol_manual_enrol_users")).isEqualTo(enrols);
+            assertThat(verified.batch().items()).filteredOn(item -> "Первова".equals(item.lastName())).singleElement()
+                    .satisfies(item -> assertThat(item.resultSource()).isEqualTo("API"));
+            assertThat(verified.batch().items()).filteredOn(item -> "Второв".equals(item.lastName())).singleElement()
+                    .satisfies(item -> assertThat(item.resultSource()).isEqualTo("LEGACY"));
+            assertThat(journal("LMS_API_TRANSFER")).last().satisfies(entry -> assertThat(entry).contains("сверено строк прежнего учёта: 1"));
+
+            accept(order("ORD-L-1", TESTER, 1, "Первова", "Анна", null, "+79000000601", "anna.l@example.test"));
+            EnrolmentQueue queue = batches.queue(OPERATOR, "rq");
+            assertThat(names(queue, EnrolmentQueueKind.MOVED_AFTER_TRANSFER)).contains("Первова");
+            assertThat(names(queue, EnrolmentQueueKind.READY)).doesNotContain("Первова");
+            LmsRoster tester = rosters.export(OPERATOR, streamId(TESTER, 1).toString(),
+                    new LmsRosterRequest(RosterMode.PENDING, IncompleteProfiles.INCLUDE, null), "rq");
+            MoodleTransferResult blocked = moodle.transfer(OPERATOR, tester.exportId().toString(), "lt-3", "rq");
+            assertThat(blocked.accepted()).isZero();
+            assertThat(blocked.batch().items()).singleElement().satisfies(item -> {
+                assertThat(item.result()).isEqualTo(BatchItemResult.FAILED);
+                assertThat(item.error()).isEqualTo(MoodleTransferService.PENDING_MOVE);
+            });
+            assertThat(stub.enrolled(43, anna)).isFalse();
+
+            UUID enrolment = group(queue, EnrolmentQueueKind.MOVED_AFTER_TRANSFER).items().getFirst().enrolmentId();
+            MoodleMoveResult move = moodle.move(OPERATOR, enrolment.toString(), "lm-1", "rq");
+            assertThat(move.courseFrom()).isEqualTo(44L);
+            assertThat(move.courseTo()).isEqualTo(43L);
+            assertThat(stub.enrolled(43, anna)).isTrue();
+            assertThat(stub.enrolled(44, anna)).isFalse();
+        } finally {
+            stub.stop();
+        }
+    }
+
+    private void moodleTarget(MoodleStub stub) {
+        org.mockito.Mockito.when(sourceSettings.moodleWrite()).thenReturn(java.util.Optional.of(new MoodleWriteTarget(stub.url(),
+                "write-secret-token-0004", 5, Duration.ofSeconds(2), Duration.ofSeconds(5), DataSize.ofMegabytes(1))));
+    }
+
+    private String movedDetail() {
+        return group(batches.queue(OPERATOR, "rq"), EnrolmentQueueKind.MOVED_AFTER_TRANSFER).items().getFirst().detail();
+    }
+
+    private OffsetDateTime claim(UUID batchId) {
+        return jdbcTemplate.queryForObject("SELECT moodle_transfer_started_at FROM enrolment_batches WHERE id = ?", OffsetDateTime.class,
+                batchId);
     }
 
     // Курс сайта совпал с программой по названию: явного сопоставления сайта нет, программа потока — из оплат, как на

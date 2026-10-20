@@ -60,7 +60,7 @@ class AnalyticsToolsTest {
     private final SigningPlanService signingPlan = mock(SigningPlanService.class);
     private final AnalyticsTools tools = new AnalyticsTools(dynamics, signals, trend, reports, signingPlan,
             LmsLearningTestBeans.PROPERTIES,
-            new McpProperties(true, "crm-mcp", List.of(), 60, 25, 10, 90, "crm-mcp.write", Duration.ofHours(24), 10, 50, java.util.Map.of()));
+            new McpProperties(true, "crm-mcp", List.of(), 60, 25, 10, 90, "crm-mcp.write", Duration.ofHours(24), 10, 50, java.util.Map.of()), new ru.rtk.crm.settings.TestSystemSettings());
 
     @Test
     void learningOverviewPassesFiltersAndKeepsUnknownMonthsAsNull() {

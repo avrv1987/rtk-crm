@@ -1,5 +1,6 @@
 package ru.rtk.crm.agreement;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -126,12 +127,45 @@ public final class AgreementModels {
     public enum ActivityStatus {
         PLANNED("Запланировано"),
         IN_PROGRESS("Выполняется"),
-        DONE("Выполнено"),
+        DONE("Проведено"),
+        CONFIRMED("Подтверждено вузом"),
+        REJECTED("Отклонено"),
         CANCELLED("Отменено");
 
         private final String title;
 
         ActivityStatus(String title) {
+            this.title = title;
+        }
+
+        public String title() {
+            return title;
+        }
+
+        // Мероприятие состоялось: для него обязательны фактическое количество и подтверждающий документ, если их
+        // требует вид мероприятия.
+        public boolean held() {
+            return this == DONE || this == CONFIRMED;
+        }
+
+        // Отменённое и отклонённое мероприятие не проверяется на обязательные атрибуты и не входит в отчёт и перечень.
+        public boolean dropped() {
+            return this == CANCELLED || this == REJECTED;
+        }
+    }
+
+    // Атрибуты мероприятия, которые администратор может сделать обязательными у вида мероприятия.
+    public enum ActivityAttribute {
+        EDUCATION_LEVEL("Уровень образования"),
+        PARTICIPANTS("Охват (число участников)"),
+        UNIT_QUANTITY("Единица и количество"),
+        COST("Стоимость или оценка"),
+        EXECUTOR("Исполнитель"),
+        DOCUMENT("Подтверждающий документ");
+
+        private final String title;
+
+        ActivityAttribute(String title) {
             this.title = title;
         }
 
@@ -150,7 +184,11 @@ public final class AgreementModels {
         }
     }
 
-    public record ActivityKind(UUID id, String name, int sortOrder, boolean archived, int version) {
+    public record ActivityKind(UUID id, String name, int sortOrder, boolean archived, int version,
+                               List<ActivityAttribute> requiredAttributes) {
+        public ActivityKind(UUID id, String name, int sortOrder, boolean archived, int version) {
+            this(id, name, sortOrder, archived, version, List.of());
+        }
     }
 
     public record ActivityKindCreateRequest(@NotBlank @Size(max = 200) String name) {
@@ -159,8 +197,12 @@ public final class AgreementModels {
     public record ActivityKindUpdateRequest(
             @NotNull @Min(0) Integer version,
             @NotBlank @Size(max = 200) String name,
-            @NotNull Boolean archived
+            @NotNull Boolean archived,
+            @Size(max = 10) List<ActivityAttribute> requiredAttributes
     ) {
+        public ActivityKindUpdateRequest(Integer version, String name, Boolean archived) {
+            this(version, name, archived, null);
+        }
     }
 
     public record AgreementSummary(
@@ -311,11 +353,12 @@ public final class AgreementModels {
             boolean signingRuleEnabled,
             List<WorkStage> stages,
             List<AgreementSummary> agreements,
-            String activeAgreementNumber
+            String activeAgreementNumber,
+            AgreementStages.ActiveAgreement activeAgreement
     ) {
         public WorkAgreements(UUID interactionId, UUID organizationId, boolean signingRuleEnabled, List<WorkStage> stages,
                               List<AgreementSummary> agreements) {
-            this(interactionId, organizationId, signingRuleEnabled, stages, agreements, null);
+            this(interactionId, organizationId, signingRuleEnabled, stages, agreements, null, null);
         }
     }
 
@@ -381,7 +424,15 @@ public final class AgreementModels {
             ActivityStatus status,
             int version,
             List<LinkedInteraction> interactions,
-            List<LinkedAttachment> attachments
+            List<LinkedAttachment> attachments,
+            UUID educationLevelId,
+            String educationLevelName,
+            Integer participants,
+            UUID unitId,
+            BigDecimal cost,
+            UUID executorId,
+            String executorName,
+            String documentNote
     ) {
     }
 
@@ -399,8 +450,20 @@ public final class AgreementModels {
             UUID responsibleProfileId,
             @NotNull ActivityStatus status,
             @Size(max = 100) List<UUID> interactionIds,
-            @Size(max = 100) List<UUID> attachmentIds
+            @Size(max = 100) List<UUID> attachmentIds,
+            UUID educationLevelId,
+            @Min(0) Integer participants,
+            UUID unitId,
+            BigDecimal cost,
+            UUID executorId,
+            @Size(max = 500) String documentNote
     ) {
+        public ActivityRequest(Integer version, UUID kindId, String title, String unit, Integer plannedVolume, Integer actualVolume,
+                               LocalDate plannedStart, LocalDate plannedEnd, LocalDate actualStart, LocalDate actualEnd,
+                               UUID responsibleProfileId, ActivityStatus status, List<UUID> interactionIds, List<UUID> attachmentIds) {
+            this(version, kindId, title, unit, plannedVolume, actualVolume, plannedStart, plannedEnd, actualStart, actualEnd,
+                    responsibleProfileId, status, interactionIds, attachmentIds, null, null, null, null, null, null);
+        }
     }
 
     public record LinkedInteraction(UUID id, String title) {

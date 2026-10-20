@@ -272,6 +272,25 @@ class InteractionKindServiceTest {
                 .isEqualTo("Вид взаимодействия: «Взаимодействие по ИТ-программе» → «Повышение квалификации»; маршрут не изменён");
     }
 
+    // Аудит видов: после смены вида маршрут помечен как оставшийся от прежнего вида, пока он не совпадает с маршрутом вида.
+    @Test
+    void routeAfterKindChangeIsMarkedAsFromPreviousKind() {
+        InteractionKind other = kindService.create(admin, request("Повышение квалификации", template(null, "ПК", "А", "Б"), null), "k");
+        Interaction created = interactionService.create(kamA, create("Карточка ПК", other.id(), null, List.of()), "c");
+        assertThat(created.route().fromPreviousKind()).isFalse();
+        InteractionPlanRequest change = new InteractionPlanRequest(created.version());
+        change.setKindId(InteractionKindTestSchema.BASE_KIND);
+
+        Interaction changed = interactionService.updatePlan(kamA, created.id(), change, "kind-change");
+
+        assertThat(changed.route().templateName()).isEqualTo("ПК");
+        assertThat(changed.route().fromPreviousKind()).isTrue();
+        jdbcTemplate.update("UPDATE interaction_kinds SET workflow_template_id = ? WHERE id = ?", changed.route().templateId(),
+                InteractionKindTestSchema.BASE_KIND);
+        assertThat(interactionService.get(kamA, created.id()).route().fromPreviousKind())
+                .as("маршрут совпал с маршрутом нынешнего вида").isFalse();
+    }
+
     @Test
     void optionalityChangesOnlyForFutureStagesAndRebuildsSkips() {
         Interaction created = interactionService.create(kamA, create("Карточка", null, null, List.of()), "c");
@@ -342,6 +361,43 @@ class InteractionKindServiceTest {
                 .isInstanceOfSatisfying(InteractionValidationException.class, error -> assertThat(error.getMessage()).contains("никогда"));
         kindService.createRule(admin, new InteractionKindRuleRequest(null, InteractionKindTestSchema.BASE_KIND,
                 OrganizationType.COLLEGE, null, null, 40), "other-priority");
+    }
+
+    // Аудит видов, Н-2 и неудобство 10: отключённое правило не действует и двойником не считается, правило отключённого
+    // вида тоже; отключённый вид остаётся в списке для фильтров с числом незавершённых карточек (С-2).
+    @Test
+    void disabledRuleOrKindIsNotATwinAndDisabledKindStaysInFilterList() {
+        InteractionKind courses = kindService.create(admin, request("Курсы", null, 5), "courses");
+        InteractionKindRule rule = kindService.createRule(admin,
+                new InteractionKindRuleRequest(null, courses.id(), OrganizationType.UNIVERSITY, null, null, 50), "rule");
+        assertThat(kindService.resolve(kamA, ORGANIZATION_A, null, null, List.of()).kindId()).isEqualTo(courses.id());
+
+        InteractionKindRule disabled = kindService.updateRule(admin, rule.id(), new InteractionKindRuleRequest(rule.version(),
+                courses.id(), OrganizationType.UNIVERSITY, null, null, 50, false), "disable-rule");
+        assertThat(disabled.active()).isFalse();
+        assertThat(kindService.resolve(kamA, ORGANIZATION_A, null, null, List.of()).kindId()).isEqualTo(InteractionKindTestSchema.BASE_KIND);
+        assertThat(auditDetails("INTERACTION_KIND_RULE_CHANGED")).anySatisfy(details -> assertThat(details).endsWith("отключено"));
+        InteractionKindRule rival = kindService.createRule(admin, new InteractionKindRuleRequest(null, InteractionKindTestSchema.BASE_KIND,
+                OrganizationType.UNIVERSITY, null, null, 50), "rival");
+        assertThatThrownBy(() -> kindService.updateRule(admin, disabled.id(), new InteractionKindRuleRequest(disabled.version(),
+                courses.id(), OrganizationType.UNIVERSITY, null, null, 50, true), "enable-rule"))
+                .as("включение правила снова проверяет двойников").isInstanceOf(InteractionValidationException.class);
+        kindService.deleteRule(admin, rival.id(), rival.version(), "delete-rival");
+        kindService.updateRule(admin, disabled.id(), new InteractionKindRuleRequest(disabled.version(),
+                courses.id(), OrganizationType.UNIVERSITY, null, null, 50, true), "enable-rule");
+
+        interactionService.create(kamA, create("Курсы для кафедры", courses.id(), null, List.of()), "courses-card");
+        InteractionKind off = kindService.update(admin, courses.id(),
+                new InteractionKindRequest(courses.version(), courses.name(), null, false, null, 5), "courses-off");
+        kindService.createRule(admin, new InteractionKindRuleRequest(null, InteractionKindTestSchema.BASE_KIND,
+                OrganizationType.UNIVERSITY, null, null, 50), "after-kind-off");
+
+        assertThat(kindService.available(kamA)).extracting(InteractionKind::id).doesNotContain(off.id());
+        assertThat(kindService.availableWithInactive(kamA)).filteredOn(kind -> kind.id().equals(off.id())).singleElement()
+                .satisfies(kind -> {
+                    assertThat(kind.active()).isFalse();
+                    assertThat(kind.interactionCount()).isEqualTo(1);
+                });
     }
 
     private static InteractionKindRequest request(String name, UUID templateId, Integer sortOrder) {

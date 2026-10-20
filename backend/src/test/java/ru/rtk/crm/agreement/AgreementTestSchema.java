@@ -81,6 +81,78 @@ public final class AgreementTestSchema {
                 """);
     }
 
+    // Таблицы и столбцы отчётности по соглашениям (V72) для тестов с собственной схемой H2: добавляются к уже
+    // созданным таблицам договоров, если тех ещё нет — пропускаются.
+    public static void createReporting(JdbcTemplate jdbc) {
+        if (exists(jdbc, "AGREEMENT_ACTIVITY_KINDS")) {
+            jdbc.execute("ALTER TABLE agreement_activity_kinds ADD COLUMN IF NOT EXISTS required_attributes VARCHAR(200)");
+        }
+        if (exists(jdbc, "AGREEMENT_ACTIVITIES")) {
+            for (String column : List.of("education_level_id UUID", "participants INTEGER", "unit_id UUID", "cost NUMERIC(16, 2)",
+                    "executor_id UUID", "document_note VARCHAR(500)")) {
+                jdbc.execute("ALTER TABLE agreement_activities ADD COLUMN IF NOT EXISTS " + column);
+            }
+        }
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_reference_items (
+                    id UUID PRIMARY KEY, category VARCHAR(16) NOT NULL, name VARCHAR(200) NOT NULL, base_amount NUMERIC(16, 2),
+                    sort_order INTEGER NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL, version INTEGER DEFAULT 0 NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_rates (
+                    id UUID PRIMARY KEY, kind_id UUID NOT NULL, unit_id UUID NOT NULL, education_level_id UUID, effective_from DATE NOT NULL,
+                    rate NUMERIC(16, 2) NOT NULL, version INTEGER DEFAULT 0 NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_reporting_settings (
+                    id SMALLINT PRIMARY KEY, period_kind VARCHAR(16) NOT NULL, academic_year_start_month INTEGER NOT NULL,
+                    silence_days INTEGER, repeat_silence_days INTEGER, reminder_days INTEGER NOT NULL, threshold_enabled BOOLEAN NOT NULL,
+                    threshold_percent NUMERIC(7, 3), threshold_base NUMERIC(16, 2), threshold_base_label VARCHAR(300), report_columns CLOB,
+                    updated_by UUID, updated_at TIMESTAMP WITH TIME ZONE
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_reporting_deadlines (
+                    id UUID PRIMARY KEY, name VARCHAR(200) NOT NULL, due_on DATE NOT NULL, deliverable VARCHAR(500),
+                    annual BOOLEAN DEFAULT FALSE NOT NULL, sort_order INTEGER NOT NULL
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_activity_lists (
+                    id UUID PRIMARY KEY, organization_id UUID NOT NULL, title VARCHAR(200) NOT NULL, period_from DATE NOT NULL,
+                    period_to DATE NOT NULL, period_label VARCHAR(100) NOT NULL, status VARCHAR(24) NOT NULL,
+                    review_round INTEGER DEFAULT 0 NOT NULL, sent_on DATE, review_due_on DATE, decided_on DATE,
+                    version INTEGER DEFAULT 0 NOT NULL, created_by UUID NOT NULL, created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_activity_list_items (
+                    list_id UUID NOT NULL, activity_id UUID, item_order INTEGER NOT NULL, agreement_number VARCHAR(100) NOT NULL,
+                    kind_name VARCHAR(200) NOT NULL, title VARCHAR(300) NOT NULL, education_level VARCHAR(200), executor VARCHAR(200),
+                    unit VARCHAR(50), planned_volume INTEGER, participants INTEGER, cost NUMERIC(16, 2), period_start DATE,
+                    period_end DATE, PRIMARY KEY (list_id, item_order)
+                )
+                """);
+        jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agreement_activity_list_events (
+                    id UUID PRIMARY KEY, list_id UUID NOT NULL, from_status VARCHAR(24), to_status VARCHAR(24) NOT NULL,
+                    channel VARCHAR(16) NOT NULL, comment VARCHAR(2000), actor_profile_id UUID, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
+    }
+
+    private static boolean exists(JdbcTemplate jdbc, String table) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = ?", Integer.class, table);
+        return count != null && count > 0;
+    }
+
     public static void clear(JdbcTemplate jdbc) {
         TABLES.forEach(table -> jdbc.update("DELETE FROM " + table));
     }

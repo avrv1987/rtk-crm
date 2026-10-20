@@ -18,6 +18,8 @@ import ru.rtk.crm.audit.AuditAction;
 import ru.rtk.crm.audit.AuditJournalRepository;
 import ru.rtk.crm.enrolment.LearnerPrivacyService;
 import ru.rtk.crm.report.ReportStorage;
+import ru.rtk.crm.settings.SystemSetting;
+import ru.rtk.crm.settings.SystemSettings;
 
 @Service
 public class RetentionService {
@@ -31,6 +33,8 @@ public class RetentionService {
     private final LearnerPrivacyService learnerPrivacyService;
     private final AuditJournalRepository auditJournalRepository;
     private final ReportStorage reportStorage;
+    private final SystemSettings settings;
+    private final PersonalDataRequestService requests;
     private final ReentrantLock lock = new ReentrantLock();
 
     public RetentionService(
@@ -39,7 +43,9 @@ public class RetentionService {
             PersonalDataService personalDataService,
             LearnerPrivacyService learnerPrivacyService,
             AuditJournalRepository auditJournalRepository,
-            ReportStorage reportStorage
+            ReportStorage reportStorage,
+            SystemSettings settings,
+            PersonalDataRequestService requests
     ) {
         this.properties = properties;
         this.repository = repository;
@@ -47,6 +53,21 @@ public class RetentionService {
         this.learnerPrivacyService = learnerPrivacyService;
         this.auditJournalRepository = auditJournalRepository;
         this.reportStorage = reportStorage;
+        this.settings = settings;
+        this.requests = requests;
+    }
+
+    /** Сроки с учётом правки администратора в «Настройках»; без правки — значения конфигурации. */
+    public static RetentionProperties effective(RetentionProperties configured, SystemSettings settings) {
+        return new RetentionProperties(
+                configured.cron(),
+                settings.days(SystemSetting.RETENTION_REPORT_FILES, configured.reportFiles()),
+                settings.days(SystemSetting.RETENTION_INACTIVE_CONTACTS, configured.inactiveContacts()),
+                settings.days(SystemSetting.RETENTION_DISMISSED_PROFILES, configured.dismissedProfiles()),
+                settings.days(SystemSetting.RETENTION_AUDIT_EVENTS, configured.auditEvents()),
+                settings.days(SystemSetting.RETENTION_AGENT_PLANS, configured.agentPlans()),
+                settings.months(SystemSetting.RETENTION_LEARNER_PROFILES, configured.learnerProfiles())
+        );
     }
 
     @Scheduled(cron = "${app.retention.cron}", zone = "Europe/Moscow")
@@ -81,6 +102,7 @@ public class RetentionService {
 
     public RetentionPolicy policy(CrmProfile actor) {
         AdminAuthorization.requireAdmin(actor);
+        RetentionProperties properties = effective(this.properties, settings);
         return new RetentionPolicy(
                 properties.reportFiles().toDays(),
                 properties.inactiveContacts().toDays(),
@@ -88,6 +110,7 @@ public class RetentionService {
                 properties.auditEvents().toDays(),
                 properties.agentPlans().toDays(),
                 term(properties.learnerProfiles()),
+                settings.value(SystemSetting.RETENTION_PERSONAL_DATA_REQUESTS),
                 properties.cron(),
                 auditJournalRepository.findLatest(AuditAction.RETENTION_APPLIED).orElse(null),
                 learnerPrivacyService.counters()
@@ -107,7 +130,7 @@ public class RetentionService {
                         + " дн. после решения или истечения срока подтверждения",
                 "Анкеты слушателей обезличиваются через " + term(properties.learnerProfiles())
                         + " после окончания последнего потока слушателя; зачисления и оплаченные заявки остаются в статистике",
-                "Сроки установлены по умолчанию до решения оператора ПДн и задаются конфигурацией сервера"
+                "Сроки установлены по умолчанию до решения оператора ПДн; администратор меняет их в разделе «Настройки»"
         );
     }
 
@@ -126,6 +149,7 @@ public class RetentionService {
     }
 
     private RetentionRun apply(UUID actorId, String requestId) {
+        RetentionProperties properties = effective(this.properties, settings);
         OffsetDateTime now = OffsetDateTime.now();
         List<UUID> reportFiles = repository.expireReportResults(
                 now.minus(properties.reportFiles()),
@@ -162,8 +186,11 @@ public class RetentionService {
                 requestId
         ));
         int agentPlans = repository.deleteDecidedAgentPlans(now.minus(properties.agentPlans()));
+        int personalDataRequests = requests.deleteClosedBefore(now.atZoneSameInstant(MOSCOW).toLocalDate()
+                .minusDays(settings.value(SystemSetting.RETENTION_PERSONAL_DATA_REQUESTS)));
         RetentionRun run = new RetentionRun(
-                now, reportFiles.size(), contacts, profiles, learners, auditEvents, expiredPlans.size(), agentPlans
+                now, reportFiles.size(), contacts, profiles, learners, auditEvents, expiredPlans.size(), agentPlans,
+                personalDataRequests
         );
         auditJournalRepository.record(AuditAction.RETENTION_APPLIED, actorId, "RETENTION", null, null, run.summary(), requestId);
         return run;

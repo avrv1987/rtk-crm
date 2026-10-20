@@ -32,7 +32,7 @@ public class EnrolmentRepository {
             LEFT JOIN enrolment_batch_items bi ON bi.batch_id = e.lms_export_id AND bi.enrolment_id = e.id
             """;
     private static final String SUMMARY_SELECT = """
-            SELECT s.id, s.course_name, s.stream_no, s.ends_on, s.version,
+            SELECT s.id, s.course_name, s.stream_no, s.ends_on, s.version, s.moodle_course_id, s.moodle_group_id,
                    COALESCE(
                        (SELECT p.name FROM source_mappings m JOIN programs p ON p.id = m.program_id
                         WHERE m.source = 'WEBSITE' AND m.kind = 'PROGRAM' AND m.external_key = s.course_key),
@@ -103,6 +103,20 @@ public class EnrolmentRepository {
                 .param("id", streamId)
                 .param("expectedVersion", expectedVersion)
                 .param("endsOn", endsOn)
+                .param("now", now)
+                .update() == 1;
+    }
+
+    boolean updateMoodleCourse(UUID streamId, int expectedVersion, Long courseId, Long groupId, OffsetDateTime now) {
+        return jdbcClient.sql("""
+                UPDATE enrolment_streams
+                SET moodle_course_id = :courseId, moodle_group_id = :groupId, version = version + 1, updated_at = :now
+                WHERE id = :id AND version = :expectedVersion
+                """)
+                .param("id", streamId)
+                .param("expectedVersion", expectedVersion)
+                .param("courseId", courseId, java.sql.Types.BIGINT)
+                .param("groupId", groupId, java.sql.Types.BIGINT)
                 .param("now", now)
                 .update() == 1;
     }
@@ -330,7 +344,9 @@ public class EnrolmentRepository {
                 resultSet.getInt("stream_no"),
                 resultSet.getString("program_name"),
                 resultSet.getObject("ends_on", LocalDate.class),
-                resultSet.getInt("version")
+                resultSet.getInt("version"),
+                resultSet.getObject("moodle_course_id") == null ? null : resultSet.getLong("moodle_course_id"),
+                resultSet.getObject("moodle_group_id") == null ? null : resultSet.getLong("moodle_group_id")
         );
     }
 

@@ -2,12 +2,15 @@ package ru.rtk.crm.privacy;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,13 +42,16 @@ import ru.rtk.crm.privacy.PersonalDataRepository.Scope;
 import ru.rtk.crm.privacy.PersonalDataRepository.StoredFile;
 import ru.rtk.crm.privacy.PersonalDataRepository.TextColumn;
 import ru.rtk.crm.privacy.PersonalDataRepository.TextKind;
+import ru.rtk.crm.privacy.SubjectSearchRepository.KnownPerson;
 import ru.rtk.crm.report.ReportStorage;
+import ru.rtk.crm.settings.SystemSettings;
 
 @Service
 public class PersonalDataService {
     static final String CONTACT_MARKER = "Контакт обезличен";
     static final String EMPLOYEE_MARKER = "Сотрудник обезличен";
     static final String PREVIOUS_EMPLOYEE_MARKER = "Сотрудник обезличен (прежнее имя)";
+    static final String OTHER_PERSON_MARKER = "[другое лицо]";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(PersonalDataService.class);
     private static final String REPORTS_AFTER_ANONYMIZATION =
@@ -65,6 +71,7 @@ public class PersonalDataService {
     private final RetentionProperties retentionProperties;
     private final LearnerPrivacyService learnerPrivacyService;
     private final ObjectMapper objectMapper;
+    private final SystemSettings settings;
 
     public PersonalDataService(
             SubjectSearchRepository searchRepository,
@@ -76,7 +83,8 @@ public class PersonalDataService {
             SubjectReportWriter reportWriter,
             RetentionProperties retentionProperties,
             LearnerPrivacyService learnerPrivacyService,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            SystemSettings settings
     ) {
         this.searchRepository = searchRepository;
         this.repository = repository;
@@ -88,6 +96,7 @@ public class PersonalDataService {
         this.retentionProperties = retentionProperties;
         this.learnerPrivacyService = learnerPrivacyService;
         this.objectMapper = objectMapper;
+        this.settings = settings;
     }
 
     @Transactional
@@ -106,7 +115,7 @@ public class PersonalDataService {
             throw new InteractionValidationException("format", "Выберите формат выгрузки: JSON или PDF");
         }
         SubjectTerms.requireExact(query);
-        SubjectSearchResult result = find(query);
+        SubjectSearchResult result = withoutOtherPeople(query, find(query));
         List<UUID> learnerIds = learnerIds(result);
         List<LearnerDisclosure> learners = learnerPrivacyService.disclose(learnerIds);
         SubjectReport report = new SubjectReport(
@@ -116,7 +125,7 @@ public class PersonalDataService {
                 SubjectReport.PURPOSES,
                 SubjectReport.SOURCES,
                 SubjectReport.RECIPIENTS,
-                RetentionService.policyLines(retentionProperties),
+                RetentionService.policyLines(RetentionService.effective(retentionProperties, settings)),
                 result,
                 learners
         );
@@ -252,10 +261,11 @@ public class PersonalDataService {
         long learners = lockLearners(selection.learnerIds()).stream()
                 .filter(learner -> learner.status() != PersonalDataStatus.ANONYMIZED)
                 .count();
+        long people = selection.peopleRecords().stream().filter(ref -> repository.anonymizePersonRecord(ref, OffsetDateTime.now(), true)).count();
         return anonymizeLocked(
                 selection.spellings(), lockContacts(selection.contactIds()), lockProfiles(selection.profileIds()),
                 attachmentFiles(selection.attachmentIds()), true, true
-        ).withLearners((int) learners);
+        ).withLearners((int) learners).withPeopleRecords((int) people);
     }
 
     @Transactional
@@ -270,7 +280,7 @@ public class PersonalDataService {
         String basis = basis(request.reason(), request.comment());
         AnonymizeCommand command = new AnonymizeCommand(
                 request.subject(), selection.contactIds(), selection.profileIds(), selection.attachmentIds(), selection.learnerIds(),
-                request.reason(), request.comment()
+                selection.peopleRecords(), request.reason(), request.comment()
         );
         return idempotent(actor, CommandOperation.ANONYMIZE_PERSONAL_DATA, idempotencyKey, command, AnonymizationResult.class, () -> {
             List<SubjectLearner> learners = lockLearners(selection.learnerIds());
@@ -284,7 +294,11 @@ public class PersonalDataService {
                     anonymizedLearners.add(learner.id());
                 }
             }
-            AnonymizationResult result = changed.withLearners(anonymizedLearners.size());
+            OffsetDateTime anonymizedAt = OffsetDateTime.now();
+            List<SubjectPersonRecord.Ref> anonymizedPeople = selection.peopleRecords().stream()
+                    .filter(ref -> repository.anonymizePersonRecord(ref, anonymizedAt, false))
+                    .toList();
+            AnonymizationResult result = changed.withLearners(anonymizedLearners.size()).withPeopleRecords(anonymizedPeople.size());
             // Объект записи — сам субъект с обозначением без ПДн, а не «—»: по журналу видно, кого и что изменили.
             String details = basis + "; изменено: " + result.summary();
             for (ContactState contact : contacts) {
@@ -301,7 +315,13 @@ public class PersonalDataService {
             }
             learnerPrivacyService.journal(AuditAction.SUBJECT_ANONYMIZED, actor.id(), learners.stream().map(SubjectLearner::id).toList(),
                     details, requestId);
-            if (contacts.isEmpty() && profiles.isEmpty() && learners.isEmpty()) {
+            for (SubjectPersonRecord.Ref ref : anonymizedPeople) {
+                auditJournalRepository.record(
+                        AuditAction.SUBJECT_ANONYMIZED, actor.id(), "PEOPLE_RECORD", ref.id(),
+                        "Запись учёта людей " + shortId(ref.id()) + " (" + ref.kind().label() + ")", details, requestId
+                );
+            }
+            if (contacts.isEmpty() && profiles.isEmpty() && learners.isEmpty() && selection.peopleRecords().isEmpty()) {
                 for (StoredFile file : files) {
                     auditJournalRepository.record(
                             AuditAction.SUBJECT_ANONYMIZED, actor.id(), "ATTACHMENT", file.id(), "Файл " + shortId(file.id()),
@@ -395,7 +415,7 @@ public class PersonalDataService {
         }
         return new AnonymizationResult(
                 pendingContacts.size(), pendingProfiles.size(), counts.mentions, counts.files, counts.sourceRecords,
-                counts.technical, files.size(), reports, 0, marked
+                counts.technical, files.size(), reports, 0, marked, 0
         );
     }
 
@@ -423,12 +443,14 @@ public class PersonalDataService {
                 ids(request.contactIds(), "contactIds"),
                 ids(request.profileIds(), "profileIds"),
                 ids(request.attachmentIds(), "attachmentIds"),
-                ids(request.learnerIds(), "learnerIds")
+                ids(request.learnerIds(), "learnerIds"),
+                refs(request.peopleRecords())
         );
         // Без выбранных записей обезличивать нечего: замена по одной строке поиска задела бы чужие данные.
         if (selection.contactIds().isEmpty() && selection.profileIds().isEmpty() && selection.attachmentIds().isEmpty()
-                && selection.learnerIds().isEmpty()) {
-            throw new InteractionValidationException("contactIds", "Отметьте контакты, профили, анкеты слушателей или файлы");
+                && selection.learnerIds().isEmpty() && selection.peopleRecords().isEmpty()) {
+            throw new InteractionValidationException("contactIds",
+                    "Отметьте контакты, профили, анкеты слушателей, записи учёта людей или файлы");
         }
         return selection;
     }
@@ -580,6 +602,72 @@ public class PersonalDataService {
                 .withLearners(learnerPrivacyService.find(query.name(), query.email(), query.phone(), query.snils()));
     }
 
+    // Выгрузка уходит самому субъекту, поэтому в ней только его данные. Упоминание — это свободный текст сотрудника,
+    // и в нём бывают ФИО и почта других людей. Их закрываем по справочникам контактов и сотрудников: полная почта,
+    // телефон и имя в любом порядке, с инициалами, без служебных приставок (OtherPersonMask). Имя самого субъекта —
+    // во всех его написаниях — не закрывается. Экран поиска у администратора текст не меняет.
+    private SubjectSearchResult withoutOtherPeople(SubjectQuery query, SubjectSearchResult result) {
+        if (result.mentions().isEmpty()) {
+            return result;
+        }
+        SubjectTerms subject = SubjectTerms.of(query);
+        Set<String> subjectNames = new HashSet<>();
+        result.contacts().forEach(contact -> subjectNames.add(lower(contact.name())));
+        result.profiles().forEach(profile -> subjectNames.add(lower(profile.displayName())));
+        Set<String> subjectSpellings = new HashSet<>(subjectNames);
+        if (query.name() != null) {
+            subjectSpellings.add(lower(query.name()));
+        }
+        SubjectTerms.spellings(query).forEach(spelling -> subjectSpellings.add(lower(spelling)));
+        List<OtherPersonMask> subjectMasks = subjectSpellings.stream().map(OtherPersonMask::of).filter(Objects::nonNull).toList();
+        String texts = lower(result.mentions().stream()
+                .map(mention -> mention.text() + "\n" + mention.interactionTitle())
+                .collect(Collectors.joining("\n")));
+        List<OtherPerson> others = new ArrayList<>();
+        for (KnownPerson person : searchRepository.knownPeople()) {
+            OtherPersonMask mask = OtherPersonMask.of(person.name());
+            if (mask == null || subjectNames.contains(lower(person.name())) || subject.foundIn(person.name())
+                    || (person.email() != null && subject.foundIn(person.email()))
+                    || subjectMasks.stream().anyMatch(mask::sameWords)) {
+                continue;
+            }
+            boolean emailInText = person.email() != null && texts.contains(lower(person.email()));
+            if (emailInText || mask.mayOccurIn(texts)) {
+                others.add(new OtherPerson(mask, SubjectTerms.subject(null, person.email(), person.phone(), List.of())));
+            }
+        }
+        if (others.isEmpty()) {
+            return result;
+        }
+        List<SubjectMention> mentions = result.mentions().stream()
+                .map(mention -> new SubjectMention(
+                        mention.interactionId(),
+                        maskOthers(mention.interactionTitle(), others, subjectMasks),
+                        mention.organizationName(),
+                        mention.place(),
+                        maskOthers(mention.text(), others, subjectMasks),
+                        mention.occurredAt()
+                ))
+                .toList();
+        return result.withMentions(mentions);
+    }
+
+    private static String maskOthers(String text, List<OtherPerson> others, List<OtherPersonMask> subjectMasks) {
+        String masked = OtherPersonMask.replace(text, others.stream().map(OtherPerson::name).toList(), subjectMasks,
+                OTHER_PERSON_MARKER);
+        for (OtherPerson other : others) {
+            masked = other.contacts().replace(masked, OTHER_PERSON_MARKER);
+        }
+        return masked;
+    }
+
+    private record OtherPerson(OtherPersonMask name, SubjectTerms contacts) {
+    }
+
+    private static String lower(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT);
+    }
+
     private static List<UUID> learnerIds(SubjectSearchResult result) {
         return result.learners().stream().map(SubjectLearner::id).toList();
     }
@@ -600,6 +688,20 @@ public class PersonalDataService {
         List<UUID> distinct = values.stream().distinct().toList();
         if (distinct.size() > MAX_IDS) {
             throw new InteractionValidationException(field, "Выберите не больше 200 записей за одну операцию");
+        }
+        return distinct;
+    }
+
+    private static List<SubjectPersonRecord.Ref> refs(List<SubjectPersonRecord.Ref> values) {
+        if (values == null) {
+            return List.of();
+        }
+        if (values.stream().anyMatch(ref -> ref == null || ref.id() == null || ref.kind() == null)) {
+            throw new InteractionValidationException("peopleRecords", "Укажите идентификатор и вид каждой записи");
+        }
+        List<SubjectPersonRecord.Ref> distinct = values.stream().distinct().toList();
+        if (distinct.size() > MAX_IDS) {
+            throw new InteractionValidationException("peopleRecords", "Выберите не больше 200 записей за одну операцию");
         }
         return distinct;
     }
@@ -666,6 +768,7 @@ public class PersonalDataService {
             List<UUID> profileIds,
             List<UUID> attachmentIds,
             List<UUID> learnerIds,
+            List<SubjectPersonRecord.Ref> peopleRecords,
             PersonalDataReason reason,
             String comment
     ) {
@@ -676,7 +779,8 @@ public class PersonalDataService {
             List<UUID> contactIds,
             List<UUID> profileIds,
             List<UUID> attachmentIds,
-            List<UUID> learnerIds
+            List<UUID> learnerIds,
+            List<SubjectPersonRecord.Ref> peopleRecords
     ) {
     }
 }

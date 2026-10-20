@@ -35,6 +35,7 @@ const policyRows = (policy: RetentionPolicy, enrolment: boolean): [string, strin
   ['Профили уволенных сотрудников', `обезличиваются через ${policy.dismissedProfilesDays} дн. после блокировки`],
   ['Журнал', `записи удаляются через ${policy.auditEventsDays} дн.`],
   ['Планы записи ИИ-агента', `удаляются через ${policy.agentPlansDays} дн. после решения или истечения срока подтверждения`],
+  ['Закрытые обращения субъектов ПДн', `удаляются через ${policy.personalDataRequestsDays} дн. после исполнения или отказа`],
   ...(enrolment
     ? [
         ['Анкеты слушателей', `обезличиваются через ${policy.learnerProfilesTerm} после окончания последнего потока слушателя`],
@@ -104,8 +105,9 @@ export const RetentionPanel = ({ onSessionExpired, onProfileUnavailable }: Sessi
       <div className="page-title">
         <h2 id="retention-title">Сроки хранения</h2>
         <HintButton label="О разделе">
-          Сроки заданы конфигурацией сервера по умолчанию до решения оператора персональных данных. Задача выполняется
-          каждую ночь; результат каждого запуска записывается в журнал.
+          Сроки заданы конфигурацией сервера по умолчанию до решения оператора персональных данных; меняет их администратор
+          в разделе «Настройки», с записью в журнал. Задача выполняется каждую ночь; результат каждого запуска тоже
+          записывается в журнал.
         </HintButton>
         <span className="page-title__spacer" />
         {state.kind === 'ready' && (
@@ -129,6 +131,7 @@ export const RetentionPanel = ({ onSessionExpired, onProfileUnavailable }: Sessi
       )}
       {state.kind === 'ready' && (
         <>
+          <p className="admin-form__hint">Изменить сроки: <a href="#/admin/settings">«Настройки» → «Сроки хранения»</a>.</p>
           <div className="admin-table-wrap">
             <table className="admin-table retention-table" aria-label="Сроки хранения">
               <thead>
@@ -167,7 +170,8 @@ export const RetentionPanel = ({ onSessionExpired, onProfileUnavailable }: Sessi
           Удалено файлов отчётов: {runState.run.reportFilesDeleted}, обезличено контактов: {runState.run.contactsAnonymized},
           профилей: {runState.run.profilesAnonymized}, {enrolment && `анкет слушателей: ${runState.run.learnersAnonymized}, `}удалено записей
           журнала: {runState.run.auditEventsDeleted}, планов ИИ-агента: {runState.run.agentPlansDeleted} (истекло без
-          подтверждения: {runState.run.agentPlansExpired}).
+          подтверждения: {runState.run.agentPlansExpired}), закрытых обращений субъектов ПДн:
+          {' '}{runState.run.personalDataRequestsDeleted}.
         </p>
       )}
       {runState.kind === 'failed' && (

@@ -1,7 +1,7 @@
 import type { BackupStatus, CrmEventCounts, DataSource, LearningCoverage } from '../../shared/api/client'
 import { formatMoscowDateTime } from '../../shared/format/datetime'
 import { coverageText } from '../control/overviewModel'
-import { backupText } from './backupStatus'
+import { backupLines } from './backupStatus'
 
 export type AdminSummary = {
   pendingProfiles?: number
@@ -100,9 +100,9 @@ export const AdminOverview = ({ summary, onRetry }: { summary: AdminSummary | nu
         </div>
         <div className="admin-overview__card">
           <h2>Резервная копия</h2>
-          {summary.backup === undefined ? <p>{noData}</p> : (
-            <p className={backupText(summary.backup).stale ? 'admin-overview__warning' : undefined}>{backupText(summary.backup).text}</p>
-          )}
+          {summary.backup === undefined ? <p>{noData}</p> : backupLines(summary.backup).map((line) => (
+            <p key={line.text} className={line.warning ? 'admin-overview__warning' : undefined}>{line.text}</p>
+          ))}
           <a className="button-link" href="#/help?section=help-admin-ops">Как восстановить</a>
         </div>
         <div className="admin-overview__card">

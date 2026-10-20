@@ -11,9 +11,14 @@ public record SubjectSearchResult(
         List<SubjectAttachment> attachments,
         List<SubjectSourceRecord> sourceRecords,
         List<SubjectLearner> learners,
+        List<SubjectPersonRecord> peopleRecords,
         boolean truncated
 ) {
+    SubjectSearchResult withMentions(List<SubjectMention> masked) {
+        return new SubjectSearchResult(contacts, profiles, masked, attachments, sourceRecords, learners, peopleRecords, truncated);
+    }
+
     SubjectSearchResult withLearners(List<SubjectLearner> found) {
-        return new SubjectSearchResult(contacts, profiles, mentions, attachments, sourceRecords, found, truncated);
+        return new SubjectSearchResult(contacts, profiles, mentions, attachments, sourceRecords, found, peopleRecords, truncated);
     }
 }

@@ -18,6 +18,7 @@ import { ContactLink } from '../../shared/ui/ContactLink'
 import { emailHref, phoneHref } from '../../shared/format/links'
 import { useUnsavedDraft } from './unsavedDrafts'
 import { commandFailureMessage, contactRoleLabels, contactRoles, formatDateTime, handledAccessError } from './workMarks'
+import { ConsentsBlock, consentSettings } from '../admin/ConsentsBlock'
 import './workCard.css'
 
 type SessionHandlers = {
@@ -169,12 +170,27 @@ const ContactItem = ({
   const [draft, setDraft] = useFormDraft(profileId, `contact:${contact.id}`, parseDraft)
   const [state, setState] = useState<CommandState>({ kind: 'idle' })
   const [history, setHistory] = useState<HistoryState>({ kind: 'hidden' })
+  const [consentsOn, setConsentsOn] = useState(false)
+  const [consentsOpen, setConsentsOpen] = useState(false)
   const commandKey = useRef<string | null>(null)
   const current = fromContact(contact)
   const values = mergedValues(draft, current)
   const conflicts = conflictKeys(draft, current)
   const changed = draft !== null && JSON.stringify(values) !== JSON.stringify(current)
   useUnsavedDraft(`contact:${contact.id}`, `правка контакта «${contact.name}»`, changed)
+
+  // Блок согласий есть, только если оператор включил их учёт для контактов.
+  useEffect(() => {
+    let active = true
+    void consentSettings().then((flags) => {
+      if (active) {
+        setConsentsOn(flags.contacts)
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [])
 
   const loadHistory = async () => {
     setHistory({ kind: 'loading' })
@@ -298,7 +314,20 @@ const ContactItem = ({
         >
           {history.kind === 'hidden' ? 'История изменений' : 'Скрыть историю'}
         </button>
+        {consentsOn && (
+          <button type="button" className="button--secondary" aria-expanded={consentsOpen} onClick={() => setConsentsOpen((value) => !value)}>
+            {consentsOpen ? 'Скрыть согласия' : 'Согласия'}
+          </button>
+        )}
       </div>
+      {consentsOn && consentsOpen && (
+        <ConsentsBlock
+          scope={{ kind: 'contact', organizationId, contactId: contact.id }}
+          canEdit={canEdit && contact.personalDataStatus === 'ACTIVE'}
+          onSessionExpired={onSessionExpired}
+          onProfileUnavailable={onProfileUnavailable}
+        />
+      )}
       {draft !== null && (
         <form className="contact-card__form" onSubmit={submit}>
           <DraftConflictNotice

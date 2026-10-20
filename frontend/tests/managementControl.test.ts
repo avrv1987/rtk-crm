@@ -90,7 +90,7 @@ test('плитка «Договор на согласовании» считае
 
 test('отбор команды из сводки живёт в адресе и оставляет её строки, договоры и итоги', () => {
   const view = controlViewFromQuery('tile=OVERDUE&team=a')
-  assert.deepEqual(view, { tile: 'OVERDUE', stuckDays: 30, team: 'a' })
+  assert.deepEqual(view, { tile: 'OVERDUE', stuckDays: null, team: 'a' })
   assert.equal(controlQuery(emptyControlFilters, view), 'tile=OVERDUE&team=a')
   const own = teamControl(control, 'a')
   assert.deepEqual(own.teams.map((group) => group.teamId), ['a'])

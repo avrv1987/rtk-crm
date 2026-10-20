@@ -41,6 +41,7 @@ import { PartnerCabinet } from '../features/partner/PartnerCabinet'
 import { ReportsScreen } from '../features/reports/ReportsScreen'
 import { ProfileMenu, SessionScreen } from '../features/session/SessionScreen'
 import { ReminderCenter } from '../features/work/ReminderCenter'
+import { AdminReminderCenter } from '../features/admin/AdminReminderCenter'
 import { WorkScreen } from '../features/work/WorkScreen'
 import { getModules, setModules } from '../shared/modules'
 import { ActionMenu } from '../shared/ui/ActionMenu'
@@ -313,6 +314,14 @@ export const App = () => {
           {(profile.role === 'USER' || profile.role === 'LEADER') && (
             <ReminderCenter
               profileId={profile.id}
+              leader={profile.role === 'LEADER'}
+              refreshKey={`${section}:${routePulse}`}
+              onSessionExpired={handleSessionExpired}
+              onProfileUnavailable={handleProfileUnavailable}
+            />
+          )}
+          {profile.role === 'ADMIN' && (
+            <AdminReminderCenter
               refreshKey={`${section}:${routePulse}`}
               onSessionExpired={handleSessionExpired}
               onProfileUnavailable={handleProfileUnavailable}

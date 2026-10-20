@@ -108,6 +108,14 @@ public class MailTemplates {
                 "Открыть кабинет вуза", "#/partner", false);
     }
 
+    // Только факт приёмки: текст запроса и ответа, ФИО КАМ в письмо не идут. Внизу — ссылка на настройку темы:
+    // это письмо координатор может отключить.
+    Letter partnerAccepted(String organization) {
+        return letter("Ответ принят: «" + organization + "»",
+                List.of("ИТ Школа РТК приняла ответ по «" + organization + "».", "Запрос и ответ — в кабинете вуза."),
+                "Открыть кабинет вуза", "#/partner", true);
+    }
+
     // Ссылка ведёт в карточку взаимодействия: там вкладка «Запросы вузу» с ответом, который КАМ принимает или возвращает.
     Letter partnerReply(String organization, UUID organizationId, UUID interactionId) {
         return letter("Координатор ответил: «" + organization + "»",

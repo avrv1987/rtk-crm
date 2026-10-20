@@ -28,12 +28,17 @@ public class ReportJobRepository {
         this.jdbcClient = jdbcClient;
     }
 
-    // Квота незавершённых заданий: подсчёт и вставка под блокировкой строки профиля. Без неё одновременные заказы
-    // одного пользователя видели одинаковый счётчик и проходили сверх квоты.
+    // Квота незавершённых заданий: подсчёт и вставка в одной транзакции под блокировкой строки профиля. Без неё
+    // одновременные заказы одного пользователя видят одинаковый счётчик и проходят сверх квоты. FOR UPDATE по самим
+    // заданиям не годится: при пустом наборе блокировать нечего. Строка профиля есть всегда (на неё ссылается внешний
+    // ключ report_jobs), а если её не видно — блокировки нет и квота не гарантирована, поэтому отказ, а не вставка.
+    // При READ COMMITTED (PostgreSQL и H2) подсчёт после ожидания блокировки видит задания, вставленные предыдущим.
     @Transactional
     public boolean insertWithinQuota(UUID jobId, CrmProfile owner, String idempotencyKey, String requestFingerprint, String requestJson,
                                      ReportRequest request, OffsetDateTime createdAt, int maxUnfinished) {
-        jdbcClient.sql("SELECT id FROM crm_user_profiles WHERE id = :owner FOR UPDATE").param("owner", owner.id()).query(UUID.class).optional();
+        jdbcClient.sql("SELECT id FROM crm_user_profiles WHERE id = :owner FOR UPDATE").param("owner", owner.id()).query(UUID.class)
+                .optional()
+                .orElseThrow(() -> new IllegalStateException("Профиль " + owner.id() + " не найден: квоту отчётов не проверить"));
         if (countUnfinished(owner.id()) >= maxUnfinished) {
             return false;
         }

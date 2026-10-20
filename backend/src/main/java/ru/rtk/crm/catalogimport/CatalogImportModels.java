@@ -8,7 +8,9 @@ import java.util.UUID;
 enum CatalogImportProfile {
     AGREEMENT,
     DIRECTION_PROGRAM,
-    VENDOR_CONTACTS
+    VENDOR_CONTACTS,
+    INTERACTION_HISTORY,
+    UNIVERSITY_AGREEMENT
 }
 
 enum CatalogImportStatus {
@@ -38,8 +40,13 @@ record CatalogImportMapping(
         Map<String, String> columns,
         Map<Integer, CatalogImportRowTarget> rowTargets,
         Map<String, String> transferStatuses,
-        UUID unassignedTeamId
+        UUID unassignedTeamId,
+        // Профиль истории: после применения этап карточки ставится по самому позднему переходу из файла.
+        Boolean stageFromHistory
 ) {
+    boolean stageFromHistoryEnabled() {
+        return Boolean.TRUE.equals(stageFromHistory);
+    }
 }
 
 record CatalogImportRowTarget(

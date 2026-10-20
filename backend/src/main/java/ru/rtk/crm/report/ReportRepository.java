@@ -30,12 +30,14 @@ import ru.rtk.crm.agreement.AgreementModels.ActivityStatus;
 import ru.rtk.crm.agreement.AgreementModels.AgreementStatus;
 import ru.rtk.crm.agreement.AgreementRepository;
 import ru.rtk.crm.catalog.OrganizationRepository;
+import ru.rtk.crm.catalog.OrganizationType;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
 import ru.rtk.crm.interaction.InteractionMarks;
 import ru.rtk.crm.interaction.InteractionRepository;
 import ru.rtk.crm.interaction.StageLmsRole;
 import ru.rtk.crm.interaction.InteractionIssueRepository;
 import ru.rtk.crm.interaction.ProductAgreementRules;
+import ru.rtk.crm.interaction.WorkStatusAt;
 
 @Repository
 public class ReportRepository {
@@ -279,9 +281,6 @@ public class ReportRepository {
         if (scope.isEmpty()) {
             return List.of();
         }
-        if (request.kind() == ReportKind.DEMAND) {
-            return withMarket(findDemandRows(scope.get(), request, limit, offset), request);
-        }
         if (request.kind() == ReportKind.AGREEMENTS) {
             return findAgreementRows(scope.get(), request, limit, offset);
         }
@@ -298,14 +297,6 @@ public class ReportRepository {
         Optional<VisibilityScope> scope = organizationRepository.visibilityScope(profile);
         if (scope.isEmpty()) {
             return 0;
-        }
-        if (request.kind() == ReportKind.DEMAND) {
-            Selection selection = demandUnion(scope.get(), request);
-            return jdbcClient.sql("SELECT COUNT(*) FROM (SELECT x.program_id FROM (" + selection.sql()
-                            + ") x GROUP BY x.program_id) demand_rows")
-                    .params(selection.parameters())
-                    .query(Long.class)
-                    .single();
         }
         if (request.kind() == ReportKind.AGREEMENTS) {
             Selection selection = agreementSelection(scope.get(), request);
@@ -341,6 +332,23 @@ public class ReportRepository {
                 .params(selection.parameters())
                 .query(Long.class)
                 .single();
+    }
+
+    public Optional<DemandIndex.Settings> findDemandIndexSettings() {
+        return jdbcClient.sql("""
+                        SELECT growth_weight, completion_weight, activity_weight, university_weight, payments_weight,
+                               min_coverage_percent, small_base
+                        FROM demand_index_settings WHERE id = 1
+                        """)
+                .query((resultSet, rowNumber) -> new DemandIndex.Settings(
+                        resultSet.getInt("growth_weight"),
+                        resultSet.getInt("completion_weight"),
+                        resultSet.getInt("activity_weight"),
+                        resultSet.getInt("university_weight"),
+                        resultSet.getInt("payments_weight"),
+                        resultSet.getInt("min_coverage_percent"),
+                        resultSet.getInt("small_base")))
+                .optional();
     }
 
     public Optional<MarketSource> findMarketSource() {
@@ -544,10 +552,13 @@ public class ReportRepository {
             conditions.add("i.created_at < :toAt");
         }
         // Без периода показываются идущие работы. С периодом — идущие и те, по которым в периоде были события: так
-        // завершённая в периоде работа остаётся в отчёте за него.
+        // завершённая в периоде работа остаётся в отчёте за него. «За период» после его конца «идущие» — активные на
+        // конец периода по истории статусов, а не сегодня: работа без событий в сентябре, завершённая в октябре, остаётся
+        // в сентябре. Активная на начало и неактивная на конец меняла статус в периоде, её добавляют события.
+        String active = historical ? WorkStatusAt.sql("toAt") + " = 'ACTIVE'" : "i.work_status = 'ACTIVE'";
         conditions.add(fromAt == null && toAt == null
-                ? "i.work_status = 'ACTIVE'"
-                : "(i.work_status = 'ACTIVE' OR EXISTS (SELECT 1 FROM interaction_events pe WHERE pe.interaction_id = i.id AND "
+                ? active
+                : "(" + active + " OR EXISTS (SELECT 1 FROM interaction_events pe WHERE pe.interaction_id = i.id AND "
                         + inPeriod("pe.occurred_at", fromAt, toAt) + "))");
         organizationFilters(conditions, parameters, filters);
         dimension(conditions, parameters, "d.id", "directionIds", filters.directionIds(), filters.includeNoDirection());
@@ -576,6 +587,7 @@ public class ReportRepository {
                 + " (SELECT COUNT(*) FROM interaction_stages ps WHERE ps.interaction_id = i.id AND ps.stage_order <= s.stage_order)"
                 + " AS stage_position,"
                 + " (SELECT COUNT(*) FROM interaction_stages ps WHERE ps.interaction_id = i.id) AS stage_total,"
+                + " (SELECT ts.norm_days FROM workflow_template_stages ts WHERE ts.id = s.template_stage_id) AS stage_norm_days,"
                 + " " + STAGE_ENTERED + " AS stage_entered_at, " + startStage + " AS start_stage, " + endStage + " AS end_stage,"
                 + " i.next_action, i.next_action_at,\n" + MARKS
                 + " (SELECT COUNT(*) FROM interaction_events te WHERE te.interaction_id = i.id AND te.type = 'TRANSITIONED'"
@@ -621,7 +633,8 @@ public class ReportRepository {
                             resultSet.getObject("program_id", UUID.class),
                             resultSet.getObject("kind_id", UUID.class),
                             resultSet.getObject("route_id", UUID.class),
-                            resultSet.getInt("missing_documents") == 1
+                            resultSet.getInt("missing_documents") == 1,
+                            resultSet.getObject("stage_norm_days", Integer.class)
                     );
                 })
                 .list();
@@ -639,7 +652,7 @@ public class ReportRepository {
         return jdbcClient.sql("SELECT o.id, o.name, t.id AS team_id, t.name AS team_name,"
                         + " CASE WHEN " + unassigned + " THEN NULL ELSE o.owner_manager_id END AS manager_id,"
                         + " CASE WHEN " + unassigned + " THEN NULL ELSE m.display_name END AS manager_name,"
-                        + " " + LAST_STAFF_ACTION + " AS last_action_at"
+                        + " " + LAST_STAFF_ACTION + " AS last_action_at, o.type"
                         + " FROM organizations o JOIN teams t ON t.id = o.team_id"
                         + " LEFT JOIN crm_user_profiles m ON m.id = o.owner_manager_id"
                         + " WHERE o.id IN (" + scope.get().currentOrganizations() + ") AND o.type <> 'OPEN_ENROLLMENT'"
@@ -653,7 +666,8 @@ public class ReportRepository {
                         resultSet.getString("team_name"),
                         resultSet.getObject("manager_id", UUID.class),
                         resultSet.getString("manager_name"),
-                        resultSet.getObject("last_action_at", OffsetDateTime.class)
+                        resultSet.getObject("last_action_at", OffsetDateTime.class),
+                        OrganizationType.valueOf(resultSet.getString("type"))
                 ))
                 .list();
     }
@@ -730,8 +744,14 @@ public class ReportRepository {
         return bounds.isEmpty() ? "TRUE" : "(" + String.join(" AND ", bounds) + ")";
     }
 
-    private List<ReportRow> findDemandRows(VisibilityScope scope, ReportRequest request, int limit, long offset) {
-        Selection selection = demandUnion(scope, request);
+    // Все строки выборки сразу: место по индексу зависит от всех программ выборки, страница режется уже после расчёта.
+    // freshAfter — граница свежести наблюдения Moodle, как у сигналов LMS: активность по более старому не считается.
+    public List<ReportRow> findDemandRows(CrmProfile profile, ReportRequest request, OffsetDateTime freshAfter) {
+        Optional<VisibilityScope> scope = organizationRepository.visibilityScope(profile);
+        if (scope.isEmpty()) {
+            return List.of();
+        }
+        Selection selection = demandUnion(scope.get(), request);
         String metric = switch (request.sortBy()) {
             case PAID_ORDERS -> "paid_orders";
             case PAID_STREAMS -> "paid_streams";
@@ -740,7 +760,7 @@ public class ReportRepository {
             case LEARNERS_COMPLETED -> "completed";
             default -> "applications";
         };
-        return jdbcClient.sql("""
+        List<ReportRow> rows = jdbcClient.sql("""
                         SELECT d.id AS direction_id, d.name AS direction_name, p.id AS program_id, p.name AS program_name,
                                CAST(SUM(x.applications) AS BIGINT) AS applications,
                                CAST(SUM(x.participants) AS BIGINT) AS participants,
@@ -751,20 +771,55 @@ public class ReportRepository {
                                CAST(CASE WHEN COUNT(x.paid_order) = 0 THEN NULL ELSE COUNT(DISTINCT x.paid_order) END AS BIGINT)
                                    AS paid_orders,
                                CAST(CASE WHEN COUNT(x.paid_stream) = 0 THEN NULL ELSE COUNT(DISTINCT x.paid_stream) END AS BIGINT)
-                                   AS paid_streams
+                                   AS paid_streams,
+                               CAST(SUM(x.active_7d) AS BIGINT) AS active_7d,
+                               CAST(SUM(x.activity_base) AS BIGINT) AS activity_base,
+                               CAST(SUM(x.stale_runs) AS BIGINT) AS stale_runs
                         FROM (""" + selection.sql() + """
                         ) x
                         LEFT JOIN programs p ON p.id = x.program_id
                         LEFT JOIN directions d ON d.id = p.direction_id
                         GROUP BY d.id, d.name, p.id, p.name
                         ORDER BY %s DESC NULLS LAST, p.name NULLS LAST, d.name, p.id
-                        LIMIT :limit OFFSET :offset
                         """.formatted(metric))
                 .params(selection.parameters())
-                .param("limit", limit)
-                .param("offset", offset)
+                .param("freshAfter", freshAfter)
                 .query(this::mapDemandRow)
                 .list();
+        Map<UUID, Long> interactions = programInteractions(scope.get(), request);
+        return withMarket(rows.stream()
+                .map(row -> row.programId() == null ? row
+                        : row.withDemand(row.demand().withInteractions(interactions.getOrDefault(row.programId(), 0L))))
+                .toList(), request);
+    }
+
+    // Спрос вузов (М17): взаимодействия по программе, созданные в периоде, в области пользователя. Отбор по виду
+    // взаимодействия действует только здесь: у заявок сайта и потоков Moodle вида нет. Данные CRM полные, поэтому
+    // программа без взаимодействий — ноль, а не «нет данных».
+    private Map<UUID, Long> programInteractions(VisibilityScope scope, ReportRequest request) {
+        List<String> conditions = new ArrayList<>(List.of(
+                "i.organization_id IN (" + scope.currentOrganizations() + ")",
+                "o.type <> 'OPEN_ENROLLMENT'",
+                "i.program_id IS NOT NULL"
+        ));
+        Map<String, Object> parameters = new HashMap<>(scope.parameters());
+        conditions.addAll(bounds("i.created_at", request, parameters));
+        ReportFilters filters = request.filters();
+        organizationFilters(conditions, parameters, filters);
+        dimension(conditions, parameters, "d.id", "directionIds", filters.directionIds(), filters.includeNoDirection());
+        dimension(conditions, parameters, "i.program_id", "programIds", filters.programIds(), false);
+        dimension(conditions, parameters, "o.owner_manager_id", "managerIds", filters.managerIds(), filters.includeNoManager());
+        dimension(conditions, parameters, "i.interaction_kind_id", "kindIds", filters.kindIds(), false);
+        Map<UUID, Long> counts = new HashMap<>();
+        jdbcClient.sql("SELECT i.program_id, CAST(COUNT(*) AS BIGINT) AS interactions FROM interactions i"
+                        + " JOIN organizations o ON o.id = i.organization_id"
+                        + " LEFT JOIN programs p ON p.id = i.program_id LEFT JOIN directions d ON d.id = p.direction_id"
+                        + " WHERE " + String.join(" AND ", conditions) + " GROUP BY i.program_id")
+                .params(parameters)
+                .query(resultSet -> {
+                    counts.put(resultSet.getObject("program_id", UUID.class), resultSet.getLong("interactions"));
+                });
+        return counts;
     }
 
     private List<GroupCount> grouped(String rows, boolean series, String aggregate, Map<String, Object> parameters) {
@@ -887,22 +942,46 @@ public class ReportRepository {
 
             String sameRoute = templateId == null ? "i.workflow_template_id IS NULL" : "i.workflow_template_id = :templateId";
             JdbcClient.StatementSpec own = jdbcClient.sql("""
-                    SELECT st.name
+                    SELECT st.name, st.template_stage_id,
+                           (SELECT prev.name FROM interaction_stages prev
+                            WHERE prev.interaction_id = st.interaction_id AND prev.stage_order < st.stage_order
+                            ORDER BY prev.stage_order DESC LIMIT 1) AS previous_name
                     FROM interaction_stages st
                     JOIN interactions i ON i.id = st.interaction_id
                     WHERE i.organization_id IN (%s) AND %s
-                    GROUP BY st.name
-                    ORDER BY MIN(st.stage_order), st.name
+                    ORDER BY st.stage_order, st.name
                     """.formatted(scope.currentOrganizations(), sameRoute))
                     .params(scope.parameters());
             if (templateId != null) {
                 own = own.param("templateId", templateId);
             }
-            // Этапы прежних версий шаблона идут после текущих и помечаются: иначе матрица показывала их номером после
-            // финального, будто маршрут продолжается (Н-РТ-3).
-            List<String> former = own.query(String.class).list().stream().filter(name -> !stages.contains(name)).toList();
+            // Этап, который КАМ добавил в маршрут своей карточки (без связи с этапом шаблона), встаёт после этапа,
+            // за которым он идёт в карточке: это звено маршрута, а не пережиток. Этапы прежних версий шаблона идут
+            // после текущих и помечаются: иначе матрица показывала их номером после финального, будто маршрут
+            // продолжается (Н-РТ-3).
+            List<String> card = new ArrayList<>();
+            List<String> former = new ArrayList<>();
+            List<String> trailingCard = new ArrayList<>();
+            for (Map<String, Object> row : own.query().listOfRows()) {
+                String name = (String) row.get("name");
+                if (stages.contains(name) || former.contains(name) || trailingCard.contains(name)) {
+                    continue;
+                }
+                if (row.get("template_stage_id") != null) {
+                    former.add(name);
+                    continue;
+                }
+                int previous = stages.indexOf((String) row.get("previous_name"));
+                if (previous < 0) {
+                    trailingCard.add(name);
+                } else {
+                    stages.add(previous + 1, name);
+                }
+                card.add(name);
+            }
+            stages.addAll(trailingCard);
             stages.addAll(former);
-            routes.add(new StageRoute(templateId, templateName, List.copyOf(stages), former));
+            routes.add(new StageRoute(templateId, templateName, List.copyOf(stages), List.copyOf(former), List.copyOf(card)));
         }
         routes.sort(Comparator.comparing(
                 (StageRoute route) -> route.templateName() == null ? "" : route.templateName(), String.CASE_INSENSITIVE_ORDER));
@@ -1068,7 +1147,8 @@ public class ReportRepository {
             parameters.put("stages", filters.stages());
         }
         if (!filters.workStatuses().isEmpty()) {
-            conditions.add("i.work_status IN (:workStatuses)");
+            // В «Состоянии на дату» статус — на эту дату по истории, как этап и ответственный.
+            conditions.add((kind == ReportKind.SNAPSHOT ? WorkStatusAt.sql("asOfAt") : "i.work_status") + " IN (:workStatuses)");
             parameters.put("workStatuses", filters.workStatuses().stream().map(Enum::name).toList());
         }
         filters.flags().forEach(flag -> conditions.add(flag.condition()));
@@ -1139,7 +1219,9 @@ public class ReportRepository {
                 "SELECT r.program_id, CAST(r.applications_count AS BIGINT) AS applications, CAST(NULL AS BIGINT) AS participants,"
                         + " CAST(NULL AS BIGINT) AS completed, CAST(NULL AS BIGINT) AS completed_base,"
                         + " CAST(NULL AS BIGINT) AS runs_without_data, CAST(NULL AS BIGINT) AS parallel_runs,"
-                        + " CAST(NULL AS VARCHAR(200)) AS paid_order, CAST(NULL AS VARCHAR(64)) AS paid_stream " + DEMAND_FROM
+                        + " CAST(NULL AS VARCHAR(200)) AS paid_order, CAST(NULL AS VARCHAR(64)) AS paid_stream,"
+                        + " CAST(NULL AS BIGINT) AS active_7d, CAST(NULL AS BIGINT) AS activity_base,"
+                        + " CAST(NULL AS BIGINT) AS stale_runs " + DEMAND_FROM
                         + applications.sql()
                         // Знаменатель доли — C + N, как в «Динамике обучения»: участия без статуса в него не входят.
                         // Поток без наблюдения на дату считается отдельно, а не нулём обучающихся.
@@ -1148,10 +1230,18 @@ public class ReportRepository {
                         + " CAST(f.completed_count + f.not_completed_count AS BIGINT),"
                         + " CAST(CASE WHEN f.mapping_id IS NULL THEN 1 ELSE 0 END AS BIGINT),"
                         + " CAST(CASE WHEN sm.run_starts_on <= :runsAsOf AND :runsAsOf < sm.run_ends_on THEN 1 ELSE 0 END"
-                        + " AS BIGINT), CAST(NULL AS VARCHAR(200)), CAST(NULL AS VARCHAR(64)) " + LEARNING_FROM + learning.sql()
+                        + " AS BIGINT), CAST(NULL AS VARCHAR(200)), CAST(NULL AS VARCHAR(64)),"
+                        // Активность меняется каждый день: по наблюдению старше порога устаревания она не берётся,
+                        // как в сигналах LMS; такой поток назван в покрытии индекса.
+                        + " CAST(CASE WHEN f.confirmed_at >= :freshAfter AND f.active_7d_count IS NOT NULL"
+                        + " THEN f.active_7d_count END AS BIGINT),"
+                        + " CAST(CASE WHEN f.confirmed_at >= :freshAfter AND f.active_7d_count IS NOT NULL"
+                        + " THEN f.participants_count END AS BIGINT),"
+                        + " CAST(CASE WHEN f.mapping_id IS NOT NULL AND f.confirmed_at < :freshAfter THEN 1 ELSE 0 END AS BIGINT) "
+                        + LEARNING_FROM + learning.sql()
                         + " UNION ALL SELECT r.program_id, CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), CAST(NULL AS BIGINT),"
                         + " CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), CAST(r.external_id AS VARCHAR(200)),"
-                        + " CAST(r.payload_hash AS VARCHAR(64)) "
+                        + " CAST(r.payload_hash AS VARCHAR(64)), CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), CAST(NULL AS BIGINT) "
                         + DEMAND_FROM + paidOrders.sql(),
                 parameters
         );
@@ -1244,6 +1334,15 @@ public class ReportRepository {
                 if (request.toAt() != null) {
                     conditions.add("i.created_at < :toAt");
                     parameters.put("toAt", request.toAt());
+                }
+                // Не завершённые к началу периода по истории статусов, а также возобновлённые внутри него: завершённая
+                // до периода работа в «Активные в периоде» не входит, сколько бы событий у неё потом ни было.
+                if (request.fromAt() != null) {
+                    parameters.put("fromAt", request.fromAt());
+                    conditions.add("(COALESCE(" + WorkStatusAt.sql("fromAt") + ", 'ACTIVE') <> 'COMPLETED'"
+                            + " OR EXISTS (SELECT 1 FROM interaction_events re WHERE re.interaction_id = i.id"
+                            + " AND re.type = 'STATUS_CHANGED' AND re.work_status_after = 'ACTIVE' AND re.occurred_at >= :fromAt"
+                            + (request.toAt() == null ? "" : " AND re.occurred_at < :toAt") + "))");
                 }
             }
         }
@@ -1467,7 +1566,15 @@ public class ReportRepository {
                 resultSet.getObject("completed_base", Long.class),
                 null,
                 null,
-                resultSet.getObject("runs_without_data", Long.class)
+                resultSet.getObject("runs_without_data", Long.class),
+                new ReportRow.Demand(
+                        resultSet.getObject("active_7d", Long.class),
+                        resultSet.getObject("activity_base", Long.class),
+                        resultSet.getObject("stale_runs", Long.class),
+                        null,
+                        null,
+                        null
+                )
         );
     }
 
@@ -1706,9 +1813,15 @@ public class ReportRepository {
 
     /**
      * Маршрут работ выборки: шаблон и названия этапов в его порядке. templateId = null — работы без шаблона.
-     * formerStages — этапы работ, которых нет в текущей версии шаблона (они в конце stages).
+     * formerStages — этапы прежних версий шаблона (они в конце stages); cardStages — этапы, добавленные в маршрут отдельных
+     * карточек (стоят в stages после этапа, за которым идут в карточке).
      */
-    public record StageRoute(UUID templateId, String templateName, List<String> stages, List<String> formerStages) {
+    public record StageRoute(UUID templateId, String templateName, List<String> stages, List<String> formerStages,
+                             List<String> cardStages) {
+        public StageRoute(UUID templateId, String templateName, List<String> stages, List<String> formerStages) {
+            this(templateId, templateName, stages, formerStages, List.of());
+        }
+
         static final String NO_TEMPLATE = "-";
 
         public String key(String stage) {

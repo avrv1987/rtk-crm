@@ -36,7 +36,7 @@ type ResultState =
 
 const currentYear = todayInMoscow().slice(0, 4)
 
-const loadOrganizations = async () => {
+export const loadOrganizations = async () => {
   const items: Organization[] = []
   for (let page = 0; ; page += 1) {
     const result = await apiClient.listOrganizations({ page, size: 100, sort: 'name,asc' })

@@ -289,6 +289,8 @@ class MailHttpTest {
         outbox.toProfile("e", MailKind.AGREEMENT_EXPIRY, MANAGEMENT, ORGANIZATION, templates.test());
         outbox.toProfile("f", MailKind.ASSIGNMENT, KAM, UUID.randomUUID(), templates.test());
         outbox.toProfile("g", MailKind.PARTNER_REQUEST, PARTNER, ORGANIZATION, templates.partnerRequest("Колледж связи"));
+        outbox.toProfile("p", MailKind.PARTNER_ACCEPTED, PARTNER, ORGANIZATION, templates.partnerAccepted("Колледж связи"));
+        jdbcTemplate.update("INSERT INTO mail_preferences (profile_id, topic) VALUES (?, 'PARTNER_ACCEPTED')", PARTNER);
         jdbcTemplate.update("UPDATE crm_user_profiles SET partner_organization_id = ? WHERE id = ?", UUID.randomUUID(), PARTNER);
         jdbcTemplate.update("INSERT INTO mail_preferences (profile_id, topic) VALUES (?, 'ASSIGNMENT')", LEADER);
         when(organizationRepository.findVisibleById(any(), eq(ORGANIZATION))).thenReturn(Optional.of(organization()));
@@ -304,6 +306,7 @@ class MailHttpTest {
         assertThat(reason("e")).contains("роль");
         assertThat(reason("f")).contains("не виден");
         assertThat(reason("g")).contains("не виден");
+        assertThat(reason("p")).contains("отключил");
 
         outbox.toProfile("h", MailKind.ASSIGNMENT, KAM, ORGANIZATION, templates.assignment("Колледж связи", ORGANIZATION));
         jdbcTemplate.update("UPDATE crm_user_profiles SET active = FALSE WHERE id = ?", KAM);
@@ -544,6 +547,16 @@ class MailHttpTest {
                 .andExpect(jsonPath("$.topics").isEmpty());
         mockMvc.perform(get("/api/mail/preferences").with(login(MANAGEMENT)))
                 .andExpect(jsonPath("$.topics[0].topic").value("WEEKLY"));
+        // Координатору вуза — одна отключаемая тема: школа приняла его ответ (решение владельца 21.10).
+        mockMvc.perform(get("/api/mail/preferences").with(login(PARTNER)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.topics.length()").value(1))
+                .andExpect(jsonPath("$.topics[0].topic").value("PARTNER_ACCEPTED"));
+        mockMvc.perform(put("/api/mail/preferences").with(login(PARTNER)).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"disabledTopics\":[\"PARTNER_ACCEPTED\",\"DIGEST\"]}"))
+                .andExpect(jsonPath("$.topics[0].enabled").value(false));
+        assertThat(jdbcTemplate.queryForList("SELECT topic FROM mail_preferences WHERE profile_id = ?", String.class, PARTNER))
+                .containsExactly("PARTNER_ACCEPTED");
     }
 
     private static MockHttpServletRequestBuilder redeem(String token) {

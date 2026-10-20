@@ -1,16 +1,23 @@
 export type AdminSectionSlug =
   | 'overview'
+  | 'settings'
   | 'employees'
   | 'teams'
   | 'organizations'
   | 'catalogs'
   | 'catalog-import'
   | 'workflow-templates'
+  | 'route-versions'
+  | 'demand-index'
+  | 'people-settings'
+  | 'agreement-reporting'
   | 'pending-source-records'
   | 'sources'
   | 'mail'
+  | 'modules'
   | 'journal'
   | 'personal-data'
+  | 'personal-data-requests'
   | 'retention'
 
 export type AdminNavRole = 'ADMIN' | 'LEADER'
@@ -23,17 +30,24 @@ const leaderOnly: AdminNavRole[] = ['LEADER']
 
 export const adminSections: AdminSectionEntry[] = [
   { slug: 'overview', label: 'Обзор', group: 'Начало', roles: adminOnly },
+  { slug: 'settings', label: 'Настройки', group: 'Начало', roles: adminOnly },
   { slug: 'employees', label: 'Сотрудники', group: 'Люди и доступ', roles: adminOnly },
   { slug: 'teams', label: 'Команды', group: 'Люди и доступ', roles: adminOnly },
   { slug: 'organizations', label: 'Организации', group: 'Люди и доступ', roles: adminOnly },
   { slug: 'catalogs', label: 'Справочники', group: 'Данные', roles: adminOnly },
   { slug: 'catalog-import', label: 'Импорт из Excel', group: 'Данные', roles: adminOnly },
   { slug: 'workflow-templates', label: 'Шаблоны этапов', group: 'Данные', roles: adminAndLeader },
+  { slug: 'route-versions', label: 'Версии маршрута', group: 'Данные', roles: adminOnly },
+  { slug: 'demand-index', label: 'Индекс востребованности', group: 'Данные', roles: adminOnly },
+  { slug: 'people-settings', label: 'Учёт людей и часов', group: 'Данные', roles: adminOnly },
+  { slug: 'agreement-reporting', label: 'Отчётность по соглашениям', group: 'Данные', roles: adminOnly },
   { slug: 'pending-source-records', label: 'Заявки с сайта', group: 'Данные', roles: leaderOnly },
   { slug: 'sources', label: 'Источники данных', group: 'Интеграции', roles: adminOnly },
   { slug: 'mail', label: 'Почта', group: 'Интеграции', roles: adminOnly },
+  { slug: 'modules', label: 'Состояние модулей', group: 'Интеграции', roles: adminOnly },
   { slug: 'journal', label: 'Журнал', group: 'Безопасность', roles: adminOnly },
   { slug: 'personal-data', label: 'Персональные данные', group: 'Безопасность', roles: adminOnly },
+  { slug: 'personal-data-requests', label: 'Обращения субъектов', group: 'Безопасность', roles: adminOnly },
   { slug: 'retention', label: 'Сроки хранения', group: 'Безопасность', roles: adminOnly }
 ]
 

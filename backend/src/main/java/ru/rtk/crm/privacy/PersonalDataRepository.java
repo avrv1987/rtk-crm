@@ -90,6 +90,50 @@ public class PersonalDataRepository {
                 .update() == 1;
     }
 
+    // Обезличивание записи учёта людей: ФИО заменяется отметкой, сопутствующие данные человека (почта, номер
+    // удостоверения, документ стажёра) стираются; часы и даты остаются для отчётов. dryRun считает, не меняя.
+    boolean anonymizePersonRecord(SubjectPersonRecord.Ref ref, OffsetDateTime now, boolean dryRun) {
+        String table;
+        String set;
+        String pending;
+        String marker;
+        switch (ref.kind()) {
+            case TEACHING_PERFORMER -> {
+                table = "university_teaching";
+                set = "performer_name = :marker";
+                pending = "performer_profile_id IS NULL AND performer_name <> :marker";
+                marker = "Исполнитель обезличен";
+            }
+            case INTERN -> {
+                table = "internships";
+                set = "intern_name = :marker, document = NULL, anonymized_at = :now";
+                pending = "anonymized_at IS NULL";
+                marker = "Стажёр обезличен";
+            }
+            case MENTOR -> {
+                table = "internships";
+                set = "mentor_name = :marker";
+                pending = "mentor_profile_id IS NULL AND mentor_name <> :marker";
+                marker = "Наставник обезличен";
+            }
+            default -> {
+                table = "teacher_qualifications";
+                set = "person_name = :marker, person_email = NULL, certificate_number = NULL, contact_id = NULL, anonymized_at = :now";
+                pending = "anonymized_at IS NULL";
+                marker = "Преподаватель обезличен";
+            }
+        }
+        JdbcClient.StatementSpec statement = jdbcClient.sql(dryRun
+                        ? "SELECT COUNT(*) FROM " + table + " WHERE id = :id AND " + pending
+                        : "UPDATE " + table + " SET " + set + ", version = version + 1, updated_at = :now WHERE id = :id AND " + pending)
+                .param("id", ref.id())
+                .param("marker", marker);
+        if (!dryRun) {
+            return statement.param("now", now).update() == 1;
+        }
+        return statement.query(Long.class).single() > 0;
+    }
+
     void anonymizeContact(UUID contactId, String marker, OffsetDateTime now) {
         jdbcClient.sql("""
                 UPDATE contacts
@@ -513,6 +557,12 @@ public class PersonalDataRepository {
         INTERACTION_TITLE("interactions", "title", 200, true, TextKind.MENTION, ScopeKind.OWNER),
         AGENT_PLAN_NOTE("agent_change_plans", "note_text", 4000, false, TextKind.MENTION, ScopeKind.EVENT),
         AGENT_PLAN_NEXT_ACTION("agent_change_plans", "next_action", 500, false, TextKind.MENTION, ScopeKind.EVENT),
+        // Учёт людей и часов: ФИО контакта или сотрудника, записанное текстом, заменяется в записях его вузов.
+        TEACHING_PERFORMER("university_teaching", "performer_name", 300, true, TextKind.MENTION, ScopeKind.OWNER),
+        INTERN_NAME("internships", "intern_name", 300, true, TextKind.MENTION, ScopeKind.OWNER),
+        MENTOR_NAME("internships", "mentor_name", 300, true, TextKind.MENTION, ScopeKind.OWNER),
+        QUALIFICATION_PERSON("teacher_qualifications", "person_name", 300, true, TextKind.MENTION, ScopeKind.OWNER),
+        QUALIFICATION_EMAIL("teacher_qualifications", "person_email", 254, true, TextKind.MENTION, ScopeKind.OWNER),
         ATTACHMENT_NAME("attachments", "original_name", 255, false, TextKind.FILE_NAME, ScopeKind.EVENT),
         SOURCE_PAYLOAD("source_records", "payload", 0, false, TextKind.SOURCE, ScopeKind.OWNER, true),
         IMPORT_PLAN("catalog_import_rows", "plan_json", 0, false, TextKind.TECHNICAL, ScopeKind.REFERENCE, true),

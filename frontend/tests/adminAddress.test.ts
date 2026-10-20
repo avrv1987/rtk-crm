@@ -30,7 +30,8 @@ test('недоступный роли или неизвестный адрес �
 test('у руководителя ровно два подраздела, у администратора — все остальные', () => {
   assert.deepEqual(adminSectionsFor('LEADER').map((section) => section.slug), ['workflow-templates', 'pending-source-records'])
   assert.deepEqual(adminSectionsFor('ADMIN').map((section) => section.slug), [
-    'overview', 'employees', 'teams', 'organizations', 'catalogs', 'catalog-import', 'workflow-templates',
-    'sources', 'mail', 'journal', 'personal-data', 'retention'
+    'overview', 'settings', 'employees', 'teams', 'organizations', 'catalogs', 'catalog-import', 'workflow-templates',
+    'route-versions', 'demand-index', 'people-settings', 'agreement-reporting', 'sources', 'mail', 'modules', 'journal',
+    'personal-data', 'personal-data-requests', 'retention'
   ])
 })

@@ -365,7 +365,7 @@ class OrganizationHistoryHttpTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
+                CREATE TABLE IF NOT EXISTS interaction_events (import_source VARCHAR(300), import_author VARCHAR(200), contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, type VARCHAR(32) NOT NULL, stage_id UUID,
                     stage_name_snapshot VARCHAR(200) NOT NULL, from_stage_name_snapshot VARCHAR(200), comment TEXT,
                     actor_profile_id UUID NOT NULL, owner_manager_id_snapshot UUID, version INTEGER NOT NULL DEFAULT 0,

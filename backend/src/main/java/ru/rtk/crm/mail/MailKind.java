@@ -18,6 +18,7 @@ public enum MailKind {
     ISSUE_RESOLVED("Решение по риску или проблеме", MailTopic.ISSUES, null, true),
     PARTNER_REQUEST("Запрос вузу", null, EnumSet.of(UserRole.PARTNER), true),
     PARTNER_RETURNED("Ответ возвращён на доработку", null, EnumSet.of(UserRole.PARTNER), true),
+    PARTNER_ACCEPTED("Ответ принят школой", MailTopic.PARTNER_ACCEPTED, null, true),
     PARTNER_REPLY("Ответ координатора вуза", MailTopic.PARTNER_REPLIES, null, true),
     SITE_REQUEST("Новая заявка с сайта", MailTopic.SITE_REQUEST, null, true),
     AGENT_PLAN("План ИИ-агента ждёт подтверждения", MailTopic.AGENT_PLANS, null, true),

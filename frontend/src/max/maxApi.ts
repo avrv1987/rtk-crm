@@ -9,6 +9,14 @@ export type TeamIndicators = components['schemas']['TeamIndicators']
 export type Interaction = components['schemas']['Interaction']
 export type Due = MaxAppWork['due']
 
+// Н6 (2.5.3): завершённую работу сервер не меняет — «Шаг выполнен» и комментарий отвечают 409. Кнопки скрываем,
+// пока работу не вернут в работу в CRM.
+export const cardActions = (card: Pick<MaxAppCard, 'interaction'>) => {
+  const open = card.interaction.marks.status !== 'COMPLETED'
+  const hasStep = card.interaction.nextAction !== null || card.interaction.nextActionAt !== null
+  return { step: open && hasStep, comment: open }
+}
+
 export class MaxApiError extends Error {
   readonly status: number
   readonly code: string
@@ -73,35 +81,62 @@ export const createMaxApi = (initData: string, fetchImpl: Fetch = (input, init) 
   return {
     start,
     current: () => session,
-    work: (due: Due, page: number) => call<MaxAppWork>(`/api/max/app/work?due=${due}&page=${page}`),
-    card: (id: string) => call<MaxAppCard>(`/api/max/app/interactions/${encodeURIComponent(id)}`),
+    // Без due сервер сам выбирает первую непустую группу и называет её в ответе (поле due).
+    work: (due: Due | null, page: number, signal?: AbortSignal) => call<MaxAppWork>(
+      `/api/max/app/work?${due === null ? '' : `due=${due}&`}page=${page}`, { signal }
+    ),
+    card: (id: string, signal?: AbortSignal) => call<MaxAppCard>(`/api/max/app/interactions/${encodeURIComponent(id)}`, { signal }),
     comment: (id: string, body: MaxAppComment, key: string) => send<Interaction>(`/api/max/app/interactions/${encodeURIComponent(id)}/comments`, body, key),
     completeStep: (id: string, body: MaxAppStepCompletion, key: string) => send<Interaction>(
       `/api/max/app/interactions/${encodeURIComponent(id)}/step-completions`, body, key
     ),
-    control: () => call<TeamIndicators>('/api/max/app/control')
+    control: (signal?: AbortSignal) => call<TeamIndicators>('/api/max/app/control', { signal })
   }
 }
 
 export type MaxApi = ReturnType<typeof createMaxApi>
 
-/** Что показать вместо приложения, если вход не удался. */
-export const startupProblem = (error: unknown): string => {
+export type ProblemAction = 'close' | 'crm' | 'retry'
+export type Problem = { title: string; text: string; action: ProblemAction }
+
+/**
+ * Экран вместо приложения, если сеанс не открылся или пропал посреди работы (повторный вход после 401 не прошёл).
+ * null — ошибка не фатальная: её показывает плашка с «Повторить» на месте списка.
+ */
+export const problemOf = (error: unknown, atStart: boolean): Problem | null => {
   if (!(error instanceof MaxApiError)) {
-    return 'Не удалось связаться с CRM. Проверьте интернет и откройте приложение снова.'
+    return atStart ? { title: 'Нет связи с CRM', text: 'Проверьте интернет и попробуйте снова.', action: 'retry' } : null
   }
   switch (error.code) {
-    case 'MAX_NOT_LINKED':
-      return 'Аккаунт MAX не подключён к CRM. Откройте CRM на компьютере: меню профиля → «Подключить MAX».'
-    case 'MAX_ROLE_NOT_ALLOWED':
-      return 'Мини-приложение доступно КАМ и руководителю команды. Работайте в основной CRM.'
-    case 'MAX_INIT_DATA_EXPIRED':
-      return 'Приложение открыто слишком давно. Закройте его и откройте снова из бота CRM.'
     case 'MAX_INIT_DATA_INVALID':
-      return 'Откройте мини-приложение из бота CRM в MAX.'
-    case 'NOT_FOUND':
-      return 'Мини-приложение MAX в этой установке CRM не включено.'
+      return { title: 'Откройте из бота', text: 'Откройте мини-приложение кнопкой «Открыть» в сообщении бота CRM в MAX.', action: 'close' }
+    case 'MAX_INIT_DATA_EXPIRED':
+      return {
+        title: 'Сеанс закончился',
+        text: 'Так бывает после 30 минут без действий. Закройте приложение и откройте снова из бота CRM.',
+        action: 'close'
+      }
+    case 'MAX_NOT_LINKED':
+      return {
+        title: 'MAX не подключён к CRM',
+        text: 'Откройте CRM на компьютере: меню профиля → «Подключить MAX». Потом вернитесь сюда.',
+        action: 'crm'
+      }
+    case 'MAX_ROLE_NOT_ALLOWED':
+      return { title: 'Нет доступа', text: 'Мини-приложение доступно КАМ и руководителю команды. Работайте в основной CRM.', action: 'crm' }
     default:
-      return error.message
+      if (!atStart) {
+        return null
+      }
+      return error.code === 'NOT_FOUND'
+        ? { title: 'Недоступно', text: 'Мини-приложение MAX в этой установке CRM не включено.', action: 'close' }
+        : { title: 'Не удалось войти', text: error.message, action: 'retry' }
   }
 }
+
+/** Текст плашки для нефатальной ошибки. */
+export const errorText = (error: unknown) => (
+  error instanceof MaxApiError ? error.message : 'Не удалось связаться с CRM. Проверьте интернет.'
+)
+
+export const isAbort = (error: unknown) => error instanceof DOMException && error.name === 'AbortError'

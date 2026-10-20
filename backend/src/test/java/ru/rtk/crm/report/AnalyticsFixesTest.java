@@ -214,6 +214,9 @@ class AnalyticsFixesTest {
         jdbcTemplate.update("UPDATE interactions SET workflow_template_id = ? WHERE id IN (?, ?)", main, INTERACTION_TWO_PRODUCTS,
                 INTERACTION_WITHOUT_LINKS);
         jdbcTemplate.update("UPDATE interactions SET workflow_template_id = ? WHERE id = ?", courses, INTERACTION_UNASSIGNED);
+        // Этапы карточки, которых нет в шаблоне «ПК», — из прежней версии шаблона (связь с этапом шаблона есть).
+        jdbcTemplate.update("UPDATE interaction_stages SET template_stage_id = RANDOM_UUID() WHERE interaction_id = ? AND stage_order > 0",
+                INTERACTION_UNASSIGNED);
         ru.rtk.crm.interaction.InteractionKindTestSchema.create(jdbcTemplate);
         UUID courseKind = UUID.randomUUID();
         jdbcTemplate.update("INSERT INTO interaction_kinds (id, name, sort_order) VALUES (?, 'Повышение квалификации', 1)", courseKind);
@@ -283,6 +286,29 @@ class AnalyticsFixesTest {
             assertThat(byStage.items()).extracting(StatisticsResult.Item::count).containsExactlyElementsOf(counts);
             assertThat(counts.stream().mapToLong(Long::longValue).sum()).isEqualTo(matrix.total().works());
         }
+    }
+
+    // этап, добавленный КАМ в маршрут карточки, стоит в матрице на своём месте и без пометки «прежний»; прежними
+    // остаются только этапы старых версий шаблона.
+    @Test
+    void stageAddedToACardStandsInItsPlaceAndOnlyOldTemplateStagesAreFormer() {
+        UUID main = routeTemplate("Основной", "Поиск контакта", "Уточнение актуальности", "Встреча", "Подписание");
+        jdbcTemplate.update("UPDATE interactions SET workflow_template_id = ?", main);
+        jdbcTemplate.update("UPDATE interaction_stages SET stage_order = stage_order + 1 WHERE interaction_id = ? AND stage_order > 0",
+                INTERACTION_WITHOUT_LINKS);
+        jdbcTemplate.update("INSERT INTO interaction_stages (id, interaction_id, stage_order, name) VALUES (?, ?, 1, 'Доп. консультация')",
+                UUID.randomUUID(), INTERACTION_WITHOUT_LINKS);
+        jdbcTemplate.update("INSERT INTO interaction_stages (id, interaction_id, stage_order, name, template_stage_id) VALUES (?, ?, 20, 'Старый этап', ?)",
+                UUID.randomUUID(), INTERACTION_TWO_PRODUCTS, UUID.randomUUID());
+
+        Control control = workControlService.control(LEADER_A_PROFILE, ReportFilters.none(), null, null);
+
+        assertThat(control.routes()).singleElement().satisfies(route -> {
+            assertThat(route.stages()).containsExactly("Поиск контакта", "Доп. консультация", "Уточнение актуальности", "Встреча",
+                    "Подписание", "Старый этап");
+            assertThat(route.cardStages()).containsExactly("Доп. консультация");
+            assertThat(route.formerStages()).containsExactly("Старый этап");
+        });
     }
 
     // М08: вехи одинаковы для разных маршрутов — считаются по роли этапа для LMS, а не по названию и номеру этапа.

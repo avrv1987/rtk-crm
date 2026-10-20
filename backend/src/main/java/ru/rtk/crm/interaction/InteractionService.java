@@ -250,13 +250,30 @@ public class InteractionService {
             UUID commandId,
             OffsetDateTime now
     ) {
+        return createImportedInteraction(organizationId, ownerManagerId, title, programId, productId, null, actorProfileId, commandId, now);
+    }
+
+    // Карточка импорта получает шаг по умолчанию из настройки импорта: без шага весь перенесённый портфель сразу попал
+    // бы в «Без шага» у руководителя.
+    public UUID createImportedInteraction(
+            UUID organizationId,
+            UUID ownerManagerId,
+            String title,
+            UUID programId,
+            UUID productId,
+            InteractionNextStep nextStep,
+            UUID actorProfileId,
+            UUID commandId,
+            OffsetDateTime now
+    ) {
         requireWorkableOrganization(organizationRepository.isArchived(organizationId));
         InteractionKindModels.ResolvedRoute route = interactionKindService.route(
                 organizationId, null, programId, productId == null ? List.of() : List.of(productId), null
         );
         return startInteraction(
-                new InteractionStart(organizationId, ownerManagerId, title, null, null, programId, null, List.of(), List.of(),
-                        route.kindId()),
+                new InteractionStart(organizationId, ownerManagerId, title,
+                        nextStep == null ? null : nextStep.nextAction(), nextStep == null ? null : nextStep.nextActionAt(),
+                        programId, null, List.of(), List.of(), route.kindId()),
                 route.template(),
                 actorProfileId,
                 commandId,
@@ -292,6 +309,11 @@ public class InteractionService {
                 commandId,
                 now
         );
+    }
+
+    /** Вид, который правила дают записи источника (сайт, Moodle): карточка для записи ищется только этого вида. */
+    public UUID sourceKind(UUID organizationId, UUID programId, List<UUID> productIds) {
+        return interactionKindService.sourceKind(organizationId, programId, productIds);
     }
 
     // Комментарий источника не меняет этап: событие COMMENTED идёт под командой применения записи, поэтому повтор
@@ -453,13 +475,12 @@ public class InteractionService {
                     .toList();
             if (!missing.isEmpty()) {
                 String prefix = missingDocumentsText(missing);
-                if (comment == null || comment.strip().equals(prefix)) {
+                String explanation = comment == null ? "" : missingDocumentsExplanation(comment, missing);
+                if (explanation.codePoints().noneMatch(Character::isLetterOrDigit)) {
                     throw new InteractionValidationException("comment", prefix
                             + " Объясните в комментарии, почему переходите без них");
                 }
-                if (!comment.startsWith(prefix)) {
-                    comment = optionalText(prefix + " " + comment, "comment", 4_000);
-                }
+                comment = optionalText(prefix + " " + explanation, "comment", 4_000);
             }
         }
         // Условие version в самом UPDATE — вторая линия защиты от потерянного обновления независимо от блокировки строки.
@@ -979,6 +1000,45 @@ public class InteractionService {
         return storeInteraction(commandId, updated);
     }
 
+    // Массовое «Задать шаг карточкам без шага» руководителя. Карточка меняется, только если по правилу «Контроля» она
+    // всё ещё «Без шага или срока»: шаг, заданный КАМ после построения списка, не перезаписывается. Уже введённый
+    // текст шага сохраняется, недостающее берётся из шага по умолчанию. Чужая команда и невидимая карточка пропускаются.
+    @Transactional
+    public boolean assignMissingStep(CrmProfile profile, UUID interactionId, InteractionNextStep step, UUID commandId, OffsetDateTime now) {
+        InteractionRepository.InteractionRow row = interactionRepository.findByIdForUpdate(interactionId).orElse(null);
+        Organization organization = row == null ? null : organizationRepository.findVisibleById(profile, row.organizationId()).orElse(null);
+        if (organization == null || profile.teamId() == null || !profile.teamId().equals(organization.teamId())) {
+            return false;
+        }
+        if (!InteractionDue.NO_NEXT_STEP.matches(row.marks().status(), row.nextAction(), row.nextActionAt(), now)) {
+            return false;
+        }
+        InteractionNextStep resolved = new InteractionNextStep(
+                row.nextAction() != null ? row.nextAction() : step.nextAction(),
+                row.nextActionAt() != null && !row.nextActionAt().isBefore(now) ? row.nextActionAt() : step.nextActionAt()
+        );
+        if (!interactionRepository.touchVersion(interactionId, row.version(), now)) {
+            throw versionConflict(interactionId, row.version());
+        }
+        interactionRepository.updatePlan(interactionId, resolved.nextAction(), resolved.nextActionAt(), row.programId());
+        interactionRepository.insertEvent(
+                UUID.randomUUID(),
+                interactionId,
+                commandId,
+                InteractionEventType.PLAN_UPDATED,
+                currentStage(interactionRepository.findStages(interactionId), row),
+                null,
+                null,
+                "Шаг задан руководителем массово для карточек без шага",
+                resolved,
+                profile.id(),
+                organization.ownerManagerId(),
+                row.version() + 1,
+                now
+        );
+        return true;
+    }
+
     @Transactional
     public Interaction completeStep(
             CrmProfile profile,
@@ -1118,12 +1178,17 @@ public class InteractionService {
         // со сроком. Так она видна в карточке и истории, а «Моя работа» возвращает взаимодействие к этой дате.
         InteractionNextStep resumeStep = resumeOn == null ? null : resumeStep(resumeOn);
         String description = statusDescription(request.status(), reason, resumeOn);
-        // При досрочном возобновлении служебный шаг возврата с прежней датой устарел, а с «Показывать вузу» его ещё и
-        // видит вуз: снимаем его, карточка покажет «Следующий шаг не задан».
+        // При возобновлении служебный шаг возврата устарел, а с «Показывать вузу» его ещё и видит вуз. Пауза заменила им
+        // шаг, который был до неё, — его и возвращаем, если он не был выполнен (тогда у последнего изменения плана до
+        // паузы шаг пустой). Восстановленный или пустой шаг пишется в событие, чтобы следующая пауза нашла его так же.
         if (request.status() == InteractionWorkStatus.ACTIVE && current.status() == InteractionWorkStatus.PAUSED
                 && RESUME_ACTION.equals(row.nextAction())) {
-            interactionRepository.updatePlan(row.id(), null, null, row.programId());
-            description += ". Шаг «" + RESUME_ACTION + "» снят: задайте следующий шаг";
+            Optional<InteractionNextStep> before = interactionRepository.findStepBeforePause(row.id(), RESUME_ACTION)
+                    .filter(step -> step.nextAction() != null && !RESUME_ACTION.equals(step.nextAction()));
+            resumeStep = before.orElse(new InteractionNextStep(null, null));
+            description += before.isPresent()
+                    ? ". Восстановлен шаг до приостановки: «" + before.get().nextAction() + "»"
+                    : ". Шаг «" + RESUME_ACTION + "» снят: задайте следующий шаг";
         }
         return saveMarks(profile, visible, commandId, expectedVersion, next, InteractionEventType.STATUS_CHANGED,
                 description, now, resumeStep);
@@ -1137,6 +1202,30 @@ public class InteractionService {
     /** Начало комментария при переходе без обязательных документов; то же подставляет окно перехода в карточке. */
     public static String missingDocumentsText(List<String> missing) {
         return "Не хватает документов: " + String.join(", ", missing) + ".";
+    }
+
+    // Объяснение без перечня недостающих документов. Клиент может прислать перечень в другом регистре, порядке или без
+    // точки (аудит видов, Н-1): перечень не считается объяснением и в истории не повторяется.
+    static String missingDocumentsExplanation(String comment, List<String> missing) {
+        String rest = comment.strip();
+        String header = "Не хватает документов:";
+        if (!rest.regionMatches(true, 0, header, 0, header.length())) {
+            return rest;
+        }
+        rest = rest.substring(header.length());
+        // Перечень заканчивается точкой или первым словом, которое не название недостающего документа.
+        boolean stripped = true;
+        while (stripped) {
+            rest = rest.replaceFirst("^[\\s,;]+", "");
+            stripped = false;
+            for (String name : missing) {
+                if (rest.regionMatches(true, 0, name, 0, name.length())) {
+                    rest = rest.substring(name.length());
+                    stripped = true;
+                }
+            }
+        }
+        return rest.replaceFirst("^\\.", "").strip();
     }
 
     private LocalDate requiredResumeOn(LocalDate resumeOn) {

@@ -623,26 +623,43 @@ public class SourceRepository {
                 .list();
     }
 
-    // Карточка цикла для потока: начало потока должно попасть в окно цикла. Карточка вообще без циклов подходит в
-    // последнюю очередь, из равных берётся недавно обновлённая.
-    Optional<UUID> findCycleInteraction(UUID organizationId, UUID programId, LocalDate runStartsOn) {
-        return jdbcClient.sql("""
-                SELECT i.id
+    // Карточки цикла для потока того же вида: начало потока должно попасть в окно цикла. Карточка без циклов
+    // подходит во вторую очередь, завершённая без циклов — в последнюю. Возвращаются все карточки лучшей очереди:
+    // если их больше одной, выбор остаётся человеку (аудит видов, С-1).
+    List<UUID> findCycleInteractions(UUID organizationId, UUID programId, UUID kindId, LocalDate runStartsOn) {
+        List<Map.Entry<UUID, Integer>> rows = jdbcClient.sql("""
+                SELECT i.id,
+                       CASE WHEN cycle_start.interaction_id IS NOT NULL OR cycle_next.interaction_id IS NOT NULL THEN 0
+                            WHEN i.work_status <> 'COMPLETED' THEN 1 ELSE 2 END AS candidate_rank
                 FROM interactions i
                 LEFT JOIN interaction_cycles cycle_start ON cycle_start.interaction_id = i.id
                 LEFT JOIN interaction_cycles cycle_next ON cycle_next.previous_interaction_id = i.id
-                WHERE i.organization_id = :organizationId AND i.program_id = :programId
+                WHERE i.organization_id = :organizationId AND i.program_id = :programId AND i.interaction_kind_id = :kindId
                   AND (cycle_start.starts_on IS NULL OR :runStartsOn >= cycle_start.starts_on)
                   AND (cycle_next.starts_on IS NULL OR :runStartsOn < cycle_next.starts_on)
-                ORDER BY CASE WHEN cycle_start.interaction_id IS NULL AND cycle_next.interaction_id IS NULL THEN 1 ELSE 0 END,
-                         i.updated_at DESC, i.id
-                LIMIT 1
+                ORDER BY candidate_rank, i.updated_at DESC, i.id
                 """)
                 .param("organizationId", organizationId)
                 .param("programId", programId)
+                .param("kindId", kindId)
                 .param("runStartsOn", runStartsOn)
-                .query(UUID.class)
-                .optional();
+                .query((resultSet, rowNumber) -> Map.entry(resultSet.getObject("id", UUID.class), resultSet.getInt("candidate_rank")))
+                .list();
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        int best = rows.getFirst().getValue();
+        return rows.stream().filter(row -> row.getValue() == best).map(Map.Entry::getKey).distinct().toList();
+    }
+
+    String interactionTitles(List<UUID> interactionIds) {
+        return jdbcClient.sql("SELECT title FROM interactions WHERE id IN (:ids) ORDER BY title")
+                .param("ids", interactionIds)
+                .query(String.class)
+                .list()
+                .stream()
+                .map(title -> "«" + title + "»")
+                .collect(java.util.stream.Collectors.joining(", "));
     }
 
     // Повтор применения находится по ключу в журнале команд. Карточка из результата принимается, только если
@@ -1077,7 +1094,9 @@ public class SourceRepository {
                 .list();
     }
 
-    Optional<UUID> findLatestInteraction(UUID organizationId, UUID programId, UUID productId) {
+    // Незавершённые карточки вуза с той же программой (или продуктом) и того же вида, что дают правила: заявка не
+    // должна попасть в карточку другого вида или в завершённую (аудит видов, С-1).
+    List<UUID> findOpenInteractions(UUID organizationId, UUID programId, UUID productId, UUID kindId) {
         String condition;
         if (programId != null) {
             condition = "i.program_id = :programId";
@@ -1090,14 +1109,15 @@ public class SourceRepository {
                 SELECT i.id
                 FROM interactions i
                 WHERE i.organization_id = :organizationId AND %s
+                  AND i.interaction_kind_id = :kindId AND i.work_status <> 'COMPLETED'
                 ORDER BY i.updated_at DESC, i.id
-                LIMIT 1
                 """.formatted(condition))
                 .param("organizationId", organizationId)
                 .param("programId", programId)
                 .param("productId", productId)
+                .param("kindId", kindId)
                 .query(UUID.class)
-                .optional();
+                .list();
     }
 
     // Роль и активность проверяются сейчас: ушедший или разжалованный администратор автором запусков по расписанию не

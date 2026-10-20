@@ -50,7 +50,7 @@ import ru.rtk.crm.work.LmsSignalRepository.SignalSource;
         "spring.datasource.url=jdbc:h2:mem:lms_signals;MODE=PostgreSQL;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({OrganizationRepository.class, LmsSignalRepository.class, LmsSignalService.class, LmsWorkLearningService.class,
+@Import({ru.rtk.crm.settings.TestSystemSettings.class, OrganizationRepository.class, LmsSignalRepository.class, LmsSignalService.class, LmsWorkLearningService.class,
         LmsSignalServiceTest.TestBeans.class})
 class LmsSignalServiceTest {
     private static final LmsSignalProperties PROPERTIES = LmsLearningTestBeans.PROPERTIES;

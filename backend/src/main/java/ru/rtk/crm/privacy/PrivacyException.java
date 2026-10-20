@@ -45,6 +45,29 @@ public class PrivacyException extends RuntimeException {
         );
     }
 
+    static PrivacyException requestNotFound() {
+        return new PrivacyException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Обращение не найдено", null);
+    }
+
+    static PrivacyException consentNotFound() {
+        return new PrivacyException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Запись о согласии не найдена", null);
+    }
+
+    static PrivacyException contactRestricted() {
+        return new PrivacyException(HttpStatus.CONFLICT, "PERSONAL_DATA_RESTRICTED",
+                "Обработка данных контакта ограничена по обращению субъекта; снять ограничение может администратор", null);
+    }
+
+    static PrivacyException learnerRestricted() {
+        return new PrivacyException(HttpStatus.CONFLICT, "PERSONAL_DATA_RESTRICTED",
+                "Обработка анкеты ограничена по обращению субъекта; снять ограничение может администратор", null);
+    }
+
+    static PrivacyException consentsDisabled() {
+        return new PrivacyException(HttpStatus.NOT_FOUND, "NOT_FOUND",
+                "Учёт согласий выключен: его включает администратор в разделе «Настройки»", null);
+    }
+
     static PrivacyException learnerNotFound() {
         return new PrivacyException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Слушатель не найден", null);
     }

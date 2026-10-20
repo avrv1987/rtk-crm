@@ -152,6 +152,14 @@ public class LearnerRepository {
                 .list();
     }
 
+    List<UUID> findEncryptedIdsAfter(UUID after, int limit) {
+        return jdbcClient.sql("SELECT id FROM learners WHERE fields IS NOT NULL AND id > :after ORDER BY id LIMIT :limit")
+                .param("after", after)
+                .param("limit", limit)
+                .query(UUID.class)
+                .list();
+    }
+
     long countWithOtherKey(String activeVersion) {
         return jdbcClient.sql("SELECT COUNT(*) FROM learners WHERE key_version <> :activeVersion")
                 .param("activeVersion", activeVersion)

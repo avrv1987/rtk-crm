@@ -27,6 +27,8 @@ import ru.rtk.crm.interaction.CommandOperation;
 import ru.rtk.crm.interaction.InteractionConflictException;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.privacy.RetentionProperties;
+import ru.rtk.crm.settings.SystemSetting;
+import ru.rtk.crm.settings.SystemSettings;
 
 @Service
 public class EnrolmentStreamService {
@@ -44,6 +46,7 @@ public class EnrolmentStreamService {
     private final AuditJournalRepository auditJournalRepository;
     private final EnrolmentCommands commands;
     private final EnrolmentBatchRepository batchRepository;
+    private final SystemSettings settings;
 
     EnrolmentStreamService(
             EnrolmentAccess enrolmentAccess,
@@ -53,7 +56,8 @@ public class EnrolmentStreamService {
             RetentionProperties retentionProperties,
             AuditJournalRepository auditJournalRepository,
             EnrolmentCommands commands,
-            EnrolmentBatchRepository batchRepository
+            EnrolmentBatchRepository batchRepository,
+            SystemSettings settings
     ) {
         this.enrolmentAccess = enrolmentAccess;
         this.enrolmentRepository = enrolmentRepository;
@@ -63,6 +67,7 @@ public class EnrolmentStreamService {
         this.auditJournalRepository = auditJournalRepository;
         this.commands = commands;
         this.batchRepository = batchRepository;
+        this.settings = settings;
     }
 
     EnrolmentStreamsView streams(CrmProfile actor) {
@@ -105,6 +110,48 @@ public class EnrolmentStreamService {
         EnrolmentStreamView view = view(streamId);
         commands.complete(reservation, view);
         return view;
+    }
+
+    // Уточнение курса Moodle: те же права, что на сопоставления курсов (администратор) и на поток (менеджер учебного
+    // процесса). Номера не сверяются с Moodle сразу: неверный курс покажет ошибка строки при передаче.
+    @Transactional
+    EnrolmentStreamView updateMoodleCourse(CrmProfile actor, String id, StreamMoodleCourseUpdate request, String idempotencyKey,
+                                           String requestId) {
+        enrolmentAccess.requireOperatorOrAdmin(actor);
+        UUID streamId = EnrolmentAccess.parseId(id);
+        if (request == null || request.version() == null || request.version() < 0) {
+            throw new InteractionValidationException("version", "Укажите версию потока");
+        }
+        if (request.courseId() != null && request.courseId() <= 0) {
+            throw new InteractionValidationException("courseId", "Номер курса Moodle — целое число больше нуля");
+        }
+        if (request.groupId() != null && (request.groupId() <= 0 || request.courseId() == null)) {
+            throw new InteractionValidationException("groupId", request.courseId() == null
+                    ? "Группа задаётся вместе с курсом" : "Номер группы Moodle — целое число больше нуля");
+        }
+        EnrolmentCommands.Reservation reservation = commands.reserve(actor.id(), CommandOperation.UPDATE_STREAM_MOODLE_COURSE,
+                idempotencyKey, commands.fingerprint(Arrays.asList(streamId, request.version(), request.courseId(), request.groupId())));
+        if (reservation.repeated()) {
+            return commands.read(reservation.previousResult(), EnrolmentStreamView.class);
+        }
+        StreamSummary stream = summary(streamId);
+        if (stream.version() != request.version()) {
+            throw InteractionConflictException.enrolmentStreamVersion(stream.version());
+        }
+        if (!enrolmentRepository.updateMoodleCourse(streamId, request.version(), request.courseId(), request.groupId(),
+                OffsetDateTime.now())) {
+            throw InteractionConflictException.enrolmentStreamVersion(stream.version());
+        }
+        auditJournalRepository.record(AuditAction.STREAM_MOODLE_COURSE_CHANGED, actor.id(), STREAM_OBJECT_TYPE, streamId, stream.title(),
+                "курс Moodle: " + moodle(stream.moodleCourseId(), stream.moodleGroupId()) + " → "
+                        + moodle(request.courseId(), request.groupId()), requestId);
+        EnrolmentStreamView view = view(streamId);
+        commands.complete(reservation, view);
+        return view;
+    }
+
+    private static String moodle(Long courseId, Long groupId) {
+        return courseId == null ? "по программе" : courseId + (groupId == null ? "" : ", группа " + groupId);
     }
 
     // От даты окончания считается срок хранения анкет, а ночная задача обезличивает их необратимо. Поэтому год с
@@ -174,7 +221,8 @@ public class EnrolmentStreamService {
     }
 
     private EnrolmentStreamView view(StreamSummary stream, List<StreamEnrolmentRow> rows) {
-        Period term = retentionProperties.learnerProfiles();
+        Period term = retentionProperties.learnerProfiles() == null ? null
+                : settings.months(SystemSetting.RETENTION_LEARNER_PROFILES, retentionProperties.learnerProfiles());
         return new EnrolmentStreamView(
                 stream.id(),
                 stream.courseName(),
@@ -187,7 +235,9 @@ public class EnrolmentStreamService {
                 (int) rows.stream().filter(row -> completeness(row.status(), row.missingFields()).complete()).count(),
                 (int) rows.stream().filter(row -> row.lmsExportedAt() != null).count(),
                 (int) rows.stream().filter(row -> row.lmsTransferredAt() != null).count(),
-                (int) rows.stream().filter(row -> row.lmsTransferredAt() == null).count()
+                (int) rows.stream().filter(row -> row.lmsTransferredAt() == null).count(),
+                stream.moodleCourseId(),
+                stream.moodleGroupId()
         );
     }
 

@@ -6,8 +6,9 @@ import { Segmented } from '../../shared/ui/Segmented'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { terms } from '../../shared/ui/terms'
 import { agreementsApi, type AgreementRegistryRow } from '../agreements/agreementsApi'
+import { demandReportHash } from '../reports/reportsRoute'
 import { emptyRegistryFilters } from '../agreements/agreementModel'
-import { defaultStuckDays, emptyControlFilters } from './controlModel'
+import { emptyControlFilters } from './controlModel'
 import {
   changeHref,
   changeText,
@@ -19,7 +20,12 @@ import {
   teamChanges,
   teamHref,
   teamOverviews,
+  topDemandDays,
+  topDemandRequest,
+  topDemandRows,
+  topDemandSize,
   type Change,
+  type TopDemandRow,
   type Period,
   type Share
 } from './overviewModel'
@@ -39,6 +45,7 @@ type Loaded = {
   periods: { current: Period; previous: Period }
   portfolio: PortfolioChange | null
   coverage: LearningCoverage | null
+  demand: { period: Period; rows: TopDemandRow[] } | null
 }
 
 type State = { kind: 'loading' } | { kind: 'ready'; data: Loaded } | { kind: 'failed'; error: unknown }
@@ -72,18 +79,22 @@ export const TeamsOverview = ({ onSessionExpired, onProfileUnavailable }: Overvi
   const load = useCallback(async (window: Window) => {
     setState({ kind: 'loading' })
     const periods = comparisonPeriods(todayInMoscow(), Number(window))
+    const demandPeriod = comparisonPeriods(todayInMoscow(), topDemandDays).current
     try {
       // Состав и покрытие — дополнительные блоки: их сбой не скрывает основную сводку.
-      const [control, summary, agreements, current, previous, portfolio, coverage] = await Promise.all([
+      const [control, summary, agreements, current, previous, portfolio, coverage, demand] = await Promise.all([
         apiClient.getWorkControl(emptyControlFilters),
-        apiClient.getTeamsSummary(defaultStuckDays),
+        apiClient.getTeamsSummary(),
         agreementsApi.registry(emptyRegistryFilters),
         apiClient.getWorkControl({ ...emptyControlFilters, ...periods.current }),
         apiClient.getWorkControl({ ...emptyControlFilters, ...periods.previous }),
         apiClient.getPortfolioChange(periods.current.from, periods.current.to).catch(() => null),
-        apiClient.getLearningCoverage().catch(() => null)
+        apiClient.getLearningCoverage().catch(() => null),
+        apiClient.previewReport(topDemandRequest(demandPeriod.from, demandPeriod.to), 0, topDemandSize)
+          .then((preview) => ({ period: demandPeriod, rows: topDemandRows(preview.items) }))
+          .catch(() => null)
       ])
-      setState({ kind: 'ready', data: { control, summary, agreements, current, previous, periods, portfolio, coverage } })
+      setState({ kind: 'ready', data: { control, summary, agreements, current, previous, periods, portfolio, coverage, demand } })
     } catch (error) {
       if (error instanceof ApiError && error.code === 'UNAUTHENTICATED') {
         onSessionExpired()
@@ -144,7 +155,7 @@ export const TeamsOverview = ({ onSessionExpired, onProfileUnavailable }: Overvi
               <th scope="col">Активные взаимодействия</th>
               <th scope="col">Просрочено</th>
               <th scope="col">Без шага или срока</th>
-              <th scope="col">{`На этапе дольше ${defaultStuckDays} дн.`}</th>
+              <th scope="col">{`На этапе дольше ${data.summary.stuckDays} дн.`}</th>
               <th scope="col">Проблемы и риски</th>
               <th scope="col">Вузы без КАМ</th>
               <th scope="col">Вузы без работы</th>
@@ -159,7 +170,7 @@ export const TeamsOverview = ({ onSessionExpired, onProfileUnavailable }: Overvi
                 </td>
                 <td data-label="Просрочено"><ShareLink share={team.overdue} of="со сроком" href={teamHref(team.teamId, 'OVERDUE')} tone /></td>
                 <td data-label="Без шага или срока"><ShareLink share={team.noNextStep} of="активных" href={teamHref(team.teamId, 'NO_NEXT_STEP')} /></td>
-                <td data-label={`На этапе дольше ${defaultStuckDays} дн.`}><ShareLink share={team.stuck} of="активных" href={teamHref(team.teamId, 'STUCK')} /></td>
+                <td data-label={`На этапе дольше ${data.summary.stuckDays} дн.`}><ShareLink share={team.stuck} of="активных" href={teamHref(team.teamId, 'STUCK')} /></td>
                 <td data-label="Проблемы и риски"><ShareLink share={team.issues} of="активных" href={teamHref(team.teamId, 'ISSUES')} tone /></td>
                 <td data-label="Вузы без КАМ"><ShareLink share={team.unassigned} of="вузов" href={teamHref(team.teamId, 'UNASSIGNED')} tone /></td>
                 <td data-label="Вузы без работы"><ShareLink share={team.idle} of="вузов" href={teamHref(team.teamId, 'IDLE')} /></td>
@@ -219,6 +230,39 @@ export const TeamsOverview = ({ onSessionExpired, onProfileUnavailable }: Overvi
           ))}
         </tbody>
       </table>
+
+      {data.demand !== null && (
+        <>
+          <h2 className="overview__title">{`Топ-${topDemandSize} программ по востребованности`}</h2>
+          <p className="control-muted">
+            {`За ${topDemandDays} дней (${periodText(data.demand.period)}), индекс М17 — как в отчёте «Востребованность программ». `}
+            Покрытие показывает, на какую долю веса компонентов опирается индекс; программы с «данных недостаточно» в топ не входят.
+            {' '}<a href={demandReportHash(data.demand.period.from, data.demand.period.to)}>Полный отчёт</a>
+          </p>
+          {data.demand.rows.length === 0 ? <p className="control-empty">Ни у одной программы не хватает данных для индекса.</p> : (
+            <table className="control-table overview__table">
+              <thead>
+                <tr>
+                  <th scope="col">Место</th>
+                  <th scope="col">Программа</th>
+                  <th scope="col">Индекс (0–100)</th>
+                  <th scope="col">Покрытие</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.demand.rows.map((row) => (
+                  <tr key={`${row.place}-${row.program}`}>
+                    <td data-label="Место">{row.place}</td>
+                    <th scope="row" data-label="Программа">{row.program}</th>
+                    <td data-label="Индекс (0–100)">{row.index}</td>
+                    <td data-label="Покрытие">{row.coverage}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
 
       {data.portfolio !== null && (
         <>

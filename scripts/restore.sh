@@ -73,5 +73,7 @@ read_archive "$reports_archive" | compose run --rm --no-deps -T --user root --en
     if [ "$1" = restore ]; then tar -C "$APP_REPORTS_STORAGE_ROOT" --no-same-owner -xf -; fi &&
     chown -R crm:crm "$APP_REPORTS_STORAGE_ROOT"
 ' sh "$reports_mode"
-compose up -d --wait --build keycloak clamav backend web
+# restore-check.sh восстанавливает во временный проект без запуска сервисов (RESTORE_SERVICES пусто) и поднимает нужные сам.
+read -r -a services <<< "${RESTORE_SERVICES-keycloak clamav backend web}"
+((${#services[@]} == 0)) || compose up -d --wait --build "${services[@]}"
 printf 'Restore completed from %s\n' "$backup_dir"

@@ -20,7 +20,9 @@ import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { Toast } from '../../shared/ui/Toast'
 import { terms } from '../../shared/ui/terms'
 import { CardDialog } from '../interactions/cardUi'
+import { ConsentsBlock } from './ConsentsBlock'
 import { commandErrorMessage, formatDateTime, handledSessionError, type SessionHandlers } from './adminShared'
+import { formatCalendarDate as formatDate } from '../../shared/format/datetime'
 import { saveFile, today } from './saveFile'
 import './adminUi.css'
 import './adminSecurity.css'
@@ -60,7 +62,20 @@ type Selection = {
   profileIds: string[]
   attachmentIds: string[]
   learnerIds: string[]
+  peopleRecords: PersonRef[]
 }
+
+type PersonRecord = SubjectSearchResult['peopleRecords'][number]
+type PersonRef = { id: string; kind: PersonRecord['kind'] }
+
+const personRecordLabels: Record<PersonRecord['kind'], string> = {
+  TEACHING_PERFORMER: 'исполнитель преподавания в вузе',
+  INTERN: 'стажёр',
+  MENTOR: 'наставник стажировки',
+  QUALIFICATION: 'повышение квалификации преподавателя'
+}
+
+const sameRef = (left: PersonRef, right: PersonRef) => left.id === right.id && left.kind === right.kind
 
 type ReasonDraft = { reason: PersonalDataReason | ''; comment: string }
 
@@ -82,7 +97,7 @@ const emptyDraft: QueryDraft = { name: '', email: '', phone: '', snils: '', othe
 export const singleWordSpellings = (value: string) => value.split(/[,;\n]/)
   .map((part) => part.trim())
   .filter((part) => part !== '' && part.split(/[^\p{L}\p{N}]+/u).filter((word) => word.length >= 2).length < 2)
-const emptySelection: Selection = { contactIds: [], profileIds: [], attachmentIds: [], learnerIds: [] }
+const emptySelection: Selection = { contactIds: [], profileIds: [], attachmentIds: [], learnerIds: [], peopleRecords: [] }
 const emptyReason: ReasonDraft = { reason: '', comment: '' }
 
 const reasonLabels: Record<PersonalDataReason, string> = {
@@ -105,6 +120,7 @@ const previewLines = (preview: AnonymizationResult) => [
   ['Контакты', preview.contacts],
   ['Профили сотрудников', preview.profiles],
   ['Анкеты слушателей', preview.learners],
+  ['Записи учёта людей и часов', preview.peopleRecords],
   ['Упоминания в карточках взаимодействий', preview.mentions],
   ['Имена файлов — будут переименованы', preview.attachmentsRenamed],
   ['Записи источников', preview.sourceRecords],
@@ -234,6 +250,7 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
   const [selection, setSelection] = useState<Selection>(emptySelection)
   const [edit, setEdit] = useState<ContactEdit | null>(null)
   const [restriction, setRestriction] = useState<RestrictState | null>(null)
+  const [consentsFor, setConsentsFor] = useState<{ subjectType: 'CONTACT' | 'LEARNER'; subjectId: string; title: string } | null>(null)
   const [anonymize, setAnonymize] = useState<AnonymizeState>({ kind: 'idle' })
   const [outcome, setOutcome] = useState<AnonymizationResult | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -323,7 +340,7 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
     try {
       const row = await apiClient.sendSubjectReportByMail(mailTo.trim(), query)
       setMailNotice(row.status === 'SENT'
-        ? `Сведения отправлены на ${row.recipient ?? 'указанный адрес'}${row.transport === 'STUB' ? ' (заглушка: письмо в журнале почты, наружу не ушло)' : ''}.`
+        ? `Сведения отправлены на ${row.recipient ?? 'указанный адрес'}${row.transport === 'STUB' ? ' (режим «Без отправки»: письмо в журнале почты, наружу не ушло)' : ''}.`
         : `Письмо поставлено в очередь${row.error ? `: ${row.error}` : ''}. Статус — в «Администрирование → Почта».`)
       setMailTo(null)
     } catch (error) {
@@ -495,6 +512,7 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
                           label={`Действия: ${contact.name}`}
                           items={[
                             { label: 'Уточнить', onSelect: () => beginEdit(contact) },
+                            { label: 'Согласия', onSelect: () => setConsentsFor({ subjectType: 'CONTACT', subjectId: contact.id, title: contact.name }) },
                             {
                               label: contact.status === 'RESTRICTED' ? 'Снять ограничение' : 'Ограничить обработку',
                               onSelect: () => openRestriction({ kind: 'contact', contact, restricted: contact.status !== 'RESTRICTED' })
@@ -563,6 +581,9 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
                             onSelect: () => openRestriction({
                               kind: 'learner', learner, title: `слушатель №${index + 1}`, restricted: learner.status !== 'RESTRICTED'
                             })
+                          }, {
+                            label: 'Согласия',
+                            onSelect: () => setConsentsFor({ subjectType: 'LEARNER', subjectId: learner.id, title: `слушатель №${index + 1}` })
                           }]}
                         />
                       </div>
@@ -579,14 +600,15 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
 
   const renderResult = (query: SubjectQuery, result: SubjectSearchResult) => {
     const selectedCount = selection.contactIds.length + selection.profileIds.length + selection.attachmentIds.length
-      + selection.learnerIds.length
+      + selection.learnerIds.length + selection.peopleRecords.length
     const counts = [
       ['contacts', result.contacts.length],
       ['profiles', result.profiles.length],
       ['mentions', result.mentions.length],
       ['attachments', result.attachments.length],
       ['sources', result.sourceRecords.length],
-      ['learners', result.learners.length]
+      ['learners', result.learners.length],
+      ['people', result.peopleRecords.length]
     ] as const
     const total = counts.reduce((sum, [, count]) => sum + count, 0)
     const nothingFound = total === 0
@@ -766,6 +788,58 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
               субъекта может менеджер учебного процесса в анкете слушателя.
             </p>
             {renderLearners(result.learners)}
+          </Group>
+        )}
+
+        {result.peopleRecords.length > 0 && (
+          <Group id="subject-people-title" title="Учёт людей и часов" count={result.peopleRecords.length} open={isOpen('people')}>
+            <p className="admin-form__hint">
+              Записи вкладки «Люди и часы» карточек вузов, где субъект указан по ФИО или почте. При обезличивании ФИО
+              заменяется отметкой, почта, номер удостоверения и документ стажёра стираются; часы и даты остаются.
+            </p>
+            <div className="admin-table-wrap">
+              <table className="admin-table" aria-label="Учёт людей и часов">
+                <thead>
+                  <tr>
+                    <th scope="col">Запись</th>
+                    <th scope="col">Вуз</th>
+                    <th scope="col">Период</th>
+                    <th scope="col">Обезличить</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.peopleRecords.map((record) => {
+                    const ref = { id: record.id, kind: record.kind }
+                    const checked = selection.peopleRecords.some((item) => sameRef(item, ref))
+                    return (
+                      <tr key={`${record.kind}:${record.id}`}>
+                        <td className="admin-table__cell-main">
+                          <span className="admin-table__main">{record.name}</span>
+                          <span className="admin-table__sub">{personRecordLabels[record.kind]}{record.details === null ? '' : ` · ${record.details}`}</span>
+                        </td>
+                        <td data-label="Вуз">{record.organizationName}</td>
+                        <td data-label="Период">{formatDate(record.startsOn)} – {formatDate(record.endsOn)}</td>
+                        <td data-label="Обезличить">
+                          {record.anonymized ? 'обезличена' : (
+                            <input
+                              type="checkbox"
+                              aria-label={`Обезличить запись: ${personRecordLabels[record.kind]}`}
+                              checked={checked}
+                              onChange={() => setSelection({
+                                ...selection,
+                                peopleRecords: checked
+                                  ? selection.peopleRecords.filter((item) => !sameRef(item, ref))
+                                  : [...selection.peopleRecords, ref]
+                              })}
+                            />
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           </Group>
         )}
 
@@ -1033,12 +1107,21 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
         )}
       </CardDialog>
 
+      <CardDialog open={consentsFor !== null} title={consentsFor === null ? '' : `Согласия: ${consentsFor.title}`}
+        onClose={() => setConsentsFor(null)}>
+        {consentsFor !== null && (
+          <ConsentsBlock key={consentsFor.subjectId} canEdit={false}
+            scope={{ kind: 'admin', subjectType: consentsFor.subjectType, subjectId: consentsFor.subjectId }}
+            onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
+        )}
+      </CardDialog>
+
       <Toast
         persistent
         message={outcome === null ? null : (
           <>
             Обезличено контактов: {outcome.contacts}, профилей: {outcome.profiles}, анкет слушателей:
-            {' '}{outcome.learners}, упоминаний:
+            {' '}{outcome.learners}, записей учёта людей и часов: {outcome.peopleRecords}, упоминаний:
             {' '}{outcome.mentions}, переименовано файлов: {outcome.attachmentsRenamed}, записей источников:
             {' '}{outcome.sourceRecords}, служебных записей:
             {' '}{outcome.technicalRecords}; удалено файлов: {outcome.attachmentsDeleted}, файлов отчётов:

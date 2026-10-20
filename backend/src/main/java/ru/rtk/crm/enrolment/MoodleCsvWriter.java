@@ -17,11 +17,11 @@ final class MoodleCsvWriter {
     private MoodleCsvWriter() {
     }
 
-    static byte[] write(List<LearnerProfile> profiles) {
+    static byte[] write(List<LearnerProfile> profiles, LmsLogin login) {
         StringBuilder csv = new StringBuilder(String.join(",", HEADER)).append("\r\n");
         for (LearnerProfile profile : profiles) {
             String email = profile.email() == null ? null : profile.email().strip().toLowerCase(Locale.ROOT);
-            csv.append(Stream.of(email, profile.firstName(), profile.lastName(), profile.middleName(), email, profile.phone())
+            csv.append(Stream.of(login.of(email), profile.firstName(), profile.lastName(), profile.middleName(), email, profile.phone())
                     .map(MoodleCsvWriter::cell)
                     .collect(Collectors.joining(","))).append("\r\n");
         }

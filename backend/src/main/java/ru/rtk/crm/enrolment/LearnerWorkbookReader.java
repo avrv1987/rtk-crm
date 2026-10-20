@@ -96,7 +96,7 @@ public class LearnerWorkbookReader {
         }
     }
 
-    private void checkAggregateZipSize(MultipartFile file) throws IOException {
+    public static void checkAggregateZipSize(MultipartFile file) throws IOException {
         byte[] signature = new byte[4];
         try (InputStream input = file.getInputStream()) {
             if (input.readNBytes(signature, 0, 4) < 4 || signature[0] != 0x50 || signature[1] != 0x4B) {

@@ -1,4 +1,4 @@
-import type { LearningCoverage, PortfolioChangeRow, TeamsSummary, WorkControl, WorkControlItem } from '../../shared/api/client'
+import type { LearningCoverage, PortfolioChangeRow, ReportPreviewRequest, TeamsSummary, WorkControl, WorkControlItem } from '../../shared/api/client'
 import { shiftCalendarDate } from '../../shared/format/datetime.ts'
 import type { AgreementRegistryRow } from '../agreements/agreementsApi'
 import { registryTileCounts } from '../agreements/agreementModel.ts'
@@ -139,7 +139,7 @@ export const teamOverviews = (
       overdue: { count: team.totals.overdue, base: count(items, (item) => item.nextActionAt !== null && item.nextActionAt !== undefined) },
       noNextStep: { count: team.totals.noNextStep, base: works },
       issues: { count: team.totals.withIssues, base: works },
-      stuck: { count: count(items, (item) => isStuck(item, defaultStuckDays)), base: works },
+      stuck: { count: count(items, (item) => isStuck(item, summary?.stuckDays ?? defaultStuckDays)), base: works },
       review: {
         total: review.length,
         yellow: review.filter((row) => row.approval?.color === 'YELLOW').length,
@@ -201,3 +201,49 @@ export const changeHref = (teamId: string, period: Period, change: 'NEW' | 'COMP
 )
 
 export const registryHref = (teamId: string, tile: 'EXPIRING' | 'DELAYED') => `#/agreements?team=${teamId}&tile=${tile}`
+
+// Блок «Топ-5 программ» в «Сводке команд» (решение владельца 21.10): тот же запрос отчёта «Востребованность программ»
+// за последние 90 дней без отборов, строки по месту — расчёт тот же, что в отчёте, файле и MCP.
+export const topDemandDays = 90
+export const topDemandSize = 5
+
+export const topDemandRequest = (from: string, to: string): ReportPreviewRequest => ({
+  kind: 'DEMAND',
+  from,
+  to,
+  asOf: null,
+  periodBasis: null,
+  filters: {
+    organizationIds: [],
+    directionIds: [],
+    includeNoDirection: false,
+    programIds: [],
+    includeNoProgram: false,
+    productIds: [],
+    includeNoProduct: false,
+    kindIds: [],
+    managerIds: [],
+    includeNoManager: false,
+    stages: [],
+    organizationType: null,
+    workStatuses: [],
+    flags: [],
+    eventTypes: [],
+    minDaysOnStage: null
+  },
+  columns: ['PROGRAM', 'DEMAND_RANK', 'DEMAND_INDEX', 'DEMAND_COVERAGE'],
+  sortBy: 'DEMAND_INDEX'
+})
+
+export type TopDemandRow = { program: string; place: number; index: string; coverage: string }
+
+// Программы без места («данных недостаточно») в топ не попадают: пустое место — не последнее место.
+export const topDemandRows = (items: Record<string, string | number | null>[]): TopDemandRow[] => items
+  .filter((item) => typeof item.DEMAND_RANK === 'number')
+  .slice(0, topDemandSize)
+  .map((item) => ({
+    program: item.PROGRAM === null || item.PROGRAM === undefined ? 'Без программы' : String(item.PROGRAM),
+    place: Number(item.DEMAND_RANK),
+    index: item.DEMAND_INDEX === null || item.DEMAND_INDEX === undefined ? '—' : String(item.DEMAND_INDEX).replace('.', ','),
+    coverage: item.DEMAND_COVERAGE === null || item.DEMAND_COVERAGE === undefined ? '' : String(item.DEMAND_COVERAGE)
+  }))

@@ -19,7 +19,6 @@ import ru.rtk.crm.work.LmsSignalModels.WorkLearning;
 
 final class ManagerWorkReport {
     static final String UNASSIGNED = "Требует назначения";
-    static final int DEFAULT_STUCK_DAYS = 30;
 
     private static final Comparator<ManagerWorkLine> ORDER = Comparator
             .comparing((ManagerWorkLine line) -> Objects.toString(line.teamName(), ""), String.CASE_INSENSITIVE_ORDER)
@@ -44,7 +43,7 @@ final class ManagerWorkReport {
             case AGREEMENT -> agreementOrganizations.contains(line.organizationId());
             case UNASSIGNED -> line.managerId() == null;
             // На этапе договора, пока договор на согласовании, действуют пороги согласования (AgreementApproval).
-            case STUCK -> active(line) && line.daysOnStage() != null && line.daysOnStage() >= stuckDays
+            case STUCK -> active(line) && line.stuck(stuckDays)
                     && (agreement == null || !agreement.stageUnderApproval());
             case LMS -> learning != null && (learning.signals() > 0 || learning.mismatch() != null && !learning.mismatch().isEmpty());
             case IDLE -> false;

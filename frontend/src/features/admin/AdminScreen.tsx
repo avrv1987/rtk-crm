@@ -12,6 +12,13 @@ import { AuditJournalPanel } from './AuditJournalPanel'
 import { CatalogImportPanel } from './CatalogImportPanel'
 import { PersonalDataPanel } from './PersonalDataPanel'
 import { RetentionPanel } from './RetentionPanel'
+import { DemandIndexPanel } from './DemandIndexPanel'
+import { PeopleSettingsPanel } from './PeopleSettingsPanel'
+import { AgreementReportingPanel } from './AgreementReportingPanel'
+import { ModulesPanel } from './ModulesPanel'
+import { PersonalDataRequestsPanel } from './PersonalDataRequestsPanel'
+import { RouteVersionsPanel } from './RouteVersionsPanel'
+import { SettingsPanel } from './SettingsPanel'
 import { SourcesPanel } from './SourcesPanel'
 import { InteractionKindTeamTemplates } from './InteractionKindTeamTemplates'
 import { WorkflowTemplatesPanel } from './WorkflowTemplatesPanel'
@@ -162,6 +169,13 @@ export const AdminScreen = ({ profile, slug, query = '', onSessionExpired, onPro
         {section === 'journal' && <AuditJournalPanel {...handlers} />}
         {section === 'personal-data' && <PersonalDataPanel {...handlers} />}
         {section === 'retention' && <RetentionPanel {...handlers} />}
+        {section === 'demand-index' && <DemandIndexPanel {...handlers} />}
+        {section === 'people-settings' && <PeopleSettingsPanel {...handlers} />}
+        {section === 'agreement-reporting' && <AgreementReportingPanel query={address.query} {...handlers} />}
+        {section === 'settings' && <SettingsPanel {...handlers} />}
+        {section === 'modules' && <ModulesPanel {...handlers} />}
+        {section === 'route-versions' && <RouteVersionsPanel {...handlers} />}
+        {section === 'personal-data-requests' && <PersonalDataRequestsPanel profileId={profile.id} {...handlers} />}
       </div>
     </div>
   )

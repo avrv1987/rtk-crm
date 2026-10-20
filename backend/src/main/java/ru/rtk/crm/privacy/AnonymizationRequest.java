@@ -9,6 +9,7 @@ public record AnonymizationRequest(
         List<UUID> profileIds,
         List<UUID> attachmentIds,
         List<UUID> learnerIds,
+        List<SubjectPersonRecord.Ref> peopleRecords,
         PersonalDataReason reason,
         String comment
 ) {

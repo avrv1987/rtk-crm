@@ -102,7 +102,7 @@ class LeaderToolsParityTest {
                 mock(AgreementRegistryService.class, RETURNS_DEEP_STUBS),
                 new WorkProperties(30, 14, 1, 3, 60, 25, 12, 90),
                 new McpProperties(true, "crm-mcp", List.of(), 60, 25, 10, 90, "crm-mcp.write", Duration.ofHours(24), 10, 50, java.util.Map.of()),
-                LmsLearningTestBeans.PROPERTIES, mock(AnalyticsTools.class));
+                LmsLearningTestBeans.PROPERTIES, mock(AnalyticsTools.class), new ru.rtk.crm.settings.TestSystemSettings());
     }
 
     @Test
@@ -190,8 +190,8 @@ class LeaderToolsParityTest {
         assertThat(map(all.get("total"))).containsEntry("idleOrganizations", 1L).containsEntry("organizations", 3L);
 
         Map<String, Object> universities = call(ReportScenario.LEADER_A_PROFILE, "team_control", Map.of("organizationType", "UNIVERSITY"));
-        assertThat(map(universities.get("total"))).as("колледж без работы не входит в итог вузов отбора")
-                .containsEntry("idleOrganizations", null).containsEntry("organizations", 1L);
+        assertThat(map(universities.get("total"))).as("колледж без работы не входит в итог отбора университетов")
+                .containsEntry("idleOrganizations", 0L).containsEntry("organizations", 1L);
 
         Map<String, Object> stuck = call(ReportScenario.LEADER_A_PROFILE, "stuck_and_idle", Map.of("productIds",
                 List.of(ReportScenario.PRODUCT_Y.toString())));
@@ -249,7 +249,7 @@ class LeaderToolsParityTest {
         AnalyticsTools analytics = new AnalyticsTools(mock(ru.rtk.crm.report.LearningDynamicsService.class),
                 mock(ru.rtk.crm.work.LmsSignalService.class), mock(ru.rtk.crm.work.LearningTrendService.class), reportService,
                 mock(ru.rtk.crm.report.SigningPlanService.class), LmsLearningTestBeans.PROPERTIES,
-                new McpProperties(true, "crm-mcp", List.of(), 60, 25, 10, 90, "crm-mcp.write", Duration.ofHours(24), 10, 50, java.util.Map.of()));
+                new McpProperties(true, "crm-mcp", List.of(), 60, 25, 10, 90, "crm-mcp.write", Duration.ofHours(24), 10, 50, java.util.Map.of()), new ru.rtk.crm.settings.TestSystemSettings());
         McpTools.Definition definition = analytics.definitions().stream()
                 .filter(item -> item.name().equals("program_demand")).findFirst().orElseThrow();
         for (CrmProfile profile : List.of(ReportScenario.LEADER_A_PROFILE, MANAGEMENT)) {

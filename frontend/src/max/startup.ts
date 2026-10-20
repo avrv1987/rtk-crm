@@ -10,10 +10,15 @@ export type BackButton = {
 
 export type Bridge = {
   initData?: string
+  platform?: string
   BackButton?: BackButton
   enableClosingConfirmation?: () => void
   disableClosingConfirmation?: () => void
   openLink?: (url: string) => void
+  // ready и close есть в скрипте моста, но не описаны в документации MAX: вызываются, только если есть.
+  ready?: () => void
+  close?: () => void
+  HapticFeedback?: { notificationOccurred?: (type: 'success' | 'error' | 'warning') => void }
 }
 
 /** initData из моста MAX, а если мост не успел или недоступен (веб-версия) — из фрагмента адреса. */
@@ -31,32 +36,35 @@ export type Route =
   | { screen: 'card'; id: string }
   | { screen: 'comment'; id: string }
   | { screen: 'step'; id: string }
-  | { screen: 'control' }
 
 const interactionParam = /^i_([0-9a-f]{32})$/
 
 const uuidOf = (hex: string) => `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 
 /**
- * Первый экран по payload кнопки (start_param, уже проверенный сервером): «i_<uuid без дефисов>» — карточка,
- * «control» — «Контроль» руководителя, иначе «Моя работа». Карточка открывается поверх ленты, чтобы «Назад» вёл в неё.
+ * Первый экран по payload кнопки (start_param, уже проверенный сервером): «i_<uuid без дефисов>» — карточка поверх
+ * «Моей работы», чтобы «Назад» вёл в неё; иначе «Моя работа».
  */
-export const initialStack = (startParam: string | null | undefined, canControl: boolean): Route[] => {
+export const initialStack = (startParam: string | null | undefined): Route[] => {
   const match = startParam ? interactionParam.exec(startParam) : null
-  if (match) {
-    return [{ screen: 'work' }, { screen: 'card', id: uuidOf(match[1]) }]
-  }
-  if (startParam === 'control' && canControl) {
-    return [{ screen: 'work' }, { screen: 'control' }]
-  }
-  return [{ screen: 'work' }]
+  return match ? [{ screen: 'work' }, { screen: 'card', id: uuidOf(match[1]) }] : [{ screen: 'work' }]
 }
+
+export type Section = 'work' | 'team'
+
+/** «control» у руководителя открывает раздел «Команда» — без стека, «Назад» там не нужен. */
+export const initialSection = (startParam: string | null | undefined, leader: boolean): Section => (
+  startParam === 'control' && leader ? 'team' : 'work'
+)
 
 export const push = (stack: Route[], route: Route): Route[] => [...stack, route]
 
 export const pop = (stack: Route[]): Route[] => (stack.length > 1 ? stack.slice(0, -1) : stack)
 
-/** Срок шага из поля datetime-local: время московское, как во всей CRM. */
+/** Своя кнопка «Назад» — только когда системной BackButton MAX нет (веб без моста), иначе их было бы две. */
+export const ownBackButton = (bridge: Bridge | undefined, depth: number) => depth > 1 && bridge?.BackButton === undefined
+
+/** Срок шага из полей даты и времени (вид YYYY-MM-DDTHH:mm): время московское, как во всей CRM. */
 export const moscowDateTime = (local: string): string | null => (
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(local) ? `${local}:00+03:00` : null
 )

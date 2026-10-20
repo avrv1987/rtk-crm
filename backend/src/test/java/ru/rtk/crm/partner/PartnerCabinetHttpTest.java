@@ -141,6 +141,7 @@ class PartnerCabinetHttpTest {
     @BeforeEach
     void setUp() throws IOException {
         createSchema();
+        ru.rtk.crm.agreement.AgreementTestSchema.createReporting(jdbcTemplate);
         for (String table : new String[] {
                 "partner_material_receipts", "partner_request_responses", "partner_request_materials", "partner_requests",
                 "audit_events", "crm_profile_events", "contact_events", "agreement_activities", "agreement_status_events", "agreements", "attachments",
@@ -235,6 +236,61 @@ class PartnerCabinetHttpTest {
                 .andExpect(jsonPath("$.requests[0].status").value("ACCEPTED"));
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM audit_events WHERE action = 'PARTNER_RESPONSE_SUBMITTED'",
                 Integer.class)).isEqualTo(1);
+    }
+
+    // Решение владельца 21.10: координатор скачивает свои файлы ответа в отправленных и закрытых запросах — только
+    // проверенные антивирусом и не удалённые; чужие ответы и внутренние файлы школы по этому пути не отдаются.
+    // Приёмка ответа ставит координатору письмо «Ответ принят».
+    @Test
+    void coordinatorDownloadsOnlyOwnCheckedResponseFileAndGetsAcceptanceLetter() throws Exception {
+        String requestId = createRequest(KAM_A, COORDINATOR, List.of()).path("id").asText();
+        MockMultipartFile file = new MockMultipartFile("file", "Свой-список.pdf", "application/pdf",
+                "%PDF-1.4 свой список".getBytes(StandardCharsets.UTF_8));
+        String receipt = respond(PARTNER_A, requestId, 0, "Список во вложении", file, "own-file")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.downloadable").value(true))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        String responseId = objectMapper.readTree(receipt).path("responseId").asText();
+        mockMvc.perform(get("/api/partner/cabinet").with(partnerLogin(PARTNER_A)))
+                .andExpect(jsonPath("$.requests[0].responses[0].responseId").value(responseId))
+                .andExpect(jsonPath("$.requests[0].responses[0].downloadable").value(true));
+        mockMvc.perform(get("/api/partner/responses/{id}/file", responseId).with(partnerLogin(PARTNER_A)))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition", containsString("attachment")))
+                .andExpect(header().string("Content-Type", "application/pdf"));
+
+        review(KAM_A, requestId, 1, "ACCEPTED", null, "accept-own").andExpect(status().isOk());
+        verify(mailNotifications).partnerAccepted(PARTNER_A, ORGANIZATION_A, "Университет А", UUID.fromString(responseId));
+        mockMvc.perform(get("/api/partner/responses/{id}/file", responseId).with(partnerLogin(PARTNER_A)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/partner/responses/{id}/file", responseId).with(partnerLogin(PARTNER_B)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/partner/responses/{id}/file", responseId).with(login(KAM_A)))
+                .andExpect(status().isForbidden());
+        for (UUID other : new UUID[] {INTERNAL_DOCUMENT, SHARED_DOCUMENT, UUID.randomUUID()}) {
+            mockMvc.perform(get("/api/partner/responses/{id}/file", other).with(partnerLogin(PARTNER_A)))
+                    .andExpect(status().isNotFound());
+        }
+
+        jdbcTemplate.update("UPDATE attachments SET status = 'QUARANTINE' WHERE original_name = 'Свой-список.pdf'");
+        mockMvc.perform(get("/api/partner/cabinet").with(partnerLogin(PARTNER_A)))
+                .andExpect(jsonPath("$.requests[0].responses[0].downloadable").value(false));
+        mockMvc.perform(get("/api/partner/responses/{id}/file", responseId).with(partnerLogin(PARTNER_A)))
+                .andExpect(status().isNotFound());
+        jdbcTemplate.update("UPDATE attachments SET status = 'CLEAN', deleted_at = CURRENT_TIMESTAMP WHERE original_name = 'Свой-список.pdf'");
+        mockMvc.perform(get("/api/partner/responses/{id}/file", responseId).with(partnerLogin(PARTNER_A)))
+                .andExpect(status().isNotFound());
+        jdbcTemplate.update("UPDATE attachments SET deleted_at = NULL WHERE original_name = 'Свой-список.pdf'");
+        // Ответ, отправленный другим профилем (прежний координатор того же контакта), — чужой.
+        jdbcTemplate.update("UPDATE partner_request_responses SET submitted_by = ? WHERE id = ?", KAM_OTHER, UUID.fromString(responseId));
+        mockMvc.perform(get("/api/partner/cabinet").with(partnerLogin(PARTNER_A)))
+                .andExpect(jsonPath("$.requests[0].responses[0].downloadable").value(false));
+        mockMvc.perform(get("/api/partner/responses/{id}/file", responseId).with(partnerLogin(PARTNER_A)))
+                .andExpect(status().isNotFound());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM audit_events WHERE action = 'ATTACHMENT_DOWNLOADED' AND actor_profile_id = ?",
+                Integer.class, PARTNER_A)).isEqualTo(2);
     }
 
     // P-08: возврат с причиной, новая версия ответа; вопрос вуза и уточнение школы.
@@ -1065,7 +1121,7 @@ class PartnerCabinetHttpTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
+                CREATE TABLE IF NOT EXISTS interaction_events (import_source VARCHAR(300), import_author VARCHAR(200), contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, type VARCHAR(32) NOT NULL, from_stage_id UUID,
                     occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
                 )

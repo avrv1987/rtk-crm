@@ -142,6 +142,17 @@ app:
     audit-events: ${APP_RETENTION_AUDIT_EVENTS:1095d}
     agent-plans: ${APP_RETENTION_AGENT_PLANS:30d}
     learner-profiles: ${APP_RETENTION_LEARNER_PROFILES:P3Y}
+  # Учёт по ПДн: значения по умолчанию до решения оператора. Сроки хранения, пороги и эти значения администратор
+  # меняет в «Администрирование → Настройки»; правка действует без перезапуска и пишется в журнал.
+  privacy:
+    request-response-days: ${APP_PRIVACY_REQUEST_RESPONSE_DAYS:10}
+    # false — календарные дни; true — рабочие (пн–пт). Праздники не учитываются.
+    request-response-working-days: ${APP_PRIVACY_REQUEST_RESPONSE_WORKING_DAYS:false}
+    request-remind-days: ${APP_PRIVACY_REQUEST_REMIND_DAYS:3}
+    requests-retention: ${APP_PRIVACY_REQUESTS_RETENTION:1095d}
+    consents:
+      contacts: ${APP_PRIVACY_CONSENTS_CONTACTS:false}
+      learners: ${APP_PRIVACY_CONSENTS_LEARNERS:false}
   account-sync:
     base-url: ${APP_OIDC_INTERNAL_BASE_URL:}
     realm: rtk-crm
@@ -174,7 +185,9 @@ app:
     keys:
       v1: ${APP_ENROLMENT_KEYS_V1:}
     fingerprint-key: ${APP_ENROLMENT_FINGERPRINT_KEY:}
-  # MCP для ИИ-агентов (docs/mcp.md). Выключен по умолчанию: без флага /mcp не регистрируется и отвечает 404.
+    # Логин в LMS (Moodle, 3KL): EMAIL — почта в нижнем регистре (по умолчанию), EMAIL_LOCAL_PART — часть до «@».
+    lms-login: ${APP_ENROLMENT_LMS_LOGIN:EMAIL}
+  # MCP для ИИ-агентов. Выключен по умолчанию: без флага /mcp не регистрируется и отвечает 404.
   mcp:
     enabled: ${MCP_ENABLED:false}
     audience: crm-mcp

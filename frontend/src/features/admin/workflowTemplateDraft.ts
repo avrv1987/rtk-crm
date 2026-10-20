@@ -8,6 +8,8 @@ export type StageDraft = {
   requiresAgreement: boolean
   lmsRole: StageLmsRole | null
   documentKinds: string[]
+  /** Норматив этапа в днях; null — «долго на этапе» берёт общий порог из «Настроек». */
+  normDays: number | null
 }
 
 export type TransitionDraft = WorkflowTransitionInput
@@ -19,7 +21,9 @@ export type TemplateDraft = {
   comment: string
 }
 
-export const emptyStage = (): StageDraft => ({ name: '', optional: false, requiresAgreement: false, lmsRole: null, documentKinds: [] })
+export const emptyStage = (): StageDraft => ({
+  name: '', optional: false, requiresAgreement: false, lmsRole: null, documentKinds: [], normDays: null
+})
 
 export const emptyDraft = (): TemplateDraft => ({
   name: '',
@@ -33,7 +37,7 @@ type TemplateLike = Pick<WorkflowTemplate, 'name' | 'stages' | 'transitions'>
 export const draftFromTemplate = (template: TemplateLike): TemplateDraft => {
   const stages = [...template.stages]
     .sort((left, right) => left.order - right.order)
-    .map((stage) => ({ id: stage.id, name: stage.name, optional: stage.optional, ...stagePropertiesOf(stage) }))
+    .map((stage) => ({ id: stage.id, name: stage.name, optional: stage.optional, ...stagePropertiesOf(stage), normDays: stage.normDays ?? null }))
   const orderById = new Map(template.stages.map((stage) => [stage.id, stage.order]))
   const transitions = template.transitions.flatMap((transition) => {
     const fromOrder = orderById.get(transition.fromStageId)
@@ -54,6 +58,7 @@ export const payloadFromDraft = (draft: TemplateDraft): WorkflowTemplateCreate =
     requiresAgreement: stage.requiresAgreement,
     lmsRole: stage.lmsRole,
     documentKinds: stage.documentKinds,
+    normDays: stage.normDays,
     ...(stage.id === undefined ? {} : { id: stage.id })
   })),
   transitions: draft.transitions,
@@ -80,6 +85,10 @@ export const draftProblems = (draft: TemplateDraft): string[] => {
   draft.stages.forEach((stage, index) => {
     if (stage.name.trim().length === 0) {
       problems.push(`Укажите название этапа ${index + 1}.`)
+    }
+    const norm = stage.normDays ?? null
+    if (norm !== null && (!Number.isInteger(norm) || norm < 1 || norm > 3650)) {
+      problems.push(`Норматив этапа ${index + 1} — целое число дней от 1 до 3650 или пусто.`)
     }
   })
   const names = new Set<string>()
@@ -280,7 +289,10 @@ const asTemplateDraft = (value: unknown): TemplateDraft | null => {
     comment: typeof record.comment === 'string' ? record.comment : '',
     stages: stages.filter((stage): stage is StageDraft => typeof stage === 'object' && stage !== null
       && typeof (stage as StageDraft).name === 'string')
-      .map((stage) => ({ ...emptyStage(), ...stage, documentKinds: Array.isArray(stage.documentKinds) ? stage.documentKinds : [] })),
+      .map((stage) => ({
+        ...emptyStage(), ...stage, documentKinds: Array.isArray(stage.documentKinds) ? stage.documentKinds : [],
+        normDays: typeof stage.normDays === 'number' ? stage.normDays : null
+      })),
     transitions: transitions.filter((transition): transition is TransitionDraft => typeof transition === 'object' && transition !== null
       && Number.isInteger((transition as TransitionDraft).fromOrder) && Number.isInteger((transition as TransitionDraft).toOrder))
       .map((transition) => ({ fromOrder: transition.fromOrder, toOrder: transition.toOrder, commentRequired: transition.commentRequired === true }))

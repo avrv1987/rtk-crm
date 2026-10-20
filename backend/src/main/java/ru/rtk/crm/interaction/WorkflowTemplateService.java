@@ -289,8 +289,9 @@ public class WorkflowTemplateService {
         long open = workflowTemplateRepository.countOpenInteractions(templateId);
         if (open > 0) {
             throw new InteractionValidationException("id", "По шаблону идут незавершённые взаимодействия: " + open
-                    + ". Удаление стёрло бы историю версий, и их нельзя было бы обновить; сначала переведите их на другой маршрут"
-                    + " или завершите");
+                    + ". Удаление стёрло бы историю версий, и их нельзя было бы обновить. Перевести карточку на другой шаблон"
+                    + " нельзя: завершите карточки или начните по другому маршруту «Новый цикл». Чтобы шаблон не получали"
+                    + " новые карточки, отключите вид с этим маршрутом или выберите для него другой шаблон");
         }
         List<String> kinds = workflowTemplateRepository.findKindNamesUsing(templateId);
         if (!kinds.isEmpty()) {
@@ -376,6 +377,14 @@ public class WorkflowTemplateService {
         return normalizeWorkflow(request.stages(), request.transitions(), reusableStageIds);
     }
 
+    // Норматив этапа необязателен: без него «долго на этапе» берёт общий порог из «Настроек».
+    private static Integer normDays(Integer value, int position) {
+        if (value != null && (value < 1 || value > 3650)) {
+            throw new InteractionValidationException("stages", "Норматив этапа " + position + " — от 1 до 3650 дней или пусто");
+        }
+        return value;
+    }
+
     private NormalizedWorkflow normalizeWorkflow(
             List<WorkflowStageInput> requestedStages,
             List<WorkflowTransitionInput> requestedTransitions,
@@ -417,7 +426,8 @@ public class WorkflowTemplateService {
                     stage.optional(),
                     Boolean.TRUE.equals(stage.requiresAgreement()),
                     stage.lmsRole(),
-                    documentKinds.normalizeRequired(stage.documentKinds(), "stages")
+                    documentKinds.normalizeRequired(stage.documentKinds(), "stages"),
+                    normDays(stage.normDays(), order + 1)
             ));
         }
         if (requestedTransitions == null) {

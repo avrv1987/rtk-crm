@@ -1,5 +1,6 @@
 package ru.rtk.crm.agreement;
 
+import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
@@ -20,6 +21,7 @@ import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import ru.rtk.crm.agreement.AgreementModels.Activity;
+import ru.rtk.crm.agreement.AgreementModels.ActivityAttribute;
 import ru.rtk.crm.agreement.AgreementModels.ActivityKind;
 import ru.rtk.crm.agreement.AgreementModels.ActivityStatus;
 import ru.rtk.crm.agreement.AgreementModels.Agreement;
@@ -81,7 +83,7 @@ public class AgreementRepository {
 
     public List<ActivityKind> findKinds(boolean includeArchived) {
         return jdbcClient.sql("""
-                SELECT id, name, sort_order, archived, version
+                SELECT id, name, sort_order, archived, version, required_attributes
                 FROM agreement_activity_kinds
                 %s
                 ORDER BY sort_order, name, id
@@ -91,7 +93,7 @@ public class AgreementRepository {
     }
 
     public Optional<ActivityKind> findKind(UUID id) {
-        return jdbcClient.sql("SELECT id, name, sort_order, archived, version FROM agreement_activity_kinds WHERE id = :id")
+        return jdbcClient.sql("SELECT id, name, sort_order, archived, version, required_attributes FROM agreement_activity_kinds WHERE id = :id")
                 .param("id", id)
                 .query(this::mapKind)
                 .optional();
@@ -109,16 +111,19 @@ public class AgreementRepository {
                 .update();
     }
 
-    public int updateKind(UUID id, int version, String name, boolean archived, OffsetDateTime now) {
+    public int updateKind(UUID id, int version, String name, boolean archived, List<ActivityAttribute> requiredAttributes,
+                          OffsetDateTime now) {
         return jdbcClient.sql("""
                 UPDATE agreement_activity_kinds
-                SET name = :name, archived = :archived, version = version + 1, updated_at = :now
+                SET name = :name, archived = :archived, required_attributes = :requiredAttributes, version = version + 1,
+                    updated_at = :now
                 WHERE id = :id AND version = :version
                 """)
                 .param("id", id)
                 .param("version", version)
                 .param("name", name)
                 .param("archived", archived)
+                .param("requiredAttributes", attributesText(requiredAttributes))
                 .param("now", now)
                 .update();
     }
@@ -1059,10 +1064,12 @@ public class AgreementRepository {
         jdbcClient.sql("""
                 INSERT INTO agreement_activities (
                     id, agreement_id, kind_id, title, unit, planned_volume, actual_volume, planned_start, planned_end,
-                    actual_start, actual_end, responsible_profile_id, status, version, created_at, updated_at
+                    actual_start, actual_end, responsible_profile_id, status, education_level_id, participants, unit_id, cost,
+                    executor_id, document_note, version, created_at, updated_at
                 ) VALUES (
                     :id, :agreementId, :kindId, :title, :unit, :plannedVolume, :actualVolume, :plannedStart, :plannedEnd,
-                    :actualStart, :actualEnd, :responsibleProfileId, :status, 0, :now, :now
+                    :actualStart, :actualEnd, :responsibleProfileId, :status, :educationLevelId, :participants, :unitId, :cost,
+                    :executorId, :documentNote, 0, :now, :now
                 )
                 """)
                 .param("id", id)
@@ -1078,7 +1085,8 @@ public class AgreementRepository {
                 SET kind_id = :kindId, title = :title, unit = :unit, planned_volume = :plannedVolume,
                     actual_volume = :actualVolume, planned_start = :plannedStart, planned_end = :plannedEnd,
                     actual_start = :actualStart, actual_end = :actualEnd, responsible_profile_id = :responsibleProfileId,
-                    status = :status, version = version + 1, updated_at = :now
+                    status = :status, education_level_id = :educationLevelId, participants = :participants, unit_id = :unitId,
+                    cost = :cost, executor_id = :executorId, document_note = :documentNote, version = version + 1, updated_at = :now
                 WHERE id = :id AND version = :version
                 """)
                 .param("id", id)
@@ -1260,10 +1268,14 @@ public class AgreementRepository {
         List<ActivityHeader> headers = jdbcClient.sql("""
                 SELECT ac.id, ac.agreement_id, ac.kind_id, k.name AS kind_name, ac.title, ac.unit, ac.planned_volume,
                        ac.actual_volume, ac.planned_start, ac.planned_end, ac.actual_start, ac.actual_end,
-                       ac.responsible_profile_id, rp.display_name AS responsible_name, ac.status, ac.version
+                       ac.responsible_profile_id, rp.display_name AS responsible_name, ac.status, ac.version,
+                       ac.education_level_id, lvl.name AS education_level_name, ac.participants, ac.unit_id, ac.cost,
+                       ac.executor_id, ex.name AS executor_name, ac.document_note
                 FROM agreement_activities ac
                 JOIN agreement_activity_kinds k ON k.id = ac.kind_id
                 LEFT JOIN crm_user_profiles rp ON rp.id = ac.responsible_profile_id
+                LEFT JOIN agreement_reference_items lvl ON lvl.id = ac.education_level_id
+                LEFT JOIN agreement_reference_items ex ON ex.id = ac.executor_id
                 WHERE %s
                 ORDER BY k.sort_order, k.name, ac.planned_start NULLS LAST, ac.title, ac.id
                 """.formatted(condition))
@@ -1312,8 +1324,33 @@ public class AgreementRepository {
                 resultSet.getString("name"),
                 resultSet.getInt("sort_order"),
                 resultSet.getBoolean("archived"),
-                resultSet.getInt("version")
+                resultSet.getInt("version"),
+                attributes(resultSet.getString("required_attributes"))
         );
+    }
+
+    // Обязательные атрибуты вида хранятся строкой кодов через запятую: набор маленький и читается только целиком.
+    static List<ActivityAttribute> attributes(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        List<ActivityAttribute> result = new ArrayList<>();
+        for (String code : value.split(",")) {
+            for (ActivityAttribute attribute : ActivityAttribute.values()) {
+                if (attribute.name().equals(code.strip()) && !result.contains(attribute)) {
+                    result.add(attribute);
+                }
+            }
+        }
+        result.sort(Comparator.naturalOrder());
+        return List.copyOf(result);
+    }
+
+    static String attributesText(List<ActivityAttribute> attributes) {
+        if (attributes == null || attributes.isEmpty()) {
+            return null;
+        }
+        return String.join(",", attributes.stream().distinct().sorted().map(Enum::name).toList());
     }
 
     private LinkedAttachment mapAttachment(ResultSet resultSet, int rowNumber) throws SQLException {
@@ -1345,7 +1382,15 @@ public class AgreementRepository {
                 resultSet.getObject("responsible_profile_id", UUID.class),
                 resultSet.getString("responsible_name"),
                 ActivityStatus.valueOf(resultSet.getString("status")),
-                resultSet.getInt("version")
+                resultSet.getInt("version"),
+                resultSet.getObject("education_level_id", UUID.class),
+                resultSet.getString("education_level_name"),
+                resultSet.getObject("participants", Integer.class),
+                resultSet.getObject("unit_id", UUID.class),
+                resultSet.getBigDecimal("cost"),
+                resultSet.getObject("executor_id", UUID.class),
+                resultSet.getString("executor_name"),
+                resultSet.getString("document_note")
         );
     }
 
@@ -1487,8 +1532,21 @@ public class AgreementRepository {
             LocalDate actualStart,
             LocalDate actualEnd,
             UUID responsibleProfileId,
-            ActivityStatus status
+            ActivityStatus status,
+            UUID educationLevelId,
+            Integer participants,
+            UUID unitId,
+            BigDecimal cost,
+            UUID executorId,
+            String documentNote
     ) {
+        public ActivityValues(UUID kindId, String title, String unit, Integer plannedVolume, Integer actualVolume, LocalDate plannedStart,
+                              LocalDate plannedEnd, LocalDate actualStart, LocalDate actualEnd, UUID responsibleProfileId,
+                              ActivityStatus status) {
+            this(kindId, title, unit, plannedVolume, actualVolume, plannedStart, plannedEnd, actualStart, actualEnd, responsibleProfileId,
+                    status, null, null, null, null, null, null);
+        }
+
         Map<String, Object> parameters() {
             Map<String, Object> parameters = new HashMap<>();
             parameters.put("kindId", kindId);
@@ -1502,6 +1560,12 @@ public class AgreementRepository {
             parameters.put("actualEnd", actualEnd);
             parameters.put("responsibleProfileId", responsibleProfileId);
             parameters.put("status", status.name());
+            parameters.put("educationLevelId", educationLevelId);
+            parameters.put("participants", participants);
+            parameters.put("unitId", unitId);
+            parameters.put("cost", cost);
+            parameters.put("executorId", executorId);
+            parameters.put("documentNote", documentNote);
             return parameters;
         }
     }
@@ -1543,7 +1607,15 @@ public class AgreementRepository {
             UUID responsibleProfileId,
             String responsibleName,
             ActivityStatus status,
-            int version
+            int version,
+            UUID educationLevelId,
+            String educationLevelName,
+            Integer participants,
+            UUID unitId,
+            BigDecimal cost,
+            UUID executorId,
+            String executorName,
+            String documentNote
     ) {
         Activity activity(List<LinkedInteraction> interactions, List<LinkedAttachment> attachments) {
             return new Activity(
@@ -1564,7 +1636,15 @@ public class AgreementRepository {
                     status,
                     version,
                     List.copyOf(interactions),
-                    List.copyOf(attachments)
+                    List.copyOf(attachments),
+                    educationLevelId,
+                    educationLevelName,
+                    participants,
+                    unitId,
+                    cost,
+                    executorId,
+                    executorName,
+                    documentNote
             );
         }
     }

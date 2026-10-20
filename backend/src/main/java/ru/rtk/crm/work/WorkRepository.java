@@ -16,6 +16,7 @@ import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
 import ru.rtk.crm.interaction.InteractionDue;
 import ru.rtk.crm.interaction.InteractionFlag;
 import ru.rtk.crm.interaction.InteractionRepository;
+import ru.rtk.crm.interaction.WorkStatusAt;
 import ru.rtk.crm.work.WorkModels.ReminderAgreement;
 import ru.rtk.crm.work.WorkModels.ReminderLicense;
 import ru.rtk.crm.work.WorkModels.ReminderStep;
@@ -31,11 +32,16 @@ public class WorkRepository {
             WHERE i.organization_id IN (SELECT id FROM organizations WHERE %s)
               AND i.work_status = 'ACTIVE'
             """;
+    // «Долго на этапе» считается в Java: порог у каждой работы свой (норматив этапа шаблона или общий), а вычитать
+    // интервал из даты одинаково на H2 и PostgreSQL нельзя.
     private static final String WORK_FLAGS = """
             SELECT %s AS group_id,
             """ + "CASE WHEN " + InteractionDue.OVERDUE.condition() + " THEN 1 ELSE 0 END AS overdue,\n"
             + "CASE WHEN " + InteractionDue.NO_NEXT_STEP.condition() + " THEN 1 ELSE 0 END AS without_next_step,\n" + """
-                   CASE WHEN %s <= :stuckBefore AND NOT %s THEN 1 ELSE 0 END AS stuck,
+                   %s AS stage_entered_at,
+                   CASE WHEN %s THEN 1 ELSE 0 END AS under_approval,
+                   (SELECT ts.norm_days FROM interaction_stages cs JOIN workflow_template_stages ts ON ts.id = cs.template_stage_id
+                    WHERE cs.id = i.current_stage_id) AS norm_days,
             """ + "CASE WHEN " + InteractionFlag.RISK_OR_PROBLEM.condition() + " THEN 1 ELSE 0 END AS at_risk\n";
 
     private static final String COUNTED_LEARNING = """
@@ -56,59 +62,40 @@ public class WorkRepository {
         this.agreementStages = agreementStages;
     }
 
-    public Map<UUID, WorkCounts> countWorkByManager(VisibilityScope scope, OffsetDateTime now, OffsetDateTime stuckBefore) {
+    public Map<UUID, WorkCounts> countWorkByManager(VisibilityScope scope, OffsetDateTime now, int stuckDays) {
         String manager = "CASE WHEN %s THEN NULL ELSE o.owner_manager_id END"
                 .formatted(OrganizationRepository.requiresAssignment("o"));
-        return countWork(manager, scope, now, stuckBefore);
+        return countWork(manager, scope, now, stuckDays);
     }
 
-    public Map<UUID, WorkCounts> countWorkByTeam(VisibilityScope scope, OffsetDateTime now, OffsetDateTime stuckBefore) {
-        return countWork("o.team_id", scope, now, stuckBefore);
+    public Map<UUID, WorkCounts> countWorkByTeam(VisibilityScope scope, OffsetDateTime now, int stuckDays) {
+        return countWork("o.team_id", scope, now, stuckDays);
     }
 
-    private Map<UUID, WorkCounts> countWork(String group, VisibilityScope scope, OffsetDateTime now, OffsetDateTime stuckBefore) {
+    private Map<UUID, WorkCounts> countWork(String group, VisibilityScope scope, OffsetDateTime now, int stuckDays) {
         Map<UUID, WorkCounts> counts = new HashMap<>();
-        jdbcClient.sql("""
-                SELECT work.group_id, COUNT(*) AS interactions, SUM(work.overdue) AS overdue,
-                       SUM(work.without_next_step) AS without_next_step, SUM(work.stuck) AS stuck,
-                       SUM(work.at_risk) AS at_risk
-                FROM (
-                """ + WORK_FLAGS.formatted(group, InteractionRepository.STAGE_ENTERED_AT, agreementStages.stageUnderApprovalCondition("i"))
+        jdbcClient.sql(WORK_FLAGS.formatted(group, InteractionRepository.STAGE_ENTERED_AT,
+                        agreementStages.stageUnderApprovalCondition("i"))
                         + OPEN_WORK.formatted(scope.condition())
-                        + " AND " + OrganizationRepository.currentStatus("o") + "\n" + """
-                ) work
-                GROUP BY work.group_id
-                """)
+                        + " AND " + OrganizationRepository.currentStatus("o"))
                 .params(scope.parameters())
                 .params(agreementStages.currentStageParameters())
                 .params(InteractionDue.parameters(now))
-                .param("stuckBefore", stuckBefore)
-                .query((resultSet, rowNumber) -> counts.put(
-                        resultSet.getObject("group_id", UUID.class),
-                        new WorkCounts(
-                                resultSet.getLong("interactions"),
-                                resultSet.getLong("overdue"),
-                                resultSet.getLong("without_next_step"),
-                                resultSet.getLong("stuck"),
-                                resultSet.getLong("at_risk")
-                        )
-                ))
-                .list();
+                .query(resultSet -> {
+                    OffsetDateTime enteredAt = resultSet.getObject("stage_entered_at", OffsetDateTime.class);
+                    Integer norm = resultSet.getObject("norm_days", Integer.class);
+                    boolean stuck = resultSet.getInt("under_approval") == 0 && enteredAt != null
+                            && !enteredAt.isAfter(now.minusDays(norm == null ? stuckDays : norm));
+                    counts.merge(resultSet.getObject("group_id", UUID.class), new WorkCounts(1,
+                            resultSet.getInt("overdue"), resultSet.getInt("without_next_step"), stuck ? 1 : 0,
+                            resultSet.getInt("at_risk")), WorkCounts::plus);
+                });
         return counts;
     }
 
-    // Статус на момент — последнее событие смены статуса до границы (work_status_after, V47); без таких событий
-    // взаимодействие активно с создания. Созданное позже границы статуса на неё не имеет.
-    private static final String STATUS_AT = """
-            CASE WHEN i.created_at >= :%1$s THEN CAST(NULL AS VARCHAR(16)) ELSE COALESCE(
-                (SELECT se.work_status_after FROM interaction_events se
-                 WHERE se.interaction_id = i.id AND se.type = 'STATUS_CHANGED' AND se.occurred_at < :%1$s
-                 ORDER BY se.occurred_at DESC, se.version DESC LIMIT 1),
-                'ACTIVE') END""";
-
     public List<PortfolioChange.State> findPortfolioStates(VisibilityScope scope, OffsetDateTime fromAt, OffsetDateTime toAt) {
-        return jdbcClient.sql("SELECT t.id AS team_id, t.name AS team_name, " + STATUS_AT.formatted("fromAt") + " AS status_start, "
-                        + STATUS_AT.formatted("toAt") + " AS status_end"
+        return jdbcClient.sql("SELECT t.id AS team_id, t.name AS team_name, " + WorkStatusAt.sql("fromAt") + " AS status_start, "
+                        + WorkStatusAt.sql("toAt") + " AS status_end"
                         + " FROM interactions i JOIN organizations o ON o.id = i.organization_id JOIN teams t ON t.id = o.team_id"
                         + " WHERE i.organization_id IN (" + scope.currentOrganizations() + ")"
                         + " AND o.type <> 'OPEN_ENROLLMENT' AND i.created_at < :toAt")
@@ -497,6 +484,11 @@ public class WorkRepository {
     }
 
     public record WorkCounts(long interactions, long overdue, long withoutNextStep, long stuck, long atRisk) {
+        WorkCounts plus(WorkCounts other) {
+            return new WorkCounts(interactions + other.interactions, overdue + other.overdue,
+                    withoutNextStep + other.withoutNextStep, stuck + other.stuck, atRisk + other.atRisk);
+        }
+
         static final WorkCounts EMPTY = new WorkCounts(0, 0, 0, 0, 0);
     }
 

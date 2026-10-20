@@ -10,6 +10,7 @@ import type {
   StatisticsRequest
 } from '../../shared/api/client'
 import { todayInMoscow } from '../../shared/format/datetime'
+import { demandLinkPeriod } from './reportsRoute'
 import { getModules, withoutPaymentColumns } from '../../shared/modules'
 import {
   agreementColumnTitles,
@@ -22,7 +23,7 @@ import {
 } from './reportAgreement'
 import { defaultPeriod } from './reportPeriods'
 
-export type DemandSort = 'APPLICATIONS' | 'PAID_ORDERS' | 'PAID_STREAMS' | 'PARTICIPANTS' | 'LEARNERS_COMPLETED' | 'PARALLEL_RUNS'
+export type DemandSort = 'DEMAND_INDEX' | 'APPLICATIONS' | 'PAID_ORDERS' | 'PAID_STREAMS' | 'PARTICIPANTS' | 'LEARNERS_COMPLETED' | 'PARALLEL_RUNS'
 
 export type OrganizationTypeFilter = '' | 'UNIVERSITY' | 'COLLEGE' | 'SCHOOL'
 
@@ -84,7 +85,7 @@ export type ReportSelection = {
 export const reportKinds: readonly ReportKind[] = ['PORTFOLIO', 'EVENTS', 'SNAPSHOT', 'DURATION', 'DEMAND', 'AGREEMENTS', 'MANAGER_WORK']
 
 export const demandSorts: readonly DemandSort[] = [
-  'APPLICATIONS', 'PAID_ORDERS', 'PAID_STREAMS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'PARALLEL_RUNS'
+  'DEMAND_INDEX', 'APPLICATIONS', 'PAID_ORDERS', 'PAID_STREAMS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'PARALLEL_RUNS'
 ]
 
 export const availableDemandSorts = (): DemandSort[] => withoutPaymentColumns(demandSorts, getModules())
@@ -180,8 +181,9 @@ export const reportColumns: Record<ReportKind, readonly ReportColumn[]> = {
     'MANAGER', 'DIRECTION', 'PROGRAM', 'PRODUCTS'
   ],
   DEMAND: [
-    'DIRECTION', 'PROGRAM', 'APPLICATIONS', 'PAID_ORDERS', 'PAID_STREAMS', 'PARTICIPANTS', 'LEARNERS_COMPLETED', 'COMPLETION_SHARE',
-    'COMPLETION_BASIS', 'PARALLEL_RUNS', 'MARKET_VACANCIES', 'MARKET_TREND'
+    'DIRECTION', 'PROGRAM', 'DEMAND_RANK', 'DEMAND_INDEX', 'DEMAND_CONTRIBUTIONS', 'DEMAND_COVERAGE', 'DEMAND_TREND',
+    'APPLICATIONS', 'PAID_ORDERS', 'PAID_STREAMS', 'PARTICIPANTS', 'ENROLLED_GROWTH', 'LEARNERS_COMPLETED', 'COMPLETION_SHARE',
+    'COMPLETION_BASIS', 'ACTIVITY_SHARE', 'UNIVERSITY_DEMAND', 'PARALLEL_RUNS', 'MARKET_VACANCIES', 'MARKET_TREND'
   ],
   SNAPSHOT: ['ORGANIZATION', 'INTERACTION', 'DIRECTION', 'PROGRAM', 'PRODUCTS', 'STAGE', 'MANAGER', 'CREATED_AT', 'LAST_EVENT_AT'],
   DURATION: ['TEAM', 'PROGRAM', 'STAGE', 'COMPLETED', 'MEDIAN_DAYS', 'P90_DAYS', 'AVG_DAYS', 'MAX_DAYS', 'CURRENT', 'CURRENT_MAX_DAYS'],
@@ -191,8 +193,8 @@ export const reportColumns: Record<ReportKind, readonly ReportColumn[]> = {
     'CONFIRMATIONS', 'CONFIRMATION_LINKS'
   ],
   MANAGER_WORK: [
-    'MANAGER', 'ORGANIZATION', 'PRODUCTS', 'PROGRAM', 'STAGE_AT_START', 'STAGE_AT_END', 'TRANSITIONS', 'PERIOD_COMMENTS',
-    'NEXT_ACTION', 'NEXT_ACTION_AT', 'OVERDUE_DAYS', 'LMS_LEARNING', 'LMS_CHECK', 'TEAM', 'DIRECTION', 'INTERACTION',
+    'MANAGER', 'ORGANIZATION', 'INTERACTION', 'PRODUCTS', 'PROGRAM', 'STAGE_AT_START', 'STAGE_AT_END', 'TRANSITIONS',
+    'PERIOD_COMMENTS', 'NEXT_ACTION', 'NEXT_ACTION_AT', 'OVERDUE_DAYS', 'LMS_LEARNING', 'LMS_CHECK', 'TEAM', 'DIRECTION',
     'STAGE_POSITION', 'DUE_STATE',
     'DAYS_ON_STAGE', 'WORK_STATUS', 'PROBLEM', 'RISK', 'AGREEMENT_STATUS', 'AGREEMENT'
   ]
@@ -201,7 +203,7 @@ export const reportColumns: Record<ReportKind, readonly ReportColumn[]> = {
 export const availableColumns = (kind: ReportKind): ReportColumn[] => (
   kind === 'DEMAND' ? withoutPaymentColumns(reportColumns.DEMAND, getModules()) : [...reportColumns[kind]]
 )
-export const managerWorkDefaultColumns: readonly ReportColumn[] = reportColumns.MANAGER_WORK.slice(0, 13)
+export const managerWorkDefaultColumns: readonly ReportColumn[] = reportColumns.MANAGER_WORK.slice(0, 14)
 
 const columnTitles: Record<ReportColumn, string> = {
   ORGANIZATION: 'Вуз',
@@ -235,6 +237,14 @@ const columnTitles: Record<ReportColumn, string> = {
   PARALLEL_RUNS: 'Параллельные потоки (Moodle)',
   MARKET_VACANCIES: 'Спрос рынка: вакансии',
   MARKET_TREND: 'Тренд спроса, %',
+  DEMAND_RANK: 'Место',
+  DEMAND_INDEX: 'Индекс востребованности (0–100)',
+  DEMAND_CONTRIBUTIONS: 'Вклад компонентов (почему такое место)',
+  DEMAND_COVERAGE: 'Покрытие индекса',
+  DEMAND_TREND: 'Тренд к прошлому периоду',
+  ENROLLED_GROWTH: 'Прирост записанных к прошлому периоду (Moodle, участия)',
+  ACTIVITY_SHARE: 'Активность за 7 дней, % (Moodle, свежие наблюдения)',
+  UNIVERSITY_DEMAND: 'Спрос вузов: взаимодействия по программе (CRM)',
   ...agreementColumnTitles,
   TEAM: 'Команда',
   COMPLETED: 'Завершённых прохождений',
@@ -320,7 +330,7 @@ export const defaultSelection = (today: Date = new Date(), kind: ReportKind = 'P
   groupBy: 'STAGE',
   chartType: 'BAR',
   seriesBy: null,
-  sortBy: 'APPLICATIONS'
+  sortBy: 'DEMAND_INDEX'
 })
 
 const oneOf = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T => (
@@ -513,7 +523,7 @@ const baseRequest = (selection: ReportSelection) => {
       includeNoProgram: agreements ? false : selection.includeNoProgram,
       productIds: demand || agreements ? [] : selection.productIds,
       includeNoProduct: demand || agreements ? false : selection.includeNoProduct,
-      kindIds: demand || agreements ? [] : selection.kindIds,
+      kindIds: agreements ? [] : selection.kindIds,
 
       managerIds: selection.managerIds,
       includeNoManager: selection.includeNoManager,
@@ -542,3 +552,9 @@ export const toStatisticsRequest = (selection: ReportSelection): StatisticsReque
     ? selection.seriesBy
     : null
 })
+
+// Переход «Полный отчёт» из «Сводки команд»: отчёт открывается за тот же период и без отборов, как посчитан блок.
+export const demandSelectionFromLink = (selection: ReportSelection, query: string, today: Date = new Date()): ReportSelection | null => {
+  const period = demandLinkPeriod(query)
+  return period === null ? null : { ...defaultSelection(today, 'DEMAND'), columns: selection.columns, ...period }
+}

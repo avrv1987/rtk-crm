@@ -115,7 +115,7 @@ public class PartnerCabinetService {
                         .map(document -> document.withReceivedAt(receipts.get(document.id())))
                         .toList(),
                 agreements,
-                partnerRequestService.forPartner(organizationId, scope.contactId())
+                partnerRequestService.forPartner(organizationId, scope.contactId(), partner.id())
         );
     }
 
@@ -123,6 +123,17 @@ public class PartnerCabinetService {
     public PartnerDownload download(CrmProfile partner, UUID attachmentId, String requestId) {
         UUID organizationId = requireOrganization(partner);
         DownloadRow document = partnerCabinetRepository.findDownloadable(organizationId, attachmentId)
+                .orElseThrow(PartnerException::documentNotFound);
+        auditJournalRepository.recordAttachmentAccess(AuditAction.ATTACHMENT_DOWNLOADED, partner.id(), document.id(), requestId);
+        return new PartnerDownload(document, attachmentStorage.open(document.storageKey()));
+    }
+
+    // Свой файл ответа координатор скачивает из кабинета, пока доступ открыт; в журнал — как любое скачивание вложения.
+    @Transactional
+    public PartnerDownload downloadOwnResponse(CrmProfile partner, UUID responseId, String requestId) {
+        PartnerCabinetRepository.PartnerScope scope = partnerCabinetRepository.findScope(partner.id())
+                .orElseThrow(PartnerException::accessClosed);
+        DownloadRow document = partnerRequestService.ownResponseFile(responseId, partner.id(), scope.organizationId(), scope.contactId())
                 .orElseThrow(PartnerException::documentNotFound);
         auditJournalRepository.recordAttachmentAccess(AuditAction.ATTACHMENT_DOWNLOADED, partner.id(), document.id(), requestId);
         return new PartnerDownload(document, attachmentStorage.open(document.storageKey()));

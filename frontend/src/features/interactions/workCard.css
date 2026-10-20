@@ -506,6 +506,13 @@ a.interaction-list-item {
   font-weight: 700;
 }
 
+.work-route__note {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
 .work-route__bar {
   display: flex;
   flex: 1 1 160px;

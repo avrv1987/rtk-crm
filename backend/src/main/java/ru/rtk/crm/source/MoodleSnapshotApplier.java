@@ -238,6 +238,7 @@ public class MoodleSnapshotApplier {
         SyncOutcome outcome;
         Optional<StoredSnapshot> previous = Optional.empty();
         boolean changed = false;
+        boolean ambiguous = false;
         UUID snapshotInteractionId = null;
         if (targets.isEmpty()) {
             result = unmapped(unit, previousInteractionId);
@@ -277,20 +278,37 @@ public class MoodleSnapshotApplier {
                     // в карточку нового.
                     .filter(id -> repository.interactionBelongsTo(id, target.organizationId()))
                     .orElse(null);
-            if (changed) {
-                interactionId = appendEvent(recordId, unit, target, interactionId, observedAt, actorProfileId, now);
+            // Карточка ищется среди карточек того вида, что дают правила (аудит видов, С-1); несколько равных
+            // кандидатов — запись в разбор, а снимок не сохраняется, чтобы следующий запуск попробовал снова.
+            List<UUID> candidates = changed && interactionId == null
+                    ? repository.findCycleInteractions(target.organizationId(), target.programId(),
+                            interactionService.sourceKind(target.organizationId(), target.programId(), List.of()), target.runStartsOn())
+                    : List.of();
+            ambiguous = candidates.size() > 1;
+            if (ambiguous) {
+                result = new ApplyResult(SourceRecordStatus.NEEDS_MAPPING,
+                        "У вуза несколько взаимодействий этой программы и вида для потока: " + repository.interactionTitles(candidates)
+                                + ". Завершите лишнее, смените его вид или свяжите карточки циклом; запись применится при следующем запуске",
+                        target.organizationId(), target.programId(), 1, previousInteractionId);
+                outcome = SyncOutcome.NEEDS_MAPPING;
+            } else {
+                if (changed) {
+                    interactionId = appendEvent(recordId, unit, target,
+                            interactionId != null ? interactionId : candidates.isEmpty() ? null : candidates.getFirst(),
+                            observedAt, actorProfileId, now);
+                }
+                snapshotInteractionId = interactionId;
+                result = new ApplyResult(SourceRecordStatus.APPLIED, null, target.organizationId(), target.programId(), 1,
+                        interactionId == null ? previousInteractionId : interactionId);
+                outcome = !changed ? SyncOutcome.SKIPPED : previous.isEmpty() ? SyncOutcome.CREATED : SyncOutcome.UPDATED;
             }
-            snapshotInteractionId = interactionId;
-            result = new ApplyResult(SourceRecordStatus.APPLIED, null, target.organizationId(), target.programId(), 1,
-                    interactionId == null ? previousInteractionId : interactionId);
-            outcome = !changed ? SyncOutcome.SKIPPED : previous.isEmpty() ? SyncOutcome.CREATED : SyncOutcome.UPDATED;
         }
         if (existing.isPresent()) {
             repository.updateRecord(recordId, version(unit, observedAt), result, runId, now);
         } else {
             repository.insertRecord(recordId, SOURCE, version(unit, observedAt), result, runId, now);
         }
-        if (current.isPresent()) {
+        if (current.isPresent() && !ambiguous) {
             OffsetDateTime changedAt = changed ? observedAt : previous.get().changedAt();
             // Снимок обновляется при каждом наблюдении, а changed_at — только при изменении: по нему определяется
             // версия скрытых сигналов.
@@ -378,11 +396,9 @@ public class MoodleSnapshotApplier {
         )) {
             throw new IllegalStateException("Moodle snapshot was already published for this observation");
         }
-        // Комментарий кладётся в уже существующую карточку: сначала снимка этого потока, затем цикла (вуз, программа,
-        // начало), новая создаётся в последнюю очередь, чтобы данные LMS не плодили карточки.
-        UUID interactionId = knownInteractionId != null
-                ? knownInteractionId
-                : repository.findCycleInteraction(target.organizationId(), target.programId(), target.runStartsOn()).orElse(null);
+        // Комментарий кладётся в уже существующую карточку (снимка этого потока или цикла, её находит publish); новая
+        // создаётся в последнюю очередь, чтобы данные LMS не плодили карточки.
+        UUID interactionId = knownInteractionId;
         if (interactionId == null) {
             interactionId = interactionService.createSourceInteraction(
                     target.organizationId(),

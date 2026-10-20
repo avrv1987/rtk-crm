@@ -7,15 +7,21 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
+import ru.rtk.crm.agreement.ReportingModels.ReportingReminders;
+import ru.rtk.crm.agreement.ReportingSettingsService;
 import ru.rtk.crm.catalog.OrganizationAssignmentCandidate;
 import ru.rtk.crm.catalog.OrganizationAssignmentRepository;
 import ru.rtk.crm.catalog.OrganizationRepository;
 import ru.rtk.crm.catalog.OrganizationRepository.VisibilityScope;
+import ru.rtk.crm.people.PeopleService;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.settings.SystemSetting;
+import ru.rtk.crm.settings.SystemSettings;
 import ru.rtk.crm.work.WorkModels.ManagerIndicators;
 import ru.rtk.crm.work.WorkModels.ReminderDigest;
 import ru.rtk.crm.work.WorkModels.TeamIndicators;
@@ -35,17 +41,28 @@ public class WorkService {
     private final OrganizationAssignmentRepository organizationAssignmentRepository;
     private final WorkRepository workRepository;
     private final WorkProperties properties;
+    private final PeopleService peopleService;
+    // Напоминания отчётности по соглашениям; провайдер, а не прямая зависимость, чтобы сводка работы не тянула весь
+    // модуль договоров туда, где его нет (узкие тестовые контексты).
+    private final ObjectProvider<ReportingSettingsService> reportingSettingsService;
+    private final SystemSettings settings;
 
     public WorkService(
             OrganizationRepository organizationRepository,
             OrganizationAssignmentRepository organizationAssignmentRepository,
             WorkRepository workRepository,
-            WorkProperties properties
+            WorkProperties properties,
+            PeopleService peopleService,
+            ObjectProvider<ReportingSettingsService> reportingSettingsService,
+            SystemSettings settings
     ) {
+        this.peopleService = peopleService;
         this.organizationRepository = organizationRepository;
         this.organizationAssignmentRepository = organizationAssignmentRepository;
         this.workRepository = workRepository;
         this.properties = properties;
+        this.reportingSettingsService = reportingSettingsService;
+        this.settings = settings;
     }
 
     @Transactional(readOnly = true)
@@ -56,7 +73,7 @@ public class WorkService {
         int stuckDays = stuckDays(requestedStuckDays);
         VisibilityScope scope = scope(profile);
         OffsetDateTime now = OffsetDateTime.now();
-        Map<UUID, WorkCounts> work = workRepository.countWorkByManager(scope, now, now.minusDays(stuckDays));
+        Map<UUID, WorkCounts> work = workRepository.countWorkByManager(scope, now, stuckDays);
         Map<UUID, Long> organizations = workRepository.countOrganizationsByManager(scope);
         List<ManagerIndicators> managers = new ArrayList<>();
         for (OrganizationAssignmentCandidate manager : organizationAssignmentRepository.findCandidates(profile.teamId(), profile.id())) {
@@ -77,7 +94,7 @@ public class WorkService {
         int stuckDays = stuckDays(requestedStuckDays);
         VisibilityScope scope = scope(profile);
         OffsetDateTime now = OffsetDateTime.now();
-        Map<UUID, WorkCounts> work = workRepository.countWorkByTeam(scope, now, now.minusDays(stuckDays));
+        Map<UUID, WorkCounts> work = workRepository.countWorkByTeam(scope, now, stuckDays);
         List<TeamSummary> teams = workRepository.countOrganizationsByTeam(scope, LocalDate.now(WorkProperties.ZONE)).stream()
                 .map(team -> {
                     WorkCounts counts = work.getOrDefault(team.teamId(), WorkCounts.EMPTY);
@@ -179,8 +196,23 @@ public class WorkService {
                 workRepository.countFeed(scope, now),
                 profile.role() == UserRole.LEADER
                         ? workRepository.findUnassignedAfterBlock(scope, now.minusDays(UNASSIGNED_SIGNAL_DAYS), limit)
-                        : List.of()
+                        : List.of(),
+                peopleService.frdoReminders(scope, today, limit),
+                reportingReminders(profile)
         );
+    }
+
+    // Только итоги групп ленты — одним запросом. Мини-приложение MAX зовёт его на каждое переключение группы, а полный
+    // reminders() — это ещё десяток запросов (лицензии, циклы, договоры, ФРДО), которые ему не нужны.
+    @Transactional(readOnly = true)
+    public WorkModels.ReminderFeed feed(CrmProfile profile) {
+        requireOwnWork(profile);
+        return workRepository.countFeed(scope(profile), OffsetDateTime.now());
+    }
+
+    private ReportingReminders reportingReminders(CrmProfile profile) {
+        ReportingSettingsService service = reportingSettingsService.getIfAvailable();
+        return service == null ? ReportingReminders.empty() : service.reminders(profile);
     }
 
     @Transactional
@@ -224,7 +256,7 @@ public class WorkService {
 
     private int stuckDays(Integer requested) {
         if (requested == null) {
-            return properties.stuckDays();
+            return settings.value(SystemSetting.STUCK_DAYS, properties.stuckDays());
         }
         if (requested < 1 || requested > MAX_STUCK_DAYS) {
             throw new InteractionValidationException("stuckDays", "Укажите целое число дней от 1 до " + MAX_STUCK_DAYS);

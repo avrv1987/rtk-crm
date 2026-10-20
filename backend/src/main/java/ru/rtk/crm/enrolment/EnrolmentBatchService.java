@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,6 +45,7 @@ import ru.rtk.crm.source.SourceSettingsService;
 @Service
 public class EnrolmentBatchService {
     static final int QUEUE_ITEMS = 50;
+    static final int QUEUE_PAGE_LIMIT = 200;
     private static final long MAX_PROTOCOL_BYTES = 5L * 1024L * 1024L;
     private static final int MAX_PROTOCOL_ROWS = 5_000;
     private static final int ERROR_LIMIT = 500;
@@ -152,7 +154,20 @@ public class EnrolmentBatchService {
 
     @Transactional
     EnrolmentQueue queue(CrmProfile actor, String requestId) {
+        return queue(actor, requestId, null, null, 0, QUEUE_ITEMS);
+    }
+
+    // Отбор по потоку и группе и листание: в группе kind строки с offset, в остальных группах — первые limit.
+    // Счётчики групп считаются после отбора по потоку, список потоков — по всей очереди.
+    @Transactional
+    EnrolmentQueue queue(CrmProfile actor, String requestId, UUID streamId, EnrolmentQueueKind onlyKind, int offset, int limit) {
         enrolmentAccess.requireOperator(actor);
+        if (offset < 0) {
+            throw new InteractionValidationException("offset", "Смещение не может быть отрицательным");
+        }
+        if (limit < 1 || limit > QUEUE_PAGE_LIMIT) {
+            throw new InteractionValidationException("limit", "Размер страницы — от 1 до " + QUEUE_PAGE_LIMIT);
+        }
         List<StreamEnrolmentRow> rows = enrolmentRepository.findAllStreamRows();
         Map<UUID, StreamSummary> streams = enrolmentRepository.findSummaries().stream()
                 .collect(Collectors.toMap(StreamSummary::id, Function.identity()));
@@ -172,8 +187,15 @@ public class EnrolmentBatchService {
                 .comparing((Candidate candidate) -> streams.get(candidate.row().streamId()).title(), EnrolmentStreamService.RUSSIAN)
                 .thenComparing(candidate -> candidate.row().orderNumber(), Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(candidate -> candidate.row().id());
+        Map<UUID, Integer> perStream = new HashMap<>();
+        found.values().forEach(candidates -> candidates.forEach(candidate -> perStream.merge(candidate.row().streamId(), 1, Integer::sum)));
+        if (streamId != null) {
+            found.replaceAll((kind, candidates) -> candidates.stream().filter(candidate -> candidate.row().streamId().equals(streamId)).toList());
+        }
         Map<EnrolmentQueueKind, List<Candidate>> shown = new EnumMap<>(EnrolmentQueueKind.class);
-        found.forEach((kind, candidates) -> shown.put(kind, candidates.stream().sorted(order).limit(QUEUE_ITEMS).toList()));
+        found.forEach((kind, candidates) -> shown.put(kind, onlyKind != null && kind != onlyKind
+                ? List.of()
+                : candidates.stream().sorted(order).skip(onlyKind == null ? 0 : offset).limit(limit).toList()));
         Map<UUID, Learner> learners = learnerService.findAll(shown.values().stream().flatMap(List::stream)
                         .map(candidate -> candidate.row().learnerId()).distinct().toList()).stream()
                 .collect(Collectors.toMap(Learner::id, Function.identity()));
@@ -186,9 +208,13 @@ public class EnrolmentBatchService {
             total += items.size();
             groups.add(new EnrolmentQueueGroup(kind, found.getOrDefault(kind, List.of()).size(), items));
         }
+        List<EnrolmentQueueStream> queueStreams = perStream.entrySet().stream()
+                .map(entry -> new EnrolmentQueueStream(entry.getKey(), streams.get(entry.getKey()).title(), entry.getValue()))
+                .sorted(Comparator.comparing(EnrolmentQueueStream::title, EnrolmentStreamService.RUSSIAN))
+                .toList();
         auditJournalRepository.record(AuditAction.LEARNER_LIST_VIEWED, actor.id(), "ENROLMENT_QUEUE", null, "Очередь зачисления",
                 "строк: " + total, requestId);
-        return new EnrolmentQueue(groups, sourceSettings.moodleWrite().isPresent());
+        return new EnrolmentQueue(groups, sourceSettings.moodleWrite().isPresent(), queueStreams);
     }
 
     @Transactional
@@ -261,7 +287,9 @@ public class EnrolmentBatchService {
             kinds.put(EnrolmentQueueKind.AMBIGUOUS_MATCH, "та же почта или телефон у другого слушателя потока");
         }
         if (row.lmsExportId() == null) {
-            if (!missing && !ambiguous) {
+            // Н4: пока перенос из прежнего потока не выполнен, слушатель только в очереди переноса — иначе передача
+            // нового потока партией зачислила бы его на новый курс, не сняв со старого.
+            if (!missing && !ambiguous && row.lmsReconcileReason() == null) {
                 kinds.put(EnrolmentQueueKind.READY, null);
             }
         } else if (row.lmsResult() == BatchItemResult.FAILED) {

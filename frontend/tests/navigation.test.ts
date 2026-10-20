@@ -106,7 +106,7 @@ test('заголовки экранов и инициалы роли', () => {
 test('администрирование: группы бокового меню, «Обзор» первым, прежние и новые адреса подразделов работают', () => {
   assert.deepEqual(adminGroupsFor('ADMIN').map((group) => group.group), ['Начало', 'Люди и доступ', 'Данные', 'Интеграции', 'Безопасность'])
   assert.equal(resolveAdminSection(undefined, 'ADMIN'), 'overview')
-  for (const slug of ['employees', 'teams', 'organizations', 'catalogs', 'workflow-templates', 'catalog-import', 'sources', 'journal', 'personal-data', 'retention']) {
+  for (const slug of ['employees', 'teams', 'organizations', 'catalogs', 'workflow-templates', 'demand-index', 'catalog-import', 'sources', 'journal', 'personal-data', 'retention']) {
     assert.equal(resolveAdminSection(slug, 'ADMIN'), slug)
   }
   assert.equal(resolveAdminSection('profiles', 'ADMIN'), 'employees')

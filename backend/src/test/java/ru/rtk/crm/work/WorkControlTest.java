@@ -41,7 +41,7 @@ import ru.rtk.crm.interaction.InteractionValidationException;
         "spring.datasource.url=jdbc:h2:mem:work_control;MODE=PostgreSQL;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({
+@Import({ru.rtk.crm.settings.TestSystemSettings.class, 
         OrganizationRepository.class,
         OrganizationAssignmentRepository.class,
         OrganizationAssignmentService.class,
@@ -51,6 +51,9 @@ import ru.rtk.crm.interaction.InteractionValidationException;
         WorkRepository.class,
         ru.rtk.crm.agreement.AgreementStages.class,
         WorkService.class,
+        ru.rtk.crm.people.PeopleService.class,
+        ru.rtk.crm.people.PeopleRepository.class,
+        ru.rtk.crm.audit.AuditJournalRepository.class,
         WorkControlTest.TestBeans.class
 })
 class WorkControlTest {
@@ -1018,6 +1021,7 @@ class WorkControlTest {
 
     private void createSchema() {
         ru.rtk.crm.interaction.StagePropertiesTestSchema.create(jdbcTemplate);
+        ru.rtk.crm.people.PeopleTestSchema.create(jdbcTemplate);
         List.of(
                 "CREATE TABLE IF NOT EXISTS teams (id UUID PRIMARY KEY, name VARCHAR(160) NOT NULL, archived BOOLEAN DEFAULT FALSE NOT NULL)",
                 """
@@ -1084,7 +1088,7 @@ class WorkControlTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
+                CREATE TABLE IF NOT EXISTS interaction_events (import_source VARCHAR(300), import_author VARCHAR(200), contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, type VARCHAR(32) NOT NULL, to_stage_id UUID,
                     to_stage_name_snapshot VARCHAR(200), version INTEGER NOT NULL, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL, work_status_after VARCHAR(16)
                 )
@@ -1123,6 +1127,9 @@ class WorkControlTest {
                     id UUID PRIMARY KEY, source VARCHAR(16) NOT NULL, kind VARCHAR(16) NOT NULL,
                     external_key VARCHAR(310) NOT NULL, run_starts_on DATE, run_ends_on DATE, run_kind VARCHAR(16) DEFAULT 'STUDENTS' NOT NULL
                 )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS workflow_template_stages (id UUID PRIMARY KEY, norm_days INTEGER)
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS reminder_settings (

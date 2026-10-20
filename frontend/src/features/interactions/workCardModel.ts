@@ -20,7 +20,17 @@ export type WorkAgreementsLike<A extends WorkAgreementLike = WorkAgreementLike> 
   agreements: readonly A[]
   /** Действующий договор школы с вузом, в том числе не связанный с работой (решение владельца 19.10). */
   activeAgreementNumber?: string | null
+  /** Договор, которым выполнено правило этапа: связанный с работой, иначе самый свежий договор вуза. */
+  activeAgreement?: ActiveAgreementLike | null
 }
+
+export type ActiveAgreementLike = { id: string; number: string; validUntil?: string | null; linked: boolean }
+
+const calendarDate = (value: string) => value.split('-').reverse().join('.')
+
+const validityText = (agreement: ActiveAgreementLike) => (
+  agreement.validUntil ? `действует до ${calendarDate(agreement.validUntil)}` : 'действует бессрочно'
+)
 
 // Адрес карточки строится из вуза самого взаимодействия, а не из вуза открытой панели: при переходе из колокольчика
 // во взаимодействие другого вуза панель прежнего вуза ещё смонтирована, и её вуз попал бы в адрес и хлебные крошки.
@@ -150,8 +160,8 @@ const signedOn = (agreement: WorkAgreementLike, today: string) => (
   agreement.status === 'ACTIVE' && Boolean(agreement.concludedOn) && !expiredOn(agreement, today)
 )
 
-const hasActiveAgreement = (work: Pick<WorkAgreementsLike, 'agreements' | 'activeAgreementNumber'>, today: string) => (
-  Boolean(work.activeAgreementNumber) || work.agreements.some((agreement) => signedOn(agreement, today))
+const hasActiveAgreement = (work: Pick<WorkAgreementsLike, 'agreements' | 'activeAgreementNumber' | 'activeAgreement'>, today: string) => (
+  Boolean(work.activeAgreementNumber) || Boolean(work.activeAgreement) || work.agreements.some((agreement) => signedOn(agreement, today))
 )
 
 export const isSignedAgreement = (agreement: WorkAgreementLike) => signedOn(agreement, moscowToday())
@@ -177,6 +187,45 @@ const byStatusChangeDesc = <A extends WorkAgreementLike>(left: A, right: A) => (
   new Date(right.statusChangedAt).getTime() - new Date(left.statusChangedAt).getTime()
 )
 
+// Этап «требует действующего договора», который переход вперёд покидает или перешагивает.
+const signingGate = (
+  work: WorkAgreementsLike,
+  stages: readonly { id: string; order: number }[],
+  fromStageId: string,
+  toStageId: string
+) => {
+  const orderOf = new Map(stages.map((stage) => [stage.id, stage.order]))
+  const from = orderOf.get(fromStageId)
+  const to = orderOf.get(toStageId)
+  if (from === undefined || to === undefined || to <= from) {
+    return undefined
+  }
+  return work.stages.find((stage) => {
+    const order = orderOf.get(stage.stageId)
+    return stage.role === 'SIGNING' && order !== undefined && order >= from && order < to
+  })
+}
+
+// сервер пропускает переход по любому действующему договору вуза. Окно перехода называет этот договор, чтобы
+// КАМ видел, почему переход разрешён, даже если с работой договор не связан.
+export const signingSatisfied = (
+  work: WorkAgreementsLike | null,
+  stages: readonly { id: string; order: number }[],
+  fromStageId: string,
+  toStageId: string
+): string | null => {
+  if (work === null || !work.signingRuleEnabled || !work.activeAgreement) {
+    return null
+  }
+  const gate = signingGate(work, stages, fromStageId, toStageId)
+  if (gate === undefined) {
+    return null
+  }
+  const active = work.activeAgreement
+  return `Условие этапа «${gate.name ?? 'требует действующего договора'}» выполнено: договор № ${active.number}, ${validityText(active)}`
+    + (active.linked ? '.' : ' (засчитан договор вуза, с этим взаимодействием он не связан).')
+}
+
 // Повторяет серверную проверку: переход вперёд, который уходит с этапа «требует действующего договора» или
 // перешагивает его, требует любого действующего договора школы с вузом.
 export const signingBlock = (
@@ -189,16 +238,7 @@ export const signingBlock = (
   if (work === null || !work.signingRuleEnabled) {
     return null
   }
-  const orderOf = new Map(stages.map((stage) => [stage.id, stage.order]))
-  const from = orderOf.get(fromStageId)
-  const to = orderOf.get(toStageId)
-  if (from === undefined || to === undefined || to <= from) {
-    return null
-  }
-  const gate = work.stages.find((stage) => {
-    const order = orderOf.get(stage.stageId)
-    return stage.role === 'SIGNING' && order !== undefined && order >= from && order < to
-  })
+  const gate = signingGate(work, stages, fromStageId, toStageId)
   if (gate === undefined || hasActiveAgreement(work, today)) {
     return null
   }
@@ -215,10 +255,11 @@ export const signingBlock = (
   return `${rule} Переведите договор № ${latest.number} в статус «Действует» с датой подписания.`
 }
 
+// counted — на этапе «требует действующего договора»: договор, которым условие выполнено (у сервера и у карточки один).
 export type AgreementFact<A extends WorkAgreementLike> =
-  | { kind: 'agreement'; agreement: A }
+  | { kind: 'agreement'; agreement: A; counted?: string }
   | { kind: 'create' }
-  | { kind: 'none' }
+  | { kind: 'none'; counted?: string }
 
 export const agreementFact = <A extends WorkAgreementLike>(work: WorkAgreementsLike<A> | null, currentStageId: string): AgreementFact<A> => {
   if (work === null) {
@@ -226,10 +267,71 @@ export const agreementFact = <A extends WorkAgreementLike>(work: WorkAgreementsL
   }
   const sorted = [...work.agreements].sort(byStatusChangeDesc)
   const current = sorted.find((agreement) => agreement.status !== 'TERMINATED' && agreement.status !== 'COMPLETED') ?? sorted[0]
+  const active = work.activeAgreement
+  const onSigning = work.signingRuleEnabled && work.stages.some((stage) => stage.stageId === currentStageId && stage.role === 'SIGNING')
+  const counted = !onSigning || !active
+    ? undefined
+    : active.linked && current?.number === active.number
+      ? `Условие этапа выполнено: ${validityText(active)}`
+      : `Засчитан договор вуза № ${active.number}, ${validityText(active)}`
   if (current !== undefined) {
-    return { kind: 'agreement', agreement: current }
+    return counted === undefined ? { kind: 'agreement', agreement: current } : { kind: 'agreement', agreement: current, counted }
+  }
+  if (counted !== undefined) {
+    return { kind: 'none', counted }
   }
   return work.stages.some((stage) => stage.stageId === currentStageId) ? { kind: 'create' } : { kind: 'none' }
+}
+
+// Завершённую карточку сервер не меняет (409), пока её не вернут в работу: действия с этапами не показываются.
+// Документы, проблемы и «Новый цикл» сервер принимает и у завершённой.
+export const stageActionsAllowed = (canEdit: boolean, status: WorkStatus | undefined) => canEdit && status !== 'COMPLETED'
+
+// при возобновлении сервер возвращает шаг, который был до паузы; если вернуть нечего, КАМ сразу видит, что шаг
+// нужно задать.
+export const statusChangeNotice = (statusLabel: string, interaction: { marks: { status: WorkStatus }; nextAction?: string | null }) => {
+  const base = `Статус взаимодействия: ${statusLabel}.`
+  if (interaction.marks.status !== 'ACTIVE') {
+    return base
+  }
+  const step = interaction.nextAction?.trim() ?? ''
+  return step === '' ? `${base} Следующий шаг не задан — задайте его.` : `${base} Следующий шаг: «${step}».`
+}
+
+export type EventLinkLike = { kind: 'ATTACHMENT' | 'AGREEMENT' | 'INTERACTION'; id: string; organizationId?: string | null; label: string }
+
+// Адрес ссылки события истории; у документа адреса нет — он открывается во вкладке «Документы».
+export const eventLinkHref = (link: EventLinkLike, currentHash: string): string | null => {
+  if (!link.organizationId || link.kind === 'ATTACHMENT') {
+    return null
+  }
+  return link.kind === 'AGREEMENT'
+    ? `#/organizations/${link.organizationId}?agreement=${link.id}`
+    : cardHash(link.organizationId, link.id, currentHash)
+}
+
+export type StageTime = { enteredAt: string; exitedAt?: string; days: number; visits: number }
+
+// вход, выход и длительность по этапам из истории переходов. Возвраты дают несколько заходов: дни
+// складываются, вход и выход — последнего захода. У текущего этапа выхода нет, дни — по сегодня.
+export const stageTimes = (
+  events: readonly { type: string; toStageId?: string | null; occurredAt: string }[],
+  now: number = Date.now()
+): Map<string, StageTime> => {
+  const entries = events.filter((event) => (event.type === 'CREATED' || event.type === 'TRANSITIONED') && event.toStageId)
+  const times = new Map<string, StageTime>()
+  entries.forEach((entry, index) => {
+    const exit = entries[index + 1]?.occurredAt
+    const millis = (exit === undefined ? now : new Date(exit).getTime()) - new Date(entry.occurredAt).getTime()
+    const previous = times.get(entry.toStageId as string)
+    times.set(entry.toStageId as string, {
+      enteredAt: entry.occurredAt,
+      exitedAt: exit,
+      days: (previous?.days ?? 0) + Math.max(0, millis) / (24 * 60 * 60 * 1000),
+      visits: (previous?.visits ?? 0) + 1
+    })
+  })
+  return times
 }
 
 export type RouteWindow = { from: number; to: number; hiddenBefore: number; hiddenAfter: number }
@@ -253,8 +355,9 @@ export const historyFilters: { value: HistoryFilter; label: string }[] = [
   { value: 'DOCUMENTS', label: 'Документы' }
 ]
 
-const stageEvents: readonly EventType[] = ['CREATED', 'TRANSITIONED', 'STAGES_EDITED', 'PLAN_UPDATED', 'STAGE_COMPLETED', 'STAGE_COMPLETION_CLEARED']
-const documentEvents: readonly EventType[] = ['ATTACHMENT_DELETED', 'AGREEMENT_UPDATED']
+const stageEvents: readonly EventType[] = ['CREATED', 'TRANSITIONED', 'STAGES_EDITED', 'PLAN_UPDATED', 'STAGE_COMPLETED', 'STAGE_COMPLETION_CLEARED',
+  'CYCLE_STARTED']
+const documentEvents: readonly EventType[] = ['ATTACHMENT_DELETED', 'AGREEMENT_UPDATED', 'DOCUMENT_ADDED', 'AGREEMENT_STATUS_CHANGED']
 
 export const historyMatches = (type: EventType, hasAttachments: boolean, filter: HistoryFilter) => {
   switch (filter) {

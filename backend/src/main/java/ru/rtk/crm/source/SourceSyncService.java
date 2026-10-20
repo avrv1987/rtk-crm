@@ -39,6 +39,8 @@ import ru.rtk.crm.enrolment.PaidOrderParser;
 import ru.rtk.crm.enrolment.PaidOrderUpload;
 import ru.rtk.crm.interaction.InteractionNotFoundException;
 import ru.rtk.crm.interaction.InteractionValidationException;
+import ru.rtk.crm.settings.SystemSetting;
+import ru.rtk.crm.settings.SystemSettings;
 import ru.rtk.crm.source.SiteApiClient.SiteResponse;
 import ru.rtk.crm.source.SourceRepository.MappedTarget;
 import ru.rtk.crm.source.SourceRepository.RunDates;
@@ -68,6 +70,7 @@ public class SourceSyncService {
     private final SourceSettingsService settings;
     private final ObjectMapper objectMapper;
     private final AuditJournalRepository auditJournalRepository;
+    private final SystemSettings systemSettings;
     private final OffsetDateTime processStartedAt = OffsetDateTime.now();
 
     public SourceSyncService(
@@ -84,7 +87,8 @@ public class SourceSyncService {
             SourceProperties properties,
             SourceSettingsService settings,
             ObjectMapper objectMapper,
-            AuditJournalRepository auditJournalRepository
+            AuditJournalRepository auditJournalRepository,
+            SystemSettings systemSettings
     ) {
         this.repository = repository;
         this.applier = applier;
@@ -100,6 +104,7 @@ public class SourceSyncService {
         this.settings = settings;
         this.objectMapper = objectMapper;
         this.auditJournalRepository = auditJournalRepository;
+        this.systemSettings = systemSettings;
     }
 
     public List<SourceView> sources(CrmProfile profile) {
@@ -223,7 +228,7 @@ public class SourceSyncService {
 
     boolean stale(SourceCode source, OffsetDateTime lastSuccessAt) {
         return configured(source)
-                && (lastSuccessAt == null || lastSuccessAt.isBefore(OffsetDateTime.now().minus(properties.staleAfter())));
+                && (lastSuccessAt == null || lastSuccessAt.isBefore(OffsetDateTime.now().minus(staleAfter())));
     }
 
     // Снимок идущего потока, не подтверждённый наблюдением за порог устаревания: курс не читается (например, падает
@@ -231,7 +236,12 @@ public class SourceSyncService {
     boolean staleSnapshot(OffsetDateTime observedAt, LocalDate runEndsOn) {
         OffsetDateTime now = OffsetDateTime.now();
         boolean running = runEndsOn == null || now.atZoneSameInstant(ZONE).toLocalDate().isBefore(runEndsOn);
-        return running && observedAt.isBefore(now.minus(properties.staleAfter())) && configured(SourceCode.MOODLE);
+        return running && observedAt.isBefore(now.minus(staleAfter())) && configured(SourceCode.MOODLE);
+    }
+
+    // Порог устаревания с правкой администратора в «Настройках».
+    private java.time.Duration staleAfter() {
+        return systemSettings.hours(SystemSetting.SOURCES_STALE_HOURS, properties.staleAfter());
     }
 
     private SyncRunCreated enqueue(SourceCode source, UUID actorProfileId, SyncTrigger trigger) {

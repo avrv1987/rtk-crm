@@ -92,15 +92,15 @@ public class ExcelReportWriter {
         sheet.setAutoFilter(new CellRangeAddress(headerRow, Math.max(headerRow, rowIndex - 1), 0, lastColumn));
 
         if (!document.groupTotals().isEmpty()) {
-            fillTotals(workbook, document, styles, TOTALS_SHEET, ManagerWorkTotal.TITLES, ManagerWorkTotal.WIDTHS,
+            fillTotals(workbook, document, styles, TOTALS_SHEET, document.totalTitles(ManagerWorkTotal.TITLES), ManagerWorkTotal.WIDTHS,
                     document.groupTotals().stream().map(ManagerWorkTotal::values).toList());
         }
         if (!document.productTotals().isEmpty()) {
-            fillTotals(workbook, document, styles, PRODUCT_TOTALS_SHEET, ManagerWorkGroupTotal.titles("Продукт"),
+            fillTotals(workbook, document, styles, PRODUCT_TOTALS_SHEET, document.totalTitles(ManagerWorkGroupTotal.titles("Продукт")),
                     ManagerWorkGroupTotal.widths(), document.productTotals().stream().map(ManagerWorkGroupTotal::values).toList());
         }
         if (!document.organizationTotals().isEmpty()) {
-            fillTotals(workbook, document, styles, ORGANIZATION_TOTALS_SHEET, ManagerWorkGroupTotal.titles("Вуз"),
+            fillTotals(workbook, document, styles, ORGANIZATION_TOTALS_SHEET, document.totalTitles(ManagerWorkGroupTotal.titles("Вуз")),
                     ManagerWorkGroupTotal.widths(), document.organizationTotals().stream().map(ManagerWorkGroupTotal::values).toList());
         }
     }

@@ -75,6 +75,25 @@ public class EnrolmentBatchRepository {
                 .optional();
     }
 
+    // Отметка «передача в Moodle идёт» вместо блокировки строки на всё время сетевых вызовов: вторая передача той же
+    // партии не начнётся, а отметка, оставшаяся после падения процесса, перестаёт действовать через stale.
+    boolean claimMoodleTransfer(UUID batchId, OffsetDateTime now, OffsetDateTime staleBefore) {
+        return jdbcClient.sql("""
+                UPDATE enrolment_batches SET moodle_transfer_started_at = :now
+                WHERE id = :id AND (moodle_transfer_started_at IS NULL OR moodle_transfer_started_at < :stale)
+                """)
+                .param("id", batchId)
+                .param("now", now)
+                .param("stale", staleBefore)
+                .update() == 1;
+    }
+
+    void releaseMoodleTransfer(UUID batchId) {
+        jdbcClient.sql("UPDATE enrolment_batches SET moodle_transfer_started_at = NULL WHERE id = :id")
+                .param("id", batchId)
+                .update();
+    }
+
     List<BatchRow> findByStream(UUID streamId) {
         return jdbcClient.sql(BATCH_SELECT + " WHERE b.stream_id = :streamId ORDER BY b.created_at DESC, b.id")
                 .param("streamId", streamId)
@@ -138,6 +157,19 @@ public class EnrolmentBatchRepository {
                 .param("result", result.name())
                 .param("error", error)
                 .param("source", source)
+                .param("actorId", actorId)
+                .param("now", now)
+                .update() == 1;
+    }
+
+    // Сверка строки прежнего учёта с Moodle: меняется только источник LEGACY → API, результат «принята» остаётся.
+    boolean confirmLegacy(UUID itemId, UUID actorId, OffsetDateTime now) {
+        return jdbcClient.sql("""
+                UPDATE enrolment_batch_items
+                SET result_source = 'API', result_at = :now, result_by = :actorId
+                WHERE id = :id AND result = 'ACCEPTED' AND result_source = 'LEGACY'
+                """)
+                .param("id", itemId)
                 .param("actorId", actorId)
                 .param("now", now)
                 .update() == 1;

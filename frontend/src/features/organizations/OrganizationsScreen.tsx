@@ -5,6 +5,7 @@ import { Pagination } from '../../shared/ui/Pagination'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { Toast } from '../../shared/ui/Toast'
 import { AgreementsPanel } from '../agreements/AgreementsPanel'
+import { ActivityListsPanel } from '../agreements/ActivityListsPanel'
 import { InteractionsPanel } from '../interactions/InteractionsPanel'
 import { CardDialog, CardSection, CardTabPanel, CardTabs, type CardTab } from '../interactions/cardUi'
 import { PendingSourceRecords } from '../sources/PendingSourceRecords'
@@ -18,6 +19,7 @@ import { OrganizationForm, organizationTypeLabels } from './OrganizationForm'
 import { OrganizationBulkTransfer } from './OrganizationBulkTransfer'
 import { filtersFromQuery, listStatuses, organizationLoadFailure, queryFromFilters, type ListFilters, type ListStatus } from './organizationFilters'
 import { assignmentResultText } from './organizationHistory'
+import { PeoplePanel } from '../people/PeoplePanel'
 
 type OrganizationsScreenProps = {
   profileId: string
@@ -29,7 +31,7 @@ type OrganizationsScreenProps = {
   onProfileUnavailable: (requestId: string) => void
 }
 
-type OrganizationTab = 'works' | 'path' | 'contacts' | 'documents' | 'timeline'
+type OrganizationTab = 'works' | 'path' | 'contacts' | 'documents' | 'people' | 'timeline'
 
 const listStatusOf: Record<Organization['status'], ListStatus> = {
   ACTIVE: 'CURRENT',
@@ -193,6 +195,7 @@ export const OrganizationsScreen = ({
   }, [listSuffix, query])
 
   const linkedAgreementId = new URLSearchParams(query).get('agreement') ?? undefined
+  const linkedListId = new URLSearchParams(query).get('activityList') ?? undefined
 
   useEffect(() => {
     if (role !== 'USER' && role !== 'LEADER') {
@@ -216,7 +219,7 @@ export const OrganizationsScreen = ({
   }, [handleAccessError, role])
 
   useEffect(() => {
-    setOrganizationTab(linkedAgreementId === undefined ? 'works' : 'documents')
+    setOrganizationTab(linkedAgreementId === undefined && linkedListId === undefined ? 'works' : 'documents')
     setCardMessage(null)
     setCounts(null)
     setAssignmentDialog(null)
@@ -226,7 +229,7 @@ export const OrganizationsScreen = ({
       return
     }
     void loadOrganization(selectedOrganizationId)
-  }, [linkedAgreementId, loadOrganization, selectedOrganizationId])
+  }, [linkedAgreementId, linkedListId, loadOrganization, selectedOrganizationId])
 
   useEffect(() => () => {
     listRequestVersion.current += 1
@@ -311,6 +314,7 @@ export const OrganizationsScreen = ({
     ...(role === 'USER' || role === 'LEADER' || role === 'MANAGEMENT' ? [{ id: 'path' as const, label: 'Путь вуза' }] : []),
     { id: 'contacts', label: 'Контакты', count: counts?.contacts },
     { id: 'documents', label: 'Договоры и документы', count: counts?.agreements },
+    ...(role === 'USER' || role === 'LEADER' || role === 'MANAGEMENT' ? [{ id: 'people' as const, label: 'Люди и часы' }] : []),
     { id: 'timeline', label: 'История' }
   ]
   const cardChanged = () => setCardRevision((value) => value + 1)
@@ -608,12 +612,30 @@ export const OrganizationsScreen = ({
                   />
                 )}
                 {organizationTab === 'documents' && (
-                  <AgreementsPanel
-                    key={`agreements:${detailState.organization.id}`}
+                  <>
+                    <AgreementsPanel
+                      key={`agreements:${detailState.organization.id}`}
+                      organizationId={detailState.organization.id}
+                      role={role}
+                      initialAgreementId={linkedAgreementId}
+                      onChanged={cardChanged}
+                      onSessionExpired={onSessionExpired}
+                      onProfileUnavailable={onProfileUnavailable}
+                    />
+                    <ActivityListsPanel
+                      key={`activity-lists:${detailState.organization.id}`}
+                      organizationId={detailState.organization.id}
+                      role={role}
+                      initialListId={linkedListId}
+                      onSessionExpired={onSessionExpired}
+                      onProfileUnavailable={onProfileUnavailable}
+                    />
+                  </>
+                )}
+                {organizationTab === 'people' && (
+                  <PeoplePanel
+                    key={`people:${detailState.organization.id}`}
                     organizationId={detailState.organization.id}
-                    role={role}
-                    initialAgreementId={linkedAgreementId}
-                    onChanged={cardChanged}
                     onSessionExpired={onSessionExpired}
                     onProfileUnavailable={onProfileUnavailable}
                   />

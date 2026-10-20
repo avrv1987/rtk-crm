@@ -39,6 +39,7 @@ export type OptionsState =
   | { kind: 'failed'; error: unknown }
 
 const demandSortLabels: Record<(typeof demandSorts)[number], string> = {
+  DEMAND_INDEX: 'по месту (индекс востребованности)',
   APPLICATIONS: 'по заявкам',
   PAID_ORDERS: 'по оплаченным заявкам',
   PAID_STREAMS: 'по потокам с оплатами',
@@ -257,7 +258,7 @@ export const ReportFilterFields = ({ role, selection, options, update }: FieldsP
           <select
             id={sortId}
             value={selection.sortBy}
-            onChange={(event) => update({ sortBy: availableDemandSorts().find((sort) => sort === event.target.value) ?? 'APPLICATIONS' })}
+            onChange={(event) => update({ sortBy: availableDemandSorts().find((sort) => sort === event.target.value) ?? 'DEMAND_INDEX' })}
           >
             {availableDemandSorts().map((sort) => <option key={sort} value={sort}>{demandSortLabels[sort]}</option>)}
           </select>

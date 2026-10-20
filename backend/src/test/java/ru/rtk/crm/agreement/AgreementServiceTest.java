@@ -87,6 +87,7 @@ import ru.rtk.crm.module.ModuleProperties;
         ReportRepository.class,
         ReportService.class,
         ru.rtk.crm.work.LmsLearningTestBeans.class,
+        ru.rtk.crm.agreement.ReportingRepository.class,
         AgreementServiceTest.TestBeans.class
 })
 class AgreementServiceTest {
@@ -151,6 +152,7 @@ class AgreementServiceTest {
     @BeforeEach
     void setUp() {
         createSchema();
+        AgreementTestSchema.createReporting(jdbc);
         for (String table : List.of(
                 "agreement_activity_attachments", "agreement_activity_interactions", "agreement_activities", "agreement_files",
                 "agreement_supplements", "agreement_programs", "agreement_products", "agreement_directions", "agreement_interactions",
@@ -839,6 +841,36 @@ class AgreementServiceTest {
                 .requireSignedToLeave(INTERACTION_A, stages, stages.get(2), stages.get(3));
         assertThat(agreementService.workAgreements(managerA, INTERACTION_A).agreements()).singleElement()
                 .satisfies(summary -> assertThat(summary.number()).isEqualTo("Д-7"));
+    }
+
+    // карточка называет договор, которым выполнено правило этапа: связанный с работой, иначе любой действующий вуза.
+    @Test
+    void workAgreementsNameTheActiveAgreementThatSatisfiesTheStageRule() {
+        LocalDate until = LocalDate.now(AgreementService.ZONE).plusMonths(6);
+        assertThat(agreementService.workAgreements(managerA, INTERACTION_A).activeAgreement()).isNull();
+
+        Agreement foreign = agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "ВУЗ-1", null, List.of()), "a-1", "req");
+        jdbc.update("UPDATE agreements SET status = 'ACTIVE', concluded_on = DATE '2026-01-15', valid_until = ? WHERE id = ?",
+                until, foreign.id());
+        AgreementModels.WorkAgreements unlinked = agreementService.workAgreements(managerA, INTERACTION_A);
+        assertThat(unlinked.agreements()).isEmpty();
+        assertThat(unlinked.activeAgreement()).satisfies(active -> {
+            assertThat(active.id()).isEqualTo(foreign.id());
+            assertThat(active.number()).isEqualTo("ВУЗ-1");
+            assertThat(active.validUntil()).isEqualTo(until);
+            assertThat(active.linked()).isFalse();
+        });
+        assertThat(unlinked.activeAgreementNumber()).isEqualTo("ВУЗ-1");
+
+        Agreement own = agreementService.create(managerA, ORGANIZATION_A, contractRequest(null, "РАБ-1", null, List.of(INTERACTION_A)),
+                "a-2", "req");
+        jdbc.update("UPDATE agreements SET status = 'ACTIVE', concluded_on = DATE '2026-02-01', status_changed_at = ? WHERE id = ?",
+                OffsetDateTime.now().minusDays(30), own.id());
+        assertThat(agreementService.workAgreements(managerA, INTERACTION_A).activeAgreement()).satisfies(active -> {
+            assertThat(active.number()).as("связанный с работой договор важнее более свежего договора вуза").isEqualTo("РАБ-1");
+            assertThat(active.validUntil()).isNull();
+            assertThat(active.linked()).isTrue();
+        });
     }
 
     @Test

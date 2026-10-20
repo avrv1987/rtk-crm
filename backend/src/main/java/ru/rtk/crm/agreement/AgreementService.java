@@ -1,13 +1,17 @@
 package ru.rtk.crm.agreement;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -24,6 +28,7 @@ import ru.rtk.crm.access.ContactInteractionMutationAuthorization;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.agreement.AgreementModels.Activity;
+import ru.rtk.crm.agreement.AgreementModels.ActivityAttribute;
 import ru.rtk.crm.agreement.AgreementModels.ActivityDeleted;
 import ru.rtk.crm.agreement.AgreementModels.ActivityKind;
 import ru.rtk.crm.agreement.AgreementModels.ActivityKindCreateRequest;
@@ -50,6 +55,8 @@ import ru.rtk.crm.agreement.AgreementRepository.ConfirmationRow;
 import ru.rtk.crm.agreement.AgreementRepository.SubjectLink;
 import ru.rtk.crm.agreement.AgreementRepository.SupplementRow;
 import ru.rtk.crm.agreement.AgreementRepository.SupplementValues;
+import ru.rtk.crm.agreement.ReportingModels.ReferenceCategory;
+import ru.rtk.crm.agreement.ReportingModels.ReferenceItem;
 import ru.rtk.crm.attachment.AttachmentStatus;
 import ru.rtk.crm.audit.AuditAction;
 import ru.rtk.crm.audit.AuditJournalRepository;
@@ -68,9 +75,6 @@ import ru.rtk.crm.web.InputRules;
 public class AgreementService {
     public static final int CONFIRMATION_LIMIT = 500;
     public static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
-    // Окно разумных дат договора: 0001 и 9999 из опечаток портили реестр и отчёты.
-    private static final int AGREEMENT_YEARS_BACK = 30;
-    private static final int AGREEMENT_YEARS_AHEAD = 30;
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
 
@@ -81,6 +85,7 @@ public class AgreementService {
     private final DataSize archiveMaxSize;
     private final AuditJournalRepository auditJournalRepository;
     private final AgreementStages agreementStages;
+    private final ReportingRepository reportingRepository;
 
     public AgreementService(
             OrganizationRepository organizationRepository,
@@ -89,7 +94,8 @@ public class AgreementService {
             ObjectMapper objectMapper,
             @Value("${app.agreements.archive-max-size}") DataSize archiveMaxSize,
             AuditJournalRepository auditJournalRepository,
-            AgreementStages agreementStages
+            AgreementStages agreementStages,
+            ReportingRepository reportingRepository
     ) {
         this.organizationRepository = organizationRepository;
         this.repository = repository;
@@ -98,6 +104,7 @@ public class AgreementService {
         this.archiveMaxSize = archiveMaxSize;
         this.auditJournalRepository = auditJournalRepository;
         this.agreementStages = agreementStages;
+        this.reportingRepository = reportingRepository;
     }
 
     @Transactional(readOnly = true)
@@ -127,16 +134,26 @@ public class AgreementService {
         String name = requiredText(request.name(), "name");
         int version = requiredVersion(request.version());
         boolean archived = Boolean.TRUE.equals(request.archived());
+        // Без списка обязательных атрибутов в запросе прежний набор сохраняется: старые формы переименования его не стирают.
+        List<ActivityAttribute> attributes = request.requiredAttributes() == null
+                ? current.requiredAttributes()
+                : AgreementRepository.attributes(AgreementRepository.attributesText(request.requiredAttributes().stream()
+                        .filter(Objects::nonNull).toList()));
         return idempotent(
                 profile,
                 CommandOperation.UPDATE_AGREEMENT_ACTIVITY_KIND,
                 idempotencyKey,
-                new UpdateKindCommand(kindId, version, name, archived),
+                new UpdateKindCommand(kindId, version, name, archived, attributes),
                 ActivityKind.class,
                 () -> {
-                    if (updatedKind(kindId, version, name, archived) != 1) {
+                    if (updatedKind(kindId, version, name, archived, attributes) != 1) {
                         throw AgreementException.kindVersion(repository.findKind(kindId).map(ActivityKind::version)
                                 .orElse(current.version()));
+                    }
+                    if (!attributes.equals(current.requiredAttributes())) {
+                        auditJournalRepository.record(AuditAction.AGREEMENT_REPORTING_CHANGED, profile.id(), "AGREEMENT_ACTIVITY_KIND",
+                                kindId, name, "обязательные атрибуты: " + attributeTitles(current.requiredAttributes()) + " → "
+                                        + attributeTitles(attributes), null);
                     }
                     return repository.findKind(kindId).orElseThrow(AgreementException::kindNotFound);
                 }
@@ -174,13 +191,15 @@ public class AgreementService {
     public WorkAgreements workAgreements(CrmProfile profile, UUID interactionId) {
         UUID organizationId = repository.findInteractionOrganization(interactionId).orElseThrow(InteractionNotFoundException::new);
         organizationRepository.findVisibleById(profile, organizationId).orElseThrow(InteractionNotFoundException::new);
+        Optional<AgreementStages.ActiveAgreement> active = agreementStages.activeAgreement(interactionId);
         return new WorkAgreements(
                 interactionId,
                 organizationId,
                 agreementStages.signingRule(),
                 agreementStages.stages(interactionId),
                 repository.findInteractionSummaries(interactionId),
-                agreementStages.activeAgreementNumber(interactionId).orElse(null)
+                active.map(AgreementStages.ActiveAgreement::number).orElse(null),
+                active.orElse(null)
         );
     }
 
@@ -401,6 +420,7 @@ public class AgreementService {
         ContactInteractionMutationAuthorization.requireCardEditor(profile);
         ActivityValues values = activityValues(organization, request, null, null);
         ActivityLinks links = activityLinks(agreement.organizationId(), request);
+        requireAttributes(values, links);
         return idempotent(
                 profile,
                 CommandOperation.CREATE_AGREEMENT_ACTIVITY,
@@ -422,8 +442,10 @@ public class AgreementService {
         Organization organization = visibleOrganization(profile, activity.organizationId());
         ContactInteractionMutationAuthorization.requireCardEditor(profile);
         int version = requiredVersion(request.version());
-        ActivityValues values = activityValues(organization, request, activity.kindId(), activity.responsibleProfileId());
+        Activity before = repository.findActivity(activityId).orElseThrow(AgreementException::activityNotFound);
+        ActivityValues values = activityValues(organization, request, activity.kindId(), activity.responsibleProfileId(), before);
         ActivityLinks links = activityLinks(activity.organizationId(), request);
+        requireAttributes(values, links);
         return idempotent(
                 profile,
                 CommandOperation.UPDATE_AGREEMENT_ACTIVITY,
@@ -435,6 +457,11 @@ public class AgreementService {
                         throw AgreementException.activityVersion(currentActivityVersion(activity));
                     }
                     repository.replaceActivityLinks(activityId, links.interactionIds(), links.attachmentIds());
+                    if (before.status() != values.status()) {
+                        auditJournalRepository.record(AuditAction.AGREEMENT_ACTIVITY_STATUS_CHANGED, profile.id(), "AGREEMENT_ACTIVITY",
+                                activityId, organization.name() + ", " + values.title(),
+                                before.status().title() + " → " + values.status().title(), null);
+                    }
                     return repository.findActivity(activityId).orElseThrow(AgreementException::activityNotFound);
                 }
         );
@@ -519,9 +546,13 @@ public class AgreementService {
         return supplement;
     }
 
-    private int updatedKind(UUID kindId, int version, String name, boolean archived) {
+    static String attributeTitles(List<ActivityAttribute> attributes) {
+        return attributes.isEmpty() ? "нет" : String.join(", ", attributes.stream().map(ActivityAttribute::title).toList());
+    }
+
+    private int updatedKind(UUID kindId, int version, String name, boolean archived, List<ActivityAttribute> attributes) {
         try {
-            return repository.updateKind(kindId, version, name, archived, OffsetDateTime.now());
+            return repository.updateKind(kindId, version, name, archived, attributes, OffsetDateTime.now());
         } catch (DuplicateKeyException exception) {
             throw kindNameTaken();
         }
@@ -555,18 +586,10 @@ public class AgreementService {
     }
 
     private AgreementValues agreementValues(Organization organization, AgreementRequest request, AgreementRow current) {
-        requireOrder(request.concludedOn(), request.validUntil(), "validUntil", "Срок действия раньше даты подписания");
         LocalDate today = LocalDate.now(ZONE);
-        // Подписанный договор с датой подписания в будущем закрывал бы этап «Подписание» договором, которого ещё нет:
-        // то же правило, что и при переходе в «Действует», действует и при создании и правке.
         AgreementStatus status = current != null ? current.status() : request.status() == null ? AgreementStatus.DRAFT : request.status();
-        if (status.signed() && request.concludedOn() != null && request.concludedOn().isAfter(today)) {
-            throw new InteractionValidationException("concludedOn", "Дата подписания не может быть позже сегодняшней");
-        }
-        InputRules.requireDateWithin(request.concludedOn(), "concludedOn", today, AGREEMENT_YEARS_BACK, AGREEMENT_YEARS_AHEAD);
-        InputRules.requireDateWithin(request.validUntil(), "validUntil", today, AGREEMENT_YEARS_BACK, AGREEMENT_YEARS_AHEAD);
-        InputRules.requireDateWithin(request.plannedOn(), "plannedOn", today, AGREEMENT_YEARS_BACK, AGREEMENT_YEARS_AHEAD);
-        InputRules.requireDateWithin(request.sentOn(), "sentOn", today, AGREEMENT_YEARS_BACK, 0);
+        AgreementDateRules.check(status, request.concludedOn(), request.validUntil(), request.sentOn(), today);
+        InputRules.requireDateWithin(request.plannedOn(), "plannedOn", today, AgreementDateRules.YEARS_BACK, AgreementDateRules.YEARS_AHEAD);
         // План подписания или продления — пара «вид + дата»; в БД это же гарантирует ограничение agreements_plan_pair.
         if ((request.plannedKind() == null) != (request.plannedOn() == null)) {
             throw new InteractionValidationException(
@@ -695,6 +718,16 @@ public class AgreementService {
             UUID currentKindId,
             UUID currentResponsibleId
     ) {
+        return activityValues(organization, request, currentKindId, currentResponsibleId, null);
+    }
+
+    private ActivityValues activityValues(
+            Organization organization,
+            ActivityRequest request,
+            UUID currentKindId,
+            UUID currentResponsibleId,
+            Activity current
+    ) {
         if (request.kindId() == null) {
             throw new InteractionValidationException("kindId", "Выберите вид мероприятия");
         }
@@ -717,10 +750,20 @@ public class AgreementService {
                     "Ответственным может быть активный менеджер или руководитель команды вуза"
             );
         }
+        ReferenceItem level = reference(request.educationLevelId(), ReferenceCategory.EDUCATION_LEVEL, "educationLevelId",
+                current == null ? null : current.educationLevelId());
+        ReferenceItem executor = reference(request.executorId(), ReferenceCategory.EXECUTOR, "executorId",
+                current == null ? null : current.executorId());
+        ReferenceItem unit = reference(request.unitId(), ReferenceCategory.UNIT, "unitId", current == null ? null : current.unitId());
+        BigDecimal cost = money(request.cost(), "cost");
+        if (request.participants() != null && request.participants() < 0) {
+            throw new InteractionValidationException("participants", "Охват не может быть отрицательным");
+        }
         return new ActivityValues(
                 kind.id(),
                 requiredText(request.title(), "title"),
-                nullableText(request.unit()),
+                // Единица из справочника важнее текста: по ней ищется ставка, а текст остаётся для прежних отчётов.
+                unit != null ? unit.name() : nullableText(request.unit()),
                 request.plannedVolume(),
                 request.actualVolume(),
                 request.plannedStart(),
@@ -728,8 +771,75 @@ public class AgreementService {
                 request.actualStart(),
                 request.actualEnd(),
                 request.responsibleProfileId(),
-                request.status()
+                request.status(),
+                level == null ? null : level.id(),
+                request.participants(),
+                unit == null ? null : unit.id(),
+                cost,
+                executor == null ? null : executor.id(),
+                nullableText(request.documentNote())
         );
+    }
+
+    // Значение справочника отчётности: категория должна совпадать, архивное допускается, только если уже стояло.
+    private ReferenceItem reference(UUID id, ReferenceCategory category, String field, UUID currentId) {
+        if (id == null) {
+            return null;
+        }
+        ReferenceItem item = reportingRepository.findReference(id)
+                .filter(candidate -> candidate.category() == category)
+                .orElseThrow(() -> new InteractionValidationException(field, "Значение не найдено в справочнике «" + category.title() + "»"));
+        if (item.archived() && !id.equals(currentId)) {
+            throw new InteractionValidationException(field, "Значение справочника в архиве; выберите действующее");
+        }
+        return item;
+    }
+
+    static BigDecimal money(BigDecimal value, String field) {
+        if (value == null) {
+            return null;
+        }
+        if (value.signum() < 0) {
+            throw new InteractionValidationException(field, "Сумма не может быть отрицательной");
+        }
+        if (value.stripTrailingZeros().scale() > 2) {
+            throw new InteractionValidationException(field, "Укажите сумму с точностью до копеек");
+        }
+        if (value.compareTo(new BigDecimal("99999999999999.99")) > 0) {
+            throw new InteractionValidationException(field, "Слишком большая сумма");
+        }
+        return value.setScale(2, RoundingMode.UNNECESSARY);
+    }
+
+    // Обязательные атрибуты задаёт вид мероприятия. Отменённое и отклонённое мероприятие не проверяется; факт и
+    // подтверждающий документ требуются, только когда мероприятие проведено (документ подтверждает проведённое).
+    private void requireAttributes(ActivityValues values, ActivityLinks links) {
+        if (values.status().dropped()) {
+            return;
+        }
+        List<ActivityAttribute> required = repository.findKind(values.kindId()).map(ActivityKind::requiredAttributes).orElse(List.of());
+        List<String> missing = new ArrayList<>();
+        String field = null;
+        for (ActivityAttribute attribute : required) {
+            String absent = switch (attribute) {
+                case EDUCATION_LEVEL -> values.educationLevelId() == null ? "educationLevelId" : null;
+                case PARTICIPANTS -> values.participants() == null ? "participants" : null;
+                case UNIT_QUANTITY -> values.unit() == null ? "unitId"
+                        : values.plannedVolume() == null ? "plannedVolume"
+                        : values.status().held() && values.actualVolume() == null ? "actualVolume" : null;
+                case COST -> values.cost() == null ? "cost" : null;
+                case EXECUTOR -> values.executorId() == null ? "executorId" : null;
+                case DOCUMENT -> values.status().held() && values.documentNote() == null && links.attachmentIds().isEmpty()
+                        ? "documentNote" : null;
+            };
+            if (absent != null) {
+                missing.add(attribute.title().toLowerCase(Locale.ROOT));
+                field = field == null ? absent : field;
+            }
+        }
+        if (field != null) {
+            throw new InteractionValidationException(field, "Для этого вида мероприятия заполните: " + String.join(", ", missing));
+        }
     }
 
     private ActivityLinks activityLinks(UUID organizationId, ActivityRequest request) {
@@ -854,7 +964,7 @@ public class AgreementService {
     private record ActivityLinks(List<UUID> interactionIds, List<UUID> attachmentIds) {
     }
 
-    private record UpdateKindCommand(UUID kindId, int version, String name, boolean archived) {
+    private record UpdateKindCommand(UUID kindId, int version, String name, boolean archived, List<ActivityAttribute> attributes) {
     }
 
     private record CreateAgreementCommand(

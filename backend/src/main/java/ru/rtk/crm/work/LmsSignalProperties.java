@@ -3,6 +3,8 @@ package ru.rtk.crm.work;
 import java.time.Duration;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import ru.rtk.crm.settings.SystemSetting;
+import ru.rtk.crm.settings.SystemSettings;
 
 @ConfigurationProperties("app.lms-signals")
 public record LmsSignalProperties(
@@ -24,5 +26,13 @@ public record LmsSignalProperties(
     public LmsSignalProperties {
         staleAfter = staleAfter == null ? DEFAULT_STALE_AFTER : staleAfter;
         completionCoveragePercent = completionCoveragePercent == null ? DEFAULT_COMPLETION_COVERAGE_PERCENT : completionCoveragePercent;
+    }
+
+    /** Пороги с учётом правки администратора в «Настройках»: устаревание данных и покрытие статусов завершения. */
+    public LmsSignalProperties with(SystemSettings settings) {
+        return new LmsSignalProperties(noStudentsAfterDays, lowCompletionPercent, completionWindowDays, activityGraceDays,
+                lowActivityPercent, notStartedPercent, dropoutPercent, inactiveAfterDays,
+                settings.hours(SystemSetting.SOURCES_STALE_HOURS, staleAfter),
+                settings.value(SystemSetting.LMS_COMPLETION_COVERAGE, completionCoveragePercent));
     }
 }

@@ -113,6 +113,7 @@ import ru.rtk.crm.work.WorkService;
 
 // Весь путь запроса: цепочка /mcp с подписанным тестовым JWT, профиль, роль, Origin, частота, транспорт SDK,
 // инструменты поверх (замоканных) сервисов и запись в журнал аудита.
+@org.springframework.context.annotation.Import(ru.rtk.crm.settings.TestSystemSettings.class)
 @SpringBootTest(properties = {
         "spring.flyway.enabled=false",
         "spring.datasource.url=jdbc:h2:mem:mcp-http;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
@@ -236,7 +237,8 @@ class McpHttpTest {
         String operator = subject(UserRole.USER);
         when(userProfileRepository.isEnrolmentOperator(profileId(operator))).thenReturn(true);
         mockMvc.perform(rpc(token(operator, List.of("crm-user")), "tools/list", Map.of()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("Менеджер учебного процесса")));
         verify(auditJournalRepository, never()).record(any(), any(), any(), any(), any(), any(), any());
     }
 
@@ -506,7 +508,7 @@ class McpHttpTest {
         assertThat(basis.path("from").asText()).isEqualTo("2026-09-01");
         assertThat(basis.path("filters").path("managerIds").toString()).contains("UNASSIGNED");
         assertThat(basis.path("filters").path("organizationType").asText()).isEqualTo("COLLEGE");
-        assertThat(basis.path("passports").asText()).isEqualTo("docs/metrics.md");
+        assertThat(basis.path("passports").asText()).isEqualTo("metric_passport");
         assertThat(basis.path("learningCoverage").has("withFreshActivity")).isTrue();
 
         JsonNode wrongMode = callTool(token, "team_control", Map.of("mode", "YESTERDAY"));

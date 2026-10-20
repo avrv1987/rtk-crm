@@ -189,6 +189,25 @@ class LearnerStorageTest {
     }
 
     @Test
+    void restoreCheckDecryptsEveryProfileAndCountsTheOnesTheKeysDoNotOpen() throws Exception {
+        learnerService.create(LearnerTestData.fullProfile(), OPERATOR);
+        Learner broken = learnerService.create(LearnerTestData.requiredOnly("Сбоева", "Вера", "+79000000003", "vera@example.test"), OPERATOR);
+        LearnerRestoreCheck check = new LearnerRestoreCheck(learnerRepository, learnerService, cipher("v1", Map.of("v1", FIRST_KEY), FINGERPRINT_KEY));
+        assertThat(check.check()).isEqualTo(new LearnerRestoreCheck.Result(2, 0));
+
+        Map<String, String> brokenFields = storedFields(broken.id());
+        brokenFields.put(LearnerField.EMAIL.name(), brokenFields.get(LearnerField.FIRST_NAME.name()));
+        storeFields(broken.id(), brokenFields);
+        assertThat(check.check()).isEqualTo(new LearnerRestoreCheck.Result(2, 1));
+
+        LearnerDataCipher otherKey = cipher("v1", Map.of("v1", SECOND_KEY), FINGERPRINT_KEY);
+        LearnerService otherKeyService = new LearnerService(learnerRepository, enrolmentRepository, otherKey, auditJournalRepository);
+        assertThatThrownBy(() -> new LearnerRestoreCheck(learnerRepository, otherKeyService, otherKey).run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("2 learner profiles");
+    }
+
+    @Test
     void retentionAnonymizesLearnersWhoseEveryStreamEndedLongerAgoThanTheTerm() {
         UUID expired = stream("Курс А", 1, TODAY.minusYears(3).minusDays(1));
         UUID boundary = stream("Курс А", 2, TODAY.minusYears(3));
@@ -442,6 +461,7 @@ class LearnerStorageTest {
             CREATE TABLE IF NOT EXISTS enrolment_streams (
                 id UUID PRIMARY KEY, course_key VARCHAR(310) NOT NULL, course_name VARCHAR(1333) NOT NULL,
                 stream_no INTEGER NOT NULL CHECK (stream_no > 0), ends_on DATE, version INTEGER NOT NULL DEFAULT 0,
+                moodle_course_id BIGINT, moodle_group_id BIGINT,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 CONSTRAINT enrolment_streams_key UNIQUE (course_key, stream_no)
             )

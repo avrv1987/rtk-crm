@@ -35,7 +35,10 @@ import ru.rtk.crm.interaction.InteractionWorkStatus;
 import ru.rtk.crm.module.ModuleProperties;
 import ru.rtk.crm.agreement.AgreementRepository;
 import ru.rtk.crm.agreement.AgreementRepository.WorkAgreementStatus;
+import ru.rtk.crm.settings.SystemSetting;
+import ru.rtk.crm.settings.SystemSettings;
 import ru.rtk.crm.work.LmsSignalModels.WorkLearning;
+import ru.rtk.crm.work.LmsSignalProperties;
 import ru.rtk.crm.work.LmsWorkLearningService;
 import ru.rtk.crm.report.ReportRepository.CatalogTable;
 
@@ -58,7 +61,7 @@ public class ReportService {
             + " входит и назван в основании, программа только с такими потоками — «нет данных», а не ноль";
     private static final String MARKET_NOTE = "Спрос рынка труда — только для направлений с признаком: вакансии — на последний"
             + " срез периода, тренд — изменение этого числа в процентах за период; «не применяется» и «нет данных» — не ноль,"
-            + " в рейтинг спрос не входит";
+            + " в индекс востребованности спрос рынка не входит";
     private static final String DURATION_NOTE = "Длительность — календарные дни от входа в этап до перехода в следующий;"
             + " время до входа в последний этап — от создания взаимодействия до первого входа в последний этап маршрута, это не"
             + " подтверждённое завершение; медиана и 90-й процентиль — по завершённым прохождениям, их число рядом;"
@@ -101,7 +104,7 @@ public class ReportService {
             ManagerWorkTile.ISSUES, "проблемы и риски",
             ManagerWorkTile.AGREEMENT, "договор на согласовании",
             ManagerWorkTile.UNASSIGNED, "вузы без КАМ",
-            ManagerWorkTile.STUCK, "на этапе дольше %d дн.",
+            ManagerWorkTile.STUCK, "на этапе дольше норматива этапа, а без норматива — дольше %d дн.",
             ManagerWorkTile.LMS, "сигналы LMS",
             ManagerWorkTile.IDLE, "вузы без идущего взаимодействия"
     );
@@ -114,14 +117,24 @@ public class ReportService {
     private final ModuleProperties modules;
     private final LmsWorkLearningService lmsWorkLearningService;
     private final AgreementRepository agreementRepository;
+    private final LmsSignalProperties lmsSignalProperties;
+    private final SystemSettings settings;
 
     public ReportService(ReportRepository repository, ReportProperties properties, ModuleProperties modules,
-                         LmsWorkLearningService lmsWorkLearningService, AgreementRepository agreementRepository) {
+                         LmsWorkLearningService lmsWorkLearningService, AgreementRepository agreementRepository,
+                         LmsSignalProperties lmsSignalProperties, SystemSettings settings) {
         this.repository = repository;
         this.properties = properties;
         this.modules = modules;
         this.lmsWorkLearningService = lmsWorkLearningService;
         this.agreementRepository = agreementRepository;
+        this.lmsSignalProperties = lmsSignalProperties;
+        this.settings = settings;
+    }
+
+    // Пороги LMS с правкой администратора; читаются на каждый отчёт, поэтому новое значение действует без перезапуска.
+    private LmsSignalProperties lms() {
+        return lmsSignalProperties.with(settings);
     }
 
     ReportRequest normalize(ReportRequest request) {
@@ -141,10 +154,13 @@ public class ReportService {
         List<ReportRow> rows;
         ManagerWorkRows managerWork = ManagerWorkRows.EMPTY;
         long total;
-        if (normalized.kind() == ReportKind.DURATION || normalized.kind() == ReportKind.MANAGER_WORK) {
+        if (normalized.kind() == ReportKind.DURATION || normalized.kind() == ReportKind.MANAGER_WORK
+                || normalized.kind() == ReportKind.DEMAND) {
             List<ReportRow> all;
             if (normalized.kind() == ReportKind.DURATION) {
                 all = durationRows(profile, normalized, generatedAt);
+            } else if (normalized.kind() == ReportKind.DEMAND) {
+                all = demandRows(profile, normalized, generatedAt);
             } else {
                 managerWork = managerWorkRows(profile, normalized, generatedAt);
                 all = managerWork.rows();
@@ -182,6 +198,7 @@ public class ReportService {
         List<ReportRow> rows;
         switch (normalized.kind()) {
             case DURATION -> rows = durationRows(profile, normalized, generatedAt);
+            case DEMAND -> rows = demandRows(profile, normalized, generatedAt);
             case MANAGER_WORK -> {
                 managerWork = managerWorkRows(profile, normalized, generatedAt);
                 rows = managerWork.rows();
@@ -313,15 +330,22 @@ public class ReportService {
             return titles;
         }
         String snapshot = "на " + date(request.runsAsOf());
-        return Map.of(
-                ReportColumn.APPLICATIONS, "Заявки (сайт, по дате подачи: " + applicationPeriod(request) + ")",
-                ReportColumn.PAID_ORDERS, "Оплаченные заявки (сайт, без ограничения периода)",
-                ReportColumn.PAID_STREAMS, "Потоки с оплатами (сайт, без ограничения периода)",
-                ReportColumn.PARTICIPANTS, "Обучающиеся в потоках периода (Moodle, участия — не уникальные люди, " + snapshot + ")",
-                ReportColumn.LEARNERS_COMPLETED, "Завершили (Moodle, участия, " + snapshot + ")",
-                ReportColumn.COMPLETION_SHARE, "Доля завершивших среди известных, % (Moodle, участия, " + snapshot + ")",
-                ReportColumn.COMPLETION_BASIS, "Основание доли (Moodle, участия, " + snapshot + ")",
-                ReportColumn.PARALLEL_RUNS, "Параллельные потоки (Moodle, на " + date(request.runsAsOf()) + ")"
+        ReportRequest previous = request.previousPeriod();
+        return Map.ofEntries(
+                Map.entry(ReportColumn.DEMAND_TREND, previous == null ? "Тренд к прошлому периоду (период не задан)"
+                        : "Тренд к прошлому периоду (" + date(previous.from()) + "–" + date(previous.to()) + ")"),
+                Map.entry(ReportColumn.ACTIVITY_SHARE, "Активность за 7 дней, % (Moodle, свежие наблюдения, " + snapshot + ")"),
+                Map.entry(ReportColumn.UNIVERSITY_DEMAND, "Спрос вузов: взаимодействия по программе (CRM, созданы: "
+                        + applicationPeriod(request) + ")"),
+                Map.entry(ReportColumn.APPLICATIONS, "Заявки (сайт, по дате подачи: " + applicationPeriod(request) + ")"),
+                Map.entry(ReportColumn.PAID_ORDERS, "Оплаченные заявки (сайт, без ограничения периода)"),
+                Map.entry(ReportColumn.PAID_STREAMS, "Потоки с оплатами (сайт, без ограничения периода)"),
+                Map.entry(ReportColumn.PARTICIPANTS,
+                        "Обучающиеся в потоках периода (Moodle, участия — не уникальные люди, " + snapshot + ")"),
+                Map.entry(ReportColumn.LEARNERS_COMPLETED, "Завершили (Moodle, участия, " + snapshot + ")"),
+                Map.entry(ReportColumn.COMPLETION_SHARE, "Доля завершивших среди известных, % (Moodle, участия, " + snapshot + ")"),
+                Map.entry(ReportColumn.COMPLETION_BASIS, "Основание доли (Moodle, участия, " + snapshot + ")"),
+                Map.entry(ReportColumn.PARALLEL_RUNS, "Параллельные потоки (Moodle, на " + date(request.runsAsOf()) + ")")
         );
     }
 
@@ -342,6 +366,94 @@ public class ReportService {
                         + ReportColumn.DATE_TIME.format(observedAt.atZoneSameInstant(ReportRequest.ZONE)) + " (МСК)")
                 .orElse("Данные Moodle: у потоков периода нет наблюдений на " + asOf)
                 + (request.periodNotEnded() ? "; период ещё не закончился, данные взяты на сегодня" : "");
+    }
+
+    // Индекс М17 считается по всем строкам выборки, затем — по прошлому периоду той же длины для тренда. Для прироста
+    // записанных каждому периоду нужен предыдущий, поэтому выборок три: текущий, прошлый и позапрошлый период.
+    private List<ReportRow> demandRows(CrmProfile profile, ReportRequest request, OffsetDateTime generatedAt) {
+        DemandIndex.Settings settings = repository.findDemandIndexSettings().orElse(DemandIndex.Settings.DEFAULT);
+        List<ReportRow> rows = repository.findDemandRows(profile, request, freshAfter(request, generatedAt));
+        ReportRequest previous = request.previousPeriod();
+        List<ReportRow> previousRows = previous == null ? List.of()
+                : repository.findDemandRows(profile, previous, freshAfter(previous, generatedAt));
+        ReportRequest beforePrevious = previous == null ? null : previous.previousPeriod();
+        Map<UUID, Long> beforePreviousParticipants = beforePrevious == null ? null
+                : participants(repository.findDemandRows(profile, beforePrevious, freshAfter(beforePrevious, generatedAt)));
+        List<DemandIndex.Result> current = rank(rows, previous == null ? null : participants(previousRows), settings);
+        Map<UUID, DemandIndex.Result> before = new HashMap<>();
+        if (previous != null) {
+            List<DemandIndex.Result> ranked = rank(previousRows, beforePreviousParticipants, settings);
+            for (int index = 0; index < previousRows.size(); index++) {
+                if (previousRows.get(index).programId() != null) {
+                    before.put(previousRows.get(index).programId(), ranked.get(index));
+                }
+            }
+        }
+        List<ReportRow> result = new ArrayList<>();
+        for (int index = 0; index < rows.size(); index++) {
+            ReportRow row = rows.get(index);
+            DemandIndex.Result rank = current.get(index);
+            String trend = previous == null || rank.index() == null ? null : trend(rank, before.get(row.programId()));
+            result.add(row.withDemand(row.demand().with(rank, trend)));
+        }
+        if (request.sortBy() == ReportColumn.DEMAND_INDEX) {
+            result.sort(Comparator.comparing(ReportRow::demandPlace, Comparator.nullsLast(Comparator.naturalOrder()))
+                    .thenComparing(ReportRow::programName, Comparator.nullsLast(Comparator.naturalOrder()))
+                    .thenComparing(ReportRow::directionName, Comparator.nullsLast(Comparator.naturalOrder()))
+                    .thenComparing(ReportRow::programId, Comparator.nullsLast(Comparator.naturalOrder())));
+        }
+        return result;
+    }
+
+    private List<DemandIndex.Result> rank(List<ReportRow> rows, Map<UUID, Long> previousParticipants, DemandIndex.Settings settings) {
+        boolean payments = modules.enrolmentEnabled();
+        return DemandIndex.rank(rows.stream()
+                .map(row -> new DemandIndex.Input(
+                        row.programId() != null,
+                        row.participants(),
+                        previousParticipants == null || row.programId() == null ? null : previousParticipants.get(row.programId()),
+                        row.completed(),
+                        row.completedBase(),
+                        row.demand().active7d(),
+                        row.demand().activityBase(),
+                        row.demand().interactions(),
+                        payments ? row.paidOrders() : null,
+                        Objects.requireNonNullElse(row.demand().staleRuns(), 0L)))
+                .toList(), settings, lms().completionCoveragePercent(), notApplicable(previousParticipants == null));
+    }
+
+    private Set<DemandIndex.Component> notApplicable(boolean withoutPreviousPeriod) {
+        Set<DemandIndex.Component> result = new HashSet<>();
+        if (withoutPreviousPeriod) {
+            result.add(DemandIndex.Component.GROWTH);
+        }
+        if (!modules.enrolmentEnabled()) {
+            result.add(DemandIndex.Component.PAYMENTS);
+        }
+        return result;
+    }
+
+    private static Map<UUID, Long> participants(List<ReportRow> rows) {
+        Map<UUID, Long> result = new HashMap<>();
+        rows.stream().filter(row -> row.programId() != null && row.participants() != null)
+                .forEach(row -> result.put(row.programId(), row.participants()));
+        return result;
+    }
+
+    private static String trend(DemandIndex.Result now, DemandIndex.Result before) {
+        if (before == null || before.index() == null) {
+            return "в прошлом периоде " + DemandIndex.INSUFFICIENT;
+        }
+        java.math.BigDecimal change = now.index().subtract(before.index());
+        String sign = change.signum() > 0 ? "+" : change.signum() < 0 ? "−" : "";
+        return sign + DemandIndex.decimal(change.abs()) + " (место " + before.place() + " → " + now.place() + ")";
+    }
+
+    // Свежесть — как у сигналов LMS: подтверждение наблюдения не старше порога устаревания до конца периода, а для
+    // идущего периода — до момента формирования.
+    private OffsetDateTime freshAfter(ReportRequest request, OffsetDateTime generatedAt) {
+        OffsetDateTime end = request.learningAt().isBefore(generatedAt) ? request.learningAt() : generatedAt;
+        return end.minus(lms().staleAfter());
     }
 
     private List<ReportRow> durationRows(CrmProfile profile, ReportRequest request, OffsetDateTime generatedAt) {
@@ -378,7 +490,8 @@ public class ReportService {
                 || request.columns().contains(ReportColumn.AGREEMENT) || request.columns().contains(ReportColumn.AGREEMENT_STATUS);
         Map<UUID, WorkLearning> learning = withLearning ? lmsWorkLearningService.byWork(profile, foundIds) : Map.of();
         Map<UUID, WorkAgreementStatus> agreements = withAgreements ? agreementRepository.findWorkStatuses(foundIds) : null;
-        int stuckDays = Objects.requireNonNullElse(request.filters().minDaysOnStage(), ManagerWorkReport.DEFAULT_STUCK_DAYS);
+        int stuckDays = request.filters().minDaysOnStage() != null ? request.filters().minDaysOnStage()
+                : settings.value(SystemSetting.STUCK_DAYS);
         Set<UUID> agreementOrganizations = tile == ManagerWorkTile.AGREEMENT
                 ? agreementRepository.findOrganizationsWithAgreementInProgress(
                         found.stream().map(ManagerWorkLine::organizationId).collect(Collectors.toSet()))
@@ -569,7 +682,8 @@ public class ReportService {
                             : " история назначений КАМ в отчёт КАМ не входит, её видит руководитель команды");
                     case DEMAND -> DEMAND_NOTE.formatted(date(request.runsAsOf()))
                             + "; сортировка: "
-                            + request.sortBy().title(ReportKind.DEMAND).toLowerCase(Locale.ROOT) + " по убыванию";
+                            + (request.sortBy() == ReportColumn.DEMAND_INDEX ? "по месту"
+                            : request.sortBy().title(ReportKind.DEMAND).toLowerCase(Locale.ROOT) + " по убыванию");
                     case SNAPSHOT -> "Этап — по последнему переходу до конца выбранного дня, ответственный — КАМ вуза на эту"
                             + " дату по истории назначений; ИТ-программа и ИТ-продукты — текущие; " + EMPLOYEE_ACTION_NOTE;
                     case DURATION -> DURATION_NOTE;
@@ -594,10 +708,12 @@ public class ReportService {
         }
         if (request.filters().tile() != null) {
             notes.add("Отбор плиткой «Контроля»: " + TILE_NOTES.get(request.filters().tile()).formatted(
-                    Objects.requireNonNullElse(request.filters().minDaysOnStage(), ManagerWorkReport.DEFAULT_STUCK_DAYS)));
+                    request.filters().minDaysOnStage() != null ? request.filters().minDaysOnStage()
+                            : settings.value(SystemSetting.STUCK_DAYS)));
         }
         if (request.kind() == ReportKind.DEMAND) {
             notes.add(2, learningNote(profile, request));
+            notes.addAll(3, indexNotes(request));
             if (request.columns().contains(ReportColumn.MARKET_VACANCIES) || request.columns().contains(ReportColumn.MARKET_TREND)) {
                 notes.add(3, marketNote());
             }
@@ -607,6 +723,22 @@ public class ReportService {
             }
         }
         return List.copyOf(notes);
+    }
+
+    // Две строки, чтобы каждое примечание помещалось в две строки экрана; полная методика — в паспорте М17 и справке.
+    private List<String> indexNotes(ReportRequest request) {
+        DemandIndex.Settings settings = repository.findDemandIndexSettings().orElse(DemandIndex.Settings.DEFAULT);
+        LmsSignalProperties lms = lms();
+        return List.of(
+                "Место и индекс востребованности (0–100, паспорт М17; о спросе, а не о качестве программы): компонент —"
+                        + " процентиль среди программ выборки, вклад — вес × процентиль, индекс — сумма вкладов; веса: "
+                        + settings.describe(),
+                "Компонент без данных — не ноль: его вес делится между остальными; доля завершивших — при покрытии статусов"
+                        + " от " + lms.completionCoveragePercent() + " %, активность — по наблюдениям не старше "
+                        + lms.staleAfter().toHours() + " ч; «данных недостаточно» — нет данных Moodle или"
+                        + " покрытие ниже порога; прирост и тренд — к прошлому периоду той же длины"
+                        + (request.previousPeriod() == null ? " (период не задан — не считаются)" : "")
+                        + (request.filters().kindIds().isEmpty() ? "" : "; вид взаимодействия отбирает только спрос вузов"));
     }
 
     private String marketNote() {
@@ -627,18 +759,24 @@ public class ReportService {
                     : "заявки сайта с датой подачи в периоде";
             case PORTFOLIO -> switch (request.periodBasis()) {
                 case ACTIVITY -> "взаимодействия, у которых есть события в периоде";
-                case ACTIVE -> "взаимодействия, созданные до конца периода и не завершённые к его началу (статуса"
-                        + " завершения в CRM нет, поэтому незавершёнными считаются все)";
+                case ACTIVE -> "взаимодействия, созданные до конца периода и не завершённые к его началу или возобновлённые"
+                        + " в периоде (статус на начало — по истории смены статуса)";
                 case CREATED -> "взаимодействия, созданные в периоде";
             };
             case DURATION -> "прохождения этапов, закончившиеся в периоде, и входы в последний этап в периоде; «на конец периода» — на "
                     + ReportColumn.DATE_TIME.format(durationCutoff(request, generatedAt).atZoneSameInstant(ReportRequest.ZONE));
             case SNAPSHOT -> throw new IllegalStateException("Snapshot has no period");
-            case MANAGER_WORK -> "взаимодействия, созданные до конца периода, которые сейчас активны или имели события в периоде";
+            case MANAGER_WORK -> historicalManager(request, generatedAt)
+                    ? "взаимодействия, созданные до конца периода, активные на его конец по истории смены статуса или имевшие"
+                            + " события в периоде"
+                    : "взаимодействия, созданные до конца периода, которые сейчас активны или имели события в периоде";
             case AGREEMENTS -> "мероприятия, сроки которых (фактические, иначе плановые, иначе срок договора)"
                     + " пересекаются с периодом";
         };
         if (request.from() == null && request.to() == null) {
+            if (request.kind() == ReportKind.MANAGER_WORK) {
+                return "Период не задан: текущее состояние на момент формирования; переходы и комментарии — за всё время";
+            }
             return request.kind() == ReportKind.DURATION ? "Период: не ограничен; отобраны " + selection : "Период: не ограничен";
         }
         return "Период: " + date(request.from()) + " – " + date(request.to()) + "; отобраны " + selection;

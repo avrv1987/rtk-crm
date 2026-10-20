@@ -85,13 +85,19 @@ public class SubjectReportWriter {
                                         new int[]{35, 65}, learner.fields(), field -> List.of(field.name(), field.value()));
                             }
                         }
+                        section(layout, "8. Учёт людей и часов (преподавание, стажировки, повышение квалификации)",
+                                List.of("Вуз", "Роль", "ФИО", "Программа или место", "Период", "Состояние"),
+                                new int[]{18, 18, 18, 22, 14, 10}, report.data().peopleRecords(),
+                                record -> List.of(record.organizationName(), record.kind().label(), record.name(), text(record.details()),
+                                        DATE.format(record.startsOn()) + " - " + DATE.format(record.endsOn()),
+                                        record.anonymized() ? "обезличена" : "обрабатывается"));
                         layout.gap(PdfLayout.NOTE_SIZE);
-                        layout.paragraph("8. Сроки хранения", PdfLayout.TITLE_SIZE);
+                        layout.paragraph("9. Сроки хранения", PdfLayout.TITLE_SIZE);
                         for (String line : report.retention()) {
                             layout.paragraph(line, PdfLayout.NOTE_SIZE);
                         }
                         layout.gap(PdfLayout.NOTE_SIZE);
-                        layout.paragraph("9. Источники и получатели", PdfLayout.TITLE_SIZE);
+                        layout.paragraph("10. Источники и получатели", PdfLayout.TITLE_SIZE);
                         layout.paragraph("Источники: " + report.sources(), PdfLayout.NOTE_SIZE);
                         layout.paragraph("Получатели: " + report.recipients(), PdfLayout.NOTE_SIZE);
                     }

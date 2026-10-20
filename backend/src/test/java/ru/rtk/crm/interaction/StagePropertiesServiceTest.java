@@ -172,7 +172,12 @@ class StagePropertiesServiceTest {
                 });
         assertThatThrownBy(() -> move(partly, 1, "Не хватает документов: Акт.")).as("один перечень — не объяснение")
                 .isInstanceOf(InteractionValidationException.class);
-        Interaction moved = move(partly, 1, "Акт подпишут на встрече");
+        // Аудит видов, Н-1: перечень без точки, в другом регистре — тоже не объяснение.
+        assertThatThrownBy(() -> move(partly, 1, "не хватает документов: акт")).isInstanceOf(InteractionValidationException.class);
+        assertThat(InteractionService.missingDocumentsExplanation("не хватает документов: договор, Акт. Акт подпишут",
+                List.of("Акт", "Договор"))).isEqualTo("Акт подпишут");
+        // Клиент прислал перечень сам: в истории он не повторяется.
+        Interaction moved = move(partly, 1, "Не хватает документов: Акт. Акт подпишут на встрече");
         assertThat(moved.currentStageName()).isEqualTo("Дальше");
         assertThat(jdbcTemplate.queryForObject("SELECT comment FROM interaction_events WHERE interaction_id = ? AND type = 'TRANSITIONED'",
                 String.class, card.id())).isEqualTo("Не хватает документов: Акт. Акт подпишут на встрече");
@@ -228,7 +233,8 @@ class StagePropertiesServiceTest {
 
         Interaction card = interactionService.create(kamA, create("По шаблону", team.id()), "used");
         assertThatThrownBy(() -> templateService.delete(leaderA, team.id(), team.version(), "delete"))
-                .hasMessageContaining("незавершённые взаимодействия: 1");
+                .hasMessageContaining("незавершённые взаимодействия: 1")
+                .as("аудит видов, Н-3: совет выполним").hasMessageContaining("«Новый цикл»").hasMessageNotContaining("переведите");
         jdbcTemplate.update("UPDATE interactions SET work_status = 'COMPLETED' WHERE id = ?", card.id());
         jdbcTemplate.update("UPDATE interaction_kinds SET workflow_template_id = ? WHERE id = ?", team.id(), InteractionKindTestSchema.BASE_KIND);
         assertThatThrownBy(() -> templateService.delete(leaderA, team.id(), team.version(), "delete-2"))

@@ -22,10 +22,14 @@ import { terms } from '../../shared/ui/terms'
 import { saveFile } from '../admin/saveFile'
 import { matchingPreset, periodPresets } from '../reports/reportPeriods'
 import { WorkList } from '../work/WorkList'
+import { assignmentResultText } from '../organizations/organizationHistory'
+import { organizationTypeLabels } from '../organizations/OrganizationForm'
 import { AssignDialog, IdleOrganizations } from './ControlIdle'
 import { ControlNoContact } from './ControlNoContact'
+import { ControlReporting } from './ControlReporting'
 import { AgreementsInProgress, ControlMatrix, UnassignedOrganizations, type MatrixOpenState } from './ControlMatrix'
 import { ControlMore } from './ControlMore'
+import { MissingStepAction } from './MissingStepAction'
 import { ControlRows, CycleStageMatrix } from './ControlCycleViews'
 import { cellFilters, displayOptions, unassignedByWork, unassignedFor } from './cycleModel'
 import {
@@ -34,6 +38,7 @@ import {
   controlFiltersFromQuery,
   invalidQueryDates,
   controlListHref,
+  controlOrganizationTypes,
   controlReportHref,
   controlQuery,
   controlQueryFromFilters,
@@ -51,6 +56,7 @@ import {
   type ControlMode,
   panelFilterCount,
   stuckDayOptions,
+  defaultStuckDays,
   teamControl,
   tileCounts,
   tileShownCount,
@@ -186,6 +192,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
   const [dataState, setDataState] = useState<DataState>({ kind: 'loading' })
   const [optionsState, setOptionsState] = useState<OptionsState>({ kind: 'loading' })
   const [summary, setSummary] = useState<TeamsSummary | null>(null)
+  const [serverStuckDays, setServerStuckDays] = useState<number | null>(null)
   const [unassignedCount, setUnassignedCount] = useState<number | null>(null)
   const [message, setMessage] = useState<{ text: string; persistent: boolean } | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -290,14 +297,16 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
   useEffect(() => {
     let active = true
     const request = management
-      ? apiClient.getTeamsSummary(view.stuckDays).then((value) => {
+      ? apiClient.getTeamsSummary(view.stuckDays ?? undefined).then((value) => {
         if (active) {
           setSummary(value)
+          setServerStuckDays(value.stuckDays)
           setUnassignedCount(value.total.unassignedOrganizations)
         }
       })
-      : apiClient.getTeamIndicators(view.stuckDays).then((value) => {
+      : apiClient.getTeamIndicators(view.stuckDays ?? undefined).then((value) => {
         if (active) {
+          setServerStuckDays(value.stuckDays)
           setUnassignedCount(value.unassignedOrganizations)
         }
       })
@@ -410,8 +419,10 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
   const teamName = view.team === undefined || view.team === null ? null
     : loaded?.teams.find((team) => team.teamId === view.team)?.teamName ?? 'команда не найдена'
   const periodMode = isPeriodMode(filters)
-  const counts = control === null ? null : tileCounts(control, view.stuckDays)
-  const shown = control === null ? null : filterControl(control, view.tile, view.stuckDays)
+  // Без выбора в адресе действует порог из «Настроек»: сервер возвращает его в сводке.
+  const stuckDays = view.stuckDays ?? serverStuckDays ?? defaultStuckDays
+  const counts = control === null ? null : tileCounts(control, stuckDays)
+  const shown = control === null ? null : filterControl(control, view.tile, stuckDays)
   const inTile = shown === null ? null : tileShownCount(shown, view.tile)
   const today = todayInMoscow()
   const choice = customPeriod ? 'CUSTOM' : periodChoice(filters.from, filters.to, today)
@@ -456,7 +467,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
     { key: 'ISSUES', label: tileLabels.ISSUES, value: counts.ISSUES, tone: 'danger' },
     { key: 'AGREEMENT', label: tileLabels.AGREEMENT, value: counts.AGREEMENT, tone: 'warning' },
     ...(unassignedTile !== null && !periodMode ? [unassignedTile] : []),
-    { key: 'STUCK', label: `${tileLabels.STUCK} ${view.stuckDays} дн.`, value: counts.STUCK, tone: 'warning' },
+    { key: 'STUCK', label: `${tileLabels.STUCK} ${stuckDays} дн.`, value: counts.STUCK, tone: 'warning' },
     { key: 'LMS', label: tileLabels.LMS, value: counts.LMS, tone: 'warning' },
     ...(control?.idleOrganizations !== null && control?.idleOrganizations !== undefined
       ? [{ key: 'IDLE' as const, label: tileLabels.IDLE, value: counts.IDLE, tone: 'danger' as const }]
@@ -494,8 +505,15 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
   if (view.tile !== null) {
     chips.push({
       key: 'tile',
-      label: `Плитка: ${view.tile === 'STUCK' ? `на этапе дольше ${view.stuckDays} дн.` : tileLabels[view.tile].toLowerCase()}`,
+      label: `Плитка: ${view.tile === 'STUCK' ? `на этапе дольше ${stuckDays} дн.` : tileLabels[view.tile].toLowerCase()}`,
       onRemove: () => selectTile(null)
+    })
+  }
+  if (filters.organizationType !== '') {
+    chips.push({
+      key: 'organizationType',
+      label: `Тип: ${organizationTypeLabels[filters.organizationType]}`,
+      onRemove: () => update({ organizationType: '' })
     })
   }
   if (filters.change !== '') {
@@ -555,6 +573,12 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
           <button type="button" className="button--secondary" onClick={() => void load(filters)}>{terms.refresh}</button>
         </p>
       )}
+      {role === 'LEADER' && shown !== null && view.tile !== 'IDLE' && (
+        <MissingStepAction control={shown} onDone={(text, persistent) => {
+          setMessage({ text, persistent })
+          void load(filters)
+        }} />
+      )}
 
       {changeTiles.length > 0 && (
         <div className="control-tiles">
@@ -585,6 +609,16 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
             <button type="button" onClick={() => void loadOptions()}>{terms.retry}</button>
           </div>
         )}
+        <label>
+          Тип организации
+          <select
+            value={filters.organizationType}
+            onChange={(event) => update({ organizationType: event.target.value as ControlFilters['organizationType'] })}
+          >
+            <option value="">Все типы</option>
+            {controlOrganizationTypes.map((type) => <option key={type} value={type}>{organizationTypeLabels[type]}</option>)}
+          </select>
+        </label>
         {options !== null && (
           <>
             <CheckList label="Продукт" options={options.products} selected={filters.productId} onChange={(ids) => update({ productId: ids })} />
@@ -605,10 +639,10 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
           </>
         )}
         <label>
-          На этапе дольше
-          <select value={view.stuckDays} onChange={(event) => setView((current) => ({ ...current, stuckDays: Number(event.target.value) }))}>
-            {(stuckDayOptions.includes(view.stuckDays) ? stuckDayOptions : [...stuckDayOptions, view.stuckDays].sort((a, b) => a - b))
-              .map((days) => <option key={days} value={days}>{days} дней</option>)}
+          На этапе дольше (если у этапа нет норматива)
+          <select value={stuckDays} onChange={(event) => setView((current) => ({ ...current, stuckDays: Number(event.target.value) }))}>
+            {(stuckDayOptions.includes(stuckDays) ? stuckDayOptions : [...stuckDayOptions, stuckDays].sort((a, b) => a - b))
+              .map((days) => <option key={days} value={days}>{days} дней{days === serverStuckDays ? ' (по настройке)' : ''}</option>)}
           </select>
         </label>
         {withPeriod && (
@@ -651,7 +685,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
         <div className="control-board" aria-busy={dataState.kind === 'ready' && dataState.refreshing}>
           <CycleStageMatrix
             control={shown}
-            stuckDays={view.stuckDays}
+            stuckDays={stuckDays}
             periodEnd={periodEnd}
             kindNames={kindNames}
             compact={compact}
@@ -684,7 +718,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
                 full={view.tile === null ? undefined : control}
                 filtered={view.tile !== null || activeControlFilterCount(filters) > 0}
                 withPeriod={withPeriod}
-                stuckDays={view.stuckDays}
+                stuckDays={stuckDays}
                 summary={summary}
                 hotTeamId={hottestTeamId(control)}
                 open={open}
@@ -698,6 +732,7 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
       )}
 
       <ControlNoContact refreshKey={refreshSignal} onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
+      <ControlReporting refreshKey={refreshSignal} onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
       <ControlMore
         management={management}
         organizations={options?.organizationList ?? null}
@@ -713,9 +748,9 @@ const ControlBoard = ({ role, profileId, initialQuery, refreshSignal, onSessionE
           organization={options?.organizationList.find((item) => item.id === assigning) ?? null}
           profileId={profileId}
           onClose={() => setAssigning(null)}
-          onAssigned={() => {
+          onAssigned={(organization) => {
             setAssigning(null)
-            setMessage({ text: 'Назначение ответственного сохранено.', persistent: false })
+            setMessage({ text: assignmentResultText('assignment', organization.ownerManagerId), persistent: false })
             setAssignRevision((value) => value + 1)
             void load(filters)
             void loadOptions()

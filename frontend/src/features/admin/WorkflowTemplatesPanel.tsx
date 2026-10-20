@@ -266,7 +266,8 @@ export const WorkflowTemplatesPanel = ({ role, profileId, onSessionExpired, onPr
           // Виды документов из другой установки могут отсутствовать в справочнике: такие коды не переносятся.
           documentKinds: documentKinds.length === 0
             ? properties.documentKinds
-            : properties.documentKinds.filter((code) => documentKinds.some((kind) => kind.code === code))
+            : properties.documentKinds.filter((code) => documentKinds.some((kind) => kind.code === code)),
+          normDays: stage.normDays ?? null
         }
       }),
       transitions: parsed.file.transitions.map((transition) => ({
@@ -721,6 +722,20 @@ export const WorkflowTemplatesPanel = ({ role, profileId, onSessionExpired, onPr
                       {lmsRoles.map((lmsRole) => <option key={lmsRole} value={lmsRole}>{lmsRoleLabels[lmsRole]}</option>)}
                     </select>
                   </label>
+                  <label>
+                    Норматив, дней
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={3650}
+                      value={stage.normDays ?? ''}
+                      placeholder="общий порог"
+                      onChange={(event) => updateStage(index, {
+                        normDays: event.target.value === '' ? null : Number(event.target.value)
+                      })}
+                    />
+                  </label>
                   <details className="wt-editor__documents">
                     <summary>Обязательные документы: {stage.documentKinds.length === 0 ? 'нет' : stage.documentKinds.length}</summary>
                     {documentKinds.length === 0 && <p className="admin-form__hint">Справочник видов документов загружается…</p>}
@@ -833,7 +848,8 @@ export const WorkflowTemplatesPanel = ({ role, profileId, onSessionExpired, onPr
         title={`Удалить шаблон «${pendingDelete?.template.name ?? ''}»?`}
         description={'Новые взаимодействия больше не смогут выбрать этот шаблон, история его версий будет удалена.'
           + ' Шаблон, по которому идут незавершённые взаимодействия или который выбран маршрутом вида взаимодействия,'
-          + ' удалить нельзя — сначала переведите их на другой маршрут.'}
+          + ' удалить нельзя: завершите такие взаимодействия или начните «Новый цикл» по другому маршруту,'
+          + ' а для вида выберите другой шаблон.'}
         confirmLabel="Подтвердить удаление"
         onConfirm={() => void confirmDelete()}
         onCancel={() => setPendingDelete(null)}

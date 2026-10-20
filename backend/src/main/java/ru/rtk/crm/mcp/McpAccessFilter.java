@@ -71,9 +71,16 @@ final class McpAccessFilter extends OncePerRequestFilter {
                     "Нужен активный профиль CRM с ролью, подтверждённой Keycloak", "mcp profile");
             return;
         }
-        if (!ALLOWED_ROLES.contains(profile.role()) || userProfileRepository.isEnrolmentOperator(profile.id())) {
+        if (!ALLOWED_ROLES.contains(profile.role())) {
             apiErrorWriter.write(request, response, HttpServletResponse.SC_FORBIDDEN, "FORBIDDEN",
                     "MCP доступен КАМ, руководителю команды и «Руководству»", "mcp role " + profile.role());
+            return;
+        }
+        // Роль подходит, а отказ из-за флага: называем причину, иначе КАМ не поймёт, почему его не пускают.
+        if (userProfileRepository.isEnrolmentOperator(profile.id())) {
+            apiErrorWriter.write(request, response, HttpServletResponse.SC_FORBIDDEN, "FORBIDDEN",
+                    "MCP закрыт: у вас отметка «Менеджер учебного процесса» — анкеты слушателей не передаются ИИ-агентам. "
+                            + "Снять отметку может администратор", "mcp enrolment operator");
             return;
         }
         if (!acquire(profile.id())) {

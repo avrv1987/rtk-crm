@@ -6,7 +6,8 @@ public final class EnrolmentBatchTestSchema {
             CREATE TABLE IF NOT EXISTS enrolment_batches (
                 id UUID PRIMARY KEY, stream_id UUID NOT NULL, format VARCHAR(16) NOT NULL, mode VARCHAR(16), file_name VARCHAR(400),
                 checksum CHAR(64), rows_count INTEGER NOT NULL, legacy BOOLEAN DEFAULT FALSE NOT NULL, created_by UUID,
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL, sent_at TIMESTAMP WITH TIME ZONE, sent_by UUID
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL, sent_at TIMESTAMP WITH TIME ZONE, sent_by UUID,
+                moodle_transfer_started_at TIMESTAMP WITH TIME ZONE
             )
             """;
 

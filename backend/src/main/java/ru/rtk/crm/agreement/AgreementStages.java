@@ -143,16 +143,36 @@ public class AgreementStages {
 
     /** Номер действующего договора школы с вузом карточки (тот же критерий, что у правила), если такой есть. */
     public Optional<String> activeAgreementNumber(UUID interactionId) {
+        return activeAgreements(interactionId).stream().map(OrganizationAgreement::number).findFirst();
+    }
+
+    // Договор, которым правило выполнено: сначала связанный с этой работой, иначе самый свежий по смене статуса договор
+    // вуза. Карточка и окно перехода называют именно его, чтобы не расходиться с сервером (решение владельца 19.10).
+    public Optional<ActiveAgreement> activeAgreement(UUID interactionId) {
+        List<OrganizationAgreement> active = activeAgreements(interactionId);
+        if (active.isEmpty()) {
+            return Optional.empty();
+        }
+        List<UUID> linked = jdbcClient.sql("SELECT agreement_id FROM agreement_interactions WHERE interaction_id = :interactionId")
+                .param("interactionId", interactionId)
+                .query(UUID.class)
+                .list();
+        OrganizationAgreement chosen = active.stream().filter(agreement -> linked.contains(agreement.id())).findFirst()
+                .orElse(active.getFirst());
+        return Optional.of(new ActiveAgreement(chosen.id(), chosen.number(), chosen.concludedOn(), chosen.validUntil(),
+                linked.contains(chosen.id())));
+    }
+
+    private List<OrganizationAgreement> activeAgreements(UUID interactionId) {
         LocalDate today = LocalDate.now(AgreementService.ZONE);
         return organizationAgreements(interactionId).stream()
                 .filter(agreement -> agreement.signed() && !agreement.expired(today))
-                .map(OrganizationAgreement::number)
-                .findFirst();
+                .toList();
     }
 
     private List<OrganizationAgreement> organizationAgreements(UUID interactionId) {
         return jdbcClient.sql("""
-                SELECT ag.number, ag.status, ag.valid_until,
+                SELECT ag.id, ag.number, ag.status, ag.concluded_on, ag.valid_until,
                        CASE WHEN ag.status = 'ACTIVE' AND ag.concluded_on IS NOT NULL THEN 1 ELSE 0 END AS signed
                 FROM agreements ag
                 JOIN interactions i ON i.organization_id = ag.organization_id
@@ -161,15 +181,21 @@ public class AgreementStages {
                 """)
                 .param("interactionId", interactionId)
                 .query((resultSet, rowNumber) -> new OrganizationAgreement(
+                        resultSet.getObject("id", UUID.class),
                         resultSet.getString("number"),
                         resultSet.getInt("signed") == 1,
                         AgreementStatus.valueOf(resultSet.getString("status")),
+                        resultSet.getObject("concluded_on", LocalDate.class),
                         resultSet.getObject("valid_until", LocalDate.class)
                 ))
                 .list();
     }
 
-    private record OrganizationAgreement(String number, boolean signed, AgreementStatus status, LocalDate validUntil) {
+    public record ActiveAgreement(UUID id, String number, LocalDate concludedOn, LocalDate validUntil, boolean linked) {
+    }
+
+    private record OrganizationAgreement(UUID id, String number, boolean signed, AgreementStatus status, LocalDate concludedOn,
+                                         LocalDate validUntil) {
         boolean expired(LocalDate today) {
             return status.expired(validUntil, today);
         }

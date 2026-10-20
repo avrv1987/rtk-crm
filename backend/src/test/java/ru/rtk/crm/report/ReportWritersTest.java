@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -153,9 +154,35 @@ class ReportWritersTest {
         assertThat(json.path("quality").path("withoutProgram").asInt()).isEqualTo(1);
     }
 
+    // Д-14: выгрузка «Контроля» в режиме «Сейчас» (без периода) не называется «за период».
+    @Test
+    void managerWorkWithoutPeriodIsTitledCurrentStateAndCountsTransitionsForAllTime() {
+        List<ReportColumn> columns = List.of(ReportColumn.TRANSITIONS, ReportColumn.PERIOD_COMMENTS);
+        ReportDocument now = new ReportDocument(
+                new ReportRequest(ReportKind.MANAGER_WORK, null, null, null, null, columns, ReportFormat.XLSX, null, null),
+                EVENT_AT, List.of(), List.of()
+        );
+        ReportDocument period = new ReportDocument(
+                new ReportRequest(ReportKind.MANAGER_WORK, LocalDate.of(2026, 10, 1), null, null, null, columns, ReportFormat.XLSX,
+                        null, null),
+                EVENT_AT, List.of(), List.of()
+        );
+
+        assertThat(now.title()).isEqualTo("Работа менеджеров: текущее состояние");
+        assertThat(columns.stream().map(now::columnTitle))
+                .containsExactly("Переходов за всё время", "Комментарии за всё время");
+        assertThat(now.totalTitles(ManagerWorkTotal.TITLES)).contains("Переходов за всё время").doesNotContain("Переходов за период");
+        assertThat(period.title()).isEqualTo("Работа менеджеров за период");
+        assertThat(period.columnTitle(ReportColumn.TRANSITIONS)).isEqualTo("Переходов за период");
+        assertThat(period.totalTitles(ManagerWorkTotal.TITLES)).contains("Переходов за период");
+    }
+
     @Test
     void demandFileWritesApplicationsAsNumbersAndMissingMoodleValuesAsNoData() throws IOException {
-        ReportRequest request = new ReportRequest(ReportKind.DEMAND, null, null, null, null, null, ReportFormat.XLSX, null, null)
+        ReportRequest request = new ReportRequest(ReportKind.DEMAND, null, null, null, null, List.of(ReportColumn.DIRECTION,
+                ReportColumn.PROGRAM, ReportColumn.APPLICATIONS, ReportColumn.PAID_ORDERS, ReportColumn.PAID_STREAMS,
+                ReportColumn.PARTICIPANTS, ReportColumn.LEARNERS_COMPLETED, ReportColumn.COMPLETION_SHARE, ReportColumn.COMPLETION_BASIS,
+                ReportColumn.PARALLEL_RUNS, ReportColumn.MARKET_VACANCIES, ReportColumn.MARKET_TREND), ReportFormat.XLSX, null, null)
                 .normalized(true);
         ReportRow row = new ReportRow(null, null, null, null, UUID.randomUUID(), "Программирование", UUID.randomUUID(),
                 "Java-разработчик", List.of(), null, null, null, null, null, null, null, null, null, null, null, null, null,
@@ -279,7 +306,7 @@ class ReportWritersTest {
     private static ReportRow marketRow(String program, MarketDemand market) {
         return new ReportRow(null, null, null, null, UUID.randomUUID(), "Направление", UUID.randomUUID(), program, List.of(), null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, List.of(), null, null,
-                null, null, null, null, null, market, null);
+                null, null, null, null, null, market, null, null);
     }
 
     private static ReportRow row(String organization, String comment) {

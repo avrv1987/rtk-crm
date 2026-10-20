@@ -38,8 +38,13 @@ public class InteractionKindsApiController {
     }
 
     @GetMapping("/api/interaction-kinds")
-    public List<InteractionKind> available(@AuthenticationPrincipal OidcUser user) {
-        return service.available(currentProfileService.requireActiveProfile(user));
+    public List<InteractionKind> available(
+            @AuthenticationPrincipal OidcUser user,
+            @RequestParam(defaultValue = "false") boolean includeInactive
+    ) {
+        return includeInactive
+                ? service.availableWithInactive(currentProfileService.requireActiveProfile(user))
+                : service.available(currentProfileService.requireActiveProfile(user));
     }
 
     @GetMapping("/api/interaction-kinds/resolution")

@@ -19,7 +19,9 @@ public class InteractionKindRepository {
     private static final String KIND_SELECT = """
             SELECT k.id, k.name, k.description, k.active, k.workflow_template_id, kt.name AS template_name,
                    k.sort_order, k.version, tt.workflow_template_id AS team_template_id, ttt.name AS team_template_name,
-                   k.default_kind
+                   k.default_kind,
+                   (SELECT COUNT(*) FROM interactions i
+                    WHERE i.interaction_kind_id = k.id AND i.work_status <> 'COMPLETED') AS interaction_count
             FROM interaction_kinds k
             LEFT JOIN workflow_templates kt ON kt.id = k.workflow_template_id
             LEFT JOIN interaction_kind_team_templates tt ON tt.kind_id = k.id AND tt.team_id = :teamId
@@ -27,7 +29,7 @@ public class InteractionKindRepository {
             """;
     private static final String RULE_SELECT = """
             SELECT r.id, r.kind_id, k.name AS kind_name, r.organization_type, r.program_id, p.name AS program_name,
-                   r.product_id, pr.name AS product_name, r.priority, r.version
+                   r.product_id, pr.name AS product_name, r.priority, r.version, r.active, k.active AS kind_active
             FROM interaction_kind_rules r
             JOIN interaction_kinds k ON k.id = r.kind_id
             LEFT JOIN programs p ON p.id = r.program_id
@@ -169,12 +171,13 @@ public class InteractionKindRepository {
     }
 
     public void insertRule(UUID id, UUID kindId, OrganizationType organizationType, UUID programId, UUID productId, int priority,
-                           OffsetDateTime now) {
+                           boolean active, OffsetDateTime now) {
         jdbcClient.sql("""
-                INSERT INTO interaction_kind_rules (id, kind_id, organization_type, program_id, product_id, priority, version,
-                                                    created_at, updated_at)
-                VALUES (:id, :kindId, :organizationType, :programId, :productId, :priority, 0, :now, :now)
+                INSERT INTO interaction_kind_rules (id, kind_id, organization_type, program_id, product_id, priority, active,
+                                                    version, created_at, updated_at)
+                VALUES (:id, :kindId, :organizationType, :programId, :productId, :priority, :active, 0, :now, :now)
                 """)
+                .param("active", active)
                 .param("id", id)
                 .param("kindId", kindId)
                 .param("organizationType", organizationType == null ? null : organizationType.name())
@@ -186,13 +189,14 @@ public class InteractionKindRepository {
     }
 
     public boolean updateRule(UUID id, int expectedVersion, UUID kindId, OrganizationType organizationType, UUID programId,
-                              UUID productId, int priority, OffsetDateTime now) {
+                              UUID productId, int priority, boolean active, OffsetDateTime now) {
         return jdbcClient.sql("""
                 UPDATE interaction_kind_rules
                 SET kind_id = :kindId, organization_type = :organizationType, program_id = :programId,
-                    product_id = :productId, priority = :priority, version = version + 1, updated_at = :now
+                    product_id = :productId, priority = :priority, active = :active, version = version + 1, updated_at = :now
                 WHERE id = :id AND version = :expectedVersion
                 """)
+                .param("active", active)
                 .param("id", id)
                 .param("expectedVersion", expectedVersion)
                 .param("kindId", kindId)
@@ -228,7 +232,7 @@ public class InteractionKindRepository {
                 FROM interaction_kind_rules r
                 JOIN interaction_kinds k ON k.id = r.kind_id AND k.active = TRUE
                 JOIN organizations o ON o.id = :organizationId
-                WHERE (r.organization_type IS NULL OR r.organization_type = o.type) AND %s AND %s
+                WHERE r.active = TRUE AND (r.organization_type IS NULL OR r.organization_type = o.type) AND %s AND %s
                 ORDER BY r.priority,
                          CASE WHEN r.organization_type IS NULL THEN 0 ELSE 1 END
                              + CASE WHEN r.program_id IS NULL THEN 0 ELSE 1 END
@@ -288,7 +292,8 @@ public class InteractionKindRepository {
                 resultSet.getInt("version"),
                 resultSet.getObject("team_template_id", UUID.class),
                 resultSet.getString("team_template_name"),
-                resultSet.getBoolean("default_kind")
+                resultSet.getBoolean("default_kind"),
+                resultSet.getLong("interaction_count")
         );
     }
 
@@ -304,7 +309,9 @@ public class InteractionKindRepository {
                 resultSet.getObject("product_id", UUID.class),
                 resultSet.getString("product_name"),
                 resultSet.getInt("priority"),
-                resultSet.getInt("version")
+                resultSet.getInt("version"),
+                resultSet.getBoolean("active"),
+                resultSet.getBoolean("kind_active")
         );
     }
 }

@@ -35,6 +35,7 @@ public class InteractionsApiController {
     private final InteractionService interactionService;
     private final AttachmentService attachmentService;
     private final ProductAgreementService productAgreementService;
+    private final InteractionRelatedEvents relatedEvents;
 
     private final ModuleProperties modules;
 
@@ -43,12 +44,14 @@ public class InteractionsApiController {
             InteractionService interactionService,
             AttachmentService attachmentService,
             ProductAgreementService productAgreementService,
+            InteractionRelatedEvents relatedEvents,
             ModuleProperties modules
     ) {
         this.currentProfileService = currentProfileService;
         this.interactionService = interactionService;
         this.attachmentService = attachmentService;
         this.productAgreementService = productAgreementService;
+        this.relatedEvents = relatedEvents;
         this.modules = modules;
     }
 
@@ -147,7 +150,10 @@ public class InteractionsApiController {
 
     @GetMapping("/{id}/events")
     public List<InteractionEvent> events(@AuthenticationPrincipal OidcUser user, @PathVariable String id) {
-        return interactionService.events(currentProfileService.requireActiveProfile(user), parseRequiredUuid(id, "id"));
+        UUID interactionId = parseRequiredUuid(id, "id");
+        // Права проверяет сервис: соседние события читаются только для видимой карточки.
+        return relatedEvents.merge(interactionId,
+                interactionService.events(currentProfileService.requireActiveProfile(user), interactionId));
     }
 
     @PostMapping("/{id}/transitions")

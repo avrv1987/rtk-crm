@@ -276,6 +276,23 @@ public class SiteRecordApplier implements SourceRecordApplier {
         if (applied.isPresent()) {
             return new ApplyResult(SourceRecordStatus.APPLIED, null, organization.id(), programId, 1, applied.get());
         }
+        UUID productId = uniqueOrNull(item.productName() == null ? List.of() : repository.findActiveProductIdsByName(item.productName()));
+        // Новая версия заявки дополняет прежнюю карточку, если она всё ещё принадлежит этому вузу. Иначе берётся
+        // незавершённая карточка вуза по программе и продукту того вида, что дают правила, и лишь затем создаётся новая:
+        // заявки сайта не плодят карточки. Несколько подходящих — запись в разбор, угадывать нельзя. Проверка идёт до
+        // резервирования команды, чтобы запись в разборе не оставила занятый ключ.
+        UUID interactionId = null;
+        if (previousInteractionId != null && repository.interactionBelongsTo(previousInteractionId, organization.id())) {
+            interactionId = previousInteractionId;
+        } else {
+            UUID kindId = interactionService.sourceKind(organization.id(), programId, productId == null ? List.of() : List.of(productId));
+            List<UUID> candidates = repository.findOpenInteractions(organization.id(), programId, productId, kindId);
+            if (candidates.size() > 1) {
+                return new ApplyResult(SourceRecordStatus.NEEDS_MAPPING, ambiguousInteractions(candidates), organization.id(),
+                        programId, 1, previousInteractionId);
+            }
+            interactionId = candidates.isEmpty() ? null : candidates.getFirst();
+        }
         UUID commandId = UUID.randomUUID();
         // Ключ занят командой без сохранённого результата: комментарий не дублируется, запись уйдёт в ошибку и будет
         // повторена.
@@ -289,18 +306,11 @@ public class SiteRecordApplier implements SourceRecordApplier {
         )) {
             throw new IllegalStateException("Source record version was already applied by this profile");
         }
-        UUID productId = uniqueOrNull(item.productName() == null ? List.of() : repository.findActiveProductIdsByName(item.productName()));
         List<Contact> matches = matchingContacts(organization.id(), item);
         // Ограничение обработки ПДн действует и на заявки: такой контакт не привязывается, новый вместо него не
         // создаётся, его данные в комментарий не попадают.
         boolean restricted = matches.stream().anyMatch(contact -> contact.personalDataStatus() == PersonalDataStatus.RESTRICTED);
         List<UUID> contactIds = restricted ? List.of() : contact(organization.id(), item, matches, actorProfileId, now);
-        // Новая версия заявки дополняет прежнюю карточку, если она всё ещё принадлежит этому вузу; иначе берётся
-        // последняя карточка вуза по программе и продукту, и лишь затем создаётся новая: заявки сайта не плодят
-        // карточки.
-        UUID interactionId = previousInteractionId != null && repository.interactionBelongsTo(previousInteractionId, organization.id())
-                ? previousInteractionId
-                : repository.findLatestInteraction(organization.id(), programId, productId).orElse(null);
         if (interactionId == null) {
             interactionId = interactionService.createSourceInteraction(
                     organization.id(),
@@ -328,6 +338,11 @@ public class SiteRecordApplier implements SourceRecordApplier {
         return new ApplyResult(
                 SourceRecordStatus.APPLIED, restricted ? RESTRICTED_CONTACT : null, organization.id(), programId, 1, interactionId
         );
+    }
+
+    private String ambiguousInteractions(List<UUID> candidates) {
+        return "У вуза несколько незавершённых взаимодействий этой программы и вида: " + repository.interactionTitles(candidates)
+                + ". Завершите лишнее или смените его вид, затем примените запись снова";
     }
 
     // Порядок поиска: выбор администратора, внешний ID, точное название. Более явная связь главнее названия.

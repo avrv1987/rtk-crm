@@ -55,6 +55,10 @@ class EnrolmentCommands {
         repository.complete(reservation.commandId(), json(result));
     }
 
+    void release(Reservation reservation) {
+        repository.release(reservation.commandId());
+    }
+
     <T> T read(String json, Class<T> type) {
         try {
             return objectMapper.readValue(json, type);

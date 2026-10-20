@@ -27,23 +27,23 @@ public class PdfReportWriter {
             if (!document.groupTotals().isEmpty()) {
                 layout.gap(PdfLayout.NOTE_SIZE);
                 layout.paragraph(ExcelReportWriter.TOTALS_SHEET, PdfLayout.NOTE_SIZE);
-                layout.table(ManagerWorkTotal.TITLES, ManagerWorkTotal.WIDTHS);
+                layout.table(document.totalTitles(ManagerWorkTotal.TITLES), ManagerWorkTotal.WIDTHS);
                 for (ManagerWorkTotal total : document.groupTotals()) {
                     layout.row(texts(total.values()));
                 }
             }
-            groupSection(layout, ExcelReportWriter.PRODUCT_TOTALS_SHEET, "Продукт", document.productTotals());
-            groupSection(layout, ExcelReportWriter.ORGANIZATION_TOTALS_SHEET, "Вуз", document.organizationTotals());
+            groupSection(layout, document, ExcelReportWriter.PRODUCT_TOTALS_SHEET, "Продукт", document.productTotals());
+            groupSection(layout, document, ExcelReportWriter.ORGANIZATION_TOTALS_SHEET, "Вуз", document.organizationTotals());
         });
     }
 
-    private static void groupSection(PdfLayout layout, String title, String first, List<ManagerWorkGroupTotal> totals) throws IOException {
+    private static void groupSection(PdfLayout layout, ReportDocument document, String title, String first, List<ManagerWorkGroupTotal> totals) throws IOException {
         if (totals.isEmpty()) {
             return;
         }
         layout.gap(PdfLayout.NOTE_SIZE);
         layout.paragraph(title, PdfLayout.NOTE_SIZE);
-        layout.table(ManagerWorkGroupTotal.titles(first), ManagerWorkGroupTotal.widths());
+        layout.table(document.totalTitles(ManagerWorkGroupTotal.titles(first)), ManagerWorkGroupTotal.widths());
         for (ManagerWorkGroupTotal total : totals) {
             layout.row(texts(total.values()));
         }

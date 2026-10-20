@@ -375,7 +375,7 @@ printf '%s' "$sync_client_definition" | kcadm update "clients/$sync_client_id" -
 kcadm add-roles -r rtk-crm --uusername service-account-crm-account-sync --cclientid realm-management --rolename manage-users \
     --rolename view-events
 
-# MCP для ИИ-агентов (docs/mcp.md). Клиентский scope crm-mcp кладёт в access token aud=crm-mcp и роли CRM; публичный
+# MCP для ИИ-агентов. Клиентский scope crm-mcp кладёт в access token aud=crm-mcp и роли CRM; публичный
 # клиент crm-mcp-client входит по PKCE с экраном согласия, без offline_access. Регистрации клиентов «на лету» (DCR) нет:
 # адреса возврата клиентов перечисляются в MCP_REDIRECT_URIS. При MCP_ENABLED=false уже заведённый клиент отключается,
 # а realm не пересоздаётся ни в каком случае.

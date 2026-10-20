@@ -139,7 +139,7 @@ public class WorkflowTemplateRepository {
                             .add(resultSet.getString("kind_code"));
                 });
         return jdbcClient.sql("""
-                SELECT id, name, stage_order, optional, requires_agreement, lms_role
+                SELECT id, name, stage_order, optional, requires_agreement, lms_role, norm_days
                 FROM workflow_template_stages
                 WHERE template_id = :templateId
                 ORDER BY stage_order ASC
@@ -155,7 +155,8 @@ public class WorkflowTemplateRepository {
                             resultSet.getBoolean("optional"),
                             resultSet.getBoolean("requires_agreement"),
                             role == null ? null : StageLmsRole.valueOf(role),
-                            documents.get(id)
+                            documents.get(id),
+                            resultSet.getObject("norm_days", Integer.class)
                     );
                 })
                 .list();
@@ -309,8 +310,9 @@ public class WorkflowTemplateRepository {
     private void insertStages(UUID templateId, List<WorkflowTemplateStage> stages) {
         for (WorkflowTemplateStage stage : stages) {
             jdbcClient.sql("""
-                    INSERT INTO workflow_template_stages (id, template_id, stage_order, name, optional, requires_agreement, lms_role)
-                    VALUES (:id, :templateId, :stageOrder, :name, :optional, :requiresAgreement, :lmsRole)
+                    INSERT INTO workflow_template_stages (
+                        id, template_id, stage_order, name, optional, requires_agreement, lms_role, norm_days
+                    ) VALUES (:id, :templateId, :stageOrder, :name, :optional, :requiresAgreement, :lmsRole, :normDays)
                     """)
                     .param("id", stage.id())
                     .param("templateId", templateId)
@@ -319,6 +321,7 @@ public class WorkflowTemplateRepository {
                     .param("optional", stage.optional())
                     .param("requiresAgreement", stage.requiresAgreement())
                     .param("lmsRole", stage.lmsRole() == null ? null : stage.lmsRole().name())
+                    .param("normDays", stage.normDays(), java.sql.Types.INTEGER)
                     .update();
             for (String kind : stage.documentKinds()) {
                 jdbcClient.sql("INSERT INTO workflow_template_stage_documents (stage_id, kind_code) VALUES (:stageId, :kind)")

@@ -48,7 +48,8 @@ public record ReportRow(
         Long completedBase,
         ManagerWork managerWork,
         MarketDemand market,
-        Long runsWithoutData
+        Long runsWithoutData,
+        Demand demand
 ) {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
 
@@ -91,7 +92,7 @@ public record ReportRow(
         this(interactionId, interactionTitle, organizationId, organizationName, directionId, directionName, programId, programName,
                 products, stageName, managerId, managerName, createdAt, lastEventAt, daysOnStage, nextAction, nextActionAt, eventAt,
                 eventType, fromStageName, comment, authorName, applications, participants, parallelRuns, marks, agreements,
-                duration, completed, agreement, paidOrders, paidStreams, completedBase, managerWork, null, null);
+                duration, completed, agreement, paidOrders, paidStreams, completedBase, managerWork, null, null, null);
     }
 
     public ReportRow(
@@ -132,7 +133,7 @@ public record ReportRow(
         this(interactionId, interactionTitle, organizationId, organizationName, directionId, directionName, programId, programName,
                 products, stageName, managerId, managerName, createdAt, lastEventAt, daysOnStage, nextAction, nextActionAt, eventAt,
                 eventType, fromStageName, comment, authorName, applications, participants, parallelRuns, marks, agreements,
-                duration, completed, agreement, paidOrders, paidStreams, completedBase, null, null, null);
+                duration, completed, agreement, paidOrders, paidStreams, completedBase, null, null, null, null);
     }
 
 
@@ -169,8 +170,50 @@ public record ReportRow(
                 programName, products, stageName, managerId, managerName, createdAt, lastEventAt, daysOnStage, nextAction,
                 nextActionAt, eventAt, eventType, fromStageName, comment, authorName, applications, participants, parallelRuns,
                 marks, agreements, duration, completed, agreement, paidOrders, paidStreams, completedBase, managerWork, marketDemand,
-                runsWithoutData
+                runsWithoutData, demand
         );
+    }
+
+    ReportRow withDemand(Demand value) {
+        return new ReportRow(
+                interactionId, interactionTitle, organizationId, organizationName, directionId, directionName, programId,
+                programName, products, stageName, managerId, managerName, createdAt, lastEventAt, daysOnStage, nextAction,
+                nextActionAt, eventAt, eventType, fromStageName, comment, authorName, applications, participants, parallelRuns,
+                marks, agreements, duration, completed, agreement, paidOrders, paidStreams, completedBase, managerWork, market,
+                runsWithoutData, value
+        );
+    }
+
+    public Integer demandPlace() {
+        return demand == null || demand.result() == null ? null : demand.result().place();
+    }
+
+    public BigDecimal demandIndex() {
+        return demand == null || demand.result() == null ? null : demand.result().index();
+    }
+
+    public String demandContributions() {
+        return demand == null || demand.result() == null ? null : demand.result().contributions();
+    }
+
+    public String demandCoverage() {
+        return demand == null || demand.result() == null ? null : demand.result().coverage();
+    }
+
+    public String demandTrend() {
+        return demand == null ? null : demand.trend();
+    }
+
+    public Long enrolledGrowth() {
+        return demand == null || demand.result() == null ? null : demand.result().growth();
+    }
+
+    public Long activityPercent() {
+        return demand == null ? null : percentOf(demand.active7d(), demand.activityBase());
+    }
+
+    public Long universityDemand() {
+        return demand == null ? null : demand.interactions();
     }
 
     public String productNames() {
@@ -347,11 +390,25 @@ public record ReportRow(
                 completedBase,
                 managerWork,
                 market,
-                runsWithoutData
+                runsWithoutData,
+                demand
         );
     }
 
     public record Product(UUID id, String name) {
+    }
+
+    // Факты индекса востребованности из SQL (активность только по свежим наблюдениям, взаимодействия программы) и
+    // результат расчёта М17 с трендом к прошлому периоду.
+    public record Demand(Long active7d, Long activityBase, Long staleRuns, Long interactions, DemandIndex.Result result,
+                         String trend) {
+        Demand with(DemandIndex.Result value, String trendText) {
+            return new Demand(active7d, activityBase, staleRuns, interactions, value, trendText);
+        }
+
+        Demand withInteractions(Long value) {
+            return new Demand(active7d, activityBase, staleRuns, value, result, trend);
+        }
     }
 
     public record ManagerWork(

@@ -10,6 +10,8 @@ import '../admin/catalogs.css'
 import { CardDialog } from '../interactions/cardUi'
 import { agreementsApi, type ActivityKind } from './agreementsApi'
 import { CommandError, useAccessErrorHandler, useCommandKey } from './agreementUi'
+import { reportingApi } from './reportingApi'
+import type { ActivityAttribute } from './reportingModel'
 
 type ActivityKindsPanelProps = {
   onSessionExpired: () => void
@@ -22,15 +24,16 @@ type ActivityKindsPanelProps = {
 
 type KindsState =
   | { kind: 'loading' }
-  | { kind: 'ready'; kinds: ActivityKind[] }
+  | { kind: 'ready'; kinds: ActivityKind[]; attributes: { code: ActivityAttribute; title: string }[] }
   | { kind: 'failed'; error: unknown }
 
 type KindFilter = 'ACTIVE' | 'ARCHIVED' | 'ALL'
 
 type KindCommand = {
   kind: ActivityKind
-  mode: 'rename' | 'archive'
+  mode: 'rename' | 'archive' | 'attributes'
   name: string
+  attributes: ActivityAttribute[]
   confirming: boolean
   saving: boolean
   error?: unknown
@@ -59,7 +62,8 @@ export const ActivityKindsPanel = ({ onSessionExpired, onProfileUnavailable, add
 
   const load = useCallback(async () => {
     try {
-      setState({ kind: 'ready', kinds: await agreementsApi.listKinds(true) })
+      const [kinds, settings] = await Promise.all([agreementsApi.listKinds(true), reportingApi.settings()])
+      setState({ kind: 'ready', kinds, attributes: settings.attributes })
     } catch (caught) {
       if (!handleAccessError(caught)) {
         setState({ kind: 'failed', error: caught })
@@ -111,9 +115,12 @@ export const ActivityKindsPanel = ({ onSessionExpired, onProfileUnavailable, add
       return
     }
     const target = command.kind
+    // requiredAttributes: null оставляет прежний набор, поэтому набор передаёт только окно обязательных атрибутов.
     const payload = command.mode === 'rename'
-      ? { version: target.version, name: command.name.trim(), archived: target.archived }
-      : { version: target.version, name: target.name, archived: !target.archived }
+      ? { version: target.version, name: command.name.trim(), archived: target.archived, requiredAttributes: null }
+      : command.mode === 'attributes'
+        ? { version: target.version, name: target.name, archived: target.archived, requiredAttributes: command.attributes }
+        : { version: target.version, name: target.name, archived: !target.archived, requiredAttributes: null }
     setCommand({ ...command, confirming: false, saving: true, error: undefined })
     try {
       await agreementsApi.updateKind(target.id, payload, commandKey.keyFor({ id: target.id, ...payload }))
@@ -121,7 +128,7 @@ export const ActivityKindsPanel = ({ onSessionExpired, onProfileUnavailable, add
       setCommand(null)
       notify(command.mode === 'rename'
         ? `Название «${payload.name}» сохранено.`
-        : payload.archived ? `Вид «${target.name}» в архиве.` : `Вид «${target.name}» восстановлен.`)
+        : command.mode === 'attributes' ? `Обязательные атрибуты вида «${target.name}» сохранены.` : payload.archived ? `Вид «${target.name}» в архиве.` : `Вид «${target.name}» восстановлен.`)
       await load()
     } catch (caught) {
       commandKey.settle(caught)
@@ -138,13 +145,18 @@ export const ActivityKindsPanel = ({ onSessionExpired, onProfileUnavailable, add
     ))
     : []
   const renaming = command?.mode === 'rename' ? command : null
+  const editingAttributes = command?.mode === 'attributes' ? command : null
+  const attributeOptions = state.kind === 'ready' ? state.attributes : []
+  const attributeTitles = (codes: readonly ActivityAttribute[]) => (
+    codes.map((code) => attributeOptions.find((option) => option.code === code)?.title ?? code).join(', ')
+  )
   const rowError = command !== null && command.mode === 'archive' ? command.error : undefined
 
   return (
     <Fragment>
       <div className="admin-toolbar" role="search" aria-label="Отбор: виды мероприятий">
         <HintButton label="О видах мероприятий">
-          Справочник для плана мероприятий договоров с вузами. Начальные значения — по видам мероприятий приказа Минцифры № 270; вид в архиве остаётся у существующих мероприятий, но не выбирается для новых.
+          Справочник для плана мероприятий договоров с вузами ведёт администратор: состав видов и обязательные атрибуты каждого вида задаются под требования эксплуатанта. Вид в архиве остаётся у существующих мероприятий, но не выбирается для новых.
         </HintButton>
         <label className="admin-toolbar__search">
           <span className="catalogs-sr">Поиск по названию</span>
@@ -177,6 +189,7 @@ export const ActivityKindsPanel = ({ onSessionExpired, onProfileUnavailable, add
           <thead>
             <tr>
               <th scope="col">Название</th>
+              <th scope="col">Обязательные атрибуты</th>
               <th scope="col" className="admin-table__actions"><span className="catalogs-sr">Действия</span></th>
             </tr>
           </thead>
@@ -187,17 +200,21 @@ export const ActivityKindsPanel = ({ onSessionExpired, onProfileUnavailable, add
                   <span className="admin-table__main">{item.name}</span>
                   {item.archived && <> <span className="admin-chip admin-chip--warn">В архиве</span></>}
                 </td>
+                <td>{item.requiredAttributes.length === 0 ? 'Не заданы' : attributeTitles(item.requiredAttributes)}</td>
                 <td className="admin-table__actions">
                   <ActionMenu
                     label={`Действия: «${item.name}»`}
                     items={[
                       ...(item.archived ? [] : [{
                         label: 'Переименовать',
-                        onSelect: () => setCommand({ kind: item, mode: 'rename', name: item.name, confirming: false, saving: false })
+                        onSelect: () => setCommand({ kind: item, mode: 'rename', name: item.name, attributes: item.requiredAttributes, confirming: false, saving: false })
+                      }, {
+                        label: 'Обязательные атрибуты…',
+                        onSelect: () => setCommand({ kind: item, mode: 'attributes', name: item.name, attributes: item.requiredAttributes, confirming: false, saving: false })
                       }]),
                       {
                         label: item.archived ? 'Восстановить' : 'Архивировать',
-                        onSelect: () => setCommand({ kind: item, mode: 'archive', name: item.name, confirming: true, saving: false })
+                        onSelect: () => setCommand({ kind: item, mode: 'archive', name: item.name, attributes: item.requiredAttributes, confirming: true, saving: false })
                       }
                     ]}
                   />
@@ -262,6 +279,58 @@ export const ActivityKindsPanel = ({ onSessionExpired, onProfileUnavailable, add
               >
                 {renaming.saving ? 'Сохраняем…' : 'Сохранить'}
               </button>
+            </div>
+          </form>
+        )}
+      </CardDialog>
+
+      <CardDialog
+        open={editingAttributes !== null}
+        title={editingAttributes === null ? '' : `Обязательные атрибуты «${editingAttributes.kind.name}»`}
+        onClose={() => (command?.saving === true ? undefined : setCommand(null))}
+      >
+        {editingAttributes !== null && (
+          <form
+            className="admin-form"
+            aria-label={`Обязательные атрибуты вида «${editingAttributes.kind.name}»`}
+            onSubmit={(event) => {
+              event.preventDefault()
+              void submitCommand()
+            }}
+          >
+            <p className="admin-form__hint">
+              Отмеченные атрибуты КАМ заполняет у каждого мероприятия этого вида. Подтверждающий документ и факт количества
+              проверяются только у проведённого и подтверждённого вузом мероприятия, у отменённого и отклонённого проверки нет.
+            </p>
+            {attributeOptions.map((option) => (
+              <label key={option.code} className="admin-form__check">
+                <input
+                  type="checkbox"
+                  checked={editingAttributes.attributes.includes(option.code)}
+                  disabled={editingAttributes.saving}
+                  onChange={(event) => setCommand({
+                    ...editingAttributes,
+                    error: undefined,
+                    // Порядок набора — как в списке атрибутов, чтобы таблица и журнал читались одинаково.
+                    attributes: attributeOptions.map((item) => item.code).filter((code) => (
+                      code === option.code ? event.target.checked : editingAttributes.attributes.includes(code)
+                    ))
+                  })}
+                />
+                {option.title}
+              </label>
+            ))}
+            {editingAttributes.error !== undefined && (
+              <CommandError
+                error={editingAttributes.error}
+                fallback="Изменение не сохранено."
+                onRetry={() => { setCommand(null); void load() }}
+                retryLabel="Обновить список"
+              />
+            )}
+            <div className="admin-form__actions">
+              <button type="button" className="button--secondary" disabled={editingAttributes.saving} onClick={() => setCommand(null)}>Отмена</button>
+              <button type="submit" disabled={editingAttributes.saving}>{editingAttributes.saving ? 'Сохраняем…' : 'Сохранить'}</button>
             </div>
           </form>
         )}

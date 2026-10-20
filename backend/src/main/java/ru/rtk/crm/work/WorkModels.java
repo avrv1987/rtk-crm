@@ -5,6 +5,8 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import ru.rtk.crm.people.PeopleModels.FrdoReminder;
+
 public final class WorkModels {
     private WorkModels() {
     }
@@ -65,8 +67,57 @@ public final class WorkModels {
             int agreementNoticeDays,
             List<ReminderAgreement> expiringAgreements,
             ReminderFeed feed,
-            List<ReminderUnassigned> unassignedAfterBlock
+            List<ReminderUnassigned> unassignedAfterBlock,
+            List<FrdoReminder> frdoDue,
+            ru.rtk.crm.agreement.ReportingModels.ReportingReminders agreementReporting
     ) {
+        public ReminderDigest(
+                boolean enabled,
+                OffsetDateTime generatedAt,
+                int upcomingDays,
+                long overdueTotal,
+                long dueTodayTotal,
+                long upcomingTotal,
+                List<ReminderStep> overdue,
+                List<ReminderStep> upcoming,
+                List<ReminderLicense> expiringLicenses,
+                List<ReminderTraining> trainingCycles,
+                int licenseExpiresBy,
+                List<ReminderQualification> qualificationDue,
+                int agreementNoticeDays,
+                List<ReminderAgreement> expiringAgreements,
+                ReminderFeed feed,
+                List<ReminderUnassigned> unassignedAfterBlock,
+                List<FrdoReminder> frdoDue
+        ) {
+            this(enabled, generatedAt, upcomingDays, overdueTotal, dueTodayTotal, upcomingTotal, overdue, upcoming,
+                    expiringLicenses, trainingCycles, licenseExpiresBy, qualificationDue, agreementNoticeDays,
+                    expiringAgreements, feed, unassignedAfterBlock, frdoDue, ru.rtk.crm.agreement.ReportingModels.ReportingReminders.empty());
+        }
+
+        public ReminderDigest(
+                boolean enabled,
+                OffsetDateTime generatedAt,
+                int upcomingDays,
+                long overdueTotal,
+                long dueTodayTotal,
+                long upcomingTotal,
+                List<ReminderStep> overdue,
+                List<ReminderStep> upcoming,
+                List<ReminderLicense> expiringLicenses,
+                List<ReminderTraining> trainingCycles,
+                int licenseExpiresBy,
+                List<ReminderQualification> qualificationDue,
+                int agreementNoticeDays,
+                List<ReminderAgreement> expiringAgreements,
+                ReminderFeed feed,
+                List<ReminderUnassigned> unassignedAfterBlock
+        ) {
+            this(enabled, generatedAt, upcomingDays, overdueTotal, dueTodayTotal, upcomingTotal, overdue, upcoming,
+                    expiringLicenses, trainingCycles, licenseExpiresBy, qualificationDue, agreementNoticeDays,
+                    expiringAgreements, feed, unassignedAfterBlock, List.of(), ru.rtk.crm.agreement.ReportingModels.ReportingReminders.empty());
+        }
+
         public ReminderDigest(
                 boolean enabled,
                 OffsetDateTime generatedAt,
@@ -86,7 +137,7 @@ public final class WorkModels {
         ) {
             this(enabled, generatedAt, upcomingDays, overdueTotal, dueTodayTotal, upcomingTotal, overdue, upcoming,
                     expiringLicenses, trainingCycles, licenseExpiresBy, qualificationDue, agreementNoticeDays,
-                    expiringAgreements, feed, List.of());
+                    expiringAgreements, feed, List.of(), List.of(), ru.rtk.crm.agreement.ReportingModels.ReportingReminders.empty());
         }
     }
 

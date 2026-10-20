@@ -114,7 +114,8 @@ class LearningCoverageServiceTest {
 
     private LearningCoverageService service() {
         SourceProperties properties = new SourceProperties(1, 1, null, Duration.ofHours(26), null, null, null, null);
-        return new LearningCoverageService(jdbcClient, new OrganizationRepository(jdbcClient), sourceRepository, properties, settings);
+        return new LearningCoverageService(jdbcClient, new OrganizationRepository(jdbcClient), sourceRepository, properties, settings,
+                new ru.rtk.crm.settings.TestSystemSettings());
     }
 
     private void run(UUID organizationId, String key, LocalDate startsOn, LocalDate endsOn, OffsetDateTime observedAt) {

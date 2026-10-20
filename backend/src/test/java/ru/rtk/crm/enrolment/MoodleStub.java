@@ -16,13 +16,16 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import com.sun.net.httpserver.HttpServer;
 
-// Заглушка REST Moodle для тестов записи: пользователи по почте, зачисления на курсы, группы и отказ создания
-// пользователя по выбранной почте.
+// Заглушка REST Moodle для тестов записи: пользователи по почте, зачисления на курсы, состав групп, отказ создания
+// пользователя по выбранной почте и разовый сбой выбранной функции — до действия или после него (ответ потерян).
 final class MoodleStub {
     private final HttpServer server;
     private final Map<String, Long> users = new ConcurrentHashMap<>();
     private final Map<String, String[]> names = new ConcurrentHashMap<>();
     private final Map<Long, Set<Long>> enrolments = new ConcurrentHashMap<>();
+    private final Map<Long, Set<Long>> groups = new ConcurrentHashMap<>();
+    private final Map<String, Boolean> failures = new ConcurrentHashMap<>();
+    private final Set<Long> unremovable = ConcurrentHashMap.newKeySet();
     private final Set<String> rejected = ConcurrentHashMap.newKeySet();
     private final Map<String, Integer> calls = new ConcurrentHashMap<>();
     private final List<String> bodies = new CopyOnWriteArrayList<>();
@@ -75,6 +78,28 @@ final class MoodleStub {
         rejected.remove(email);
     }
 
+    // Следующий вызов функции отвечает ошибкой Moodle; applied — действие при этом всё же выполнено.
+    void failOnce(String function, boolean applied) {
+        failures.put(function, applied);
+    }
+
+    // Зачисление не вручную: enrol_manual_unenrol_users его не снимает.
+    void notManual(long userId) {
+        unremovable.add(userId);
+    }
+
+    boolean enrolled(long courseId, long userId) {
+        return enrolments.getOrDefault(courseId, Set.of()).contains(userId);
+    }
+
+    boolean inGroup(long groupId, long userId) {
+        return groups.getOrDefault(groupId, Set.of()).contains(userId);
+    }
+
+    long userId(String email) {
+        return users.get(email);
+    }
+
     int calls(String function) {
         return calls.getOrDefault(function, 0);
     }
@@ -99,6 +124,17 @@ final class MoodleStub {
         }
         String function = form.get("wsfunction");
         calls.merge(function, 1, Integer::sum);
+        Boolean failure = failures.remove(function);
+        if (failure != null) {
+            if (failure) {
+                apply(function, form);
+            }
+            return "{\"exception\":\"dml_write_exception\",\"errorcode\":\"dmlwriteexception\",\"message\":\"\"}";
+        }
+        return apply(function, form);
+    }
+
+    private String apply(String function, Map<String, String> form) {
         return switch (function) {
             case "core_user_get_users_by_field" -> {
                 Long id = users.get(form.get("values[0]"));
@@ -120,13 +156,31 @@ final class MoodleStub {
                 names.put(email, new String[] {form.get("users[0][firstname]"), form.get("users[0][lastname]")});
                 yield "[{\"id\":" + id + ",\"username\":\"" + form.get("users[0][username]") + "\"}]";
             }
-            case "core_user_update_users", "core_group_add_group_members" -> "null";
+            case "core_user_update_users" -> "null";
+            case "core_group_add_group_members" -> {
+                groups.computeIfAbsent(Long.parseLong(form.get("members[0][groupid]")), ignored -> new HashSet<>())
+                        .add(Long.parseLong(form.get("members[0][userid]")));
+                yield "null";
+            }
+            case "core_group_delete_group_members" -> {
+                groups.getOrDefault(Long.parseLong(form.get("members[0][groupid]")), new HashSet<>())
+                        .remove(Long.parseLong(form.get("members[0][userid]")));
+                yield "null";
+            }
+            case "core_group_get_group_members" -> {
+                long group = Long.parseLong(form.get("groupids[0]"));
+                yield "[{\"groupid\":" + group + ",\"userids\":["
+                        + String.join(",", groups.getOrDefault(group, Set.of()).stream().map(String::valueOf).toList()) + "]}]";
+            }
             case "enrol_manual_enrol_users" -> {
                 enrolments.computeIfAbsent(Long.parseLong(form.get("enrolments[0][courseid]")), ignored -> new HashSet<>())
                         .add(Long.parseLong(form.get("enrolments[0][userid]")));
                 yield "null";
             }
             case "enrol_manual_unenrol_users" -> {
+                if (unremovable.contains(Long.parseLong(form.get("enrolments[0][userid]")))) {
+                    yield "null";
+                }
                 enrolments.getOrDefault(Long.parseLong(form.get("enrolments[0][courseid]")), new HashSet<>())
                         .remove(Long.parseLong(form.get("enrolments[0][userid]")));
                 yield "null";

@@ -755,7 +755,7 @@ class DemoBootstrapCommandTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
+                CREATE TABLE IF NOT EXISTS interaction_events (import_source VARCHAR(300), import_author VARCHAR(200), contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, interaction_id UUID NOT NULL, type VARCHAR(32) NOT NULL,
                     version INTEGER NOT NULL, occurred_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     stage_id UUID, stage_name_snapshot VARCHAR(200)

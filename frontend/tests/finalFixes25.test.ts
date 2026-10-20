@@ -146,11 +146,11 @@ test('п. 17: разделы без места в нижней панели до
   assert.match(app, /nav\.some\(\(item\) => !item\.phone\) && \(\s+<li className="app-tabbar__more">/)
 })
 
-test('п. 18: версия приложения 2.5.0', () => {
-  assert.equal(JSON.parse(file('frontend/package.json')).version, '2.5.0')
+test('п. 18: версия приложения 2.5.3', () => {
+  assert.equal(JSON.parse(file('frontend/package.json')).version, '2.5.3')
   const lock = JSON.parse(file('frontend/package-lock.json'))
-  assert.equal(lock.version, '2.5.0')
-  assert.equal(lock.packages[''].version, '2.5.0')
+  assert.equal(lock.version, '2.5.3')
+  assert.equal(lock.packages[''].version, '2.5.3')
 })
 
 test('«Контроль»: колонка сетки ограничена шириной экрана — нет горизонтальной прокрутки на ширине около 760 px', () => {
@@ -169,5 +169,6 @@ test('«Контроль»: вложенные сетки и таблица ме
 test('редактор шаблона: свойства этапа идут строками ниже, поле названия не сжимается в 1440 px', () => {
   const css = readFileSync(new URL('../src/features/admin/workflowVersions.css', import.meta.url), 'utf8')
   assert.match(css, /\.wt-editor__stages > li > :nth-child\(2\) \{ grid-column: 2; grid-row: 1; \}/)
-  assert.match(css, /:nth-child\(6\) \{ grid-column: 2 \/ -1; \}/)
+  assert.match(css, /:nth-child\(n \+ 4\) \{ grid-column: 2 \/ -1; \}/)
+  assert.match(css, /> :last-child \{ grid-column: 4; grid-row: 1; \}/)
 })

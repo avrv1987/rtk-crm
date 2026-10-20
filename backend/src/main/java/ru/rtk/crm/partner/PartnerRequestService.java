@@ -14,6 +14,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -174,7 +175,7 @@ public class PartnerRequestService {
         materials.forEach(material -> repository.insertMaterial(id, material));
         auditJournalRepository.record(AuditAction.PARTNER_REQUEST_CREATED, actor.id(), OBJECT_TYPE, id, organization.name(),
                 "запрос вузу; материалов: " + materials.size(), requestId);
-        notifyCoordinator(organizationId, request.contactId(), id, false);
+        notifyCoordinator(organizationId, request.contactId(), id, CoordinatorLetter.REQUEST);
         PartnerRequestView view = view(id);
         complete(reservation, view);
         return view;
@@ -228,9 +229,8 @@ public class PartnerRequestService {
         auditJournalRepository.record(AuditAction.PARTNER_RESPONSE_REVIEWED, actor.id(), OBJECT_TYPE, requestId, current.workTitle(),
                 (next == PartnerRequestStatus.ACCEPTED ? "принят" : "возвращён на доработку") + "; квитанция " + answer.receiptNumber(),
                 auditRequestId);
-        if (next == PartnerRequestStatus.RETURNED) {
-            notifyCoordinator(current.organizationId(), current.contactId(), answer.id(), true);
-        }
+        notifyCoordinator(current.organizationId(), current.contactId(), answer.id(),
+                next == PartnerRequestStatus.RETURNED ? CoordinatorLetter.RETURNED : CoordinatorLetter.ACCEPTED);
         PartnerRequestView view = view(requestId);
         complete(reservation, view);
         return view;
@@ -304,12 +304,13 @@ public class PartnerRequestService {
                 .orElse(List.of());
     }
 
-    List<PartnerRequestForPartner> forPartner(UUID organizationId, UUID contactId) {
+    List<PartnerRequestForPartner> forPartner(UUID organizationId, UUID contactId, UUID partnerProfileId) {
         List<RequestRow> requests = repository.findForContact(organizationId, contactId);
         List<UUID> ids = requests.stream().map(RequestRow::id).toList();
         Map<UUID, List<PartnerRequestMaterial>> materials = materials(ids);
         Map<UUID, List<PartnerReceipt>> responses = repository.findResponses(ids).stream()
                 .collect(Collectors.groupingBy(ResponseRow::requestId, Collectors.mapping(response -> new PartnerReceipt(
+                        response.id(),
                         response.receiptNumber(),
                         response.kind(),
                         response.message(),
@@ -317,7 +318,9 @@ public class PartnerRequestService {
                         PartnerRequestModels.fileState(response.fileStatus()),
                         response.submittedAt(),
                         response.decision(),
-                        response.decisionReason()
+                        response.decisionReason(),
+                        partnerProfileId.equals(response.submittedBy()) && response.fileStatus() == AttachmentStatus.CLEAN
+                                && !response.fileDeleted()
                 ), Collectors.toList())));
         return requests.stream()
                 .map(request -> new PartnerRequestForPartner(
@@ -405,8 +408,10 @@ public class PartnerRequestService {
                 .filter(target -> target.ownerManagerId() != null)
                 .ifPresent(target -> mail.partnerReply(target.ownerManagerId(), organizationId, interactionId,
                         target.organizationName(), responseId)));
-        PartnerReceipt result = new PartnerReceipt(receipt, responseKind, text, attachment == null ? null : attachment.originalName(),
-                attachment == null ? null : PartnerRequestModels.fileState(attachment.status()), now, null, null);
+        PartnerReceipt result = new PartnerReceipt(responseId, receipt, responseKind, text,
+                attachment == null ? null : attachment.originalName(),
+                attachment == null ? null : PartnerRequestModels.fileState(attachment.status()), now, null, null,
+                attachment != null && attachment.status() == AttachmentStatus.CLEAN);
         complete(reservation, result);
         return result;
     }
@@ -425,14 +430,17 @@ public class PartnerRequestService {
         return new PartnerMaterialReceipt(attachmentId, repository.findReceipt(attachmentId, partner.id()).orElseThrow());
     }
 
-    private void notifyCoordinator(UUID organizationId, UUID contactId, UUID eventId, boolean returned) {
+    private enum CoordinatorLetter { REQUEST, RETURNED, ACCEPTED }
+
+    private void notifyCoordinator(UUID organizationId, UUID contactId, UUID eventId, CoordinatorLetter letter) {
         afterCommit(mail -> repository.findMailTarget(organizationId, contactId)
                 .filter(target -> target.coordinatorProfileId() != null)
                 .ifPresent(target -> {
-                    if (returned) {
-                        mail.partnerReturned(target.coordinatorProfileId(), organizationId, target.organizationName(), eventId);
-                    } else {
-                        mail.partnerRequest(target.coordinatorProfileId(), organizationId, target.organizationName(), eventId);
+                    UUID profile = target.coordinatorProfileId();
+                    switch (letter) {
+                        case REQUEST -> mail.partnerRequest(profile, organizationId, target.organizationName(), eventId);
+                        case RETURNED -> mail.partnerReturned(profile, organizationId, target.organizationName(), eventId);
+                        case ACCEPTED -> mail.partnerAccepted(profile, organizationId, target.organizationName(), eventId);
                     }
                 }));
     }
@@ -455,6 +463,10 @@ public class PartnerRequestService {
                 }
             }
         });
+    }
+
+    Optional<PartnerCabinetRepository.DownloadRow> ownResponseFile(UUID responseId, UUID profileId, UUID organizationId, UUID contactId) {
+        return repository.findOwnResponseFile(responseId, profileId, organizationId, contactId);
     }
 
     Map<UUID, OffsetDateTime> receipts(UUID profileId) {

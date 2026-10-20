@@ -125,6 +125,14 @@ public class CommandIdempotencyRepository {
         }
     }
 
+    // Команда с внешними вызовами вне транзакции сорвалась: резерв без результата снимается, чтобы повтор с тем же
+    // ключом выполнил её заново, как после отката транзакции.
+    public void release(UUID commandId) {
+        jdbcClient.sql("DELETE FROM command_idempotency_records WHERE id = :commandId AND result_json IS NULL")
+                .param("commandId", commandId)
+                .update();
+    }
+
     // Уже выполненная команда с тем же содержимым, но под другим ключом: повтор «Применить» после успеха.
     public Optional<String> findCompletedResult(UUID actorProfileId, CommandOperation operation, String requestFingerprint) {
         return jdbcClient.sql("""

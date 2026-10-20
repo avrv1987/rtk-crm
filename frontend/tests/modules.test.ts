@@ -82,3 +82,17 @@ test('справка без модулей не содержит их разде
   assert.ok(codes.includes('PARTNER_MODULE_DISABLED'))
   assert.equal(visibleBy(tocItems, on).length, tocItems.length)
 })
+
+test('посадочная 2.5: цикл вуза, виды и свойства этапа, сравнение периодов, надёжность и MCP', async () => {
+  const { readFileSync } = await import('node:fs')
+  const page = readFileSync(new URL('../src/features/landing/LandingPage.tsx', import.meta.url), 'utf8')
+  for (const fact of ['«Путь вуза»', 'Матрица «программа × этап»', "'#lp-cycle'", 'id="lp-cycle"', 'вида взаимодействия свой маршрут',
+    '«Требует действующего договора»', 'роль этапа для LMS', 'циклом без выхода к финалу', 'медиана и P90', '«было → стало»',
+    '«(текущая)»', '«N из M потоков»', 'Надёжность и защита', '(версия 2.3)', "['MCP',"]) {
+    assert.ok(page.includes(fact), fact)
+  }
+  assert.doesNotMatch(page, /ранжирован/)
+  const leader = rolesFor(on).find((role) => role.title === 'Руководитель команды')
+  assert.ok(leader?.duties.some((duty) => duty.includes('матрица «программа × этап»')))
+  assert.ok(rolesFor(on)[0].duties.some((duty) => duty.includes('«Путь вуза»')))
+})

@@ -107,7 +107,8 @@ public class PartnerRequestRepository {
         return jdbcClient.sql("""
                 SELECT response.id, response.request_id, response.receipt_number, response.kind, response.message,
                        response.attachment_id, a.original_name, a.status AS file_status, response.submitted_at,
-                       author.display_name AS submitted_by_name, response.decision, response.decision_reason, response.decided_at
+                       author.display_name AS submitted_by_name, response.decision, response.decision_reason, response.decided_at,
+                       response.submitted_by, a.deleted_at AS file_deleted_at
                 FROM partner_request_responses response
                 LEFT JOIN attachments a ON a.id = response.attachment_id
                 LEFT JOIN crm_user_profiles author ON author.id = response.submitted_by
@@ -128,9 +129,38 @@ public class PartnerRequestRepository {
                         resultSet.getString("submitted_by_name"),
                         resultSet.getString("decision") == null ? null : PartnerResponseDecision.valueOf(resultSet.getString("decision")),
                         resultSet.getString("decision_reason"),
-                        resultSet.getObject("decided_at", OffsetDateTime.class)
+                        resultSet.getObject("decided_at", OffsetDateTime.class),
+                        resultSet.getObject("submitted_by", UUID.class),
+                        resultSet.getObject("file_deleted_at") != null
                 ))
                 .list();
+    }
+
+    // Свой файл ответа координатора: только ответ этого профиля на запрос его контакта и организации, файл проверен
+    // антивирусом и не удалён. Чужие ответы и внутренние файлы школы по этому пути не отдаются.
+    public Optional<PartnerCabinetRepository.DownloadRow> findOwnResponseFile(UUID responseId, UUID profileId, UUID organizationId,
+                                                                             UUID contactId) {
+        return jdbcClient.sql("""
+                SELECT a.id, a.original_name, a.media_type, a.size_bytes, a.storage_key
+                FROM partner_request_responses response
+                JOIN partner_requests r ON r.id = response.request_id
+                JOIN attachments a ON a.id = response.attachment_id
+                WHERE response.id = :responseId AND response.submitted_by = :profileId
+                  AND r.organization_id = :organizationId AND r.contact_id = :contactId
+                  AND a.status = 'CLEAN' AND a.deleted_at IS NULL
+                """)
+                .param("responseId", responseId)
+                .param("profileId", profileId)
+                .param("organizationId", organizationId)
+                .param("contactId", contactId)
+                .query((resultSet, rowNumber) -> new PartnerCabinetRepository.DownloadRow(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getString("original_name"),
+                        resultSet.getString("media_type"),
+                        resultSet.getLong("size_bytes"),
+                        resultSet.getObject("storage_key", UUID.class)
+                ))
+                .optional();
     }
 
     public void insert(RequestRow request, UUID createdBy) {
@@ -415,7 +445,9 @@ public class PartnerRequestRepository {
             String submittedByName,
             PartnerResponseDecision decision,
             String decisionReason,
-            OffsetDateTime decidedAt
+            OffsetDateTime decidedAt,
+            UUID submittedBy,
+            boolean fileDeleted
     ) {
     }
 

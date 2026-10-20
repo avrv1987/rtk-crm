@@ -5,6 +5,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Component;
 import ru.rtk.crm.access.CrmProfile;
 import ru.rtk.crm.access.UserProfileRepository;
+import ru.rtk.crm.access.UserRole;
 import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.module.ModuleDisabledException;
 import ru.rtk.crm.module.ModuleProperties;
@@ -30,6 +31,13 @@ public class EnrolmentAccess {
         if (!userProfileRepository.isEnrolmentOperator(profile.id())) {
             throw new EnrolmentAccessDeniedException();
         }
+    }
+
+    public void requireOperatorOrAdmin(CrmProfile profile) {
+        if (profile.role() == UserRole.ADMIN && modules.enrolmentEnabled()) {
+            return;
+        }
+        requireOperator(profile);
     }
 
     static UUID parseId(String value) {

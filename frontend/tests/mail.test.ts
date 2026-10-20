@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { adminSectionsFor } from '../src/features/admin/adminSections.ts'
 import { categoryLabels } from '../src/features/admin/auditJournal.ts'
-import { defaultPort, draftOf, invitationToken, mailPreferencesAvailable, rowStatusText, updateOf } from '../src/features/mail/mailAdmin.ts'
+import { defaultPort, draftOf, invitationToken, mailPreferencesAvailable, queueDayText, rowStatusText, updateOf } from '../src/features/mail/mailAdmin.ts'
 
 const on = { enrolment: false, partner: false, mail: true }
 const off = { enrolment: false, partner: false }
@@ -12,7 +12,8 @@ test('«Уведомления на почту» — при включённом
   assert.equal(mailPreferencesAvailable({ role: 'ADMIN', enrolmentOperator: false }, on), true)
   assert.equal(mailPreferencesAvailable({ role: 'MANAGEMENT', enrolmentOperator: false }, on), true)
   assert.equal(mailPreferencesAvailable({ role: 'USER', enrolmentOperator: true }, on), false)
-  assert.equal(mailPreferencesAvailable({ role: 'PARTNER', enrolmentOperator: false }, on), false)
+  // Координатор вуза отключает письмо «Школа приняла мой ответ» (решение владельца 21.10).
+  assert.equal(mailPreferencesAvailable({ role: 'PARTNER', enrolmentOperator: false }, on), true)
   assert.equal(mailPreferencesAvailable({ role: 'USER', enrolmentOperator: false }, off), false)
 })
 
@@ -22,8 +23,8 @@ test('раздел «Почта» есть только у администра�
   assert.equal(categoryLabels.MAIL, 'Почта')
 })
 
-test('заглушка подписана в журнале, адрес приглашения разбирается строго', () => {
-  assert.equal(rowStatusText({ status: 'SENT', transport: 'STUB' }), 'отправлено (заглушка)')
+test('режим «Без отправки» подписан в журнале, адрес приглашения разбирается строго', () => {
+  assert.equal(rowStatusText({ status: 'SENT', transport: 'STUB' }), 'в журнале (без отправки)')
   assert.equal(rowStatusText({ status: 'SENT', transport: 'SMTP' }), 'отправлено')
   assert.equal(rowStatusText({ status: 'DROPPED', transport: null }), 'не отправлено')
   const token = 'abcdefghijklmnopqrstuvwxyz_-0123456789ABCDEFG'
@@ -43,4 +44,10 @@ test('пустой пароль не отправляется, порт подс
   assert.equal(updateOf({ ...draft, port: '' }).port, null)
   assert.equal(defaultPort('TLS'), 465)
   assert.equal(defaultPort('STARTTLS'), 587)
+})
+
+test('очередь за сутки: в режиме «Без отправки» письма записаны в журнал, а не отправлены', () => {
+  assert.equal(queueDayText('STUB', { sent: 0, logged: 12 }), 'записано в журнал без отправки 12')
+  assert.equal(queueDayText('SMTP', { sent: 5, logged: 0 }), 'отправлено 5')
+  assert.equal(queueDayText('SMTP', { sent: 5, logged: 2 }), 'отправлено 5, записано в журнал без отправки 2')
 })

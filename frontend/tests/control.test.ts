@@ -298,3 +298,16 @@ test('дополнительные блоки «Контроля» подпис�
   assert.match(controlMoreScope(false), /^По всей команде, фильтры, плитки и период выше не применяются\./)
   assert.doesNotMatch(controlMoreScope(false), /подписания/)
 })
+
+test('отбор по типу организации в «Контроле» — тот же, что в отчётах: адрес, выгрузка, «Без работы» и переход в отчёт', () => {
+  const filters = controlFiltersFromQuery('type=COLLEGE&product=p1')
+  assert.equal(filters.organizationType, 'COLLEGE')
+  assert.equal(controlFiltersFromQuery('type=OPEN_ENROLLMENT').organizationType, '')
+  assert.equal(controlQueryFromFilters(filters), 'product=p1&type=COLLEGE')
+  assert.equal(activeControlFilterCount(filters), 2)
+  assert.equal(toExportRequest(filters, 'XLSX', false).filters?.organizationType, 'COLLEGE')
+  assert.equal(toExportRequest(filters, 'XLSX', false, { tile: 'IDLE', stuckDays: 30 }).filters?.organizationType, 'COLLEGE')
+  assert.equal(toExportRequest(emptyControlFilters, 'XLSX', false).filters?.organizationType, null)
+  const selection = reportSelectionFromControl({} as ReportSelection, queryOf(controlReportHref(filters, { tile: null, stuckDays: 30 })))
+  assert.equal(selection?.organizationType, 'COLLEGE')
+})

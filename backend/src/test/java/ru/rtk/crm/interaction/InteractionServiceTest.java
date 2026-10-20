@@ -98,6 +98,7 @@ import ru.rtk.crm.report.ManagerWorkLine;
         ru.rtk.crm.audit.AuditJournalRepository.class,
         ru.rtk.crm.work.WorkNewsRepository.class,
         ru.rtk.crm.work.WorkNewsService.class,
+        ru.rtk.crm.work.WorkRepository.class,
         InteractionServiceTest.JsonConfiguration.class
 })
 class InteractionServiceTest {
@@ -157,6 +158,9 @@ class InteractionServiceTest {
 
     @Autowired
     private ru.rtk.crm.work.WorkNewsService workNewsService;
+
+    @Autowired
+    private ru.rtk.crm.work.WorkRepository workRepository;
 
     @BeforeEach
     void setUp() {
@@ -2036,6 +2040,50 @@ class InteractionServiceTest {
         assertThat(ids(profileA, InteractionFilter.from(null, null, "OVERDUE", null))).contains(overdueThisWeek);
     }
 
+    // Мини-приложение MAX рисует число на плитке из ленты (countFeed), а строки — из списка с тем же due. Проверка на
+    // настоящих сервисах и базе: число каждой группы равно «Найдено» в списке, «На неделе» — без сегодняшнего дня.
+    @Test
+    void feedTotalsEqualListTotalsForEveryMiniAppGroup() {
+        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime weekEnd = InteractionDue.weekStart(now).plusWeeks(1);
+        OffsetDateTime dayEnd = InteractionDue.dayEnd(now);
+        OffsetDateTime laterToday = now.plusSeconds(java.time.Duration.between(now, dayEnd).toSeconds() / 2);
+        List<InteractionCreateRequest> cases = List.of(
+                new InteractionCreateRequest(ORGANIZATION_A, "Просрочено", "Позвонить", now.minusDays(3), List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Просрочено без шага", null, now.minusDays(1), List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Сегодня", "Встретиться", laterToday, List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Конец недели", "Встретиться", weekEnd.minusMinutes(1), List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Завтра", "Встретиться", dayEnd.plusHours(10), List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Позже", "Встретиться", weekEnd.plusDays(3), List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Без шага", null, null, List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Приостановлено", "Возобновить", laterToday, List.of()),
+                new InteractionCreateRequest(ORGANIZATION_A, "Завершено", "Позвонить", now.minusDays(2), List.of()),
+                new InteractionCreateRequest(ORGANIZATION_B, "Чужой вуз", "Позвонить", now.minusDays(2), List.of())
+        );
+        Map<String, UUID> created = new java.util.HashMap<>();
+        for (InteractionCreateRequest request : cases) {
+            CrmProfile owner = request.organizationId().equals(ORGANIZATION_B) ? profileB : profileA;
+            created.put(request.title(), interactionService.create(owner, request, "feed-" + request.title()).id());
+        }
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'PAUSED' WHERE id = ?", created.get("Приостановлено"));
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'COMPLETED' WHERE id = ?", created.get("Завершено"));
+
+        ru.rtk.crm.work.WorkModels.ReminderFeed feed = workRepository.countFeed(
+                organizationRepository.visibilityScope(profileA).orElseThrow(), OffsetDateTime.now());
+        Map<String, Long> groups = Map.of(
+                "OVERDUE", feed.overdue(),
+                "TODAY", feed.today(),
+                "REST_OF_WEEK", feed.thisWeek() - feed.today(),
+                "NO_NEXT_STEP", feed.noNextStep(),
+                "LATER", feed.later());
+        groups.forEach((due, total) -> assertThat(interactionService.list(profileA, InteractionFilter.from(null, null, due, null),
+                InteractionQuery.from(0, 25, "nextActionAt,asc")).total()).as(due).isEqualTo(total));
+        assertThat(feed.overdue()).isEqualTo(2);
+        assertThat(feed.resumeDue()).isEqualTo(1);
+        assertThat(feed.today() + (feed.thisWeek() - feed.today()) + feed.later()).isEqualTo(4);
+        assertThat(ids(profileA, InteractionFilter.from(null, null, "REST_OF_WEEK", null))).doesNotContain(created.get("Сегодня"));
+    }
+
     private static ManagerWorkDue controlDue(String nextAction, OffsetDateTime nextActionAt, OffsetDateTime now) {
         return new ManagerWorkLine(null, null, null, null, null, null, null, null, null, null, null, 0, 0, null, null, null,
                 nextAction, nextActionAt, null, 0, false, false).due(now);
@@ -2351,6 +2399,71 @@ class InteractionServiceTest {
         assertThat(resumed.nextActionAt()).isNull();
         assertThat(interactionService.events(profileA, work.id()).getLast().comment())
                 .isEqualTo("Взаимодействие возобновлено. Шаг «Вернуться к работе после приостановки» снят: задайте следующий шаг");
+    }
+
+    // пауза заменяет шаг служебным, возобновление возвращает невыполненный шаг, который был до паузы.
+    @Test
+    void resumeRestoresTheUnfinishedStepThatThePauseReplaced() {
+        OffsetDateTime dueAt = OffsetDateTime.parse("2026-12-01T10:00:00+03:00");
+        Interaction work = interactionService.create(profileA,
+                new InteractionCreateRequest(ORGANIZATION_A, "Шаг до паузы", "Согласовать план внедрения", dueAt, List.of()),
+                "restore-create");
+        Interaction paused = interactionService.changeStatus(profileA, work.id(), new InteractionStatusRequest(work.version(),
+                InteractionWorkStatus.PAUSED, "Вуз на каникулах", LocalDate.now(InteractionDue.ZONE).plusDays(30)), "restore-pause");
+        assertThat(paused.nextAction()).isEqualTo("Вернуться к работе после приостановки");
+
+        Interaction resumed = interactionService.changeStatus(profileA, work.id(),
+                new InteractionStatusRequest(paused.version(), InteractionWorkStatus.ACTIVE, null, null), "restore-resume");
+
+        assertThat(resumed.nextAction()).isEqualTo("Согласовать план внедрения");
+        assertThat(resumed.nextActionAt().toInstant()).isEqualTo(dueAt.toInstant());
+        assertThat(interactionService.events(profileA, work.id()).getLast()).satisfies(event -> {
+            assertThat(event.comment()).isEqualTo("Взаимодействие возобновлено. Восстановлен шаг до приостановки: «Согласовать план внедрения»");
+            assertThat(event.nextStep().nextAction()).isEqualTo("Согласовать план внедрения");
+        });
+
+        // Вторая пауза после восстановления находит тот же шаг: восстановление записано в историю как изменение плана.
+        Interaction pausedAgain = interactionService.changeStatus(profileA, work.id(), new InteractionStatusRequest(resumed.version(),
+                InteractionWorkStatus.PAUSED, "Снова каникулы", LocalDate.now(InteractionDue.ZONE).plusDays(10)), "restore-pause-2");
+        Interaction resumedAgain = interactionService.changeStatus(profileA, work.id(),
+                new InteractionStatusRequest(pausedAgain.version(), InteractionWorkStatus.ACTIVE, null, null), "restore-resume-2");
+        assertThat(resumedAgain.nextAction()).isEqualTo("Согласовать план внедрения");
+    }
+
+    // «Путь вуза» берёт последний вход на этап из создания и переходов; пропущенный этап входа не имеет.
+    @Test
+    void stageEntriesKeepTheLastEntryAndSkipStagesNeverEntered() {
+        Interaction created = createA("Входы на этапы", "entries-create");
+        Interaction second = interactionService.transition(profileA, created.id(),
+                new InteractionTransitionRequest(0, created.stages().get(1).id(), null), "entries-forward");
+        Interaction back = interactionService.transition(profileA, created.id(),
+                new InteractionTransitionRequest(second.version(), created.stages().get(0).id(), "Повторяем встречу"), "entries-back");
+
+        java.util.Map<UUID, OffsetDateTime> entries = interactionRepository.findStageEntries(created.id());
+
+        List<InteractionEvent> events = interactionService.events(profileA, created.id());
+        assertThat(entries).containsOnlyKeys(created.stages().get(0).id(), created.stages().get(1).id());
+        assertThat(entries.get(created.stages().get(0).id()).toInstant()).isEqualTo(events.getLast().occurredAt().toInstant());
+        assertThat(back.currentStageId()).isEqualTo(created.stages().get(0).id());
+    }
+
+    @Test
+    void resumeLeavesNoStepWhenTheStepBeforeThePauseWasCompleted() {
+        Interaction work = interactionService.create(profileA,
+                new InteractionCreateRequest(ORGANIZATION_A, "Шаг выполнен до паузы", "Позвонить проректору",
+                        OffsetDateTime.parse("2026-12-01T10:00:00+03:00"), List.of()),
+                "done-before-pause-create");
+        Interaction done = interactionService.completeStep(profileA, work.id(),
+                new InteractionStepCompletionRequest(work.version(), "Созвонились", null), "done-before-pause-step");
+        Interaction paused = interactionService.changeStatus(profileA, work.id(), new InteractionStatusRequest(done.version(),
+                InteractionWorkStatus.PAUSED, "Вуз на каникулах", LocalDate.now(InteractionDue.ZONE).plusDays(30)), "done-before-pause");
+
+        Interaction resumed = interactionService.changeStatus(profileA, work.id(),
+                new InteractionStatusRequest(paused.version(), InteractionWorkStatus.ACTIVE, null, null), "done-before-resume");
+
+        assertThat(resumed.nextAction()).isNull();
+        assertThat(resumed.nextActionAt()).isNull();
+        assertThat(interactionService.events(profileA, work.id()).getLast().comment()).endsWith("снят: задайте следующий шаг");
     }
 
     @Test
@@ -3721,7 +3834,7 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS workflow_template_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
+                CREATE TABLE IF NOT EXISTS workflow_template_stages (norm_days INTEGER, requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
                     id UUID PRIMARY KEY,
                     template_id UUID NOT NULL,
                     stage_order INTEGER NOT NULL,
@@ -3791,7 +3904,7 @@ class InteractionServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
+                CREATE TABLE IF NOT EXISTS interaction_events (import_source VARCHAR(300), import_author VARCHAR(200), contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY,
                     interaction_id UUID NOT NULL,
                     command_id UUID NOT NULL,

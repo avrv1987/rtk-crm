@@ -1,5 +1,6 @@
 import { apiClient } from '../../shared/api/client'
 import type { components } from '../../shared/api/openapi'
+import { enrolmentQueueSearch, type EnrolmentQueueQuery } from './enrolmentQueueModel'
 
 export type EnrolmentBatch = components['schemas']['EnrolmentBatch']
 export type EnrolmentBatchItem = components['schemas']['EnrolmentBatchItem']
@@ -26,7 +27,9 @@ export const importBatchProtocol = (id: string, file: File, idempotencyKey: stri
   return apiClient.upload<BatchResultsApplied>(`${batchPath(id)}/protocol`, form, idempotencyKey)
 }
 
-export const getEnrolmentQueue = () => apiClient.request<EnrolmentQueue>('/api/enrolment/queue')
+export const getEnrolmentQueue = (query: EnrolmentQueueQuery = {}) => (
+  apiClient.request<EnrolmentQueue>(`/api/enrolment/queue${enrolmentQueueSearch(query)}`)
+)
 
 export const reconcileEnrolmentLms = (
   enrolmentId: string,
@@ -41,6 +44,7 @@ export type MoodleTransferResult = {
   sent: number
   accepted: number
   failed: number
+  confirmed: number
   stoppedReason: string | null
 }
 

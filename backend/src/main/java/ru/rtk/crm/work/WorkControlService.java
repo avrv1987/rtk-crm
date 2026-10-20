@@ -264,7 +264,8 @@ public class WorkControlService {
                 line.kindId(),
                 line.routeId(),
                 line.stageAtEnd() == null ? line.stageName() : line.stageAtEnd(),
-                line.missingDocuments()
+                line.missingDocuments(),
+                line.stageNormDays()
         );
     }
 

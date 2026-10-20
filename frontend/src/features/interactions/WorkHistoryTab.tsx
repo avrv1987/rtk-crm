@@ -4,7 +4,7 @@ import { ActionMenu } from '../../shared/ui/ActionMenu'
 import { Segmented } from '../../shared/ui/Segmented'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { formatMoscowDateTime } from './moscowTime'
-import { historyFilters, historyMatches, historyPageSize, newestFirst, type HistoryFilter } from './workCardModel'
+import { eventLinkHref, historyFilters, historyMatches, historyPageSize, newestFirst, type HistoryFilter } from './workCardModel'
 
 const eventLabel: Record<InteractionEvent['type'], string> = {
   CREATED: 'Взаимодействие создано',
@@ -17,7 +17,10 @@ const eventLabel: Record<InteractionEvent['type'], string> = {
   AGREEMENT_UPDATED: 'Изменены лицензия и передача',
   ATTACHMENT_DELETED: 'Удалён документ',
   STAGE_COMPLETED: 'Этап отмечен выполненным',
-  STAGE_COMPLETION_CLEARED: 'Снята отметка выполнения этапа'
+  STAGE_COMPLETION_CLEARED: 'Снята отметка выполнения этапа',
+  DOCUMENT_ADDED: 'Добавлен документ',
+  AGREEMENT_STATUS_CHANGED: 'Договор с вузом',
+  CYCLE_STARTED: 'Новый цикл'
 }
 
 const eventStageDescription = (event: InteractionEvent) => {
@@ -33,9 +36,22 @@ type WorkHistoryTabProps = {
   failedRequestId: string | null | undefined
   attachmentsByEvent: Map<InteractionEvent['id'], Attachment[]>
   onRefresh: () => void
+  onOpenDocuments?: () => void
 }
 
-export const WorkHistoryTab = ({ events, loading, failedRequestId, attachmentsByEvent, onRefresh }: WorkHistoryTabProps) => {
+const EventLink = ({ link, onOpenDocuments }: { link: NonNullable<InteractionEvent['link']>; onOpenDocuments?: () => void }) => {
+  const href = eventLinkHref(link, window.location.hash)
+  if (href !== null) {
+    return <p className="interaction-events__link"><a href={href}>{link.kind === 'AGREEMENT' ? `Открыть договор ${link.label}` : `Открыть «${link.label}»`}</a></p>
+  }
+  return onOpenDocuments === undefined ? null : (
+    <p className="interaction-events__link">
+      <button type="button" className="button-link" onClick={onOpenDocuments}>Открыть во вкладке «Документы»</button>
+    </p>
+  )
+}
+
+export const WorkHistoryTab = ({ events, loading, failedRequestId, attachmentsByEvent, onRefresh, onOpenDocuments }: WorkHistoryTabProps) => {
   const [filter, setFilter] = useState<HistoryFilter>('ALL')
   const [shown, setShown] = useState(historyPageSize)
   const matching = events === undefined ? [] : newestFirst(events)
@@ -84,14 +100,21 @@ export const WorkHistoryTab = ({ events, loading, failedRequestId, attachmentsBy
                       Следующий шаг: {item.nextStep.nextAction ?? 'не задан'}; срок: {item.nextStep.nextActionAt === null ? 'не задан' : formatMoscowDateTime(item.nextStep.nextActionAt)}
                     </p>
                   )}
+                  {item.link && <EventLink link={item.link} onOpenDocuments={onOpenDocuments} />}
                   {eventAttachments.length > 0 && (
                     <p className="interaction-events__attachments">
                       Документы: {eventAttachments.map((attachment) => attachment.originalName).join(', ')}
                     </p>
                   )}
-                  <p className="interaction-events__meta">
-                    Автор: {item.actorDisplayName}{item.preparedByAgent ? ' · подготовлено ИИ-агентом, подтвердил автор' : ''}
-                  </p>
+                  {item.importSource ? (
+                    <p className="interaction-events__meta">
+                      Импортировано: {item.importSource}. Автор в файле: {item.importAuthor ?? 'импорт'}. Загрузил: {item.actorDisplayName}
+                    </p>
+                  ) : (
+                    <p className="interaction-events__meta">
+                      Автор: {item.actorDisplayName}{item.preparedByAgent ? ' · подготовлено ИИ-агентом, подтвердил автор' : ''}
+                    </p>
+                  )}
                 </li>
               )
             })}

@@ -189,6 +189,10 @@
 }
 
 .organization-history__total,
+.organization-history__comment {
+  white-space: pre-line;
+}
+
 .organization-history__actor {
   color: var(--color-text-muted);
   font-size: var(--font-size-md);

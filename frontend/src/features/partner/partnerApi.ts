@@ -30,6 +30,11 @@ export const downloadPartnerDocument = (id: string) => (
   apiClient.download(`/api/partner/documents/${encodeURIComponent(id)}/download`)
 )
 
+// Свой файл ответа на запрос школы: сервер отдаёт только файл этого координатора, проверенный антивирусом.
+export const downloadPartnerResponseFile = (responseId: string) => (
+  apiClient.download(`/api/partner/responses/${encodeURIComponent(responseId)}/file`)
+)
+
 export const organizationTypeLabels: Record<PartnerCabinet['organization']['type'], string> = {
   UNIVERSITY: 'Вуз',
   SCHOOL: 'Школа',

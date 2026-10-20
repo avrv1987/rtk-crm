@@ -121,7 +121,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
         "spring.datasource.url=jdbc:h2:mem:sources;MODE=PostgreSQL;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({
+@Import({ru.rtk.crm.settings.TestSystemSettings.class, 
         OrganizationRepository.class,
         ContactRepository.class,
         CatalogRepository.class,
@@ -646,6 +646,44 @@ class SourceSyncServiceTest {
         assertThat(demandApplications(kamA)).isEqualTo(3);
     }
 
+    // Аудит видов, С-1: заявка сайта идёт только в незавершённую карточку того вида, что дают правила.
+    @Test
+    void siteRecordGoesOnlyToOpenInteractionOfTheKindChosenByRules() {
+        UUID training = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO interaction_kinds (id, name, active, sort_order, version) VALUES (?, 'Повышение квалификации', TRUE, 5, 0)",
+                training);
+        jdbcTemplate.update("INSERT INTO interaction_kind_rules (id, kind_id, program_id, priority) VALUES (?, ?, ?, 10)",
+                UUID.randomUUID(), training, PROGRAM_JAVA);
+
+        sync();
+
+        assertThat(events(existingInteractionA)).as("карточка другого вида заявку не получает").containsExactly("CREATED");
+        UUID created = interactionIds(ORGANIZATION_A).stream().filter(id -> !id.equals(existingInteractionA)).findFirst().orElseThrow();
+        assertThat(jdbcTemplate.queryForObject("SELECT interaction_kind_id FROM interactions WHERE id = ?", UUID.class, created))
+                .isEqualTo(training);
+        assertThat(events(created)).containsExactly("CREATED", "COMMENTED");
+    }
+
+    @Test
+    void siteRecordSkipsCompletedInteractionAndGoesToReviewWhenSeveralFit() {
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'COMPLETED' WHERE id = ?", existingInteractionA);
+
+        sync();
+
+        assertThat(events(existingInteractionA)).as("завершённая карточка заявку не получает").containsExactly("CREATED");
+        assertThat(interactionIds(ORGANIZATION_A)).hasSize(2);
+
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'ACTIVE'");
+        jdbcTemplate.update("UPDATE source_records SET status = 'NEEDS_MAPPING', interaction_id = NULL WHERE external_id = 'pr-1'");
+        UUID record = jdbcTemplate.queryForObject("SELECT id FROM source_records WHERE external_id = 'pr-1'", UUID.class);
+        jdbcTemplate.update("DELETE FROM command_idempotency_records WHERE operation = 'APPLY_SOURCE_RECORD'");
+
+        assertThat(siteRecordApplier.reapply(record, ADMIN)).isEqualTo(SourceRecordStatus.NEEDS_MAPPING);
+        assertThat(jdbcTemplate.queryForObject("SELECT error FROM source_records WHERE id = ?", String.class, record))
+                .contains("несколько незавершённых взаимодействий").contains("«Курс Java»").contains("«Заявка с сайта: Java-разработчик»");
+        assertThat(events(existingInteractionA)).containsExactly("CREATED");
+    }
+
     @Test
     void partnershipRequestFromRestrictedContactIsAppliedWithoutLinkingOrCopyingTheContact() {
         UUID restricted = UUID.randomUUID();
@@ -947,6 +985,29 @@ class SourceSyncServiceTest {
         assertThat(events(existingInteractionA)).containsExactly("CREATED", "COMMENTED", "COMMENTED");
         assertThat(lastComment(existingInteractionA)).contains("обучающихся 6, завершили 4, не завершили 2");
         assertThat(events(interactionsB.getFirst())).containsExactly("CREATED", "COMMENTED");
+    }
+
+    // Аудит видов, С-1: данные Moodle не выбирают наугад одну из нескольких подходящих карточек.
+    @Test
+    void moodleDataGoesToReviewWhenSeveralInteractionsOfTheKindFit() {
+        interactionService.create(kamA, new InteractionCreateRequest(ORGANIZATION_A, "Второй курс Java", null, null, List.of(),
+                PROGRAM_JAVA, List.of(), null, null), "second-java");
+        syncMoodle();
+        UUID javaRecord = moodleRecordId("moodle_course", Long.toString(JAVA_COURSE));
+
+        SourceRecordApplyResult mapped = service.apply(admin, javaRecord, moodleRun(ORGANIZATION_A, PROGRAM_JAVA));
+
+        assertThat(mapped.record().status()).isEqualTo(SourceRecordStatus.NEEDS_MAPPING);
+        assertThat(mapped.record().error()).contains("«Курс Java»").contains("«Второй курс Java»");
+        assertThat(events(existingInteractionA)).containsExactly("CREATED");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learning_snapshots", Integer.class)).isZero();
+
+        jdbcTemplate.update("UPDATE interactions SET work_status = 'COMPLETED' WHERE title = 'Второй курс Java'");
+        SyncRunView retry = syncMoodle();
+
+        assertThat(retry.status()).isEqualTo(SyncRunStatus.SUCCEEDED);
+        assertThat(recordStatusById(javaRecord)).isEqualTo("APPLIED");
+        assertThat(events(existingInteractionA)).containsExactly("CREATED", "COMMENTED");
     }
 
     @Test
@@ -1457,6 +1518,8 @@ class SourceSyncServiceTest {
         assertThat(snapshotValue(dataRecord, "participants_count", Integer.class)).isEqualTo(4);
     }
 
+    // Против живого Moodle (MOODLE_TEST_URL, MOODLE_TEST_TOKEN, MOODLE_TEST_COURSE_IDS). В CI его нет, поэтому тест там пропускается;
+    // остальные тесты класса проверяют ту же синхронизацию на заглушке Moodle.
     @Test
     @EnabledIfEnvironmentVariable(named = "MOODLE_TEST_URL", matches = ".+")
     void liveMoodleMatchesDemoDataAndKeepsPublicationOnRepeatAndFailure() {
@@ -2434,7 +2497,7 @@ class SourceSyncServiceTest {
                 new CrmClient(properties, objectMapper), event -> { }, null);
         return new SourceSyncService(repository, siteRecordApplier, crmRecordApplier, crmExchangeService, paidOrderEnrolment,
                 siteApiClient, moodleSnapshotApplier, moodleClient, laborMarketSync, sourceSyncExecutor, properties, settings,
-                objectMapper, auditJournalRepository);
+                objectMapper, auditJournalRepository, new ru.rtk.crm.settings.TestSystemSettings());
     }
 
     private SyncRunView sync() {
@@ -2894,6 +2957,14 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS demand_index_settings (
+                    id SMALLINT PRIMARY KEY, growth_weight INTEGER NOT NULL, completion_weight INTEGER NOT NULL,
+                    activity_weight INTEGER NOT NULL, university_weight INTEGER NOT NULL, payments_weight INTEGER NOT NULL,
+                    min_coverage_percent INTEGER NOT NULL, small_base INTEGER NOT NULL, updated_by UUID NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS labor_market_settings (
                     id SMALLINT PRIMARY KEY, base_url VARCHAR(500), token_encrypted VARCHAR(2000),
                     token_changed_at TIMESTAMP WITH TIME ZONE, updated_by UUID NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -2999,7 +3070,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS workflow_template_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
+                CREATE TABLE IF NOT EXISTS workflow_template_stages (norm_days INTEGER, requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
                     id UUID PRIMARY KEY, template_id UUID NOT NULL, stage_order INTEGER NOT NULL,
                     name VARCHAR(200) NOT NULL, optional BOOLEAN NOT NULL
                 )
@@ -3019,7 +3090,7 @@ class SourceSyncServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
+                CREATE TABLE IF NOT EXISTS interaction_events (import_source VARCHAR(300), import_author VARCHAR(200), contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, external_key VARCHAR(200) UNIQUE, interaction_id UUID NOT NULL,
                     command_id UUID NOT NULL, type VARCHAR(32) NOT NULL, stage_id UUID NOT NULL,
                     stage_name_snapshot VARCHAR(200) NOT NULL, from_stage_id UUID, from_stage_name_snapshot VARCHAR(200),
@@ -3189,6 +3260,7 @@ class SourceSyncServiceTest {
                 CREATE TABLE IF NOT EXISTS enrolment_streams (
                     id UUID PRIMARY KEY, course_key VARCHAR(310) NOT NULL, course_name VARCHAR(1333) NOT NULL,
                     stream_no INTEGER NOT NULL, ends_on DATE, version INTEGER NOT NULL DEFAULT 0,
+                    moodle_course_id BIGINT, moodle_group_id BIGINT,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     UNIQUE (course_key, stream_no)
                 )

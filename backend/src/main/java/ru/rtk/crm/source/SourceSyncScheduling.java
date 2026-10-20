@@ -14,7 +14,7 @@ import org.springframework.scheduling.support.CronTrigger;
 
 @Configuration
 @EnableScheduling
-@Profile("!demo-bootstrap")
+@Profile("!demo-bootstrap & !restore-check")
 class SourceSyncScheduling {
     private static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
 

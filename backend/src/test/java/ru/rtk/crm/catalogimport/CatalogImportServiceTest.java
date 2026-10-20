@@ -75,6 +75,12 @@ import ru.rtk.crm.interaction.WorkflowTemplateRepository;
         ru.rtk.crm.interaction.InteractionKindService.class,
         ru.rtk.crm.agreement.AgreementStages.class,
         VendorContactImport.class,
+        InteractionHistoryImport.class,
+        UniversityAgreementImport.class,
+        ImportSettingsService.class,
+        MigrationImportRepository.class,
+        ru.rtk.crm.agreement.AgreementRepository.class,
+        ru.rtk.crm.agreement.AgreementApproval.class,
         ru.rtk.crm.audit.AuditJournalRepository.class,
         CatalogImportServiceTest.ImportTestConfiguration.class
 })
@@ -555,7 +561,7 @@ class CatalogImportServiceTest {
         assertThat(row(withoutTeam, 4).newValues()).containsEntry("contactName", "Сидорова Анна; Кузнецов Илья; Орлова Мария");
 
         CatalogImportPreviewResponse response = service.preview(admin, file(file), CatalogImportProfile.AGREEMENT, "Каталог",
-                new CatalogImportMapping(tzColumns(), Map.of(), Map.of(), TEAM_B));
+                new CatalogImportMapping(tzColumns(), Map.of(), Map.of(), TEAM_B, null));
         CatalogImportView preview = service.get(admin, response.importId());
 
         assertThat(row(preview, 3).status()).isEqualTo(CatalogImportRowStatus.CREATE);
@@ -773,19 +779,19 @@ class CatalogImportServiceTest {
             columns.put(fields.get(index), VENDOR_HEADERS.get(index));
         }
         CatalogImportPreviewResponse response = service.preview(admin, file(file), CatalogImportProfile.VENDOR_CONTACTS, "Каталог",
-                new CatalogImportMapping(columns, Map.of(), Map.of(), null));
+                new CatalogImportMapping(columns, Map.of(), Map.of(), null, null));
         return service.get(admin, response.importId());
     }
 
     private CatalogImportView preview(byte[] file, Map<String, String> columns, Map<Integer, CatalogImportRowTarget> targets) {
         CatalogImportPreviewResponse response = service.preview(admin, file(file), CatalogImportProfile.AGREEMENT, "Каталог",
-                new CatalogImportMapping(columns, targets, Map.of(), null));
+                new CatalogImportMapping(columns, targets, Map.of(), null, null));
         return service.get(admin, response.importId());
     }
 
     private CatalogImportView previewDirections(byte[] file, Map<String, String> columns) {
         CatalogImportPreviewResponse response = service.preview(admin, file(file), CatalogImportProfile.DIRECTION_PROGRAM,
-                "Каталог", new CatalogImportMapping(columns, Map.of(), Map.of(), null));
+                "Каталог", new CatalogImportMapping(columns, Map.of(), Map.of(), null, null));
         return service.get(admin, response.importId());
     }
 
@@ -888,6 +894,12 @@ class CatalogImportServiceTest {
 
     private void createSchema() {
         ru.rtk.crm.interaction.InteractionKindTestSchema.create(jdbcTemplate);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS import_settings (
+                    id SMALLINT PRIMARY KEY, default_step_text VARCHAR(500) NOT NULL, default_step_days INTEGER NOT NULL,
+                    updated_by UUID, updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+                """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id UUID PRIMARY KEY, category VARCHAR(32) NOT NULL, action VARCHAR(64) NOT NULL, actor_profile_id UUID,
@@ -1041,7 +1053,7 @@ class CatalogImportServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS workflow_template_stages (requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
+                CREATE TABLE IF NOT EXISTS workflow_template_stages (norm_days INTEGER, requires_agreement BOOLEAN DEFAULT FALSE NOT NULL, lms_role VARCHAR(32), 
                     id UUID PRIMARY KEY, template_id UUID NOT NULL, stage_order INTEGER NOT NULL,
                     name VARCHAR(200) NOT NULL, optional BOOLEAN NOT NULL
                 )
@@ -1061,7 +1073,7 @@ class CatalogImportServiceTest {
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS interaction_events (contact_channel VARCHAR(16),
+                CREATE TABLE IF NOT EXISTS interaction_events (import_source VARCHAR(300), import_author VARCHAR(200), contact_channel VARCHAR(16),
                     id UUID PRIMARY KEY, external_key VARCHAR(200) UNIQUE, interaction_id UUID NOT NULL,
                     command_id UUID NOT NULL, type VARCHAR(32) NOT NULL, stage_id UUID NOT NULL,
                     stage_name_snapshot VARCHAR(200) NOT NULL, from_stage_id UUID, from_stage_name_snapshot VARCHAR(200),

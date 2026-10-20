@@ -10,12 +10,14 @@ public record RetentionRun(
         int learnersAnonymized,
         int auditEventsDeleted,
         int agentPlansExpired,
-        int agentPlansDeleted
+        int agentPlansDeleted,
+        int personalDataRequestsDeleted
 ) {
     String summary() {
         return "удалено файлов отчётов: " + reportFilesDeleted + ", обезличено контактов: " + contactsAnonymized
                 + ", обезличено профилей: " + profilesAnonymized + ", обезличено анкет слушателей: " + learnersAnonymized
                 + ", удалено записей журнала: " + auditEventsDeleted
-                + ", истекло планов ИИ-агента: " + agentPlansExpired + ", удалено планов ИИ-агента: " + agentPlansDeleted;
+                + ", истекло планов ИИ-агента: " + agentPlansExpired + ", удалено планов ИИ-агента: " + agentPlansDeleted
+                + ", удалено закрытых обращений субъектов ПДн: " + personalDataRequestsDeleted;
     }
 }

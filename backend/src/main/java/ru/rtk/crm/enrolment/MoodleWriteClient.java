@@ -87,6 +87,22 @@ public class MoodleWriteClient {
                 "members[0][userid]", Long.toString(userId)));
     }
 
+    // Только группа, которую задала CRM: прочие группы слушателя в курсе (их мог добавить преподаватель) не трогаются.
+    void removeFromGroup(MoodleWriteTarget target, long userId, long groupId) {
+        call(target, "core_group_delete_group_members", Map.of("members[0][groupid]", Long.toString(groupId),
+                "members[0][userid]", Long.toString(userId)));
+    }
+
+    Set<Long> groupMemberIds(MoodleWriteTarget target, long groupId) {
+        JsonNode body = call(target, "core_group_get_group_members", Map.of("groupids[0]", Long.toString(groupId)));
+        if (!body.isArray()) {
+            throw MoodleWriteException.invalid("Ответ core_group_get_group_members не является списком");
+        }
+        List<Long> ids = new ArrayList<>();
+        body.forEach(group -> group.path("userids").forEach(id -> ids.add(id.asLong())));
+        return ids.stream().collect(Collectors.toSet());
+    }
+
     Set<Long> enrolledUserIds(MoodleWriteTarget target, long courseId) {
         JsonNode body = call(target, "core_enrol_get_enrolled_users", Map.of("courseid", Long.toString(courseId)));
         if (!body.isArray()) {

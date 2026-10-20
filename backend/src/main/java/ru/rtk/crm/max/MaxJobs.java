@@ -9,6 +9,8 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ru.rtk.crm.settings.SystemSetting;
+import ru.rtk.crm.settings.SystemSettings;
 
 // Задания модуля в общем планировщике CRM. Каждое ловит свои ошибки: сбой MAX не должен останавливать повторы.
 // app.max.jobs-enabled=false выключает их в тестах, где шаги вызываются напрямую.
@@ -26,6 +28,7 @@ class MaxJobs {
     private final MaxLinkRepository linkRepository;
     private final MaxSessionRepository sessionRepository;
     private final String environmentToken;
+    private final SystemSettings systemSettings;
 
     MaxJobs(
             MaxProperties properties,
@@ -36,7 +39,8 @@ class MaxJobs {
             MaxQueueRepository queueRepository,
             MaxLinkRepository linkRepository,
             MaxSessionRepository sessionRepository,
-            @Value("${app.max.bot-token:}") String environmentToken
+            @Value("${app.max.bot-token:}") String environmentToken,
+            SystemSettings systemSettings
     ) {
         this.properties = properties;
         this.inbox = inbox;
@@ -47,6 +51,7 @@ class MaxJobs {
         this.linkRepository = linkRepository;
         this.sessionRepository = sessionRepository;
         this.environmentToken = environmentToken;
+        this.systemSettings = systemSettings;
     }
 
     // Начальная настройка из MAX_BOT_TOKEN сразу при старте, не дожидаясь ежечасной проверки подписки.
@@ -88,8 +93,10 @@ class MaxJobs {
     void applyRetention() {
         run("retention", () -> {
             OffsetDateTime now = OffsetDateTime.now();
-            int inboxRows = queueRepository.deleteInboxBefore(now.minus(properties.inboxRetention()));
-            int outboxRows = queueRepository.deleteOutboxBefore(now.minus(properties.outboxRetention()));
+            int inboxRows = queueRepository.deleteInboxBefore(now.minus(
+                    systemSettings.days(SystemSetting.RETENTION_MAX_INBOX, properties.inboxRetention())));
+            int outboxRows = queueRepository.deleteOutboxBefore(now.minus(
+                    systemSettings.days(SystemSetting.RETENTION_MAX_OUTBOX, properties.outboxRetention())));
             int codes = linkRepository.deleteExpiredCodes(now);
             int sessions = sessionRepository.deleteStale(now, now.minus(properties.sessionIdle()));
             LOGGER.info("MAX retention applied inbox={} outbox={} codes={} sessions={}", inboxRows, outboxRows, codes, sessions);

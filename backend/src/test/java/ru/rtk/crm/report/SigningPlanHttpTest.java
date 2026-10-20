@@ -71,6 +71,7 @@ class SigningPlanHttpTest {
         createSchema();
         ru.rtk.crm.agreement.AgreementTestSchema.create(jdbcTemplate);
         ru.rtk.crm.agreement.AgreementTestSchema.createWorkTables(jdbcTemplate);
+        ru.rtk.crm.agreement.AgreementTestSchema.createReporting(jdbcTemplate);
         ru.rtk.crm.agreement.AgreementTestSchema.clear(jdbcTemplate);
         for (String table : List.of("audit_events", "saved_reports", "command_idempotency_records", "agreements", "organizations",
                 "crm_user_profiles", "teams")) {

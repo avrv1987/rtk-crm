@@ -10,6 +10,7 @@ public record RetentionPolicy(
         long auditEventsDays,
         long agentPlansDays,
         String learnerProfilesTerm,
+        long personalDataRequestsDays,
         String schedule,
         AuditEntry lastRun,
         LearnerPrivacyService.Counters learners

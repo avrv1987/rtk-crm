@@ -275,6 +275,21 @@ class MailNotificationsTest {
                         .contains("#/partner").doesNotContain("Новый запрос").doesNotContain("Настроить уведомления"));
     }
 
+    // Решение владельца 21.10: приёмка ответа — короткое письмо координатору без текстов и ФИО, со ссылкой в кабинет;
+    // тему координатор отключает сам (отправщик не шлёт письмо отключённой темы — MailHttpTest).
+    @Test
+    void acceptedAnswerLetterIsShortAndItsTopicCanBeTurnedOff() {
+        UUID answer = UUID.randomUUID();
+        assertThat(notifications.partnerAccepted(MailHttpTest.PARTNER, ORGANIZATION, "Колледж связи", answer)).isTrue();
+        assertThat(notifications.partnerAccepted(MailHttpTest.PARTNER, ORGANIZATION, "Колледж связи", answer)).isFalse();
+        assertThat(subjects(MailHttpTest.PARTNER)).containsExactly("Ответ принят: «Колледж связи»");
+        assertThat(text(MailHttpTest.PARTNER, "PARTNER_ACCEPTED")).contains("приняла ответ по «Колледж связи»")
+                .contains("#/partner").contains("Настроить уведомления");
+        assertThat(MailKind.PARTNER_ACCEPTED.topic()).isEqualTo(MailTopic.PARTNER_ACCEPTED);
+        assertThat(MailKind.PARTNER_ACCEPTED.organizationBound()).isEqualTo(MailKind.PARTNER_RETURNED.organizationBound());
+        assertThat(MailTopic.PARTNER_ACCEPTED.roles()).containsExactly(ru.rtk.crm.access.UserRole.PARTNER);
+    }
+
     @Test
     void disabledTopicIsNotQueued() {
         jdbcTemplate.update("INSERT INTO mail_preferences (profile_id, topic) VALUES (?, 'ASSIGNMENT')", KAM);

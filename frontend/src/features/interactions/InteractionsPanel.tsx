@@ -49,6 +49,7 @@ import { LearningSnapshots } from './LearningSnapshots'
 import { LmsSignalsCard } from '../work/LmsSignals'
 import { OrganizationContacts, type PartnerAccessRights } from './OrganizationContacts'
 import { PartnerRequestsTab } from '../partner/PartnerRequestsTab'
+import { PeoplePanel } from '../people/PeoplePanel'
 import { PartnerStepToggle } from '../partner/PartnerStepToggle'
 import { getModules } from '../../shared/modules'
 import { CameraInput } from '../../shared/ui/CameraInput'
@@ -83,6 +84,7 @@ import { StageCompletionPanel } from './StageCompletionPanel'
 import {
   automaticKindLabel,
   interactionKindsApi,
+  manualRouteMismatch,
   optionalityLabel,
   optionalityOperation,
   resolutionHint,
@@ -106,6 +108,9 @@ import {
   forwardCommentSelectedNote,
   primaryShortLabels,
   signingBlock,
+  signingSatisfied,
+  stageActionsAllowed,
+  statusChangeNotice,
   type TransitionDirection,
   transitionBesidePrimary,
   transitionsToward,
@@ -494,7 +499,7 @@ const attachmentMessage = (error: unknown, action: 'upload' | 'download' | 'refr
 
 type CardDialogKind = 'contact' | 'create' | 'transition' | 'step' | 'program' | 'comment' | 'upload' | 'status' | 'flags' | 'issues' | 'stageEdit' | 'stageCompletion' | 'details'
 
-type CardTabId = 'history' | 'documents' | 'contract' | 'learning' | 'contacts' | 'partner'
+type CardTabId = 'history' | 'documents' | 'contract' | 'learning' | 'people' | 'contacts' | 'partner'
 
 type WorksFilter = 'ACTIVE' | 'ALL'
 
@@ -1095,6 +1100,10 @@ export const InteractionsPanel = ({
   ) || unavailableProgram || unavailableProductIds.length > 0
   const currentTemplatePageHasSelection = templatesState.kind === 'ready'
     && templatesState.page.items.some((template) => template.id === createTemplateId)
+  const createKindDescription = kinds.find((kind) => kind.id === (createKindId || kindResolution?.kindId))?.description ?? null
+  const createRouteMismatch = manualRouteMismatch(kindResolution, createTemplateId, templatesState.kind === 'ready'
+    ? templatesState.page.items.find((template) => template.id === createTemplateId)?.name ?? null
+    : null)
   const unavailableTemplate = createTemplateId.length > 0
     && templatesState.kind === 'ready'
     && templatesState.page.total === 0
@@ -2169,88 +2178,6 @@ export const InteractionsPanel = ({
                   />
                   <FieldError id="interaction-create-title-error" message={fieldErrorOf(createState, 'title')} />
                 </label>
-                {kinds.length > 0 && (
-                  <label>
-                    Вид взаимодействия
-                    <select value={createKindId} onChange={(event) => setCreateKindId(event.target.value)}>
-                      <option value="">{automaticKindLabel(kindResolution)}</option>
-                      {kinds.map((kind) => <option key={kind.id} value={kind.id}>{kind.name}</option>)}
-                    </select>
-                  </label>
-                )}
-                <label>
-                  Шаблон процесса
-                  <select
-                    value={createTemplateId}
-                    disabled={templatesState.kind !== 'ready'}
-                    onChange={(event) => changeCreateTemplate(event.target.value)}
-                  >
-                    <option value="">
-                      {kindResolution !== null
-                        ? `По виду: ${kindResolution.templateName}`
-                        : templatesState.kind === 'ready' && templatesState.page.teamDefaultTemplateId !== null
-                        ? `Шаблон команды по умолчанию: ${templatesState.page.items.find((template) => (
-                          template.id === templatesState.page.teamDefaultTemplateId
-                        ))?.name ?? 'выбран руководителем'}`
-                        : 'Шаблон по умолчанию'}
-                    </option>
-                    {createTemplateId.length > 0 && !currentTemplatePageHasSelection && (
-                      <option value={createTemplateId}>Сохранённый выбор: найдите шаблон на странице списка</option>
-                    )}
-                    {templatesState.kind === 'ready' && templatesState.page.items.map((template) => (
-                      <option key={template.id} value={template.id}>{template.name}</option>
-                    ))}
-                  </select>
-                </label>
-                {kindResolution !== null && createTemplateId === '' && (
-                  <p className="interaction-catalog-message" role="note">{resolutionHint(kindResolution)}</p>
-                )}
-
-                {templatesState.kind === 'loading' && (
-                  <p className="interaction-catalog-message" role="status">Загружаем доступные шаблоны процесса…</p>
-                )}
-                {templatesState.kind === 'failed' && (
-                  <div className="interaction-catalog-message interaction-catalog-message--error" role="alert">
-                    <p>Не удалось загрузить доступные шаблоны процесса.</p>
-                    <SupportDetails requestId={templatesState.requestId} />
-                    <button type="button" onClick={() => void loadAvailableTemplates(templatesPageIndex)}>Повторить</button>
-                  </div>
-                )}
-                {templatesState.kind === 'ready' && templatesState.page.total > templatesState.page.size && (
-                  <nav className="interaction-template-pagination" aria-label="Страницы шаблонов процесса">
-                    <button
-                      type="button"
-                      disabled={templatesState.page.page === 0}
-                      onClick={() => changeTemplatesPage(templatesState.page.page - 1)}
-                    >
-                      Предыдущая
-                    </button>
-                    <p>Страница {templatesState.page.page + 1} из {Math.ceil(templatesState.page.total / templatesState.page.size)}</p>
-                    <button
-                      type="button"
-                      disabled={(templatesState.page.page + 1) * templatesState.page.size >= templatesState.page.total}
-                      onClick={() => changeTemplatesPage(templatesState.page.page + 1)}
-                    >
-                      Следующая
-                    </button>
-                  </nav>
-                )}
-                {unavailableTemplate && (
-                  <div className="interaction-catalog-message interaction-catalog-message--error" role="alert">
-                    <p>Выбранный ранее шаблон больше недоступен в текущей области. Выберите другой шаблон или шаблон по умолчанию.</p>
-                    <button type="button" onClick={clearUnavailableTemplate}>Использовать шаблон по умолчанию</button>
-                  </div>
-                )}
-                {templatesState.kind === 'ready' && templateSelectionRequiresResolution && !currentTemplatePageHasSelection && (
-                  <div className="interaction-catalog-message interaction-catalog-message--error" role="alert">
-                    <p>Сохранённый шаблон ещё не подтверждён в доступной области. Перейдите по страницам списка или выберите другой шаблон.</p>
-                  </div>
-                )}
-                {templatesState.kind !== 'ready' && templateSelectionRequiresResolution && (
-                  <div className="interaction-catalog-message interaction-catalog-message--error" role="alert">
-                    <p>Черновик содержит шаблон процесса. Загрузите доступные шаблоны перед отправкой.</p>
-                  </div>
-                )}
                 <fieldset className="interaction-contact-picker">
                   <legend>Связанные контакты</legend>
                   {contactsState.kind === 'loading' && <p>Загружаем доступные контакты…</p>}
@@ -2361,6 +2288,91 @@ export const InteractionsPanel = ({
                     <p>Черновик содержит программу или продукты. Загрузите справочник перед отправкой, чтобы проверить выбор.</p>
                   </div>
                 )}
+                {/* Вид подбирается по программе и продуктам, поэтому поле стоит после них (аудит видов). */}
+                {kinds.length > 0 && (
+                  <label>
+                    Вид взаимодействия
+                    <select value={createKindId} onChange={(event) => setCreateKindId(event.target.value)}>
+                      <option value="">{automaticKindLabel(kindResolution)}</option>
+                      {kinds.map((kind) => <option key={kind.id} value={kind.id}>{kind.name}</option>)}
+                    </select>
+                    {createKindDescription && <span className="interaction-field-hint">{createKindDescription}</span>}
+                  </label>
+                )}
+                <label>
+                  Шаблон процесса
+                  <select
+                    value={createTemplateId}
+                    disabled={templatesState.kind !== 'ready'}
+                    onChange={(event) => changeCreateTemplate(event.target.value)}
+                  >
+                    <option value="">
+                      {kindResolution !== null
+                        ? `По виду: ${kindResolution.templateName}`
+                        : templatesState.kind === 'ready' && templatesState.page.teamDefaultTemplateId !== null
+                        ? `Шаблон команды по умолчанию: ${templatesState.page.items.find((template) => (
+                          template.id === templatesState.page.teamDefaultTemplateId
+                        ))?.name ?? 'выбран руководителем'}`
+                        : 'Шаблон по умолчанию'}
+                    </option>
+                    {createTemplateId.length > 0 && !currentTemplatePageHasSelection && (
+                      <option value={createTemplateId}>Сохранённый выбор: найдите шаблон на странице списка</option>
+                    )}
+                    {templatesState.kind === 'ready' && templatesState.page.items.map((template) => (
+                      <option key={template.id} value={template.id}>{template.name}</option>
+                    ))}
+                  </select>
+                </label>
+                {kindResolution !== null && createTemplateId === '' && (
+                  <p className="interaction-catalog-message" role="note">{resolutionHint(kindResolution)}</p>
+                )}
+                {createRouteMismatch !== null && <p className="notice" role="note">{createRouteMismatch}</p>}
+
+                {templatesState.kind === 'loading' && (
+                  <p className="interaction-catalog-message" role="status">Загружаем доступные шаблоны процесса…</p>
+                )}
+                {templatesState.kind === 'failed' && (
+                  <div className="interaction-catalog-message interaction-catalog-message--error" role="alert">
+                    <p>Не удалось загрузить доступные шаблоны процесса.</p>
+                    <SupportDetails requestId={templatesState.requestId} />
+                    <button type="button" onClick={() => void loadAvailableTemplates(templatesPageIndex)}>Повторить</button>
+                  </div>
+                )}
+                {templatesState.kind === 'ready' && templatesState.page.total > templatesState.page.size && (
+                  <nav className="interaction-template-pagination" aria-label="Страницы шаблонов процесса">
+                    <button
+                      type="button"
+                      disabled={templatesState.page.page === 0}
+                      onClick={() => changeTemplatesPage(templatesState.page.page - 1)}
+                    >
+                      Предыдущая
+                    </button>
+                    <p>Страница {templatesState.page.page + 1} из {Math.ceil(templatesState.page.total / templatesState.page.size)}</p>
+                    <button
+                      type="button"
+                      disabled={(templatesState.page.page + 1) * templatesState.page.size >= templatesState.page.total}
+                      onClick={() => changeTemplatesPage(templatesState.page.page + 1)}
+                    >
+                      Следующая
+                    </button>
+                  </nav>
+                )}
+                {unavailableTemplate && (
+                  <div className="interaction-catalog-message interaction-catalog-message--error" role="alert">
+                    <p>Выбранный ранее шаблон больше недоступен в текущей области. Выберите другой шаблон или шаблон по умолчанию.</p>
+                    <button type="button" onClick={clearUnavailableTemplate}>Использовать шаблон по умолчанию</button>
+                  </div>
+                )}
+                {templatesState.kind === 'ready' && templateSelectionRequiresResolution && !currentTemplatePageHasSelection && (
+                  <div className="interaction-catalog-message interaction-catalog-message--error" role="alert">
+                    <p>Сохранённый шаблон ещё не подтверждён в доступной области. Перейдите по страницам списка или выберите другой шаблон.</p>
+                  </div>
+                )}
+                {templatesState.kind !== 'ready' && templateSelectionRequiresResolution && (
+                  <div className="interaction-catalog-message interaction-catalog-message--error" role="alert">
+                    <p>Черновик содержит шаблон процесса. Загрузите доступные шаблоны перед отправкой.</p>
+                  </div>
+                )}
                 <label>
                   Следующий шаг
                   <textarea
@@ -2427,6 +2439,9 @@ export const InteractionsPanel = ({
   const transitionSigningBlock = currentInteraction === undefined || selectedTransition === undefined
     ? null
     : signingBlock(work, currentInteraction.stages, currentInteraction.currentStageId, selectedTransition.stageId)
+  const transitionSigningSatisfied = currentInteraction === undefined || selectedTransition === undefined || transitionSigningBlock !== null
+    ? null
+    : signingSatisfied(work, currentInteraction.stages, currentInteraction.currentStageId, selectedTransition.stageId)
   const hasNextStep = (currentInteraction?.nextAction?.trim() ?? '').length > 0
   const hasStepOrDue = hasNextStep || (currentInteraction?.nextActionAt ?? null) !== null
   const primary = currentInteraction === undefined ? null : primaryAction({
@@ -2435,7 +2450,8 @@ export const InteractionsPanel = ({
     hasNextStep,
     transitionCount: transitionOptions('forward').length,
     agreementStageRole: stageRole,
-    agreementCount: work?.agreements.length ?? 0,
+    // Засчитанный договор вуза — тоже договор: на этапе договора КАМ не уводят создавать ещё один.
+    agreementCount: (work?.agreements.length ?? 0) + (work?.activeAgreement ? 1 : 0),
     signingBlocked: signingBlockedNext
   })
   const startAgreementCreate = () => {
@@ -2495,6 +2511,7 @@ export const InteractionsPanel = ({
     { id: 'documents', label: 'Документы', count: currentInteraction.attachments.length },
     { id: 'contract', label: 'Договор и лицензии', count: (work?.agreements.length ?? 0) + currentInteraction.productAgreements.length },
     { id: 'learning', label: 'Обучение', count: signalCount > 0 ? signalCount : undefined },
+    ...(role === 'USER' || role === 'LEADER' || role === 'MANAGEMENT' ? [{ id: 'people' as const, label: 'Люди и часы' }] : []),
     { id: 'contacts', label: 'Контакты', count: currentInteraction.contactIds.length },
     ...(getModules().partner ? [{ id: 'partner' as const, label: 'Запросы вузу' }] : [])
   ]
@@ -2728,7 +2745,7 @@ export const InteractionsPanel = ({
           <RouteDisclosure
             interaction={currentInteraction}
             items={pathItems}
-            canEdit={canManageDailyWork}
+            canEdit={stageActionsAllowed(canManageDailyWork, workStatus)}
             onCompleteStage={() => setDialog('stageCompletion')}
             onEditStages={() => setDialog('stageEdit')}
             onReturnToStage={transitionOptions('back').length === 0 ? undefined : () => openTransition('back')}
@@ -2749,6 +2766,7 @@ export const InteractionsPanel = ({
                 failedRequestId={eventsState.kind === 'failed' && eventsState.id === currentInteraction.id ? eventsState.requestId ?? null : undefined}
                 attachmentsByEvent={attachmentsByEvent}
                 onRefresh={() => void loadEvents(currentInteraction.id)}
+                onOpenDocuments={() => setCardTab('documents')}
               />
             )}
 
@@ -2895,7 +2913,7 @@ export const InteractionsPanel = ({
               <div className="work-training">
                 <LmsStageSuggestionPanel
                   interaction={currentInteraction}
-                  canEdit={canManageDailyWork}
+                  canEdit={stageActionsAllowed(canManageDailyWork, workStatus)}
                   onChanged={applyUpdatedInteraction}
                   onOpenTransition={() => openTransition('forward')}
                   onMoveToStage={moveToStage}
@@ -2976,6 +2994,16 @@ export const InteractionsPanel = ({
                   />
                 </CardSection>
               </div>
+            )}
+
+            {cardTab === 'people' && (
+              <PeoplePanel
+                key={`people:${currentInteraction.id}`}
+                organizationId={currentInteraction.organizationId}
+                interactionId={currentInteraction.id}
+                onSessionExpired={onSessionExpired}
+                onProfileUnavailable={onProfileUnavailable}
+              />
             )}
 
             {cardTab === 'partner' && getModules().partner && (
@@ -3084,6 +3112,7 @@ export const InteractionsPanel = ({
                     {transitionSigningBlock !== null && (
                       <p className="interaction-catalog-message interaction-catalog-message--error work-card__signing" role="alert">{transitionSigningBlock}</p>
                     )}
+                    {transitionSigningSatisfied !== null && <p className="notice" role="note">{transitionSigningSatisfied}</p>}
                     <label>
                       <span>
                         {transitionDirection === 'back' ? 'Причина возврата' : 'Комментарий к переходу'}
@@ -3313,7 +3342,7 @@ export const InteractionsPanel = ({
                   key={`status:${currentInteraction.id}`}
                   interaction={currentInteraction}
                   profileId={profileId}
-                  onChanged={(interaction) => applyUpdatedInteraction(interaction, `Статус взаимодействия: ${workStatusLabels[interaction.marks.status]}.`)}
+                  onChanged={(interaction) => applyUpdatedInteraction(interaction, statusChangeNotice(workStatusLabels[interaction.marks.status], interaction))}
                   onRefresh={reload}
                   onSessionExpired={onSessionExpired}
                   onProfileUnavailable={onProfileUnavailable}

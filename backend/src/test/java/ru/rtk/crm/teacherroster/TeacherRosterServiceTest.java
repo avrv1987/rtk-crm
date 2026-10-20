@@ -47,6 +47,7 @@ import ru.rtk.crm.teacherroster.TeacherRosterModels.TeacherRosterRequest;
         OrganizationRepository.class,
         AuditJournalRepository.class,
         LmsRosterWorkbookWriter.class,
+        ru.rtk.crm.enrolment.LmsLogin.class,
         TeacherRosterRepository.class,
         TeacherRosterService.class
 })

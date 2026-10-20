@@ -97,6 +97,9 @@ public class CatalogImportService {
     private final CommandIdempotencyRepository commandIdempotencyRepository;
     private final CatalogChangeEventRepository catalogChangeEventRepository;
     private final VendorContactImport vendorContactImport;
+    private final InteractionHistoryImport historyImport;
+    private final UniversityAgreementImport universityAgreementImport;
+    private final ImportSettingsService importSettingsService;
     private final ObjectMapper objectMapper;
     private final AuditJournalRepository auditJournalRepository;
 
@@ -111,9 +114,15 @@ public class CatalogImportService {
             InteractionService interactionService,
             CatalogChangeEventRepository catalogChangeEventRepository,
             VendorContactImport vendorContactImport,
-            AuditJournalRepository auditJournalRepository
+            AuditJournalRepository auditJournalRepository,
+            InteractionHistoryImport historyImport,
+            UniversityAgreementImport universityAgreementImport,
+            ImportSettingsService importSettingsService
     ) {
         this.repository = repository;
+        this.historyImport = historyImport;
+        this.universityAgreementImport = universityAgreementImport;
+        this.importSettingsService = importSettingsService;
         this.auditJournalRepository = auditJournalRepository;
         this.catalogChangeEventRepository = catalogChangeEventRepository;
         this.vendorContactImport = vendorContactImport;
@@ -154,9 +163,12 @@ public class CatalogImportService {
         if (normalizedMapping.unassignedTeamId() != null && !repository.activeTeamExists(normalizedMapping.unassignedTeamId())) {
             throw new InteractionValidationException("unassignedTeamId", "Команда не найдена или в архиве");
         }
-        List<CatalogImportStoredRow> rows = profileType == CatalogImportProfile.VENDOR_CONTACTS
-                ? vendorContactImport.plan(sheet, normalizedMapping)
-                : plannedRows(profileType, sheet, normalizedMapping);
+        List<CatalogImportStoredRow> rows = switch (profileType) {
+            case VENDOR_CONTACTS -> vendorContactImport.plan(sheet, normalizedMapping);
+            case INTERACTION_HISTORY -> historyImport.plan(sheet, normalizedMapping, file.getOriginalFilename());
+            case UNIVERSITY_AGREEMENT -> universityAgreementImport.plan(sheet, normalizedMapping, file.getOriginalFilename());
+            default -> plannedRows(profileType, sheet, normalizedMapping);
+        };
         UUID importId = UUID.randomUUID();
         UUID jobId = UUID.randomUUID();
         repository.insertPreview(importId, jobId, profile.id(), profileType, normalizedMapping, rows, OffsetDateTime.now());
@@ -288,7 +300,12 @@ public class CatalogImportService {
                     case DIRECTION_PROGRAM -> applyDirectionProgram(row.plan(), profile.id(), commandId, now);
                     case VENDOR_CONTACTS -> vendorContactImport.apply(row.plan(), profile.id(), commandId, now);
                     case AGREEMENT -> applyAgreement(row.plan(), profile.id(), commandId, now, createdInteractions);
+                    case INTERACTION_HISTORY -> historyImport.apply(row.plan(), profile.id(), commandId, now, createdInteractions);
+                    case UNIVERSITY_AGREEMENT -> universityAgreementImport.apply(row.plan(), profile.id(), now);
                 }
+            }
+            if (stored.profile() == CatalogImportProfile.INTERACTION_HISTORY && stored.mapping().stageFromHistoryEnabled()) {
+                historyImport.applyStages(commandId, now);
             }
             for (ImportAgreementLink link : archivedLinks) {
                 repository.changeAgreementArchived(link.agreementId(), true, now);
@@ -329,6 +346,8 @@ public class CatalogImportService {
             case AGREEMENT -> "Импорт реестра соглашений";
             case DIRECTION_PROGRAM -> "Импорт направлений и программ";
             case VENDOR_CONTACTS -> "Импорт вендоров и контактов";
+            case INTERACTION_HISTORY -> "Импорт истории взаимодействий";
+            case UNIVERSITY_AGREEMENT -> "Импорт договоров с вузами";
         };
     }
 
@@ -1298,8 +1317,8 @@ public class CatalogImportService {
                 .map(ImportOrganization::ownerManagerId)
                 .orElse(null);
         UUID created = interactionService.createImportedInteraction(
-                organizationId, ownerManagerId, values.get("interactionTitle"), uuid(values.get("programId")), productId, actorProfileId,
-                commandId, now
+                organizationId, ownerManagerId, values.get("interactionTitle"), uuid(values.get("programId")), productId,
+                importSettingsService.defaultStep(now), actorProfileId, commandId, now
         );
         if (planKey != null) {
             createdInteractions.put(planKey, created);
@@ -1341,7 +1360,8 @@ public class CatalogImportService {
             ));
         }
         return new CatalogImportMapping(
-                Map.copyOf(columns), Map.copyOf(targets), Map.copyOf(transferStatuses), mapping.unassignedTeamId()
+                Map.copyOf(columns), Map.copyOf(targets), Map.copyOf(transferStatuses), mapping.unassignedTeamId(),
+                mapping.stageFromHistoryEnabled() ? Boolean.TRUE : null
         );
     }
 
@@ -1350,11 +1370,15 @@ public class CatalogImportService {
             case AGREEMENT -> AGREEMENT_REQUIRED_FIELDS;
             case DIRECTION_PROGRAM -> DIRECTION_PROGRAM_REQUIRED_FIELDS;
             case VENDOR_CONTACTS -> VendorContactImport.REQUIRED_FIELDS;
+            case INTERACTION_HISTORY -> InteractionHistoryImport.REQUIRED_FIELDS;
+            case UNIVERSITY_AGREEMENT -> UniversityAgreementImport.REQUIRED_FIELDS;
         };
         Set<String> allowed = switch (profile) {
             case AGREEMENT -> AGREEMENT_MAPPING_FIELDS;
             case DIRECTION_PROGRAM -> DIRECTION_PROGRAM_MAPPING_FIELDS;
             case VENDOR_CONTACTS -> VendorContactImport.MAPPING_FIELDS;
+            case INTERACTION_HISTORY -> InteractionHistoryImport.MAPPING_FIELDS;
+            case UNIVERSITY_AGREEMENT -> UniversityAgreementImport.MAPPING_FIELDS;
         };
         for (String field : required) {
             if (!mapping.columns().containsKey(field)) {
@@ -1378,19 +1402,24 @@ public class CatalogImportService {
 
     private void inspectWorkbookFile(MultipartFile file) {
         if (file == null || file.isEmpty()) {
-            throw new AttachmentValidationException("file", "Выберите файл XLS или XLSX");
+            throw new AttachmentValidationException("file", "Выберите файл XLS, XLSX или CSV");
         }
         if (file.getSize() > MAX_FILE_SIZE) {
             throw new AttachmentTooLargeException();
         }
-        AttachmentUploadInspection inspection = attachmentContentValidator.inspect(file);
-        String name = inspection.originalName().toLowerCase(Locale.ROOT);
-        if (!name.endsWith(".xls") && !name.endsWith(".xlsx")) {
-            throw new AttachmentValidationException("file", "Поддерживаются только книги XLS и XLSX");
+        long size = file.getSize();
+        // CSV — текст без сигнатуры, проверку сигнатуры вложений он не проходит; текстовость проверяет чтение CSV.
+        if (!CatalogImportCsv.isCsv(file.getOriginalFilename())) {
+            AttachmentUploadInspection inspection = attachmentContentValidator.inspect(file);
+            String name = inspection.originalName().toLowerCase(Locale.ROOT);
+            if (!name.endsWith(".xls") && !name.endsWith(".xlsx")) {
+                throw new AttachmentValidationException("file", "Поддерживаются книги XLS и XLSX и файлы CSV");
+            }
+            size = inspection.sizeBytes();
         }
         AttachmentScanOutcome outcome;
         try (InputStream input = file.getInputStream()) {
-            outcome = attachmentScanner.scan(input, inspection.sizeBytes());
+            outcome = attachmentScanner.scan(input, size);
         } catch (IOException exception) {
             throw new AttachmentValidationException("file", "Файл не удалось прочитать");
         }
