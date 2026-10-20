@@ -258,9 +258,10 @@ class AgreementReportingHttpTest {
         assertThat(approved.path("summary").path("status").asText()).isEqualTo("APPROVED");
         JsonNode history = json(call(HttpMethod.GET, "/api/activity-lists/" + id, LEADER_A, UserRole.LEADER, null)).path("history");
         assertThat(history).hasSize(5);
-        assertThat(history.get(0).path("channel").asText()).isEqualTo("COORDINATOR");
-        assertThat(history.get(0).path("actorName").asText()).isEqualTo("Координатор вуза");
-        assertThat(history.get(1).path("comment").asText()).contains("в кабинет вуза");
+        // Порядок событий одного мгновения не определён (часы Windows грубые): проверяем состав, а не место.
+        assertThat(history.findParents("channel")).anyMatch(event -> event.path("channel").asText().equals("COORDINATOR")
+                && event.path("actorName").asText().equals("Координатор вуза"));
+        assertThat(history.findValuesAsText("comment")).anyMatch(comment -> comment.contains("в кабинет вуза"));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_events WHERE action = 'AGREEMENT_ACTIVITY_LIST_CHANGED'", Integer.class))
                 .isEqualTo(5);
     }
@@ -274,15 +275,15 @@ class AgreementReportingHttpTest {
                 Map.of("year", 2026)).path("summary").path("id").asText();
         JsonNode sent = transition(marked, KAM_A, 0, "SEND", null);
         assertThat(sent.path("actions").toString()).contains("APPROVE", "RETURN");
-        assertThat(sent.path("history").get(0).path("comment").asText()).contains("ответ отметит КАМ");
+        assertThat(sent.path("history").findValuesAsText("comment")).anyMatch(comment -> comment.contains("ответ отметит КАМ"));
         MockHttpServletResponse future = call(HttpMethod.POST, "/api/activity-lists/" + marked + "/transitions", KAM_A, UserRole.USER,
                 Map.of("version", 1, "action", "APPROVE", "respondedOn", today().plusDays(1).toString()));
         assertThat(future.getStatus()).isEqualTo(400);
         JsonNode approved = json(call(HttpMethod.POST, "/api/activity-lists/" + marked + "/transitions", KAM_A, UserRole.USER,
                 Map.of("version", 1, "action", "APPROVE", "respondedOn", today().toString())));
         assertThat(approved.path("summary").path("status").asText()).isEqualTo("APPROVED");
-        assertThat(approved.path("history").get(0).path("channel").asText()).isEqualTo("KAM");
-        assertThat(approved.path("history").get(0).path("comment").asText()).startsWith("Отметка КАМ: ответ вуза от");
+        assertThat(approved.path("history").findParents("channel")).anyMatch(event -> event.path("channel").asText().equals("KAM")
+                && event.path("comment").asText().startsWith("Отметка КАМ: ответ вуза от"));
 
         String silent = created(KAM_A, UserRole.USER, "/api/organizations/" + WITHOUT_COORDINATOR + "/activity-lists",
                 Map.of("year", 2026, "title", "Итоговый перечень")).path("summary").path("id").asText();
@@ -304,7 +305,7 @@ class AgreementReportingHttpTest {
                 Map.of("year", 2026)).path("summary").path("id").asText();
         JsonNode open = transition(waiting, KAM_A, 0, "SEND", null);
         assertThat(open.path("summary").path("reviewDueOn").isNull()).isTrue();
-        assertThat(open.path("history").get(0).path("comment").asText()).contains("срок ответа не задан");
+        assertThat(open.path("history").findValuesAsText("comment")).anyMatch(comment -> comment.contains("срок ответа не задан"));
     }
 
     @Test

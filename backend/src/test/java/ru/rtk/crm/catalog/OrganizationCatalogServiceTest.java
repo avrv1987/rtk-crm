@@ -134,7 +134,8 @@ class OrganizationCatalogServiceTest {
                 .isEqualTo(OrganizationStatus.ACTIVE);
         assertThat(catalogChangeEventRepository.findPage(CatalogEntityType.ORGANIZATION, 0, 10).items())
                 .extracting(CatalogChangeEvent::action, CatalogChangeEvent::actorDisplayName)
-                .containsExactly(
+                // Порядок событий одного мгновения не определён (часы Windows грубые): проверяем состав.
+                .containsExactlyInAnyOrder(
                         org.assertj.core.groups.Tuple.tuple(CatalogChangeAction.APPROVE, "Руководитель А"),
                         org.assertj.core.groups.Tuple.tuple(CatalogChangeAction.REQUEST, "КАМ А")
                 );

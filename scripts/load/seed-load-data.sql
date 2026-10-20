@@ -110,7 +110,7 @@ CROSS JOIN generate_series(0, 9) e;
 
 INSERT INTO interactions (
     id, organization_id, title, current_stage_id, next_action, next_action_at, program_id, last_contact_at,
-    version, created_by, created_at, updated_at
+    version, created_by, created_at, updated_at, interaction_kind_id
 )
 SELECT i.id,
        i.organization_id,
@@ -127,7 +127,9 @@ SELECT i.id,
        9,
        i.actor_id,
        i.created_at,
-       last_event.occurred_at
+       last_event.occurred_at,
+       -- С версии 2.5 вид взаимодействия обязателен: нагрузочные карточки получают вид по умолчанию.
+       (SELECT k.id FROM interaction_kinds k WHERE k.default_kind)
 FROM load_interactions i
 JOIN load_stages current_stage ON current_stage.interaction_id = i.id AND current_stage.position = i.transitions
 JOIN load_events last_event ON last_event.interaction_id = i.id AND last_event.version = 9
