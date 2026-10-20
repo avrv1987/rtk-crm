@@ -1838,7 +1838,7 @@
         <bounds x="520" y="700" width="320" height="55"/>
       </child>
     </element>
-    <element xsi:type="archimate:ArchimateDiagramModel" name="Версия 2.0: контроль, договор, интеграции, роли и профили Compose" id="id-23f6404e73c7061340d30b592d848080">
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Контроль, договор, интеграции, роли и профили Compose" id="id-23f6404e73c7061340d30b592d848080">
       <documentation>Что добавлено после версии 1.x: «Контроль» и отчёт «Работа менеджеров», версии маршрута, роль сотрудника из Keycloak, договор с вузом, рынок труда и обмен с CRM заказчика на демонстрационных источниках, кабинет вуза и флаги модулей, пакеты work, module, partner, teacherroster, профили Compose и CI.</documentation>
       <child xsi:type="archimate:DiagramObject" id="id-f2d283402a0a2cb4152ed19239ad267c" targetConnections="id-33024e258696617214cb3f89be7b377a id-342b34f47c3bbe227e27030bd8d054c7 id-e8cefa299df2ea705b32cac223c48959" archimateElement="id-63e6b9acc9e88f5046c4675d2458c6be">
         <bounds x="20" y="20" width="180" height="50"/>
@@ -2079,7 +2079,7 @@
         <sourceConnection xsi:type="archimate:Connection" id="id-a1a46304f75810feabbaec7aff4ee252" source="id-9a5599b9875604c17bec8919af5850e7" target="id-fe8defcdea88cf1890cf6f17de0b9e6a" archimateRelationship="id-153c2a107c128750e567c47b05896921"/>
       </child>
     </element>
-    <element xsi:type="archimate:ArchimateDiagramModel" name="Версия 2.5: подключаемые модули — MCP, MAX, почта" id="id-19ce43b0aa8a969a9ef7db60075ec7a9">
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Подключаемые модули — MCP, MAX, почта" id="id-19ce43b0aa8a969a9ef7db60075ec7a9">
       <documentation>Модули, выключенные по умолчанию: сервер MCP для ИИ-агентов с планами записи и подтверждением сотрудника, бот и мини-приложение MAX, почтовые уведомления и приглашения; внешние системы, узлы и файлы конфигурации.</documentation>
       <child xsi:type="archimate:DiagramObject" id="id-939a9070e0a424608acf32575fcc800d" targetConnections="id-8a0063c179a87924e4a8d6f1379cd853 id-4e1550273f8a9dfe0e9bcad7affd1094 id-caa47ad7079880dd1cd3f0ce38baf677 id-ebdb1e4d24dc72a7ef027dd138847db1 id-d696a4082731e9901de32f6e2ba88c89 id-38d7db8ed06836cec98782774a2609e5" archimateElement="id-83c58498ad93bd70e4c418bf0ae260eb">
         <bounds x="20" y="20" width="200" height="80"/>
@@ -2321,7 +2321,7 @@
         </sourceConnection>
       </child>
     </element>
-    <element xsi:type="archimate:ArchimateDiagramModel" name="Версия 2.5: маршрут и аналитика — виды, свойства этапов, путь вуза, индекс востребованности" id="id-687c25e57d4b72800a33760b615330c7">
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Маршрут и аналитика — виды, свойства этапов, путь вуза, индекс востребованности" id="id-687c25e57d4b72800a33760b615330c7">
       <documentation>Виды взаимодействия и правила выбора вида, свойства этапов и нормативы, сводка версий маршрута, путь вуза и матрица «программа × этап», режимы периода и сравнение периодов, полнота данных обучения, индекс востребованности, настройки, влияющие на расчёты.</documentation>
       <child xsi:type="archimate:DiagramObject" id="id-20da1f915755df595e86a05388d50a65" targetConnections="id-b41e96de9d9a0dec51cc5ce3003a9287 id-ceded76bb6d1f9d3af74e9292d21c231 id-641a0af8280d3d3af6db416164fa09d8 id-d68170a6047b388972a669a2e4c3da37" archimateElement="id-dcf91bb853fe22ab40704bdd77a32ae3">
         <bounds x="20" y="20" width="200" height="80"/>
@@ -2507,7 +2507,7 @@
         <sourceConnection xsi:type="archimate:Connection" id="id-e8c36d0ab6e995a5415abf1bf31c90fe" source="id-3ad0a1db32ca85ffeeaa587bf11197b3" target="id-1cfa97f8d106dd1fffd4a3e7c8b6ebe6" archimateRelationship="id-1e2c250ae0aa41f92a7e8f524faf27f7"/>
       </child>
     </element>
-    <element xsi:type="archimate:ArchimateDiagramModel" name="Версия 2.5: договоры, люди и часы, слушатели и кабинет вуза" id="id-1682d142d29d802d494a2b04a814e047">
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Договоры, люди и часы, слушатели и кабинет вуза" id="id-1682d142d29d802d494a2b04a814e047">
       <documentation>Отчётность по соглашениям (атрибуты мероприятий, справочники, ставки, перечни с согласованием, сроки цикла, шаблон выгрузки), учёт людей и часов с передачей в ФРДО, запросы вузу и ответы координатора, партии зачисления и перенос в Moodle, роль «Менеджер учебного процесса».</documentation>
       <child xsi:type="archimate:DiagramObject" id="id-aecaa9a1f1210ff1e15e40c9bf35c527" archimateElement="id-3fc585865307cf7c85c417976578a802">
         <bounds x="20" y="20" width="200" height="80"/>
@@ -2685,7 +2685,7 @@
         <sourceConnection xsi:type="archimate:Connection" id="id-f4270824de290022a2a026ff67e649c8" source="id-9b46913dc8d3d173cc3062665f66f9a8" target="id-c93f1737a663e4e893a5ef68f9bebeba" archimateRelationship="id-284bbb73abe6375a0b129623e1b8ddbd"/>
       </child>
     </element>
-    <element xsi:type="archimate:ArchimateDiagramModel" name="Версия 2.5: администрирование, ПДн и эксплуатация" id="id-3ca1d8f5bba23e6f38f02100f289e1e0">
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Администрирование, ПДн и эксплуатация" id="id-3ca1d8f5bba23e6f38f02100f289e1e0">
       <documentation>Настройки системы, состояние модулей, импорт из Excel и CSV с историей, обращения субъектов ПДн и согласия, ограничение частоты API и квота отчётов, резервное копирование по расписанию с хранением копий и передачей во внешнее хранилище.</documentation>
       <child xsi:type="archimate:DiagramObject" id="id-bb349fb173fa9c192d5dab4070b06678" archimateElement="id-f2995fac946f3fd5148c363113d12ab4">
         <bounds x="20" y="20" width="200" height="80"/>
