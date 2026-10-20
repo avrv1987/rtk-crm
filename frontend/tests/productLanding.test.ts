@@ -7,12 +7,11 @@ import { savedOnChange, settingValueText } from '../src/features/admin/adminSett
 import { rolesFor } from '../src/features/landing/landingModules.ts'
 import { isProductDemo, landingPageFor, productDemoHref, showBackToContest } from '../src/features/landing/landingMode.ts'
 import {
-  productConnections,
+  connectionsLine,
   productOutcomes,
   productScreens,
-  protectionFacts,
-  reliabilityFacts,
-  scenarioFor
+  productSteps,
+  reliabilityLine
 } from '../src/features/landing/productContent.ts'
 import { getLandingMode, setLandingMode } from '../src/shared/modules.ts'
 
@@ -25,12 +24,11 @@ const on = { enrolment: true, partner: true, max: true, mcp: true, mail: true }
 const productText = (modules: typeof on) => [
   source('ProductLanding.tsx'),
   ...productOutcomes.flatMap((item) => [item.title, item.text]),
-  ...scenarioFor(modules).flatMap((step) => [step.role, step.text, step.screen]),
-  ...productScreens.flatMap((screen) => [screen.title, screen.alt, screen.caption]),
-  ...productConnections(modules).flat(),
-  ...reliabilityFacts.flat(),
-  ...protectionFacts(modules),
-  ...rolesFor(modules).flatMap((role) => [role.title, role.benefit, ...role.duties])
+  ...productSteps,
+  ...productScreens.flatMap((screen) => [screen.alt, screen.caption]),
+  reliabilityLine,
+  connectionsLine(modules),
+  ...rolesFor(modules).flatMap((role) => [role.title, role.benefit])
 ].join(' ')
 
 test('главная выбирается по режиму из /api/config, демонстрационный адрес открывает продуктовую при любом режиме', () => {
@@ -71,20 +69,42 @@ test('на продуктовой главной нет блоков для жю
   }
 })
 
-test('продуктовая главная показывает подключаемые модули и ИИ-агентов только при включённых модулях', () => {
-  const titles = (modules: typeof on) => productConnections(modules).map(([title]) => title)
-  assert.deepEqual(titles(off), ['Moodle', 'Сайт ИТ Школы', 'Excel', 'Открытый API'])
-  assert.deepEqual(titles(on), ['Moodle', 'Сайт ИТ Школы', 'Excel', 'MAX', 'Почта', 'ИИ-агенты (MCP)', 'Открытый API'])
+test('продуктовая главная показывает модульные роли и MAX только при включённых модулях', () => {
+  const titles = (modules: typeof on) => rolesFor(modules).map((role) => role.title)
+  assert.ok(!titles(off).includes('Координатор вуза') && !titles(off).includes('Менеджер учебного процесса'))
+  assert.ok(titles(on).includes('Координатор вуза') && titles(on).includes('Менеджер учебного процесса'))
+  assert.ok(!connectionsLine(off).includes('MAX') && connectionsLine(on).includes('MAX'))
   const withoutModules = productText(off).replace(source('ProductLanding.tsx'), '')
-  for (const word of ['ИИ', 'координатор', 'кабинет', 'слушател', 'анкет']) {
+  for (const word of ['ИИ', 'координатор', 'кабинет', 'слушател', 'анкет', 'MAX']) {
     assert.ok(!withoutModules.includes(word), `без модулей на продуктовой главной есть «${word}»`)
   }
-  assert.equal(scenarioFor(on).length, 8)
 })
 
-test('надёжность — факты замера 2.5.3, у каждого снимка есть alt и размеры', () => {
-  assert.deepEqual(reliabilityFacts.map(([value]) => value), ['50', '0', '< 1 с', '12 из 12'])
-  assert.ok(source('ProductLanding.tsx').includes('версия 2.5.3'))
+const words = (text: string) => text.split(/\s+/).filter(Boolean).length
+
+test('продуктовая главная короткая: не больше 7 секций, без перечня интеграций и внутренних терминов', () => {
+  const page = source('ProductLanding.tsx')
+  assert.ok((page.match(/<section/g) ?? []).length <= 7)
+  assert.ok((page.match(/<nav className="landing-header__nav"[\s\S]*?<\/nav>/)?.[0].match(/<a /g) ?? []).length <= 3)
+  assert.ok(!page.includes('pl-connections') && !page.includes('landing-integration'), 'вернулся блок перечня интеграций')
+  assert.ok(productOutcomes.length >= 3 && productOutcomes.length <= 4)
+  for (const outcome of productOutcomes) {
+    assert.ok(words(outcome.text) <= 12, outcome.text)
+  }
+  assert.ok(productSteps.length <= 4 && productSteps.every((step) => words(step) <= 12))
+  assert.ok(productScreens.length >= 2 && productScreens.length <= 3)
+  for (const role of rolesFor(on)) {
+    assert.ok(words(role.benefit) <= 16, role.benefit)
+  }
+  const text = productText(on).replace(page, '') + page.replace(/className="[^"]*"/g, '')
+  for (const term of ['p95', 'LOAD', 'XLSX', 'OpenAPI', 'MCP', '«Контроль»', '«Моя работа»', '«Путь вуза»', 'Экран:']) {
+    assert.ok(!text.includes(term), `на продуктовой главной есть «${term}»`)
+  }
+})
+
+test('надёжность — одна строка по замеру, у каждого снимка есть alt и размеры', () => {
+  assert.ok(reliabilityLine.includes('50') && reliabilityLine.includes('секунды'))
+  assert.ok(!source('ProductLanding.tsx').includes('<dl className="landing-facts"'))
   for (const screen of productScreens) {
     assert.ok(screen.alt.length > 20 && screen.width > 0 && screen.height > 0, screen.src)
   }

@@ -13,3 +13,6 @@ backend/.maven-repository/
 backups/
 .demo-accounts.*
 .load-test/
+
+# Резервные копии стенда (scripts/backup.sh)
+.backups/

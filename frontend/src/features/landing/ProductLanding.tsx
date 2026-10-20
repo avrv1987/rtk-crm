@@ -1,15 +1,8 @@
 import { useEffect, useState } from 'react'
 import { getModules } from '../../shared/modules'
 import { landingLinks } from './landingLinks'
-import { rolesFor, rolesLead } from './landingModules'
-import {
-  productConnections,
-  productOutcomes,
-  productScreens,
-  protectionFacts,
-  reliabilityFacts,
-  scenarioFor
-} from './productContent'
+import { rolesFor } from './landingModules'
+import { connectionsLine, productOutcomes, productScreens, productSteps, reliabilityLine } from './productContent'
 import './landing.css'
 
 const instructionsUrl = landingLinks.sourceCodeUrl === ''
@@ -79,9 +72,7 @@ export const ProductLanding = ({ onLogin, signedIn = false, backToContest = fals
           <div className="landing-header__actions">
             <nav className="landing-header__nav" aria-label="Разделы страницы">
               <a href="#pl-roles">Роли</a>
-              <a href="#pl-day">Как идёт работа</a>
               <a href="#pl-screens">Экраны</a>
-              <a href="#pl-reliability">Надёжность</a>
               <a href="#/help">Справка</a>
             </nav>
             {loginButton}
@@ -96,27 +87,23 @@ export const ProductLanding = ({ onLogin, signedIn = false, backToContest = fals
               <p className="eyebrow">Для сотрудников ИТ Школы РТК</p>
               <h1>Вся работа школы с вузами — в одной системе</h1>
               <p className="landing-hero__lead">
-                CRM ведёт путь с каждым вузом, колледжем и школой по ИТ-программам и ИТ-продуктам: от первого контакта до
-                повышения квалификации преподавателей и отчёта по соглашению. У каждой работы есть ответственный,
-                следующий шаг и срок, а руководитель видит всю картину без таблиц и опросов.
+                От первой заявки до отчёта по соглашению: у каждого дела есть ответственный, следующий шаг и срок.
               </p>
               <div className="landing-hero__actions">
                 {loginButton}
                 <a className="landing-hero__check" href="#/help">Справка</a>
               </div>
-              <p className="landing-hero__note">Вход по корпоративной учётной записи. Пароль вводится только на странице защищённого входа.</p>
             </div>
             <figure className="landing-shot landing-shot--hero">
-              <img src="/landing/control-matrix.png" width="1440" height="900" alt="«Контроль» руководителя: матрица «программа × этап», красным отмечены просрочки" />
-              <figcaption>«Контроль» → «Этапы»: где застряли вузы по каждой программе.</figcaption>
+              <img src="/landing/control-matrix.png" width="1440" height="900" alt="Таблица руководителя: программы по этапам, просрочки отмечены красным" />
+              <figcaption>Где застряли вузы по каждой программе.</figcaption>
             </figure>
           </div>
         </section>
 
         <section id="pl-outcomes" className="landing-section" aria-labelledby="pl-outcomes-title">
           <div className="landing-container">
-            <p className="eyebrow">Что даёт система</p>
-            <h2 id="pl-outcomes-title">Шесть вещей, ради которых она сделана</h2>
+            <h2 id="pl-outcomes-title">Что даёт система</h2>
             <ul className="landing-outcomes">
               {productOutcomes.map((outcome) => (
                 <li key={outcome.title} className="landing-card landing-outcome">
@@ -130,110 +117,44 @@ export const ProductLanding = ({ onLogin, signedIn = false, backToContest = fals
 
         <section id="pl-roles" className="landing-section" aria-labelledby="pl-roles-title">
           <div className="landing-container">
-            <p className="eyebrow">Роли</p>
             <h2 id="pl-roles-title">Каждый видит свою часть работы</h2>
-            <p className="landing-section__lead">{rolesLead(modules)}</p>
-            <div className="landing-roles">
+            <dl className="pl-roles">
               {rolesFor(modules).map((role) => (
-                <div key={role.title} className="landing-card landing-role">
-                  <h3>{role.title}</h3>
-                  <p className="landing-role__benefit">{role.benefit}</p>
-                  <ul>
-                    {role.duties.map((duty) => <li key={duty}>{duty}</li>)}
-                  </ul>
+                <div key={role.title} className="pl-roles__row">
+                  <dt>{role.title}</dt>
+                  <dd>{role.benefit}</dd>
                 </div>
               ))}
-            </div>
-            <p className="landing-roles__first-login">
-              <strong>Первый вход.</strong> Если после входа вы видите «Профиль ожидает активации администратором», доступ к вузам появится, когда администратор назначит вам роль и команду.
-            </p>
+            </dl>
           </div>
         </section>
 
-        <section id="pl-day" className="landing-section" aria-labelledby="pl-day-title">
+        <section id="pl-work" className="landing-section" aria-labelledby="pl-work-title">
           <div className="landing-container">
-            <p className="eyebrow">Как идёт работа</p>
-            <h2 id="pl-day-title">Один вуз — от заявки до отчёта</h2>
-            <p className="landing-section__lead">Так проходит путь вуза в системе. На каждом шаге понятно, кто действует и на каком экране.</p>
-            <ol className="landing-steps">
-              {scenarioFor(modules).map((step, index, steps) => (
-                <li key={step.text} className="landing-step">
-                  <span className="landing-step__number" aria-hidden="true">{index + 1}</span>
-                  {index < steps.length - 1 && <span className="landing-step__line" aria-hidden="true" />}
-                  <div className="landing-step__text">
-                    <h3>{step.role}</h3>
-                    <p>{step.text}</p>
-                    <p className="landing-step__screen">Экран: {step.screen}</p>
-                  </div>
-                </li>
-              ))}
+            <h2 id="pl-work-title">Как идёт работа</h2>
+            <ol className="pl-steps">
+              {productSteps.map((step) => <li key={step}>{step}</li>)}
             </ol>
           </div>
         </section>
 
         <section id="pl-screens" className="landing-section" aria-labelledby="pl-screens-title">
           <div className="landing-container">
-            <p className="eyebrow">Экраны</p>
             <h2 id="pl-screens-title">Как это выглядит</h2>
-            <p className="landing-section__lead">Снимки сделаны на демонстрационных данных.</p>
             <div className="landing-shots">
               {productScreens.map((screen) => (
                 <figure key={screen.src} className={screen.phone ? 'landing-shot landing-shot--phone' : 'landing-shot'}>
                   <img src={screen.src} width={screen.width} height={screen.height} alt={screen.alt} loading="lazy" />
-                  <figcaption><strong>{screen.title}.</strong> {screen.caption}</figcaption>
+                  <figcaption>{screen.caption}</figcaption>
                 </figure>
               ))}
             </div>
           </div>
         </section>
 
-        <section id="pl-connections" className="landing-section" aria-labelledby="pl-connections-title">
+        <section id="pl-reliability" className="landing-section" aria-label="Надёжность">
           <div className="landing-container">
-            <p className="eyebrow">Связь с другими системами</p>
-            <h2 id="pl-connections-title">Данные приходят сами</h2>
-            <div className="landing-integrations">
-              {productConnections(modules).map(([title, text]) => (
-                <div key={title} className="landing-integration">
-                  <h3>{title}</h3>
-                  <p>{text}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section id="pl-reliability" className="landing-section" aria-labelledby="pl-reliability-title">
-          <div className="landing-container">
-            <p className="eyebrow">Надёжность и защита</p>
-            <h2 id="pl-reliability-title">Выдерживает работу всей команды</h2>
-            <p className="landing-section__lead">Замер нагрузки на рабочем сервере, версия 2.5.3:</p>
-            <dl className="landing-facts">
-              {reliabilityFacts.map(([value, text]) => (
-                <div key={text} className="landing-card landing-fact">
-                  <dt>{value}</dt>
-                  <dd>{text}</dd>
-                </div>
-              ))}
-            </dl>
-            <ul className="landing-protection">
-              {protectionFacts(modules).map((fact) => <li key={fact}>{fact}</li>)}
-            </ul>
-          </div>
-        </section>
-
-        <section id="pl-help" className="landing-section" aria-labelledby="pl-help-title">
-          <div className="landing-container landing-help">
-            <div>
-              <h2 id="pl-help-title">Начать работу</h2>
-              <p className="landing-section__lead">
-                Войдите по корпоративной учётной записи. Как работать в своей роли — в справке внутри CRM и в инструкциях пользователей.
-              </p>
-            </div>
-            <div className="landing-help__actions">
-              {loginButton}
-              <a className="landing-hero__check" href="#/help">Справка</a>
-              {instructionsUrl && <a className="landing-hero__check" href={instructionsUrl}>Инструкции пользователей</a>}
-            </div>
+            <p className="pl-reliability">{reliabilityLine}</p>
           </div>
         </section>
       </main>
@@ -243,7 +164,7 @@ export const ProductLanding = ({ onLogin, signedIn = false, backToContest = fals
           <div className="landing-footer__top">
             <div className="landing-footer__about">
               <p className="landing-footer__brand">CRM ИТ Школы РТК</p>
-              <p>Работа с вузами, колледжами и школами по ИТ-программам и ИТ-продуктам</p>
+              <p>Работа с вузами, колледжами и школами по ИТ-программам и ИТ-продуктам. {connectionsLine(modules)}</p>
             </div>
             <nav className="landing-footer__links" aria-label="Ссылки в подвале">
               <a href="#/help">Справка</a>

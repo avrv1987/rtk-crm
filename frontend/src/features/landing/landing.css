@@ -1040,7 +1040,7 @@ html:has(.landing) {
   margin: 0;
 }
 
-/* Продуктовая главная: те же токены и блоки, плюс снимки экранов, итоги и факты замера. */
+/* Продуктовая главная: те же токены и блоки, плюс снимки экранов, карточки итогов, строки ролей и шаги. */
 .landing-hero__demo {
   margin-top: var(--space-3);
   font-size: var(--font-size-md);
@@ -1108,17 +1108,13 @@ html:has(.landing) {
   background: var(--color-surface-muted);
 }
 
-.landing-outcomes,
-.landing-protection {
-  padding: 0;
-  list-style: none;
-}
-
 .landing-outcomes {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
   gap: var(--space-6);
-  margin-top: var(--space-8);
+  margin: var(--space-8) 0 0;
+  padding: 0;
+  list-style: none;
 }
 
 .landing-outcome {
@@ -1128,63 +1124,79 @@ html:has(.landing) {
   padding: var(--space-6);
 }
 
-.landing-step__screen {
+/* Роли — по строке: кто → что получает. */
+.pl-roles {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-6) 0 0;
+}
+
+.pl-roles__row {
+  display: grid;
+  grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
+  gap: var(--space-2) var(--space-6);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.pl-roles dt {
+  font-weight: 600;
+}
+
+.pl-roles dd {
+  margin: 0;
   color: var(--color-text-muted);
-  font-size: var(--font-size-md);
 }
 
-.landing-facts {
+.pl-steps {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
   gap: var(--space-6);
-  margin-top: var(--space-6);
+  margin: var(--space-6) 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: pl-step;
 }
 
-.landing-fact {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-6);
-}
-
-.landing-fact dt {
-  color: var(--color-action);
-  font-size: var(--font-size-display);
-  font-weight: 700;
-  line-height: 1.1;
-}
-
-.landing-protection {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
-  gap: var(--space-3) var(--space-6);
-  margin-top: var(--space-8);
-}
-
-.landing-protection li {
+.pl-steps li {
   position: relative;
-  padding-left: var(--space-6);
+  padding-top: var(--space-10);
+  counter-increment: pl-step;
 }
 
-.landing-protection li::before {
+.pl-steps li::before {
   position: absolute;
+  top: 0;
   left: 0;
-  color: var(--color-success);
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--color-surface-accent-strong);
+  color: var(--color-action);
   font-weight: 700;
-  content: '✓' / '';
+  content: counter(pl-step);
 }
 
-.landing-help {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-6);
+.pl-reliability {
+  margin: 0;
+  padding: var(--space-6);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-accent);
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  text-align: center;
+  text-wrap: balance;
 }
 
-.landing-help__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3) var(--space-6);
+@media (max-width: 640px) {
+  .pl-roles__row {
+    grid-template-columns: 1fr;
+  }
+
+  .pl-reliability {
+    font-size: var(--font-size-base);
+    text-align: left;
+  }
 }

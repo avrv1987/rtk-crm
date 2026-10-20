@@ -72,8 +72,9 @@ production_compose() {
     (cd "$project_root" && docker compose --env-file "$env_file" "$@")
 }
 check_compose() {
-    (cd "$project_root" && COMPOSE_PROJECT_NAME=$project COMPOSE_PATH_SEPARATOR=: \
-        COMPOSE_FILE="$project_root/compose.yaml:$work/compose.restore-check.yaml" docker compose --env-file "$work/env" "$@")
+    # Файлы через -f, а не COMPOSE_FILE: Git Bash на Windows превращает список через «:» в пути с буквой диска.
+    (cd "$project_root" && COMPOSE_PROJECT_NAME=$project \
+        docker compose -f "$project_root/compose.yaml" -f "$work/compose.restore-check.yaml" --env-file "$work/env" "$@")
 }
 # backup_psql, backup_counts и backup_file_count из backup-lib.sh работают с временным проектом.
 compose() {
@@ -141,8 +142,13 @@ check_ready=1
 check_compose down -v --remove-orphans >> "$log" 2>&1
 
 restore_started=$SECONDS
-(cd "$project_root" && COMPOSE_PROJECT_NAME=$project COMPOSE_PATH_SEPARATOR=: \
-    COMPOSE_FILE="$project_root/compose.yaml:$work/compose.restore-check.yaml" RESTORE_SERVICES='' \
+# restore.sh получает файлы через COMPOSE_FILE; в Git Bash на Windows список нужен в виде путей Windows через «;».
+compose_files="$project_root/compose.yaml:$work/compose.restore-check.yaml" compose_separator=:
+if command -v cygpath > /dev/null; then
+    compose_files="$(cygpath -w "$project_root/compose.yaml");$(cygpath -w "$work/compose.restore-check.yaml")" compose_separator=';'
+fi
+(cd "$project_root" && COMPOSE_PROJECT_NAME=$project COMPOSE_PATH_SEPARATOR=$compose_separator \
+    COMPOSE_FILE="$compose_files" RESTORE_SERVICES='' \
     bash scripts/restore.sh "$copy" "$work/env") >> "$log" 2>&1 || fail 'restore.sh failed, details in backup.log'
 restore_seconds=$((SECONDS - restore_started))
 
