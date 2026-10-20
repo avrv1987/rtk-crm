@@ -84,11 +84,15 @@ final class CatalogImportCsv {
         return new CatalogImportWorkbookSheet(SHEET, List.copyOf(headers.values()), List.copyOf(rows));
     }
 
+    static final String ENCODING_HINT = "Файл не похож на текстовый CSV в UTF-8 или Windows-1251 (например, сохранён в UTF-16); "
+            + "сохраните его в Excel как «CSV UTF-8» или «CSV (разделители — запятые)»";
+
     // Строгое чтение UTF-8: если байты не складываются в UTF-8, файл сохранён в Windows-1251 (Excel «CSV (разделители — запятые)»).
     private static String decode(byte[] content) {
+        // Нулевые байты бывают у UTF-16 (Excel «Текст Юникод») — подсказываем, в чём сохранить.
         for (byte value : content) {
             if (value == 0) {
-                throw new InteractionValidationException("file", "Файл не похож на текстовый CSV");
+                throw new InteractionValidationException("file", ENCODING_HINT);
             }
         }
         String text;

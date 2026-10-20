@@ -4,6 +4,7 @@ import { formatCalendarDate, formatMoscowDateTime } from '../../shared/format/da
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { saveFile } from '../admin/saveFile'
 import { handledAccessError } from '../interactions/workMarks'
+import { useRecordDraft } from '../interactions/formDraft'
 import { attachmentAccept, attachmentFormats } from '../documents/documentsApi'
 import { attachmentFileProblem, attachmentLimitMegabytes, attachmentNameLimit } from '../documents/attachmentRules'
 import {
@@ -39,7 +40,9 @@ const receiptLine = (receipt: PartnerReceipt) => {
 }
 
 export const PartnerRequestCard = ({ request, onChanged, onSessionExpired, onProfileUnavailable }: PartnerRequestCardProps) => {
-  const [message, setMessage] = useState('')
+  // Текст ответа — в черновике вкладки: переживает F5 и повторный вход. Файл браузер сохранить не даёт — его выбирают заново.
+  const draft = useRecordDraft(`partner-request:${request.id}`, `ответ на запрос «${request.action}»`, { message: '' })
+  const { message } = draft.values
   const [file, setFile] = useState<File | null>(null)
   const fileProblem = file === null ? null : attachmentFileProblem(file)
   // Ключ повтора живёт, пока ответ не принят: повторная отправка после обрыва связи уходит с тем же ключом,
@@ -59,7 +62,7 @@ export const PartnerRequestCard = ({ request, onChanged, onSessionExpired, onPro
         file: kind === 'QUESTION' ? null : file
       }, idempotencyKey)
       setState({ kind: 'sent', receipt })
-      setMessage('')
+      draft.clear()
       setFile(null)
       setIdempotencyKey(createIdempotencyKey())
       onChanged()
@@ -170,7 +173,7 @@ export const PartnerRequestCard = ({ request, onChanged, onSessionExpired, onPro
         <form className="partner-request__form" onSubmit={(event) => { event.preventDefault(); void send('ANSWER') }}>
           <label>
             Ответ школе
-            <textarea value={message} maxLength={4000} rows={3} disabled={sending} onChange={(event) => setMessage(event.target.value)} />
+            <textarea value={message} maxLength={4000} rows={3} disabled={sending} onChange={(event) => draft.set({ message: event.target.value })} />
           </label>
           <label>
             Файл (необязательно)

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { getModules } from '../../shared/modules'
 import { landingLinks } from './landingLinks'
 import { rolesFor } from './landingModules'
-import { connectionsLine, productOutcomes, productScreens, productSteps, reliabilityLine } from './productContent'
+import { connectionsLine, productOutcomes, productScreens, productSteps } from './productContent'
 import './landing.css'
 
 const instructionsUrl = landingLinks.sourceCodeUrl === ''
@@ -152,11 +152,6 @@ export const ProductLanding = ({ onLogin, signedIn = false, backToContest = fals
           </div>
         </section>
 
-        <section id="pl-reliability" className="landing-section" aria-label="Надёжность">
-          <div className="landing-container">
-            <p className="pl-reliability">{reliabilityLine}</p>
-          </div>
-        </section>
       </main>
 
       <footer className="landing-footer">

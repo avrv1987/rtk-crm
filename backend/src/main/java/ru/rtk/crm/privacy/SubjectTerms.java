@@ -34,6 +34,7 @@ final class SubjectTerms {
     private static final String WORD_GAP = "[^\\p{L}\\p{N}]{1,3}";
     private static final String NOT_AFTER_WORD = "(?<![\\p{L}\\p{N}])";
     private static final String NOT_BEFORE_WORD = "(?![\\p{L}\\p{N}])";
+    private static final Pattern PHONE_TEXT = Pattern.compile("[+\\d\\s().\\-]+");
     private static final Pattern FULL_EMAIL = Pattern.compile("[^@\\s]+@[^@\\s]+\\.[^@\\s]+");
     private static final Pattern UUID_TEXT =
             Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
@@ -80,6 +81,12 @@ final class SubjectTerms {
             terms.phones.put(phone.core(), phone);
         }
         for (String value : spellings(query)) {
+            // Телефон в «других написаниях» ищется как телефон — без учёта скобок, пробелов и дефисов, как и при замене.
+            Phone phone = PHONE_TEXT.matcher(value).matches() ? Phone.parse(value, MIN_PHONE_DIGITS) : null;
+            if (phone != null) {
+                terms.phones.put(phone.core(), phone);
+                continue;
+            }
             terms.addText(value);
             addPhrase(terms.filePhrases, value);
         }
@@ -106,9 +113,21 @@ final class SubjectTerms {
         if (parsedPhone != null) {
             terms.phones.put(parsedPhone.core(), parsedPhone);
         }
+        // Другие написания: телефон в любой записи, полная почта или ФИО целиком; остальное в замену не попадает.
         for (String spelling : otherSpellings) {
-            if (fullName(spelling)) {
-                addPhrase(terms.namePhrases, spelling);
+            String value = lenientText(spelling);
+            if (value == null) {
+                continue;
+            }
+            if (PHONE_TEXT.matcher(value).matches()) {
+                Phone other = Phone.parse(value, MIN_SUBJECT_PHONE_DIGITS);
+                if (other != null) {
+                    terms.phones.put(other.core(), other);
+                }
+            } else if (FULL_EMAIL.matcher(value).matches()) {
+                terms.addText(value);
+            } else if (fullName(value)) {
+                addPhrase(terms.namePhrases, value);
             }
         }
         return terms;

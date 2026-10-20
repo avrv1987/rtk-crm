@@ -52,6 +52,7 @@ import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.report.ExcelReportWriter;
 import ru.rtk.crm.report.PdfLayout;
 import ru.rtk.crm.report.ReportFormat;
+import ru.rtk.crm.web.Plural;
 
 // «Отчёт по соглашениям» за период: строки — мероприятия планов договоров, своды по вузам, видам, исполнителям и
 // уровням, свод по исполнителям против порога. Набор и порядок колонок строк задаёт администратор (шаблон выгрузки),
@@ -178,7 +179,7 @@ public class AgreementReportService {
                         + " проведения: окончание мероприятия, иначе начало"
         ));
         if (withoutRate > 0) {
-            notes.add("Без ставки: " + withoutRate + " мероприятий — нет подходящей ставки, единицы из справочника или даты");
+            notes.add("Без ставки: " + Plural.withCount(withoutRate, "мероприятие", "мероприятия", "мероприятий") + " — нет подходящей ставки, единицы из справочника или даты");
         }
         if (settings.thresholdEnabled() && settings.thresholdPercent() != null) {
             notes.add("Свод против порога: " + plain(settings.thresholdPercent()) + " % от базы"

@@ -3,7 +3,6 @@ package ru.rtk.crm.privacy;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -38,10 +37,7 @@ import ru.rtk.crm.interaction.InteractionValidationException;
 import ru.rtk.crm.privacy.PersonalDataRepository.ContactState;
 import ru.rtk.crm.privacy.PersonalDataRepository.ContactValues;
 import ru.rtk.crm.privacy.PersonalDataRepository.ProfileState;
-import ru.rtk.crm.privacy.PersonalDataRepository.Scope;
 import ru.rtk.crm.privacy.PersonalDataRepository.StoredFile;
-import ru.rtk.crm.privacy.PersonalDataRepository.TextColumn;
-import ru.rtk.crm.privacy.PersonalDataRepository.TextKind;
 import ru.rtk.crm.privacy.SubjectSearchRepository.KnownPerson;
 import ru.rtk.crm.report.ReportStorage;
 import ru.rtk.crm.settings.SystemSettings;
@@ -338,8 +334,8 @@ public class PersonalDataService {
         return anonymizeLocked(List.of(), lockContacts(contactIds), lockProfiles(profileIds), List.of(), false, false);
     }
 
-    // Область каждого субъекта своя: контакт — его вуз (взаимодействия, где он участник, всегда этого вуза),
-    // сотрудник — вузы, с которыми он работал. Заменяются только его ФИО целиком, полная почта и телефон.
+    // Замена идёт по всему реестру мест с ПДн, в любом вузе, — так же, как поиск. Заменяются только ФИО целиком,
+    // полная почта и телефон субъекта, в том числе указанные в форме и прежние из истории правок контакта.
     private AnonymizationResult anonymizeLocked(
             List<String> spellings,
             List<ContactState> contacts,
@@ -360,30 +356,27 @@ public class PersonalDataService {
         // Другие написания из формы поиска относятся к контакту, а если контакт не выбран — к сотруднику.
         List<String> profileSpellings = pendingContacts.isEmpty() ? spellings : List.of();
         List<UUID> deletedFiles = files.stream().map(StoredFile::id).toList();
-        Set<UUID> organizations = new LinkedHashSet<>();
         List<SubjectTerms> subjects = new ArrayList<>();
         for (ContactState contact : pendingContacts) {
-            SubjectTerms terms = SubjectTerms.subject(contact.name(), contact.email(), contact.phone(), spellings);
-            replace(terms, CONTACT_MARKER,
-                    new Scope(List.of(contact.organizationId()), List.of(contact.id()), deletedFiles), counts, dryRun);
+            List<String> known = new ArrayList<>(spellings);
+            for (String field : List.of("name", "email", "phone")) {
+                known.addAll(repository.previousContactValues(contact.id(), field));
+            }
+            SubjectTerms terms = SubjectTerms.subject(contact.name(), contact.email(), contact.phone(), known);
+            replace(terms, CONTACT_MARKER, deletedFiles, counts, dryRun);
             subjects.add(terms);
-            organizations.add(contact.organizationId());
         }
         for (ProfileState profile : pendingProfiles) {
-            List<UUID> profileOrganizations = repository.profileOrganizationIds(profile.id());
             SubjectTerms terms = SubjectTerms.subject(profile.displayName(), null, null, profileSpellings);
-            replace(terms, EMPLOYEE_MARKER,
-                    new Scope(profileOrganizations, List.of(profile.id()), deletedFiles), counts, dryRun);
+            replace(terms, EMPLOYEE_MARKER, deletedFiles, counts, dryRun);
             subjects.add(terms);
-            organizations.addAll(profileOrganizations);
         }
         int reports = 0;
         int marked = 0;
         if (expireReports && !(pendingContacts.isEmpty() && pendingProfiles.isEmpty())) {
             // Отчёт удаляется, только если субъект найден в самом файле; непрочитанный файл помечается, а не удаляется.
             List<UUID> expired = new ArrayList<>();
-            for (PersonalDataRepository.SubjectReport report : repository.findSubjectReports(
-                    List.copyOf(organizations), pendingProfiles.stream().map(ProfileState::id).toList())) {
+            for (PersonalDataRepository.SubjectReport report : repository.findSubjectReports()) {
                 ReportContentScanner.Presence presence = ReportContentScanner.scan(
                         reportStorage.resultFile(report.file().storageKey()), report.format(), report.groupBy(),
                         !pendingProfiles.isEmpty(), subjects);
@@ -419,17 +412,24 @@ public class PersonalDataService {
         );
     }
 
-    private void replace(SubjectTerms terms, String marker, Scope scope, Counts counts, boolean dryRun) {
+    private void replace(SubjectTerms terms, String marker, List<UUID> deletedFiles, Counts counts, boolean dryRun) {
         if (terms.isEmpty()) {
             return;
         }
-        for (TextColumn column : TextColumn.values()) {
-            int changed = repository.replaceText(column, terms, marker, scope, dryRun);
-            switch (column.kind()) {
-                case MENTION -> counts.mentions += changed;
-                case FILE_NAME -> counts.files += changed;
+        for (PersonalDataPlace place : PersonalDataPlace.values()) {
+            int changed = repository.replaceText(place, terms, marker, deletedFiles, dryRun);
+            switch (place.kind()) {
+                case MENTION, PEOPLE -> {
+                    if (place.fileName()) {
+                        counts.files += changed;
+                    } else {
+                        counts.mentions += changed;
+                    }
+                }
+                case ATTACHMENT -> counts.files += changed;
                 case SOURCE -> counts.sourceRecords += changed;
                 case TECHNICAL -> counts.technical += changed;
+                case RETAINED -> { }
             }
         }
     }
@@ -438,8 +438,18 @@ public class PersonalDataService {
         if (request == null) {
             throw new InteractionValidationException("body", "Укажите, что обезличить");
         }
+        // Почта и телефон из формы идут в замену вместе с «другими написаниями»: контакт мог быть уточнён, а старый
+        // телефон, по которому администратор искал, остался в текстах.
+        List<String> spellings = new ArrayList<>(SubjectTerms.spellings(request.subject()));
+        if (request.subject() != null) {
+            for (String value : new String[]{request.subject().email(), request.subject().phone()}) {
+                if (value != null && !value.isBlank()) {
+                    spellings.add(value);
+                }
+            }
+        }
         Selection selection = new Selection(
-                SubjectTerms.spellings(request.subject()),
+                spellings,
                 ids(request.contactIds(), "contactIds"),
                 ids(request.profileIds(), "profileIds"),
                 ids(request.attachmentIds(), "attachmentIds"),

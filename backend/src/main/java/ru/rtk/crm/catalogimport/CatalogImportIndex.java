@@ -45,7 +45,7 @@ final class CatalogImportIndex<T extends ImportKeyed> {
     }
 
     static String clean(String value) {
-        return value == null ? "" : value.replaceAll("[\\s\\u00A0]+", " ").trim();
+        return ru.rtk.crm.web.VisibleText.blank(value) ? "" : value.replaceAll("[\\s\\u00A0]+", " ").trim();
     }
 
     static String naturalKey(Object parent, String name) {

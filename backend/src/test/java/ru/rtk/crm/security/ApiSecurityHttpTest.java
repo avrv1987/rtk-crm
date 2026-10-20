@@ -53,6 +53,28 @@ class ApiSecurityHttpTest {
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    // Б-5 проверки 2.5.3: анонимный запрос к API не создаёт сеанс в БД — иначе каждый 401 добавлял строку
+    // spring_session. Сеанс нужен только цепочке входа OIDC (запрос авторизации хранится в нём).
+    @Test
+    void anonymousApiRequestsDoNotCreateSessions() throws Exception {
+        Integer before = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM SPRING_SESSION", Integer.class);
+        for (int index = 0; index < 20; index++) {
+            MvcResult result = mockMvc.perform(get(index % 2 == 0 ? "/api/me" : "/api/organizations"))
+                    .andExpect(status().isUnauthorized())
+                    .andReturn();
+            assertThat(result.getRequest().getSession(false)).isNull();
+            assertThat(String.valueOf(result.getResponse().getHeader("Set-Cookie"))).doesNotContain("SESSION=");
+        }
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM SPRING_SESSION", Integer.class)).isEqualTo(before);
+
+        mockMvc.perform(get("/api/auth/authorization/keycloak")).andExpect(status().isFound());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM SPRING_SESSION", Integer.class))
+                .as("цепочка входа OIDC хранит запрос авторизации в сеансе").isEqualTo(before + 1);
+    }
+
     @Test
     void anonymousApiRequestReceivesJsonUnauthorizedWithRequestId() throws Exception {
         MvcResult result = mockMvc.perform(get("/api/me"))

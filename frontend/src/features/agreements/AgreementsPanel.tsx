@@ -33,6 +33,7 @@ import { AgreementTermMark, ApprovalMark, CommandError, useAccessErrorHandler, u
 import { reportingApi } from './reportingApi'
 import { formatMoney, parseMoney, referenceOptions, requiredFields, type ReferenceItem } from './reportingModel'
 import { RequiredMark } from '../interactions/cardUi'
+import { useRecordDraft } from '../interactions/formDraft'
 import './agreements.css'
 
 type AgreementsPanelProps = {
@@ -246,10 +247,11 @@ type AttachFromWorkProps = {
   agreement: Agreement
   options: AgreementOptions
   onSaved: (agreement: Agreement) => void
+  onReload: () => void
   handleAccessError: (error: unknown) => boolean
 }
 
-const AttachFromWork = ({ agreement, options, onSaved, handleAccessError }: AttachFromWorkProps) => {
+const AttachFromWork = ({ agreement, options, onSaved, onReload, handleAccessError }: AttachFromWorkProps) => {
   const [open, setOpen] = useState(false)
   const [fileId, setFileId] = useState('')
   const [saving, setSaving] = useState(false)
@@ -293,7 +295,7 @@ const AttachFromWork = ({ agreement, options, onSaved, handleAccessError }: Atta
         </select>
       </label>
       {options.attachments.length === 0 && <p className="agreement-form__hint">Проверенных документов во взаимодействиях вуза пока нет.</p>}
-      {error !== null && <CommandError error={error} fallback="Версия не добавлена." />}
+      {error !== null && <CommandError error={error} fallback="Версия не добавлена." onReload={() => { setError(null); onReload() }} />}
       <div className="agreement-form__actions">
         <button type="submit" disabled={saving || fileId === ''}>{saving ? 'Добавляем…' : 'Добавить версию'}</button>
         <button type="button" className="button--secondary" disabled={saving} onClick={() => setOpen(false)}>Отмена</button>
@@ -314,6 +316,11 @@ type AgreementDetailProps = {
 
 type ActivityEditor = { mode: 'create' } | { mode: 'edit'; activity: AgreementActivity } | null
 
+// Окно правки берёт мероприятие из свежего договора: после «Обновить карточку» форма сохраняет с новой версией.
+const editedActivity = (editor: ActivityEditor, activities: AgreementActivity[]) => (
+  editor?.mode === 'edit' ? activities.find((item) => item.id === editor.activity.id) ?? editor.activity : undefined
+)
+
 const AgreementDetail = ({
   agreementId,
   organizationId,
@@ -331,8 +338,9 @@ const AgreementDetail = ({
   const [archiving, setArchiving] = useState(false)
   const deleteKey = useCommandKey()
 
+  // Перечитывание не прячет карточку за «Загружаем…»: открытые окна и введённое в них остаются на месте (Н-А1).
   const load = useCallback(async () => {
-    setState({ kind: 'loading' })
+    setState((current) => (current.kind === 'ready' ? current : { kind: 'loading' }))
     try {
       setState({ kind: 'ready', value: await agreementsApi.get(agreementId) })
     } catch (error) {
@@ -443,7 +451,7 @@ const AgreementDetail = ({
         </p>
       )}
       {canEdit && (
-        <AgreementTransitions agreement={agreement} onDone={changed} handleAccessError={handleAccessError} />
+        <AgreementTransitions agreement={agreement} onDone={changed} onReload={refresh} handleAccessError={handleAccessError} />
       )}
       {archiving && <p role="status">Готовим архив подтверждений…</p>}
       <CardDialog open={editingAgreement} title="Реквизиты договора" onClose={() => setEditingAgreement(false)}>
@@ -453,6 +461,7 @@ const AgreementDetail = ({
           options={catalogs.options}
           onSaved={(updated) => { setEditingAgreement(false); changed(updated) }}
           onCancel={() => setEditingAgreement(false)}
+          onReload={refresh}
           handleAccessError={handleAccessError}
         />
       </CardDialog>
@@ -520,7 +529,7 @@ const AgreementDetail = ({
         onUploaded={() => void load()}
         handleAccessError={handleAccessError}
       >
-        <AttachFromWork agreement={agreement} options={catalogs.options} onSaved={changed} handleAccessError={handleAccessError} />
+        <AttachFromWork agreement={agreement} options={catalogs.options} onSaved={changed} onReload={refresh} handleAccessError={handleAccessError} />
       </AgreementFiles>
 
       <CardSection title="Дополнительные соглашения" count={agreement.supplements.length}>
@@ -559,7 +568,7 @@ const AgreementDetail = ({
             <button type="button" className="button--secondary" onClick={() => openEditor({ mode: 'create' })}>Добавить мероприятие</button>
           )}
         </div>
-        {actionError !== null && <CommandError error={actionError} fallback="Действие не выполнено." />}
+        {actionError !== null && <CommandError error={actionError} fallback="Действие не выполнено." onReload={() => { setActionError(null); refresh() }} />}
         <CardDialog
           open={editor !== null}
           title={editor?.mode === 'edit' ? 'Изменить мероприятие' : 'Новое мероприятие'}
@@ -569,10 +578,11 @@ const AgreementDetail = ({
             <ActivityForm
               key={editor.mode === 'edit' ? editor.activity.id : 'create'}
               agreementId={agreement.id}
-              activity={editor.mode === 'edit' ? editor.activity : undefined}
+              activity={editedActivity(editor, agreement.activities)}
               catalogs={catalogs}
               onSaved={() => { setEditor(null); refresh() }}
               onCancel={() => setEditor(null)}
+              onReload={refresh}
               handleAccessError={handleAccessError}
             />
           )}
@@ -681,29 +691,40 @@ type ActivityFormProps = {
   catalogs: Catalogs
   onSaved: () => void
   onCancel: () => void
+  onReload: () => void
   handleAccessError: (error: unknown) => boolean
 }
 
-const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, handleAccessError }: ActivityFormProps) => {
+const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, onReload, handleAccessError }: ActivityFormProps) => {
   const kinds = catalogs.kinds.filter((kind) => !kind.archived || kind.id === activity?.kindId)
-  const [kindId, setKindId] = useState(activity?.kindId ?? kinds[0]?.id ?? '')
-  const [title, setTitle] = useState(activity?.title ?? '')
-  const [unitId, setUnitId] = useState(activity?.unitId ?? '')
-  const [plannedVolume, setPlannedVolume] = useState(activity?.plannedVolume?.toString() ?? '')
-  const [actualVolume, setActualVolume] = useState(activity?.actualVolume?.toString() ?? '')
-  const [plannedStart, setPlannedStart] = useState(activity?.plannedStart ?? '')
-  const [plannedEnd, setPlannedEnd] = useState(activity?.plannedEnd ?? '')
-  const [actualStart, setActualStart] = useState(activity?.actualStart ?? '')
-  const [actualEnd, setActualEnd] = useState(activity?.actualEnd ?? '')
-  const [responsibleId, setResponsibleId] = useState(activity?.responsibleProfileId ?? '')
-  const [status, setStatus] = useState<ActivityStatus>(activity?.status ?? 'PLANNED')
-  const [educationLevelId, setEducationLevelId] = useState(activity?.educationLevelId ?? '')
-  const [participants, setParticipants] = useState(activity?.participants?.toString() ?? '')
-  const [cost, setCost] = useState(activity?.cost?.toString() ?? '')
-  const [executorId, setExecutorId] = useState(activity?.executorId ?? '')
-  const [documentNote, setDocumentNote] = useState(activity?.documentNote ?? '')
-  const [interactionIds, setInteractionIds] = useState<string[]>(activity?.interactions.map((item) => item.id) ?? [])
-  const [attachmentIds, setAttachmentIds] = useState<string[]>(activity?.attachments.map((item) => item.id) ?? [])
+  const draft = useRecordDraft(
+    activity === undefined ? `activity:new:${agreementId}` : `activity:${activity.id}`,
+    activity === undefined ? 'новое мероприятие плана договора' : `мероприятие плана «${activity.title}»`,
+    {
+      kindId: activity?.kindId ?? kinds[0]?.id ?? '',
+      title: activity?.title ?? '',
+      unitId: activity?.unitId ?? '',
+      plannedVolume: activity?.plannedVolume?.toString() ?? '',
+      actualVolume: activity?.actualVolume?.toString() ?? '',
+      plannedStart: activity?.plannedStart ?? '',
+      plannedEnd: activity?.plannedEnd ?? '',
+      actualStart: activity?.actualStart ?? '',
+      actualEnd: activity?.actualEnd ?? '',
+      responsibleId: activity?.responsibleProfileId ?? '',
+      status: (activity?.status ?? 'PLANNED') as string,
+      educationLevelId: activity?.educationLevelId ?? '',
+      participants: activity?.participants?.toString() ?? '',
+      cost: activity?.cost?.toString() ?? '',
+      executorId: activity?.executorId ?? '',
+      documentNote: activity?.documentNote ?? '',
+      interactionIds: activity?.interactions.map((item) => item.id) ?? [],
+      attachmentIds: activity?.attachments.map((item) => item.id) ?? []
+    }
+  )
+  const { set } = draft
+  const { kindId, title, unitId, plannedVolume, actualVolume, plannedStart, plannedEnd, actualStart, actualEnd, responsibleId,
+    educationLevelId, participants, cost, executorId, documentNote, interactionIds, attachmentIds } = draft.values
+  const status = draft.values.status as ActivityStatus
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const commandKey = useCommandKey()
@@ -757,6 +778,7 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
         await agreementsApi.updateActivity(activity.id, payload, key)
       }
       commandKey.settle()
+      draft.clear()
       onSaved()
     } catch (caught) {
       commandKey.settle(caught)
@@ -773,7 +795,7 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
       <div className="agreement-form__grid">
         <label className="agreement-form__wide">
           <span>Вид мероприятия<RequiredMark /></span>
-          <select value={kindId} required onChange={(event) => setKindId(event.target.value)}>
+          <select value={kindId} required onChange={(event) => set({ kindId: event.target.value })}>
             {kinds.map((item) => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (в архиве)' : ''}</option>)}
           </select>
         </label>
@@ -785,24 +807,24 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
         )}
         <label className="agreement-form__wide">
           <span>Мероприятие<RequiredMark /></span>
-          <input value={title} required maxLength={300} onChange={(event) => setTitle(event.target.value)} />
+          <input value={title} required maxLength={300} onChange={(event) => set({ title: event.target.value })} />
         </label>
         <label>
           Статус
-          <select value={status} onChange={(event) => setStatus(event.target.value as ActivityStatus)}>
+          <select value={status} onChange={(event) => set({ status: event.target.value })}>
             {activityStatuses.map((item) => <option key={item} value={item}>{activityStatusLabels[item]}</option>)}
           </select>
         </label>
         <label>
           <span>Уровень образования{mark(required.educationLevel)}</span>
-          <select value={educationLevelId} required={required.educationLevel} onChange={(event) => setEducationLevelId(event.target.value)}>
+          <select value={educationLevelId} required={required.educationLevel} onChange={(event) => set({ educationLevelId: event.target.value })}>
             <option value="">Не указан</option>
             {levels.map((item) => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (в архиве)' : ''}</option>)}
           </select>
         </label>
         <label>
           <span>Единица{mark(required.unit)}</span>
-          <select value={unitId} required={required.unit && legacyUnit === null} onChange={(event) => setUnitId(event.target.value)}>
+          <select value={unitId} required={required.unit && legacyUnit === null} onChange={(event) => set({ unitId: event.target.value })}>
             <option value="">{legacyUnit === null ? 'Не указана' : `«${legacyUnit}» (из прежней записи)`}</option>
             {units.map((item) => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (в архиве)' : ''}</option>)}
           </select>
@@ -810,49 +832,49 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
         <label>
           <span>Охват, участников{mark(required.participants)}</span>
           <input type="number" min={0} step={1} inputMode="numeric" value={participants} required={required.participants}
-            onChange={(event) => setParticipants(event.target.value)} />
+            onChange={(event) => set({ participants: event.target.value })} />
         </label>
         <label>
           <span>Количество по плану{mark(required.plannedVolume)}</span>
           <input type="number" min={0} step={1} inputMode="numeric" value={plannedVolume} required={required.plannedVolume}
-            onChange={(event) => setPlannedVolume(event.target.value)} />
+            onChange={(event) => set({ plannedVolume: event.target.value })} />
         </label>
         <label>
           <span>Количество факт{mark(required.actualVolume)}</span>
           <input type="number" min={0} step={1} inputMode="numeric" value={actualVolume} required={required.actualVolume}
-            onChange={(event) => setActualVolume(event.target.value)} />
+            onChange={(event) => set({ actualVolume: event.target.value })} />
         </label>
         <label>
           <span>Стоимость или оценка, ₽{mark(required.cost)}</span>
           <input type="number" min={0} step={0.01} inputMode="decimal" value={cost} required={required.cost}
-            onChange={(event) => setCost(event.target.value)} />
+            onChange={(event) => set({ cost: event.target.value })} />
         </label>
         <label>
           <span>Исполнитель{mark(required.executor)}</span>
-          <select value={executorId} required={required.executor} onChange={(event) => setExecutorId(event.target.value)}>
+          <select value={executorId} required={required.executor} onChange={(event) => set({ executorId: event.target.value })}>
             <option value="">Не указан</option>
             {executors.map((item) => <option key={item.id} value={item.id}>{item.name}{item.archived ? ' (в архиве)' : ''}</option>)}
           </select>
         </label>
         <label>
           План: начало
-          <input type="date" value={plannedStart} max={plannedEnd || undefined} onChange={(event) => setPlannedStart(event.target.value)} />
+          <input type="date" value={plannedStart} max={plannedEnd || undefined} onChange={(event) => set({ plannedStart: event.target.value })} />
         </label>
         <label>
           План: окончание
-          <input type="date" value={plannedEnd} min={plannedStart || undefined} onChange={(event) => setPlannedEnd(event.target.value)} />
+          <input type="date" value={plannedEnd} min={plannedStart || undefined} onChange={(event) => set({ plannedEnd: event.target.value })} />
         </label>
         <label>
           Факт: начало
-          <input type="date" value={actualStart} max={actualEnd || undefined} onChange={(event) => setActualStart(event.target.value)} />
+          <input type="date" value={actualStart} max={actualEnd || undefined} onChange={(event) => set({ actualStart: event.target.value })} />
         </label>
         <label>
           Факт: окончание
-          <input type="date" value={actualEnd} min={actualStart || undefined} onChange={(event) => setActualEnd(event.target.value)} />
+          <input type="date" value={actualEnd} min={actualStart || undefined} onChange={(event) => set({ actualEnd: event.target.value })} />
         </label>
         <label className="agreement-form__wide">
           Ответственный
-          <select value={responsibleId} onChange={(event) => setResponsibleId(event.target.value)}>
+          <select value={responsibleId} onChange={(event) => set({ responsibleId: event.target.value })}>
             <option value="">Не назначен</option>
             {catalogs.options.responsibles.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}
           </select>
@@ -860,7 +882,7 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
         <label className="agreement-form__wide">
           <span>Подтверждающий документ: реквизиты{mark(required.document)}</span>
           <input value={documentNote} maxLength={500} placeholder="Акт, письмо вуза: номер и дата"
-            onChange={(event) => setDocumentNote(event.target.value)} />
+            onChange={(event) => set({ documentNote: event.target.value })} />
           {required.document && (
             <span className="agreement-form__hint">Укажите реквизиты или выберите проверенный документ ниже.</span>
           )}
@@ -876,7 +898,7 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
                 <input
                   type="checkbox"
                   checked={interactionIds.includes(item.id)}
-                  onChange={(event) => setInteractionIds((current) => toggle(current, item.id, event.target.checked))}
+                  onChange={(event) => set({ interactionIds: toggle(interactionIds, item.id, event.target.checked) })}
                 />
                 <span>{item.title}</span>
               </label>
@@ -897,7 +919,7 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
                 <input
                   type="checkbox"
                   checked={attachmentIds.includes(item.id)}
-                  onChange={(event) => setAttachmentIds((current) => toggle(current, item.id, event.target.checked))}
+                  onChange={(event) => set({ attachmentIds: toggle(attachmentIds, item.id, event.target.checked) })}
                 />
                 <span>{item.originalName}<span className="agreement-activity__document-meta"> — {item.interactionTitle}, {item.stageName}, {formatInstant(item.createdAt)}</span></span>
               </label>
@@ -905,10 +927,10 @@ const ActivityForm = ({ agreementId, activity, catalogs, onSaved, onCancel, hand
           ))}
         </ul>
       </fieldset>
-      {error !== null && <CommandError error={error} fallback="Мероприятие не сохранено." />}
+      {error !== null && <CommandError error={error} fallback="Мероприятие не сохранено." onReload={() => { setError(null); onReload() }} />}
       <div className="agreement-form__actions">
         <button type="submit" disabled={saving || kindId === ''}>{saving ? 'Сохраняем…' : 'Сохранить мероприятие'}</button>
-        <button type="button" className="button--secondary" onClick={onCancel} disabled={saving}>Отмена</button>
+        <button type="button" className="button--secondary" onClick={() => { draft.clear(); onCancel() }} disabled={saving}>Отмена</button>
       </div>
     </form>
   )

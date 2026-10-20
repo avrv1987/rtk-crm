@@ -96,7 +96,12 @@ class SigningPlanHttpTest {
         expectRows(USER_B, 1, "Б-1");
         expectRows(LEADER_A, 1, "А-1");
         expectRows(MANAGEMENT, 2, "А-1");
-        expectRows(ADMIN, 0, null);
+        // Б-11 проверки 2.5.3: бизнес-отчёт администратору недоступен — 403, а не пустой отчёт.
+        mockMvc.perform(get(PLAN).param("year", "2026").param("quarter", "1").with(login(ADMIN)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        mockMvc.perform(get(PLAN + "/file").param("format", "XLSX").with(login(ADMIN)))
+                .andExpect(status().isForbidden());
         mockMvc.perform(get(PLAN).param("year", "2026").param("quarter", "1").with(login(PARTNER)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));

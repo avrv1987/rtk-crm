@@ -458,6 +458,13 @@ export const isAccessDenied = (error: unknown): boolean => (
   error instanceof ApiError && (error.status === 401 || error.status === 403)
 )
 
+export const isConflict = (error: unknown): boolean => error instanceof ApiError && error.status === 409
+
+// После «Обновить карточку» плашка конфликта устарела: состояние «ошибка 409» сбрасывается, прочие ошибки остаются.
+export const clearConflict = <S extends { kind: string }>(state: S): S | { kind: 'idle' } => (
+  state.kind === 'failed' && isConflict((state as { error?: unknown }).error) ? { kind: 'idle' } : state
+)
+
 const parseJson = (text: string): unknown => {
   try {
     return JSON.parse(text)
@@ -2295,8 +2302,9 @@ export class ApiClient {
   private async throwResponseError(response: Response): Promise<never> {
     const body = parseJson(await response.text())
     // Ограничение частоты: экраны показывают message ошибки, поэтому срок повтора из Retry-After вписывается прямо в
-    // него — ни один экран не нужно учить коду RATE_LIMITED.
-    if (response.status === 429) {
+    // него — ни один экран не нужно учить коду RATE_LIMITED. Свой код сервера (личная квота отчётов) уже несёт
+    // понятный текст со сроком — его оставляем.
+    if (response.status === 429 && !(isApiErrorPayload(body) && body.code !== 'RATE_LIMITED')) {
       const seconds = Number.parseInt(response.headers.get('Retry-After') ?? '', 10)
       throw new ApiError({
         code: 'RATE_LIMITED',

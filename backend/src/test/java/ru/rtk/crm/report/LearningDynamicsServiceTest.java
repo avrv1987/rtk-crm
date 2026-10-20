@@ -120,10 +120,9 @@ class LearningDynamicsServiceTest {
         });
         assertThat(service.dynamics(MANAGER_A_PROFILE, FROM, TO, null, List.of(ORGANIZATION_B), null).rows()).isEmpty();
         assertThat(service.dynamics(LEADER_A_PROFILE, FROM, TO, null, null, List.of(PROGRAM_DATA)).rows()).isEmpty();
-        assertThat(service.dynamics(ADMIN_PROFILE, FROM, TO, null, null, null)).satisfies(empty -> {
-            assertThat(empty.rows()).isEmpty();
-            assertThat(empty.totalParticipants()).containsOnlyNulls();
-        });
+        // Б-11: бизнес-отчёт администратору недоступен — 403, а не пустой отчёт.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.dynamics(ADMIN_PROFILE, FROM, TO, null, null, null))
+                .isInstanceOf(ru.rtk.crm.access.AdminCrmProfileAccessDeniedException.class);
         assertThat(leader.notes()).anyMatch(note -> note.contains("действовавшему на конец последнего дня месяца"));
     }
 

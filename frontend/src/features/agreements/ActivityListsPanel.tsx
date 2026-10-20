@@ -6,6 +6,7 @@ import { HintButton } from '../../shared/ui/HintButton'
 import { CardDialog, RequiredMark } from '../interactions/cardUi'
 import { formatDate, formatInstant, formatPeriod } from './agreementsApi'
 import { CommandError, useAccessErrorHandler, useCommandKey } from './agreementUi'
+import { discardRecordDraft, useRecordDraft } from '../interactions/formDraft'
 import { reportingApi, type ActivityList, type ActivityListsView, type ActivityListSummary } from './reportingApi'
 import {
   activityListChannelLabels,
@@ -231,8 +232,8 @@ type CreateListFormProps = {
 }
 
 const CreateListForm = ({ organizationId, defaultYear, handleAccessError, onCancel, onCreated }: CreateListFormProps) => {
-  const [year, setYear] = useState(String(defaultYear))
-  const [title, setTitle] = useState('')
+  const draft = useRecordDraft(`activity-list:new:${organizationId}`, 'новый перечень мероприятий', { year: String(defaultYear), title: '' })
+  const { year, title } = draft.values
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const commandKey = useCommandKey()
@@ -245,6 +246,7 @@ const CreateListForm = ({ organizationId, defaultYear, handleAccessError, onCanc
     try {
       const list = await reportingApi.createList(organizationId, payload, commandKey.keyFor(payload))
       commandKey.settle()
+      draft.clear()
       onCreated(list)
     } catch (caught) {
       commandKey.settle(caught)
@@ -261,12 +263,12 @@ const CreateListForm = ({ organizationId, defaultYear, handleAccessError, onCanc
       <label>
         <span>Год периода<RequiredMark /></span>
         <input type="number" min={2000} max={2100} step={1} inputMode="numeric" required value={year} disabled={saving}
-          onChange={(event) => setYear(event.target.value)} />
+          onChange={(event) => draft.set({ year: event.target.value })} />
       </label>
       <p className="admin-form__hint">Для учебного года — год, в котором он начинается.</p>
       <label>
         Название (необязательно)
-        <input value={title} maxLength={300} disabled={saving} onChange={(event) => setTitle(event.target.value)} />
+        <input value={title} maxLength={300} disabled={saving} onChange={(event) => draft.set({ title: event.target.value })} />
       </label>
       <p className="admin-form__hint">
         В перечень войдут все мероприятия договоров вуза за период, кроме отменённых и отклонённых и договоров «Расторгнут».
@@ -274,7 +276,7 @@ const CreateListForm = ({ organizationId, defaultYear, handleAccessError, onCanc
       </p>
       {error !== null && <CommandError error={error} fallback="Перечень не сформирован." />}
       <div className="admin-form__actions">
-        <button type="button" className="button--secondary" disabled={saving} onClick={onCancel}>Отмена</button>
+        <button type="button" className="button--secondary" disabled={saving} onClick={() => { draft.clear(); onCancel() }}>Отмена</button>
         <button type="submit" disabled={saving || year === ''}>{saving ? 'Формируем…' : 'Сформировать'}</button>
       </div>
     </form>
@@ -311,6 +313,14 @@ const ActivityListCard = ({ listId, canEdit, handleAccessError, onChanged }: Act
     void load()
   }, [load])
 
+  // Н-А4: перечень ушёл вузу — черновик правки названия и состава больше не применить.
+  const editable = state.kind === 'ready' && listEditable(state.value.summary.status)
+  useEffect(() => {
+    if (state.kind === 'ready' && !editable) {
+      discardRecordDraft(`activity-list:${listId}`)
+    }
+  }, [editable, listId, state.kind])
+
   if (state.kind === 'loading') {
     return <p role="status">Загружаем перечень…</p>
   }
@@ -323,6 +333,13 @@ const ActivityListCard = ({ listId, canEdit, handleAccessError, onChanged }: Act
     onChanged()
   }
   const has = (action: ActivityListAction) => list.actions.includes(action)
+  // После конфликта окно закрывается, а перечень перечитывается: виден его новый статус и история.
+  const reloadAfterConflict = () => {
+    setEditing(false)
+    setAnswer(null)
+    void load()
+    onChanged()
+  }
 
   const send = async () => {
     setSending(false)
@@ -383,6 +400,7 @@ const ActivityListCard = ({ listId, canEdit, handleAccessError, onChanged }: Act
             action={answer}
             handleAccessError={handleAccessError}
             onCancel={() => setAnswer(null)}
+            onReload={reloadAfterConflict}
             onDone={(updated) => { setAnswer(null); changed(updated) }}
           />
         )}
@@ -393,6 +411,7 @@ const ActivityListCard = ({ listId, canEdit, handleAccessError, onChanged }: Act
             list={list}
             handleAccessError={handleAccessError}
             onCancel={() => setEditing(false)}
+            onReload={reloadAfterConflict}
             onDone={(updated) => { setEditing(false); changed(updated) }}
           />
         )}
@@ -406,13 +425,18 @@ type AnswerFormProps = {
   action: 'APPROVE' | 'RETURN'
   handleAccessError: (error: unknown) => boolean
   onCancel: () => void
+  onReload: () => void
   onDone: (list: ActivityList) => void
 }
 
-const AnswerForm = ({ list, action, handleAccessError, onCancel, onDone }: AnswerFormProps) => {
+const AnswerForm = ({ list, action, handleAccessError, onCancel, onReload, onDone }: AnswerFormProps) => {
   const today = todayInMoscow()
-  const [respondedOn, setRespondedOn] = useState(today)
-  const [comment, setComment] = useState('')
+  const draft = useRecordDraft(
+    `activity-list:${list.summary.id}:answer:${action}`,
+    `ответ вуза на перечень «${list.summary.title}»`,
+    { respondedOn: today, comment: '' }
+  )
+  const { respondedOn, comment } = draft.values
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const commandKey = useCommandKey()
@@ -431,6 +455,7 @@ const AnswerForm = ({ list, action, handleAccessError, onCancel, onDone }: Answe
     try {
       const updated = await reportingApi.transitionList(list.summary.id, payload, commandKey.keyFor({ id: list.summary.id, ...payload }))
       commandKey.settle()
+      draft.clear()
       onDone(updated)
     } catch (caught) {
       commandKey.settle(caught)
@@ -447,17 +472,17 @@ const AnswerForm = ({ list, action, handleAccessError, onCancel, onDone }: Answe
       <label>
         Дата ответа вуза
         <input type="date" value={respondedOn} min={list.summary.sentOn ?? undefined} max={today} disabled={saving}
-          onChange={(event) => setRespondedOn(event.target.value)} />
+          onChange={(event) => draft.set({ respondedOn: event.target.value })} />
       </label>
       <label>
         <span>Комментарий{commentRequired && <RequiredMark />}</span>
         <textarea value={comment} rows={3} maxLength={2000} required={commentRequired} disabled={saving}
           placeholder={commentRequired ? 'Что вуз просит изменить' : 'Например, письмо вуза: номер и дата'}
-          onChange={(event) => setComment(event.target.value)} />
+          onChange={(event) => draft.set({ comment: event.target.value })} />
       </label>
-      {error !== null && <CommandError error={error} fallback="Ответ вуза не отмечен." />}
+      {error !== null && <CommandError error={error} fallback="Ответ вуза не отмечен." onReload={onReload} />}
       <div className="admin-form__actions">
-        <button type="button" className="button--secondary" disabled={saving} onClick={onCancel}>Отмена</button>
+        <button type="button" className="button--secondary" disabled={saving} onClick={() => { draft.clear(); onCancel() }}>Отмена</button>
         <button type="submit" disabled={saving || (commentRequired && comment.trim() === '')}>{saving ? 'Сохраняем…' : 'Отметить'}</button>
       </div>
     </form>
@@ -468,13 +493,18 @@ type EditListFormProps = {
   list: ActivityList
   handleAccessError: (error: unknown) => boolean
   onCancel: () => void
+  onReload: () => void
   onDone: (list: ActivityList) => void
 }
 
-const EditListForm = ({ list, handleAccessError, onCancel, onDone }: EditListFormProps) => {
+const EditListForm = ({ list, handleAccessError, onCancel, onReload, onDone }: EditListFormProps) => {
   const kept = list.items.flatMap((item) => (item.activityId === null ? [] : [item.activityId]))
-  const [title, setTitle] = useState(list.summary.title)
-  const [activityIds, setActivityIds] = useState<string[]>(kept)
+  const draft = useRecordDraft(
+    `activity-list:${list.summary.id}`,
+    `название и состав перечня «${list.summary.title}»`,
+    { title: list.summary.title, activityIds: kept }
+  )
+  const { title, activityIds } = draft.values
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const commandKey = useCommandKey()
@@ -488,6 +518,7 @@ const EditListForm = ({ list, handleAccessError, onCancel, onDone }: EditListFor
     try {
       const updated = await reportingApi.updateList(list.summary.id, payload, commandKey.keyFor({ id: list.summary.id, ...payload }))
       commandKey.settle()
+      draft.clear()
       onDone(updated)
     } catch (caught) {
       commandKey.settle(caught)
@@ -503,7 +534,7 @@ const EditListForm = ({ list, handleAccessError, onCancel, onDone }: EditListFor
     <form className="agreement-form" aria-label="Изменение перечня" onSubmit={(event) => { event.preventDefault(); void save(false) }}>
       <label>
         <span>Название<RequiredMark /></span>
-        <input value={title} required maxLength={300} disabled={saving} onChange={(event) => setTitle(event.target.value)} />
+        <input value={title} required maxLength={300} disabled={saving} onChange={(event) => draft.set({ title: event.target.value })} />
       </label>
       <fieldset className="agreement-form__choices">
         <legend>Позиции перечня</legend>
@@ -517,9 +548,9 @@ const EditListForm = ({ list, handleAccessError, onCancel, onDone }: EditListFor
                   type="checkbox"
                   checked={activityIds.includes(item.activityId)}
                   disabled={saving}
-                  onChange={(event) => setActivityIds((current) => (
-                    event.target.checked ? [...current, item.activityId] : current.filter((id) => id !== item.activityId)
-                  ))}
+                  onChange={(event) => draft.set({
+                    activityIds: event.target.checked ? [...activityIds, item.activityId] : activityIds.filter((id) => id !== item.activityId)
+                  })}
                 />
                 <span>{item.title}<span className="agreement-activity__document-meta"> — договор № {item.agreementNumber}, {item.kindName}</span></span>
               </label>
@@ -527,13 +558,13 @@ const EditListForm = ({ list, handleAccessError, onCancel, onDone }: EditListFor
           ))}
         </ul>
       </fieldset>
-      {error !== null && <CommandError error={error} fallback="Перечень не сохранён." />}
+      {error !== null && <CommandError error={error} fallback="Перечень не сохранён." onReload={onReload} />}
       <div className="agreement-form__actions">
         <button type="submit" disabled={saving || title.trim() === ''}>{saving ? 'Сохраняем…' : 'Сохранить'}</button>
         <button type="button" className="button--secondary" disabled={saving || title.trim() === ''} onClick={() => void save(true)}>
           Собрать заново из плана
         </button>
-        <button type="button" className="button--secondary" disabled={saving} onClick={onCancel}>Отмена</button>
+        <button type="button" className="button--secondary" disabled={saving} onClick={() => { draft.clear(); onCancel() }}>Отмена</button>
       </div>
     </form>
   )

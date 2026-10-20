@@ -55,6 +55,7 @@ public class SigningPlanService {
 
     @Transactional(readOnly = true)
     public SigningPlan plan(CrmProfile profile, Integer year, Integer quarter) {
+        ru.rtk.crm.access.BusinessDataAuthorization.requireReader(profile);
         LocalDate today = LocalDate.now(ReportRequest.ZONE);
         if (quarter != null && (quarter < 1 || quarter > 4)) {
             throw new InteractionValidationException("quarter", "Квартал — число от 1 до 4");

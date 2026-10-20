@@ -170,6 +170,7 @@ export const WorkAgreementBlock = ({
                   agreement={agreement}
                   interactionId={interactionId}
                   onDone={changed}
+                  onReload={changed}
                   handleAccessError={handleAccessError}
                 />
               )}

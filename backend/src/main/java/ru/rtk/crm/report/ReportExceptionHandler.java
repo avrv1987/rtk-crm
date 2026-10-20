@@ -11,12 +11,12 @@ import ru.rtk.crm.web.ApiError;
 
 @RestControllerAdvice
 public class ReportExceptionHandler {
-    private static final String RETRY_AFTER_SECONDS = "30";
+    static final String RETRY_AFTER_SECONDS = "30";
 
     @ExceptionHandler(ReportException.class)
     public ResponseEntity<ApiError> report(ReportException exception, HttpServletRequest request) {
         ResponseEntity.BodyBuilder response = ResponseEntity.status(exception.status());
-        if (exception.status() == HttpStatus.SERVICE_UNAVAILABLE) {
+        if (exception.status() == HttpStatus.SERVICE_UNAVAILABLE || exception.status() == HttpStatus.TOO_MANY_REQUESTS) {
             response.header(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS);
         }
         return response.body(ApiError.of(exception.code(), exception.getMessage(), RequestId.from(request)));

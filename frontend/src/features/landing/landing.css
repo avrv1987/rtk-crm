@@ -1179,24 +1179,8 @@ html:has(.landing) {
   content: counter(pl-step);
 }
 
-.pl-reliability {
-  margin: 0;
-  padding: var(--space-6);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface-accent);
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-  text-align: center;
-  text-wrap: balance;
-}
-
 @media (max-width: 640px) {
   .pl-roles__row {
     grid-template-columns: 1fr;
-  }
-
-  .pl-reliability {
-    font-size: var(--font-size-base);
-    text-align: left;
   }
 }

@@ -6,10 +6,13 @@ import { formatDate } from '../agreements/agreementsApi'
 import { useCommandKey } from '../agreements/agreementUi'
 import { reportingApi, type ActivityList } from '../agreements/reportingApi'
 import { handledAccessError } from '../interactions/workMarks'
+import { useRecordDraft } from '../interactions/formDraft'
 
 type PartnerActivityListsProps = {
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
+  // Н-А3: кабинет считает перечни «На согласовании» в «Требуется от вуза» и показывает счётчик в навигации.
+  onLoaded?: (lists: ActivityList[]) => void
 }
 
 type State =
@@ -24,8 +27,14 @@ const errorText = (error: unknown, fallback: string) => (
 )
 
 // Перечни своего вуза: координатор согласует перечень или возвращает его на доработку с комментарием.
-export const PartnerActivityLists = ({ onSessionExpired, onProfileUnavailable }: PartnerActivityListsProps) => {
+export const PartnerActivityLists = ({ onSessionExpired, onProfileUnavailable, onLoaded }: PartnerActivityListsProps) => {
   const [state, setState] = useState<State>({ kind: 'loading' })
+  const lists = state.kind === 'ready' ? state.lists : null
+  useEffect(() => {
+    if (lists !== null) {
+      onLoaded?.(lists)
+    }
+  }, [lists, onLoaded])
 
   const load = useCallback(async () => {
     try {
@@ -82,8 +91,10 @@ type PartnerListCardProps = PartnerActivityListsProps & {
 }
 
 const PartnerListCard = ({ list, onChanged, onSessionExpired, onProfileUnavailable }: PartnerListCardProps) => {
-  const [returning, setReturning] = useState(false)
-  const [comment, setComment] = useState('')
+  const draft = useRecordDraft(`partner-list:${list.summary.id}:return`, `возврат перечня «${list.summary.title}»`, { comment: '' })
+  const { comment } = draft.values
+  // Начатый возврат после F5 или повторного входа открывается сразу с введённым текстом.
+  const [returning, setReturning] = useState(draft.edited)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const commandKey = useCommandKey()
@@ -96,6 +107,7 @@ const PartnerListCard = ({ list, onChanged, onSessionExpired, onProfileUnavailab
     try {
       const updated = await reportingApi.decidePartnerList(summary.id, payload, commandKey.keyFor({ id: summary.id, ...payload }))
       commandKey.settle()
+      draft.clear()
       onChanged(updated)
     } catch (caught) {
       commandKey.settle(caught)
@@ -135,11 +147,11 @@ const PartnerListCard = ({ list, onChanged, onSessionExpired, onProfileUnavailab
         <form className="partner-request__form" onSubmit={submitReturn} aria-label={`Возврат перечня «${summary.title}»`}>
           <label>
             Что нужно изменить<span className="required-mark" aria-hidden="true"> *</span>
-            <textarea value={comment} rows={3} maxLength={2000} required disabled={saving} onChange={(event) => setComment(event.target.value)} />
+            <textarea value={comment} rows={3} maxLength={2000} required disabled={saving} onChange={(event) => draft.set({ comment: event.target.value })} />
           </label>
           <div className="partner-request__actions">
             <button type="submit" disabled={saving || comment.trim() === ''}>{saving ? 'Отправляем…' : 'Вернуть на доработку'}</button>
-            <button type="button" className="button--secondary" disabled={saving} onClick={() => setReturning(false)}>Отмена</button>
+            <button type="button" className="button--secondary" disabled={saving} onClick={() => { draft.clear(); setReturning(false) }}>Отмена</button>
           </div>
         </form>
       )}

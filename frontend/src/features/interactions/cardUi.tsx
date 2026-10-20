@@ -1,5 +1,6 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from 'react'
 import './cardUi.css'
+import { useFocusReturn } from '../../shared/ui/focusReturn'
 
 type CardDialogProps = {
   open: boolean
@@ -11,6 +12,7 @@ type CardDialogProps = {
 export const CardDialog = ({ open, title, onClose, children }: CardDialogProps) => {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const titleId = useId()
+  useFocusReturn(open)
 
   useEffect(() => {
     const dialog = dialogRef.current

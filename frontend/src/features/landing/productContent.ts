@@ -43,8 +43,6 @@ export const productScreens: Screen[] = [
   }
 ]
 
-/** Замер нагрузки на сервере, версия 2.5.3, 20.10.2026 (docs/load-testing.md). */
-export const reliabilityLine = 'Замер на рабочем сервере: 50 сотрудников одновременно, ни одного ответа дольше секунды. Каждый видит только данные своей роли.'
 
 /** Подключения одной строкой; MAX — только когда модуль включён на этом сервере. */
 export const connectionsLine = (modules: Modules): string => (

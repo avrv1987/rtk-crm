@@ -1382,7 +1382,9 @@ public class CatalogImportService {
         };
         for (String field : required) {
             if (!mapping.columns().containsKey(field)) {
-                throw new InteractionValidationException(field, "Выберите столбец файла для обязательного поля");
+                // Искажённые заголовки — частый признак чужой кодировки CSV (KOI8-R): подсказываем и это.
+                throw new InteractionValidationException(field, "Выберите столбец файла для обязательного поля; если названия "
+                        + "столбцов искажены, сохраните файл в UTF-8 или Windows-1251");
             }
         }
         for (Map.Entry<String, String> entry : mapping.columns().entrySet()) {

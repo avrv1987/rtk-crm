@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, apiClient, createIdempotencyKey } from '../../shared/api/client'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
+import { useRecordDraft } from '../interactions/formDraft'
 import {
   getEnrolmentBatch,
   importBatchProtocol,
@@ -27,7 +28,9 @@ type BatchState =
 export const EnrolmentBatchView = ({ batchId, onAccessError }: EnrolmentBatchViewProps) => {
   const [state, setState] = useState<BatchState>({ kind: 'loading' })
   const [selected, setSelected] = useState<string[]>([])
-  const [errorText, setErrorText] = useState('')
+  // Причина ошибки LMS — свободный текст без персональных данных: держим её в черновике вкладки (Н-А2).
+  const errorDraft = useRecordDraft(`enrolment-batch:${batchId}:error`, 'причина ошибки LMS в партии', { errorText: '' })
+  const { errorText } = errorDraft.values
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<unknown>(null)
   const [applied, setApplied] = useState<BatchResultsApplied | null>(null)
@@ -72,11 +75,17 @@ export const EnrolmentBatchView = ({ batchId, onAccessError }: EnrolmentBatchVie
     }
   }
 
-  const mark = (result: BatchItemResult) => run(() => recordBatchResults(batchId, selected.map((itemId) => ({
-    itemId,
-    result,
-    error: result === 'FAILED' ? errorText : null
-  })), commandKey))
+  const mark = (result: BatchItemResult) => run(async () => {
+    const outcome = await recordBatchResults(batchId, selected.map((itemId) => ({
+      itemId,
+      result,
+      error: result === 'FAILED' ? errorText : null
+    })), commandKey)
+    if (result === 'FAILED') {
+      errorDraft.clear()
+    }
+    return outcome
+  })
 
   if (state.kind === 'loading') {
     return <p role="status">Загружаем партию…</p>
@@ -169,7 +178,7 @@ export const EnrolmentBatchView = ({ batchId, onAccessError }: EnrolmentBatchVie
         <button type="button" disabled={busy || selected.length === 0} onClick={() => void mark('ACCEPTED')}>Принята LMS</button>
         <label>
           Причина ошибки
-          <input value={errorText} maxLength={500} onChange={(event) => setErrorText(event.target.value)} />
+          <input value={errorText} maxLength={500} onChange={(event) => errorDraft.set({ errorText: event.target.value })} />
         </label>
         <button type="button" className="button--secondary" disabled={busy || selected.length === 0 || errorText.trim() === ''}
           onClick={() => void mark('FAILED')}>Ошибка LMS</button>

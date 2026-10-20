@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { ApiError } from '../../shared/api/client'
+import { ApiError, isConflict } from '../../shared/api/client'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import { saveFile } from '../admin/saveFile'
 import { CardDialog, CardSection, RequiredMark } from '../interactions/cardUi'
+import { useRecordDraft } from '../interactions/formDraft'
 import { type AccessHandlers, formatDate, handledAccessError } from '../work/workShared'
 import {
   confirmationLabels,
@@ -275,7 +276,9 @@ export const PeoplePanel = ({ organizationId, interactionId, onSessionExpired, o
           onClose={() => setEditing(null)}>
           <PeopleForm
             kind={editing.kind}
-            record={editing.record}
+            record={editing.record === null
+              ? null
+              : (overview[editing.kind] as AnyRecord[]).find((item) => item.id === editing.record?.id) ?? editing.record}
             overview={overview}
             defaults={{
               hourUnit: editing.kind === 'teaching' ? units.teachingUnit : editing.kind === 'internships' ? units.internshipUnit : units.qualificationUnit,
@@ -288,6 +291,7 @@ export const PeoplePanel = ({ organizationId, interactionId, onSessionExpired, o
               void load()
             }}
             onCancel={() => setEditing(null)}
+            onReload={() => void load()}
           />
         </CardDialog>
       )}
@@ -311,10 +315,16 @@ type FormProps = {
   handled: (error: unknown) => boolean
   onSaved: () => void
   onCancel: () => void
+  onReload: () => void
 }
 
-const PeopleForm = ({ kind, record, overview, defaults, handled, onSaved, onCancel }: FormProps) => {
-  const [draft, setDraft] = useState<Draft>(() => draftFrom(kind, record as Record<string, unknown> | null, defaults))
+const PeopleForm = ({ kind, record, overview, defaults, handled, onSaved, onCancel, onReload }: FormProps) => {
+  const recordDraft = useRecordDraft<Draft>(
+    record === null ? `people:${kind}:new:${overview.organizationId}:${defaults.interactionId ?? ''}` : `people:${kind}:${record.id}`,
+    `${record === null ? 'новая запись' : 'запись'} «${titles[kind]}» в «Людях и часах»`,
+    draftFrom(kind, record as Record<string, unknown> | null, defaults)
+  )
+  const draft = recordDraft.values
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
 
@@ -329,6 +339,7 @@ const PeopleForm = ({ kind, record, overview, defaults, handled, onSaved, onCanc
       } else {
         await peopleApi.update(kind, record.id, payload)
       }
+      recordDraft.clear()
       onSaved()
     } catch (value) {
       if (!handled(value)) {
@@ -346,7 +357,7 @@ const PeopleForm = ({ kind, record, overview, defaults, handled, onSaved, onCanc
       {peopleFields[kind].map((field) => {
         const value = draft[field.key]
         const fieldError = errors[field.key]
-        const update = (next: string | boolean) => setDraft((current) => ({ ...current, [field.key]: next }))
+        const update = (next: string | boolean) => recordDraft.set({ [field.key]: next })
         if (field.type === 'checkbox') {
           return (
             <label key={field.key} className="checkbox-field">
@@ -384,10 +395,13 @@ const PeopleForm = ({ kind, record, overview, defaults, handled, onSaved, onCanc
         <div className="organizations-message organizations-message--error source-form__wide" role="alert">
           <p>{error instanceof ApiError ? error.message : 'Не удалось сохранить запись.'}</p>
           <SupportDetails requestId={error instanceof ApiError ? error.requestId : undefined} />
+          {isConflict(error) && (
+            <button type="button" onClick={() => { setError(null); onReload() }}>Обновить карточку</button>
+          )}
         </div>
       )}
       <div className="source-form__actions">
-        <button type="button" className="button--secondary" disabled={saving} onClick={onCancel}>Отмена</button>
+        <button type="button" className="button--secondary" disabled={saving} onClick={() => { recordDraft.clear(); onCancel() }}>Отмена</button>
         <button type="submit" disabled={saving}>{saving ? 'Сохраняем…' : 'Сохранить'}</button>
       </div>
     </form>

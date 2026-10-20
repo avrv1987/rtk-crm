@@ -1,5 +1,6 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { useLeaveWarning } from '../../shared/ui/useLeaveWarning'
+import { useUnsavedDraft } from '../interactions/unsavedDrafts'
 import {
   ApiError,
   apiClient,
@@ -96,6 +97,8 @@ const LearnerGroupCard = ({
   const editStartRef = useRef<Record<string, string> | null>(null)
   const dirty = editDraft !== null && config.fields.some((code) => (editDraft[code] ?? '') !== (editStartRef.current?.[code] ?? ''))
   useLeaveWarning(dirty, `Изменения в группе «${learnerFieldGroupLabels[config.group]}» не сохранены. Уйти без сохранения?`)
+  // Анкета — персональные данные, в черновик вкладки не пишется; плашка истёкшего сеанса честно скажет, что текст не вернётся.
+  useUnsavedDraft(`learner:${learnerId}:${config.group}`, `группа «${learnerFieldGroupLabels[config.group]}» анкеты слушателя`, dirty, true)
 
   const reveal = async (): Promise<Record<string, string> | null> => {
     setRevealBusy(true)

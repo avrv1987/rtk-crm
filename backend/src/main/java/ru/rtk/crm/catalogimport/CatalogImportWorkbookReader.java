@@ -22,6 +22,7 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.apache.poi.xssf.usermodel.XSSFCell;
+import org.openxmlformats.schemas.spreadsheetml.x2006.main.STCellType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 import ru.rtk.crm.interaction.InteractionValidationException;
@@ -241,7 +242,10 @@ public class CatalogImportWorkbookReader {
     private CellText text(Cell cell, DataFormatter formatter) {
         CellType type = cell.getCellType();
         if (type == CellType.FORMULA) {
-            if (cell instanceof XSSFCell xssfCell && !xssfCell.getCTCell().isSetV()) {
+            // Пустое <v/> (openpyxl, генераторы отчётов) — тоже нет значения, а не «0»; пустая строка законна только
+            // у строковой формулы (t="str").
+            if (cell instanceof XSSFCell xssfCell && (!xssfCell.getCTCell().isSetV()
+                    || xssfCell.getCTCell().getV().isEmpty() && xssfCell.getCTCell().getT() != STCellType.STR)) {
                 return new CellText("", "Формула без сохранённого значения; откройте и сохраните файл в Excel");
             }
             type = cell.getCachedFormulaResultType();

@@ -44,6 +44,7 @@ class OpenApiContractTest {
                 "REPORT_ACCESS_CHANGED",
                 "REPORT_RESULT_UNAVAILABLE",
                 "REPORT_CAPACITY_EXCEEDED",
+                "REPORT_QUOTA_EXCEEDED",
                 "PAYLOAD_TOO_LARGE"
         );
     }

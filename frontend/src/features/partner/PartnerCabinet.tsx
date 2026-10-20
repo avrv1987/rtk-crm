@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { ActivityList } from '../agreements/reportingApi'
+import { pluralForm } from '../../shared/format/plural'
 import { ApiError } from '../../shared/api/client'
 import { formatCalendarDate, formatMoscowDateTime, todayInMoscow } from '../../shared/format/datetime'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
@@ -19,7 +21,7 @@ import { emailHref, phoneHref } from '../../shared/format/links'
 import { ContactLink } from '../../shared/ui/ContactLink'
 import { PartnerActivityLists } from './PartnerActivityLists'
 import { PartnerRequestCard } from './PartnerRequestCard'
-import { partnerRequestGroups } from './partnerRequestModel'
+import { partnerRequestGroups, partnerRequiredCount, partnerReviewLists } from './partnerRequestModel'
 import './partner.css'
 
 type PartnerCabinetProps = {
@@ -58,6 +60,7 @@ const statusSince = (changedAt: string) => {
 export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: PartnerCabinetProps) => {
   const [state, setState] = useState<CabinetState>({ kind: 'loading' })
   const [download, setDownload] = useState<DownloadState>({ kind: 'idle' })
+  const [lists, setLists] = useState<ActivityList[] | null>(null)
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) {
@@ -103,6 +106,8 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
 
   const { organization, manager, works, documents, agreements, requests } = state.cabinet
   const groups = partnerRequestGroups(requests)
+  const reviewLists = partnerReviewLists(lists)
+  const focusLists = () => document.getElementById('partner-activity-lists')?.focus()
   const requestCards = (items: typeof requests) => (
     <ul className="partner-cabinet__list">
       {items.map((request) => (
@@ -137,7 +142,7 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
 
       <nav className="partner-cabinet__nav" aria-label="Разделы кабинета">
         <a href="#partner-required" onClick={(event) => { event.preventDefault(); document.getElementById('partner-required')?.focus() }}>
-          Требуется от вуза ({groups.required.length})
+          Требуется от вуза ({partnerRequiredCount(groups.required.length, lists)})
         </a>
         <a href="#partner-works" onClick={(event) => { event.preventDefault(); document.getElementById('partner-works')?.focus() }}>
           Взаимодействия ({works.length})
@@ -149,13 +154,21 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
           Договоры ({agreements.length})
         </a>
         <a href="#partner-activity-lists" onClick={(event) => { event.preventDefault(); document.getElementById('partner-activity-lists')?.focus() }}>
-          Перечни мероприятий
+          Перечни мероприятий{lists === null ? '' : ` (${lists.length})`}
         </a>
       </nav>
 
       <section className="partner-cabinet__section" aria-labelledby="partner-required">
         <h3 id="partner-required" tabIndex={-1}>Требуется от вуза</h3>
-        {groups.required.length === 0 ? <p>Сейчас школа ничего не ждёт от вуза.</p> : requestCards(groups.required)}
+        {reviewLists.length > 0 && (
+          <p className="notice">
+            {`${pluralForm(reviewLists.length, 'Перечень', 'Перечня', 'Перечней')} мероприятий ждёт вашего решения: `}
+            {reviewLists.map((list) => `«${list.summary.title}»`).join(', ')}.{' '}
+            <a href="#partner-activity-lists" onClick={(event) => { event.preventDefault(); focusLists() }}>Перейти к перечням</a>
+          </p>
+        )}
+        {groups.required.length > 0 && requestCards(groups.required)}
+        {groups.required.length === 0 && reviewLists.length === 0 && <p>Сейчас школа ничего не ждёт от вуза.</p>}
       </section>
 
       {groups.sent.length > 0 && (
@@ -284,7 +297,7 @@ export const PartnerCabinet = ({ onSessionExpired, onProfileUnavailable }: Partn
         </ul>
       </section>
 
-      <PartnerActivityLists onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} />
+      <PartnerActivityLists onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} onLoaded={setLists} />
     </div>
   )
 }

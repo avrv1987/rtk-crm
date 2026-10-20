@@ -67,6 +67,7 @@ const streamsOf = (enrolments: LearnerSummary['enrolments']) => (
 
 export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessError }: EnrolmentStreamsListProps) => {
   const [state, setState] = useState<ListState>({ kind: 'loading' })
+  const [queueRevision, setQueueRevision] = useState(0)
   const [searchValues, setSearchValues] = useState<Record<LearnerSearch['kind'], string>>({ EMAIL: '', PHONE: '', SNILS: '', LAST_NAME: '' })
   const [search, setSearch] = useState<SearchState>({ kind: 'idle' })
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -138,9 +139,9 @@ export const EnrolmentStreamsList = ({ onOpenStream, onOpenLearner, onAccessErro
             </p>
           )}
 
-          <EnrolmentQueuePanel onAccessError={onAccessError} />
+          <EnrolmentQueuePanel onAccessError={onAccessError} refreshSignal={queueRevision} />
 
-          <PaidOrdersUpload onUploaded={() => void load()} onAccessError={onAccessError} />
+          <PaidOrdersUpload onUploaded={() => { void load(); setQueueRevision((value) => value + 1) }} onAccessError={onAccessError} />
 
           <section className="enrolment__section" aria-labelledby="enrolment-streams-title">
             <h3 id="enrolment-streams-title">Потоки</h3>

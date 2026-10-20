@@ -4,9 +4,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -19,7 +17,6 @@ import ru.rtk.crm.report.ReportKind;
 
 @Repository
 public class PersonalDataRepository {
-    private static final String SCOPE_INTERACTIONS = "SELECT id FROM interactions WHERE organization_id IN (:scopeOrganizations)";
     // Отчёты этих видов собраны из чисел и справочников, ПДн в них нет.
     private static final List<String> REPORTS_WITHOUT_PERSONAL_DATA = List.of(ReportKind.DEMAND.name(), ReportKind.DURATION.name());
 
@@ -203,111 +200,89 @@ public class PersonalDataRepository {
                 "UPDATE organization_assignment_events SET new_owner_manager_display_name = :marker WHERE owner_manager_id = :profileId",
                 "UPDATE organization_assignment_events SET actor_display_name = :marker WHERE actor_profile_id = :profileId",
                 "UPDATE organization_team_events SET actor_display_name = :marker WHERE actor_profile_id = :profileId",
+                "UPDATE organization_deputies SET deputy_display_name = :marker WHERE deputy_profile_id = :profileId",
+                "UPDATE organization_deputies SET actor_display_name = :marker WHERE actor_profile_id = :profileId",
+                "UPDATE organization_deputies SET ended_by_display_name = :marker WHERE ended_by_profile_id = :profileId",
+                "UPDATE catalog_change_events SET actor_display_name = :marker WHERE actor_profile_id = :profileId",
                 "UPDATE audit_events SET actor_display_name = :marker WHERE actor_profile_id = :profileId"
         )) {
             jdbcClient.sql(statement).param("profileId", profileId).param("marker", marker).update();
         }
     }
 
-    // Замена идёт только внутри области субъекта (scope): тексты взаимодействий его вузов, их вложения и записи
-    // источников, записи журнала об этих объектах и служебные снимки, где есть идентификатор субъекта или вуза.
-    // Без области ничего не меняется — глобальная замена по базе переименовывала чужие файлы.
-    int replaceText(TextColumn column, SubjectTerms terms, String marker, Scope scope, boolean dryRun) {
-        if (terms.isEmpty()) {
+    // Замена идёт по тем же местам реестра и тем же признакам, что и поиск субъекта: что поиск показал, то
+    // «Обезличить» и заменит, в любом вузе. Признаки строгие — ФИО целиком, полная почта, телефон от 7 цифр, — поэтому
+    // одиночные слова и чужие файлы не задеваются. Файлы, отмеченные к удалению, не переименовываются.
+    int replaceText(PersonalDataPlace place, SubjectTerms terms, String marker, List<UUID> deletedFiles, boolean dryRun) {
+        if (terms.isEmpty() || place.kind() == PersonalDataPlace.Kind.RETAINED) {
             return 0;
         }
-        Map<String, Object> scopeParams = new LinkedHashMap<>();
-        String scopeSql = scopeCondition(column, scope, scopeParams);
-        if (scopeSql == null) {
-            return 0;
-        }
-        boolean fileName = column.kind() == TextKind.FILE_NAME || column == TextColumn.AUDIT_OBJECT;
-        SqlMatch match = fileName ? terms.attachmentMatch(column.column()) : terms.textMatch(column.column());
-        JdbcClient.StatementSpec select = jdbcClient.sql(
-                "SELECT id, " + column.column() + " AS text FROM " + column.table() + " WHERE " + match.sql() + " AND (" + scopeSql + ")"
-        );
+        String column = "x." + place.column();
+        SqlMatch match = place.fileName() ? terms.attachmentMatch(column) : terms.textMatch(column);
+        List<String> key = place.key();
+        String excluded = place.kind() == PersonalDataPlace.Kind.ATTACHMENT && !deletedFiles.isEmpty()
+                ? " AND x.id NOT IN (:deletedFiles)" : "";
+        JdbcClient.StatementSpec select = jdbcClient.sql("SELECT " + String.join(", ", key.stream().map(k -> "x." + k).toList())
+                + ", " + column + " AS pd_text FROM " + place.table() + " x WHERE " + match.sql() + excluded);
         match.params().forEach(select::param);
-        scopeParams.forEach(select::param);
-        List<StoredText> candidates = select
-                .query((resultSet, rowNumber) -> new StoredText(resultSet.getObject("id", UUID.class), resultSet.getString("text")))
-                .list();
+        if (!excluded.isEmpty()) {
+            select.param("deletedFiles", deletedFiles);
+        }
+        List<StoredText> candidates = select.query((resultSet, rowNumber) -> {
+            List<Object> values = new ArrayList<>();
+            for (String part : key) {
+                values.add(resultSet.getObject(part));
+            }
+            return new StoredText(values, resultSet.getString("pd_text"));
+        }).list();
         int changed = 0;
         for (StoredText candidate : candidates) {
-            String replaced = fileName
+            String replaced = place.fileName()
                     ? terms.replaceInAttachmentName(candidate.text(), marker)
-                    : column.json()
+                    : place.json()
                     ? terms.replaceInJson(candidate.text(), marker, objectMapper)
                     : terms.replace(candidate.text(), marker);
             if (replaced == null || replaced.equals(candidate.text())) {
                 continue;
             }
             if (!dryRun) {
-                jdbcClient.sql("UPDATE " + column.table() + " SET " + column.column() + " = :text"
-                                + (column.versioned() ? ", version = version + 1" : "") + " WHERE id = :id")
-                        .param("text", column.fit(replaced))
-                        .param("id", candidate.id())
-                        .update();
+                List<String> conditions = new ArrayList<>();
+                for (int index = 0; index < key.size(); index++) {
+                    conditions.add(key.get(index) + " = :k" + index);
+                }
+                JdbcClient.StatementSpec update = jdbcClient.sql("UPDATE " + place.table() + " SET " + place.column() + " = :text"
+                                + (place.versioned() ? ", version = version + 1" : "")
+                                + (place.clearedWith() == null ? "" : ", " + place.clearedWith() + " = NULL")
+                                + " WHERE " + String.join(" AND ", conditions))
+                        .param("text", place.fit(replaced));
+                for (int index = 0; index < key.size(); index++) {
+                    update.param("k" + index, candidate.key().get(index));
+                }
+                update.update();
             }
             changed++;
         }
         return changed;
     }
 
-    private static String scopeCondition(TextColumn column, Scope scope, Map<String, Object> params) {
-        boolean organizations = !scope.organizationIds().isEmpty();
-        if (organizations) {
-            params.put("scopeOrganizations", scope.organizationIds());
+    // Прежние ФИО, почта и телефон контакта из истории его правок: КАМ мог сменить телефон, а старый остался в текстах.
+    List<String> previousContactValues(UUID contactId, String field) {
+        List<String> values = new ArrayList<>();
+        for (String changes : jdbcClient.sql("SELECT changes FROM contact_events WHERE contact_id = :contactId")
+                .param("contactId", contactId)
+                .query(String.class)
+                .list()) {
+            try {
+                for (com.fasterxml.jackson.databind.JsonNode change : objectMapper.readTree(changes)) {
+                    if (field.equals(change.path("field").asText()) && change.path("previousValue").isTextual()) {
+                        values.add(change.path("previousValue").asText());
+                    }
+                }
+            } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
+                // Нечитаемая запись истории не мешает обезличиванию: её текст всё равно проходит замену по реестру.
+            }
         }
-        return switch (column.scope()) {
-            case EVENT -> {
-                if (!organizations) {
-                    yield null;
-                }
-                // Файлы, отмеченные к удалению, не переименовываются: иначе один файл посчитан бы дважды.
-                if (column.kind() == TextKind.FILE_NAME && !scope.deletedFiles().isEmpty()) {
-                    params.put("deletedFiles", scope.deletedFiles());
-                    yield "interaction_id IN (" + SCOPE_INTERACTIONS + ") AND id NOT IN (:deletedFiles)";
-                }
-                yield "interaction_id IN (" + SCOPE_INTERACTIONS + ")";
-            }
-            case OWNER -> organizations ? "organization_id IN (:scopeOrganizations)" : null;
-            case AUDIT -> {
-                params.put("scopeObjects", scope.objectIds());
-                yield "object_id IN (:scopeObjects)" + (organizations
-                        ? " OR object_id IN (:scopeOrganizations) OR object_id IN (" + SCOPE_INTERACTIONS + ")"
-                        + " OR object_id IN (SELECT a.id FROM attachments a WHERE a.interaction_id IN (" + SCOPE_INTERACTIONS + "))"
-                        : "");
-            }
-            // В служебных JSON нет внешних ключей: берём только снимки, где записан идентификатор субъекта или его вуза.
-            case REFERENCE -> {
-                List<String> parts = new ArrayList<>();
-                List<UUID> ids = new ArrayList<>(scope.objectIds());
-                ids.addAll(scope.organizationIds());
-                for (int index = 0; index < ids.size(); index++) {
-                    params.put("ref" + index, "%" + ids.get(index) + "%");
-                    parts.add(column.column() + " LIKE :ref" + index);
-                }
-                yield parts.isEmpty() ? null : String.join(" OR ", parts);
-            }
-        };
-    }
-
-    // Вузы, с которыми работал сотрудник: был или стал ответственным, писал события. Его имя может быть только там.
-    List<UUID> profileOrganizationIds(UUID profileId) {
-        return jdbcClient.sql("""
-                SELECT id FROM organizations WHERE owner_manager_id = :profileId
-                UNION
-                SELECT organization_id FROM organization_assignment_events
-                WHERE previous_owner_manager_id = :profileId OR owner_manager_id = :profileId
-                UNION
-                SELECT organization_id FROM organization_team_events WHERE previous_owner_manager_id = :profileId
-                UNION
-                SELECT i.organization_id FROM interaction_events e JOIN interactions i ON i.id = e.interaction_id
-                WHERE e.actor_profile_id = :profileId
-                """)
-                .param("profileId", profileId)
-                .query(UUID.class)
-                .list();
+        return values;
     }
 
     List<StoredFile> findAttachmentFiles(List<UUID> attachmentIds) {
@@ -341,53 +316,20 @@ public class PersonalDataRepository {
         return expired;
     }
 
-    // Кандидаты — готовые отчёты, где могли оказаться данные субъекта: виды с текстами и ФИО (не «Востребованность»
-    // и не «Длительность») у тех, кто видел его вузы, — «Руководство», команды этих вузов, в том числе прежние,
-    // и отчёты самого сотрудника. Отчёты других команд и администраторов (они не видят работу с вузами) не трогаются.
-    // Удалять ли кандидата, решает проверка содержимого файла (ReportContentScanner).
-    List<SubjectReport> findSubjectReports(List<UUID> organizationIds, List<UUID> profileIds) {
-        List<UUID> teams = new ArrayList<>();
-        if (!organizationIds.isEmpty()) {
-            teams.addAll(jdbcClient.sql("""
-                    SELECT team_id FROM organizations WHERE id IN (:organizations)
-                    UNION
-                    SELECT previous_team_id FROM organization_team_events WHERE organization_id IN (:organizations)
-                    UNION
-                    SELECT team_id FROM organization_team_events WHERE organization_id IN (:organizations)
-                    """)
-                    .param("organizations", organizationIds)
-                    .query(UUID.class)
-                    .list());
-        }
-        if (!profileIds.isEmpty()) {
-            teams.addAll(jdbcClient.sql("SELECT team_id FROM crm_user_profiles WHERE id IN (:profiles) AND team_id IS NOT NULL")
-                    .param("profiles", profileIds)
-                    .query(UUID.class)
-                    .list());
-        }
-        List<String> owners = new ArrayList<>(List.of("owner_role = 'MANAGEMENT'"));
-        if (!teams.isEmpty()) {
-            owners.add("(owner_role IN ('USER', 'LEADER') AND owner_team_id IN (:teams))");
-        }
-        if (!profileIds.isEmpty()) {
-            owners.add("owner_profile_id IN (:profiles)");
-        }
-        JdbcClient.StatementSpec select = jdbcClient.sql("""
+    // Кандидаты — все готовые отчёты видов с текстами и ФИО (не «Востребованность» и не «Длительность»): упоминание
+    // субъекта могло попасть и в карточку другого вуза, а с ней — в отчёт другой команды. Удалять ли кандидата, решает
+    // проверка содержимого файла (ReportContentScanner): отчёт без субъекта остаётся.
+    List<SubjectReport> findSubjectReports() {
+        return jdbcClient.sql("""
                 SELECT id, result_storage_key, format, group_by
                 FROM report_jobs
                 WHERE status = 'SUCCEEDED' AND result_storage_key IS NOT NULL AND kind NOT IN (:safeKinds)
-                  AND (%s)
                 ORDER BY id
-                """.formatted(String.join(" OR ", owners)))
-                .param("safeKinds", REPORTS_WITHOUT_PERSONAL_DATA);
-        if (!teams.isEmpty()) {
-            select.param("teams", teams.stream().distinct().toList());
-        }
-        if (!profileIds.isEmpty()) {
-            select.param("profiles", profileIds);
-        }
-        return select.query((resultSet, row) -> new SubjectReport(mapReportFile(resultSet, row), resultSet.getString("format"),
-                resultSet.getString("group_by"))).list();
+                """)
+                .param("safeKinds", REPORTS_WITHOUT_PERSONAL_DATA)
+                .query((resultSet, row) -> new SubjectReport(mapReportFile(resultSet, row), resultSet.getString("format"),
+                        resultSet.getString("group_by")))
+                .list();
     }
 
     // Файл остаётся, но в списке выгрузок отчёт помечен: проверить его на данные субъекта не удалось.
@@ -502,7 +444,7 @@ public class PersonalDataRepository {
         return new StoredFile(resultSet.getObject("id", UUID.class), resultSet.getObject("result_storage_key", UUID.class));
     }
 
-    private record StoredText(UUID id, String text) {
+    private record StoredText(List<Object> key, String text) {
     }
 
     record SubjectReport(StoredFile file, String format, String groupBy) {
@@ -531,101 +473,5 @@ public class PersonalDataRepository {
     }
 
     record ProfileState(UUID id, String displayName, String login, boolean active, boolean anonymized) {
-    }
-
-    record Scope(List<UUID> organizationIds, List<UUID> objectIds, List<UUID> deletedFiles) {
-    }
-
-    enum TextKind {
-        MENTION,
-        FILE_NAME,
-        SOURCE,
-        TECHNICAL
-    }
-
-    enum ScopeKind {
-        EVENT,
-        OWNER,
-        AUDIT,
-        REFERENCE
-    }
-
-    enum TextColumn {
-        EVENT_COMMENT("interaction_events", "comment", 0, false, TextKind.MENTION, ScopeKind.EVENT),
-        EVENT_NEXT_ACTION("interaction_events", "next_action", 500, false, TextKind.MENTION, ScopeKind.EVENT),
-        INTERACTION_NEXT_ACTION("interactions", "next_action", 500, true, TextKind.MENTION, ScopeKind.OWNER),
-        INTERACTION_TITLE("interactions", "title", 200, true, TextKind.MENTION, ScopeKind.OWNER),
-        AGENT_PLAN_NOTE("agent_change_plans", "note_text", 4000, false, TextKind.MENTION, ScopeKind.EVENT),
-        AGENT_PLAN_NEXT_ACTION("agent_change_plans", "next_action", 500, false, TextKind.MENTION, ScopeKind.EVENT),
-        // Учёт людей и часов: ФИО контакта или сотрудника, записанное текстом, заменяется в записях его вузов.
-        TEACHING_PERFORMER("university_teaching", "performer_name", 300, true, TextKind.MENTION, ScopeKind.OWNER),
-        INTERN_NAME("internships", "intern_name", 300, true, TextKind.MENTION, ScopeKind.OWNER),
-        MENTOR_NAME("internships", "mentor_name", 300, true, TextKind.MENTION, ScopeKind.OWNER),
-        QUALIFICATION_PERSON("teacher_qualifications", "person_name", 300, true, TextKind.MENTION, ScopeKind.OWNER),
-        QUALIFICATION_EMAIL("teacher_qualifications", "person_email", 254, true, TextKind.MENTION, ScopeKind.OWNER),
-        ATTACHMENT_NAME("attachments", "original_name", 255, false, TextKind.FILE_NAME, ScopeKind.EVENT),
-        SOURCE_PAYLOAD("source_records", "payload", 0, false, TextKind.SOURCE, ScopeKind.OWNER, true),
-        IMPORT_PLAN("catalog_import_rows", "plan_json", 0, false, TextKind.TECHNICAL, ScopeKind.REFERENCE, true),
-        COMMAND_RESULT("command_idempotency_records", "result_json", 0, false, TextKind.TECHNICAL, ScopeKind.REFERENCE, true),
-        AUDIT_OBJECT("audit_events", "object_name", 500, false, TextKind.TECHNICAL, ScopeKind.AUDIT),
-        AUDIT_DETAILS("audit_events", "details", 2000, false, TextKind.TECHNICAL, ScopeKind.AUDIT);
-
-        private final String table;
-        private final String column;
-        private final int maxLength;
-        private final boolean versioned;
-        private final TextKind kind;
-        private final ScopeKind scope;
-        private final boolean json;
-
-        TextColumn(String table, String column, int maxLength, boolean versioned, TextKind kind, ScopeKind scope) {
-            this(table, column, maxLength, versioned, kind, scope, false);
-        }
-
-        TextColumn(
-                String table,
-                String column,
-                int maxLength,
-                boolean versioned,
-                TextKind kind,
-                ScopeKind scope,
-                boolean json
-        ) {
-            this.table = table;
-            this.column = column;
-            this.maxLength = maxLength;
-            this.versioned = versioned;
-            this.kind = kind;
-            this.scope = scope;
-            this.json = json;
-        }
-
-        String table() {
-            return table;
-        }
-
-        String column() {
-            return column;
-        }
-
-        boolean versioned() {
-            return versioned;
-        }
-
-        TextKind kind() {
-            return kind;
-        }
-
-        ScopeKind scope() {
-            return scope;
-        }
-
-        boolean json() {
-            return json;
-        }
-
-        String fit(String value) {
-            return maxLength == 0 || value.length() <= maxLength ? value : value.substring(0, maxLength);
-        }
     }
 }

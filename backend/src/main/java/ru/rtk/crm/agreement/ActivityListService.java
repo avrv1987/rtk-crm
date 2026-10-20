@@ -126,8 +126,13 @@ public class ActivityListService {
         List<UUID> activityIds = ids(request.activityIds());
         return agreementService.idempotent(profile, CommandOperation.UPDATE_ACTIVITY_LIST, idempotencyKey,
                 new UpdateCommand(listId, version, title, activityIds), ActivityList.class, () -> {
-                    if (!list.status().editable()) {
-                        throw new InteractionValidationException("status", "Менять можно проект или возвращённый перечень");
+                    // Статус перечитывается в транзакции: экран мог показывать проект, который тем временем отправили вузу.
+                    ActivityListSummary current = repository.findList(listId).orElse(list);
+                    if (!current.status().editable()) {
+                        throw AgreementException.listNotEditable(current.version(), current.status());
+                    }
+                    if (current.version() != version) {
+                        throw AgreementException.listVersion(current.version());
                     }
                     List<ActivityListItem> items = items(list.organizationId(), list.periodFrom(), list.periodTo(), activityIds);
                     if (repository.updateListTitle(listId, version, title, OffsetDateTime.now()) != 1) {

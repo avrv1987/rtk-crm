@@ -44,12 +44,14 @@ public class ReportException extends RuntimeException {
         );
     }
 
-    // Тот же код, что у переполнения общей очереди: клиенту одинаково — подождать, пока освободится; текст — про своё.
+    // Личная квота — ограничение частоты для одного пользователя, как общий лимит запросов: 429 с Retry-After,
+    // а не 503 «сервер занят». Общая очередь (capacityExceeded) остаётся 503: заняты слоты всего сервера.
     public static ReportException userQuota(int limit) {
         return new ReportException(
-                HttpStatus.SERVICE_UNAVAILABLE,
-                "REPORT_CAPACITY_EXCEEDED",
-                "У вас уже строятся " + limit + " файлов отчётов; дождитесь их готовности и повторите"
+                HttpStatus.TOO_MANY_REQUESTS,
+                "REPORT_QUOTA_EXCEEDED",
+                "У вас уже строятся " + limit + " файлов отчётов; дождитесь готовности одного из них и повторите через "
+                        + ReportExceptionHandler.RETRY_AFTER_SECONDS + " сек."
         );
     }
 

@@ -23,6 +23,8 @@ import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.deser.BeanDeserializerModifier;
 import com.fasterxml.jackson.databind.deser.std.DelegatingDeserializer;
+import com.fasterxml.jackson.databind.deser.std.StdScalarDeserializer;
+import com.fasterxml.jackson.databind.deser.std.StringDeserializer;
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import org.springframework.context.annotation.Configuration;
@@ -64,6 +66,7 @@ public class ApiJsonConfiguration implements WebMvcConfigurer {
         for (Class<?> type : List.of(List.class, Set.class, Collection.class)) {
             mapper.configOverride(type).setSetterInfo(noNullItems);
         }
+        mapper.registerModule(new SimpleModule("api-text").addDeserializer(String.class, new ApiText()));
         mapper.registerModule(new SimpleModule("api-date-bounds").setDeserializerModifier(new BeanDeserializerModifier() {
             @Override
             public JsonDeserializer<?> modifyDeserializer(DeserializationConfig config, BeanDescription description,
@@ -88,6 +91,28 @@ public class ApiJsonConfiguration implements WebMvcConfigurer {
             return false;
         }
         return year >= 1 && year <= 9999;
+    }
+
+    static final String NUL_MESSAGE = "Недопустимый символ (NUL); удалите его из текста";
+
+    // Строка только из невидимых символов (пробелы, NBSP, нулевой ширины) — это пусто: дальше её отвергнет обычная
+    // проверка «Заполните поле» любого сервиса. Символ NUL база не хранит — отказ сразу, с ошибкой у поля.
+    static final class ApiText extends StdScalarDeserializer<String> {
+        ApiText() {
+            super(String.class);
+        }
+
+        @Override
+        public String deserialize(JsonParser parser, DeserializationContext context) throws IOException {
+            String value = StringDeserializer.instance.deserialize(parser, context);
+            if (value == null) {
+                return null;
+            }
+            if (value.indexOf('\u0000') >= 0) {
+                throw InvalidFormatException.from(parser, NUL_MESSAGE, value, String.class);
+            }
+            return VisibleText.blank(value) ? "" : value;
+        }
     }
 
     private static final class YearBounded extends DelegatingDeserializer {

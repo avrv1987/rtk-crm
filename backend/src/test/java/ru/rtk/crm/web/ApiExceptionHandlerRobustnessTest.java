@@ -25,6 +25,9 @@ class ApiExceptionHandlerRobustnessTest {
         assertThat(db(violation("22008"))).satisfies(response -> expect(response, 400, "VALIDATION_ERROR"));
         assertThat(db(violation("23514"))).satisfies(response -> expect(response, 400, "VALIDATION_ERROR"));
         assertThat(db(new DataIntegrityViolationException("no sql state"))).satisfies(response -> expect(response, 400, "VALIDATION_ERROR"));
+        // Б-9: символ NUL, который отвергла база, называется недопустимым символом, а не «слишком длинным значением».
+        assertThat(db(violation("22021")).getBody().fieldErrors().get("body")).startsWith("Недопустимый символ");
+        assertThat(db(violation("22023")).getBody().fieldErrors().get("body")).startsWith("Недопустимый символ");
     }
 
     @Test

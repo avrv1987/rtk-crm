@@ -15,6 +15,8 @@ import { type AccessErrorReporter, learnerFullName, responseErrorMessage } from 
 
 type EnrolmentQueuePanelProps = {
   onAccessError: AccessErrorReporter
+  // Н-А6: растёт после загрузки оплат — очередь перечитывается вместе с таблицей потоков.
+  refreshSignal?: number
 }
 
 type QueueState =
@@ -33,7 +35,7 @@ const itemHref = (item: EnrolmentQueueItem) => {
   return enrolmentHref({ kind: 'learner', learnerId: item.learnerId, streamId: item.streamId })
 }
 
-export const EnrolmentQueuePanel = ({ onAccessError }: EnrolmentQueuePanelProps) => {
+export const EnrolmentQueuePanel = ({ onAccessError, refreshSignal = 0 }: EnrolmentQueuePanelProps) => {
   const [state, setState] = useState<QueueState>({ kind: 'loading' })
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -75,7 +77,7 @@ export const EnrolmentQueuePanel = ({ onAccessError }: EnrolmentQueuePanelProps)
 
   useEffect(() => {
     void load()
-  }, [load])
+  }, [load, refreshSignal])
 
   const reconcile = async (item: EnrolmentQueueItem, viaMoodle = false) => {
     setBusy(`${item.kind}:${item.enrolmentId}`)

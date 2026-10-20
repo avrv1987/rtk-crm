@@ -14,19 +14,23 @@ import {
   forgetActiveProfile,
   rememberActiveProfile,
   rememberReturnRoute,
+  storedFormDraftLabels,
   takeReturnRoute
 } from '../features/interactions/drafts'
+import { currentUnsavedEntries, markUnsavedDraft, sessionExpiredNotice } from '../features/interactions/unsavedDrafts'
 import { UnsavedDraftNotice } from '../features/interactions/UnsavedDraftNotice'
 import { HelpScreen } from '../features/help/HelpScreen'
 import { IssuesScreen } from '../features/issues/IssuesScreen'
 import {
   activeWorkTab,
   canonicalAddress,
+  documentTitle,
   isListView,
   isSameRouteClick,
   isSameSectionClick,
   navFor,
   parseRoute,
+  redirectNotice,
   sectionTitle,
   sectionsFor,
   workRedirect,
@@ -82,6 +86,9 @@ export const App = () => {
   const [routePulse, setRoutePulse] = useState(0)
   const activeProfileId = useRef<string | null>(null)
   const sectionNavPending = useRef(false)
+  // Плашка над экраном: истёкший сеанс, выход в другой вкладке (на посадочной) и переход из чужого раздела (в CRM).
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null)
+  const [routeNotice, setRouteNotice] = useState<{ section: string; text: string } | null>(null)
   const redirect = state.kind === 'profile' ? workRedirect(hash, state.profile.role) : null
   const route = parseRoute(redirect ?? hash)
   const watchedProfileId = state.kind === 'profile' ? state.profile.id : null
@@ -105,13 +112,26 @@ export const App = () => {
     const sections = sectionsFor(state.profile.role, state.profile.enrolmentOperator, getModules(), state.profile.enrolmentOnly)
     const target = canonicalAddress(route, sections)
     if (target !== null) {
+      setRouteNotice({ section: sections[0], text: redirectNotice(route.section, sections[0], state.profile.role) })
       window.history.replaceState(null, '', target)
       setHash(target)
     }
   }, [route.section, state])
 
+  // Н-А7: выход в другой вкладке объясняется словами, адрес экрана запоминается для возврата после входа.
+  // Черновики этой вкладки удаляются, как при обычном выходе. Вход другого сотрудника — перезагрузка с его профилем.
   useEffect(() => (
-    watchedProfileId === null ? undefined : watchSessionElsewhere(watchedProfileId, () => window.location.assign('/'))
+    watchedProfileId === null ? undefined : watchSessionElsewhere(watchedProfileId, (signedOut) => {
+      if (!signedOut) {
+        window.location.reload()
+        return
+      }
+      clearDraftsForProfile(watchedProfileId)
+      forgetActiveProfile()
+      activeProfileId.current = null
+      setSessionNotice('Вы вышли из CRM в другой вкладке. Войдите снова — откроется этот же экран. Несохранённые черновики этой вкладки удалены.')
+      setState({ kind: 'anonymous' })
+    })
   ), [watchedProfileId])
 
   useEffect(() => {
@@ -147,6 +167,17 @@ export const App = () => {
     return () => document.removeEventListener('click', handleClick)
   }, [])
 
+  // Н-А8: заголовок вкладки браузера — по экрану; без входа остаётся название CRM.
+  const profileSections = state.kind === 'profile'
+    ? sectionsFor(state.profile.role, state.profile.enrolmentOperator, getModules(), state.profile.enrolmentOnly)
+    : []
+  const screenTitle = state.kind === 'profile'
+    ? sectionTitle(profileSections.find((item) => item === route.section) ?? profileSections[0], state.profile.role)
+    : null
+  useEffect(() => {
+    document.title = documentTitle(screenTitle)
+  }, [screenTitle])
+
   const loadSession = async () => {
     try {
       const config = await apiClient.config()
@@ -155,12 +186,15 @@ export const App = () => {
       const profile = await apiClient.me()
       await apiClient.refreshCsrf()
       rememberActiveProfile(profile.id)
+      // Черновики форм, оставшиеся во вкладке (F5, повторный вход), сразу видны в плашке «Есть несохранённый черновик».
+      storedFormDraftLabels(profile.id).forEach(({ key, label }) => markUnsavedDraft(`form:${key}`, label, true))
       announceSession(profile.id)
       activeProfileId.current = profile.id
       const returnRoute = takeReturnRoute()
       if (returnRoute !== null && returnRoute !== window.location.hash) {
         window.location.hash = returnRoute
       }
+      setSessionNotice(null)
       setState({ kind: 'profile', profile })
     } catch (error) {
       if (error instanceof ApiError && error.code === 'UNAUTHENTICATED') {
@@ -197,11 +231,12 @@ export const App = () => {
     }
   }
 
-  // Истёкший сеанс объясняется словами (Н-14, 2.5): черновики остаются во вкладке и вернутся после входа.
-  const [sessionExpired, setSessionExpired] = useState(false)
+  // Истёкший сеанс объясняется словами (Н-14, 2.5). Текст плашки собирается до ухода с экрана (Н-А2): обещает возврат
+  // только тех форм, чей текст лежит в черновике вкладки, и прямо называет те, что не сохранятся.
   const handleSessionExpired = useCallback(() => {
     activeProfileId.current = null
-    setSessionExpired(true)
+    // Первый отказ определяет текст: к следующим формы без черновика уже закрыты и пропали бы из перечня.
+    setSessionNotice((current) => current ?? sessionExpiredNotice(currentUnsavedEntries()))
     setState({ kind: 'anonymous' })
   }, [])
 
@@ -255,7 +290,6 @@ export const App = () => {
   if (state.kind === 'profile' && isProductDemo(search)) {
     return <ProductLanding signedIn backToContest={showBackToContest(getLandingMode(), search)} onLogin={() => window.location.assign('/')} />
   }
-  const sessionNotice = sessionExpired ? 'Сеанс истёк. Войдите снова — вы вернётесь на тот же экран, несохранённый текст восстановится.' : null
   if (state.kind === 'anonymous' && landingPageFor(getLandingMode(), search) === 'product') {
     return (
       <ProductLanding
@@ -310,9 +344,21 @@ export const App = () => {
   const workTab = activeWorkTab(section)
   const workTabs = workTab === null ? [] : workTabsFor(profile.role)
   const title = sectionTitle(section, profile.role)
+  const shownRouteNotice = routeNotice !== null && routeNotice.section === section ? routeNotice.text : null
 
   return (
     <div className={nav.some((item) => item.phone) ? 'app-shell app-shell--tabbar' : 'app-shell'}>
+      {/* Н-А8: адреса с # заняты маршрутами, поэтому ссылка переводит фокус сама, не меняя адрес. */}
+      <a
+        className="skip-link"
+        href="#app-main"
+        onClick={(event) => {
+          event.preventDefault()
+          document.getElementById('app-main')?.focus()
+        }}
+      >
+        Перейти к содержанию
+      </a>
       <header className="app-header">
         <p className="app-header__brand">
           <span className="app-header__brand-full">CRM ИТ Школы РТК</span>
@@ -360,13 +406,19 @@ export const App = () => {
           </ul>
         </nav>
       )}
-      <main className="app-main">
+      <main className="app-main" id="app-main" tabIndex={-1}>
         <div className="page-title">
           <h1>{title}</h1>
           {section === 'admin' && profile.role === 'ADMIN' && (
             <HintButton label="Что видит администратор">{adminNoticeText}</HintButton>
           )}
         </div>
+        {shownRouteNotice !== null && (
+          <div className="notice route-notice" role="status">
+            <p>{shownRouteNotice}</p>
+            <button type="button" className="button--secondary" onClick={() => setRouteNotice(null)}>Понятно</button>
+          </div>
+        )}
         <div className="app-content">
           {section === 'admin' && (
             <AdminScreen

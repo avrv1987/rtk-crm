@@ -121,7 +121,7 @@ const previewLines = (preview: AnonymizationResult) => [
   ['Профили сотрудников', preview.profiles],
   ['Анкеты слушателей', preview.learners],
   ['Записи учёта людей и часов', preview.peopleRecords],
-  ['Упоминания в карточках взаимодействий', preview.mentions],
+  ['Упоминания: карточки, проблемы, договоры, мероприятия, запросы вузу, согласия и другие тексты', preview.mentions],
   ['Имена файлов — будут переименованы', preview.attachmentsRenamed],
   ['Записи источников', preview.sourceRecords],
   ['Служебные записи: журнал, снимки команд и импорта', preview.technicalRecords],
@@ -153,7 +153,23 @@ const placeLabels: Record<SubjectMention['place'], string> = {
   PLAN_HISTORY: 'Следующий шаг в истории',
   NEXT_ACTION: 'Текущий следующий шаг',
   TITLE: 'Название карточки',
-  AGENT_PLAN: 'План записи ИИ-агента'
+  AGENT_PLAN: 'План записи ИИ-агента',
+  WORK_STATUS: 'Причина паузы или ожидания',
+  IMPORT: 'Источник или автор импортированной записи',
+  STAGE_COMMENT: 'Комментарий к отметке этапа',
+  ISSUE: 'Проблема или риск',
+  AGREEMENT: 'Договор: стороны, допсоглашение, комментарий',
+  AGREEMENT_FILE: 'Имя файла договора',
+  AGREEMENT_ACTIVITY: 'Мероприятие плана договора',
+  ACTIVITY_LIST: 'Перечень мероприятий',
+  HANDOVER: 'Записка при передаче вуза',
+  PARTNER_REQUEST: 'Запрос вузу и ответ координатора',
+  CONSENT: 'Согласие на обработку ПДн',
+  PERSONAL_DATA_REQUEST: 'Обращение субъекта ПДн — имя остаётся для учёта обращения',
+  SAVED_REPORT: 'Название сохранённого отчёта',
+  CONTACT_HISTORY: 'История изменений контакта',
+  PEOPLE_DOCUMENT: 'Документ в учёте людей и часов',
+  VENDOR_CONTACT: 'Контакт вендора'
 }
 
 const recordTypeLabels: Record<string, string> = {
@@ -675,13 +691,13 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
         )}
 
         {result.mentions.length > 0 && (
-          <Group id="subject-mentions-title" title="Упоминания в карточках" count={result.mentions.length} open={isOpen('mentions')}>
+          <Group id="subject-mentions-title" title="Упоминания в текстах" count={result.mentions.length} open={isOpen('mentions')}>
             <div className="admin-table-wrap">
-              <table className="admin-table" aria-label="Упоминания в карточках">
+              <table className="admin-table" aria-label="Упоминания в текстах">
                 <thead>
                   <tr>
                     <th scope="col">Где</th>
-                    <th scope="col">Вуз и карточка</th>
+                    <th scope="col">Вуз и объект</th>
                     <th scope="col">Текст</th>
                   </tr>
                 </thead>
@@ -692,9 +708,9 @@ export const PersonalDataPanel = ({ onSessionExpired, onProfileUnavailable }: Se
                         <span className="admin-table__main">{placeLabels[mention.place]}</span>
                         {mention.occurredAt && <span className="admin-table__sub">{formatDateTime(mention.occurredAt)}</span>}
                       </td>
-                      <td data-label="Вуз и карточка">
+                      <td data-label="Вуз и объект">
                         <span>
-                          {mention.organizationName}
+                          {mention.organizationName ?? '—'}
                           <span className="admin-table__sub">«{mention.interactionTitle}»</span>
                         </span>
                       </td>

@@ -2,6 +2,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
   ApiError,
   apiClient,
+  clearConflict,
   createIdempotencyKey,
   type Attachment,
   type CatalogLookup,
@@ -2517,6 +2518,12 @@ export const InteractionsPanel = ({
   ]
   const reload = () => {
     if (currentInteraction !== undefined) {
+      // Н-А13: после перечитывания карточки старая плашка конфликта уже неверна — снимаем её, черновик остаётся.
+      setPlanState(clearConflict)
+      setCommentState(clearConflict)
+      setTransitionState(clearConflict)
+      setStageEditState(clearConflict)
+      setUploadState(clearConflict)
       openInteraction(currentInteraction.id)
     }
   }

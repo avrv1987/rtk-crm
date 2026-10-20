@@ -155,6 +155,9 @@ public class ApiSecurityConfiguration {
                         // Приглашение из письма открывает человек без входа: сессии и cookie нет, подделывать нечего,
                         // а доступ даёт только одноразовый токен в адресе.
                         .ignoringRequestMatchers(MAIL_INVITATION_MATCHER))
+                // Запрос без входа не сохраняется для повтора после входа: иначе каждый 401 заводил бы сеанс в БД
+                // (spring_session). Интерфейс сам знает, куда вернуться; сеанс создаёт только цепочка входа OIDC.
+                .requestCache(cache -> cache.disable())
                 .addFilterBefore(requestIdFilter, SecurityContextHolderFilter.class)
                 .addFilterAfter(apiRateLimitFilter, AnonymousAuthenticationFilter.class)
                 .authorizeHttpRequests(authorize -> authorize

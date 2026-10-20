@@ -10,6 +10,7 @@ import {
 import { defaultSignerId } from './agreementModel'
 import { planKindLabels, planKinds, type PlanKind } from '../reports/signingPlan'
 import { CommandError, useCommandKey } from './agreementUi'
+import { useRecordDraft } from '../interactions/formDraft'
 
 type Named = { id: string; name: string }
 
@@ -20,6 +21,8 @@ type AgreementFormProps = {
   defaultInteractionIds?: string[]
   onSaved: (agreement: Agreement) => void
   onCancel: () => void
+  // Н-А1: при конфликте версии перечитать договор на месте; введённое остаётся в черновике формы.
+  onReload?: () => void
   handleAccessError: (error: unknown) => boolean
 }
 
@@ -66,26 +69,36 @@ export const AgreementForm = ({
   defaultInteractionIds,
   onSaved,
   onCancel,
+  onReload,
   handleAccessError
 }: AgreementFormProps) => {
   const creating = agreement === undefined
-  const [number, setNumber] = useState(agreement?.number ?? '')
-  const [signed, setSigned] = useState(false)
-  const [concludedOn, setConcludedOn] = useState(agreement?.concludedOn ?? '')
-  const [validUntil, setValidUntil] = useState(agreement?.validUntil ?? '')
-  const [sentOn, setSentOn] = useState(agreement?.sentOn ?? '')
-  const [plannedKind, setPlannedKind] = useState<PlanKind | ''>(agreement?.plannedKind ?? '')
-  const [plannedOn, setPlannedOn] = useState(agreement?.plannedOn ?? '')
-  const [parties, setParties] = useState(agreement?.parties ?? '')
-  const [universitySignerId, setUniversitySignerId] = useState(
-    agreement === undefined ? defaultSignerId(options.contacts) : agreement.universitySigner?.id ?? ''
+  const initial = {
+    number: agreement?.number ?? '',
+    signed: false,
+    concludedOn: agreement?.concludedOn ?? '',
+    validUntil: agreement?.validUntil ?? '',
+    sentOn: agreement?.sentOn ?? '',
+    plannedKind: agreement?.plannedKind ?? '',
+    plannedOn: agreement?.plannedOn ?? '',
+    parties: agreement?.parties ?? '',
+    universitySignerId: agreement === undefined ? defaultSignerId(options.contacts) : agreement.universitySigner?.id ?? '',
+    schoolSignerId: agreement?.schoolSigner?.id ?? '',
+    interactionIds: agreement?.interactions.map((item) => item.id) ?? defaultInteractionIds ?? [],
+    directionIds: agreement?.directions.map((item) => item.id) ?? [],
+    programIds: agreement?.programs.map((item) => item.id) ?? [],
+    productIds: agreement?.products.map((item) => item.id) ?? [],
+    fileId: ''
+  }
+  const draft = useRecordDraft(
+    agreement === undefined ? `agreement:new:${organizationId}` : `agreement:${agreement.id}`,
+    agreement === undefined ? 'новый договор с вузом' : `реквизиты договора № ${agreement.number}`,
+    initial
   )
-  const [schoolSignerId, setSchoolSignerId] = useState(agreement?.schoolSigner?.id ?? '')
-  const [interactionIds, setInteractionIds] = useState<string[]>(agreement?.interactions.map((item) => item.id) ?? defaultInteractionIds ?? [])
-  const [directionIds, setDirectionIds] = useState<string[]>(agreement?.directions.map((item) => item.id) ?? [])
-  const [programIds, setProgramIds] = useState<string[]>(agreement?.programs.map((item) => item.id) ?? [])
-  const [productIds, setProductIds] = useState<string[]>(agreement?.products.map((item) => item.id) ?? [])
-  const [fileId, setFileId] = useState('')
+  const { set } = draft
+  const { number, signed, concludedOn, validUntil, sentOn, plannedOn, parties, universitySignerId, schoolSignerId, interactionIds,
+    directionIds, programIds, productIds, fileId } = draft.values
+  const plannedKind = draft.values.plannedKind as PlanKind | ''
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const commandKey = useCommandKey()
@@ -132,6 +145,7 @@ export const AgreementForm = ({
         ? await agreementsApi.create(organizationId, payload, key)
         : await agreementsApi.update(agreement.id, payload, key)
       commandKey.settle()
+      draft.clear()
       onSaved(result)
     } catch (caught) {
       commandKey.settle(caught)
@@ -149,11 +163,11 @@ export const AgreementForm = ({
         <fieldset className="agreement-form__status">
           <legend>Договор</legend>
           <label>
-            <input type="radio" name="agreement-initial-status" checked={!signed} onChange={() => setSigned(false)} />
+            <input type="radio" name="agreement-initial-status" checked={!signed} onChange={() => set({ signed: false })} />
             <span>Проект — пойдёт на согласование с вузом</span>
           </label>
           <label>
-            <input type="radio" name="agreement-initial-status" checked={signed} onChange={() => setSigned(true)} />
+            <input type="radio" name="agreement-initial-status" checked={signed} onChange={() => set({ signed: true })} />
             <span>Уже подписан</span>
           </label>
         </fieldset>
@@ -161,7 +175,7 @@ export const AgreementForm = ({
       <div className="agreement-form__grid">
         <label>
           <span>Номер договора<span className="required-mark" aria-hidden="true"> *</span></span>
-          <input value={number} required maxLength={100} onChange={(event) => setNumber(event.target.value)} />
+          <input value={number} required maxLength={100} onChange={(event) => set({ number: event.target.value })} />
         </label>
         <label>
           <span>Дата подписания{creating && signed && <span className="required-mark" aria-hidden="true"> *</span>}</span>
@@ -170,20 +184,20 @@ export const AgreementForm = ({
             value={concludedOn}
             required={creating && signed}
             max={validUntil !== '' && validUntil < todayInMoscow() ? validUntil : todayInMoscow()}
-            onChange={(event) => setConcludedOn(event.target.value)}
+            onChange={(event) => set({ concludedOn: event.target.value })}
           />
         </label>
         <label>
           Действует до
-          <input type="date" value={validUntil} min={concludedOn || undefined} onChange={(event) => setValidUntil(event.target.value)} />
+          <input type="date" value={validUntil} min={concludedOn || undefined} onChange={(event) => set({ validUntil: event.target.value })} />
         </label>
         <label>
           Отправлен на согласование
-          <input type="date" value={sentOn} onChange={(event) => setSentOn(event.target.value)} />
+          <input type="date" value={sentOn} onChange={(event) => set({ sentOn: event.target.value })} />
         </label>
         <label>
           Подписант вуза
-          <select value={universitySignerId} onChange={(event) => setUniversitySignerId(event.target.value)}>
+          <select value={universitySignerId} onChange={(event) => set({ universitySignerId: event.target.value })}>
             <option value="">Не выбран</option>
             {contacts.map((item) => (
               <option key={item.id} value={item.id}>
@@ -195,7 +209,7 @@ export const AgreementForm = ({
         </label>
         <label>
           Подписант школы
-          <select value={schoolSignerId} onChange={(event) => setSchoolSignerId(event.target.value)}>
+          <select value={schoolSignerId} onChange={(event) => set({ schoolSignerId: event.target.value })}>
             <option value="">Не выбран</option>
             {schoolSigners.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}
           </select>
@@ -206,11 +220,11 @@ export const AgreementForm = ({
             value={plannedKind}
             onChange={(event) => {
               const next = event.target.value as PlanKind | ''
-              setPlannedKind(next)
+              set({ plannedKind: next })
               if (next === '') {
-                setPlannedOn('')
+                set({ plannedOn: '' })
               } else if (next === 'RENEWAL' && plannedOn === '' && validUntil !== '') {
-                setPlannedOn(validUntil)
+                set({ plannedOn: validUntil })
               }
             }}
           >
@@ -226,7 +240,7 @@ export const AgreementForm = ({
             required={plannedKind !== ''}
             disabled={plannedKind === ''}
             min={plannedKind === 'RENEWAL' ? concludedOn || undefined : undefined}
-            onChange={(event) => setPlannedOn(event.target.value)}
+            onChange={(event) => set({ plannedOn: event.target.value })}
           />
           {plannedKind === 'RENEWAL' && validUntil !== '' && (
             <span className="agreement-form__hint">{`Договор действует до ${formatDate(validUntil)}; продление планируют от этой даты.`}</span>
@@ -234,12 +248,12 @@ export const AgreementForm = ({
         </label>
         <label className="agreement-form__wide">
           Стороны
-          <textarea value={parties} maxLength={2000} rows={2} onChange={(event) => setParties(event.target.value)} />
+          <textarea value={parties} maxLength={2000} rows={2} onChange={(event) => set({ parties: event.target.value })} />
         </label>
         {creating && (
           <label className="agreement-form__wide">
             Файл договора из документов взаимодействий
-            <select value={fileId} onChange={(event) => setFileId(event.target.value)}>
+            <select value={fileId} onChange={(event) => set({ fileId: event.target.value })}>
               <option value="">Не выбран</option>
               {options.attachments.map((item) => (
                 <option key={item.id} value={item.id}>{item.originalName} — {item.interactionTitle}, {item.stageName}</option>
@@ -249,7 +263,7 @@ export const AgreementForm = ({
           </label>
         )}
       </div>
-      <ChoiceList legend="Связанные взаимодействия вуза" items={works} selected={interactionIds} empty="У вуза пока нет взаимодействий." onChange={setInteractionIds} />
+      <ChoiceList legend="Связанные взаимодействия вуза" items={works} selected={interactionIds} empty="У вуза пока нет взаимодействий." onChange={(ids) => set({ interactionIds: ids })} />
       <fieldset className="agreement-form__subject">
         <legend>Предмет договора</legend>
         <ChoiceList
@@ -257,27 +271,27 @@ export const AgreementForm = ({
           items={withSelected(options.directions, agreement?.directions)}
           selected={directionIds}
           empty="Нет направлений."
-          onChange={setDirectionIds}
+          onChange={(ids) => set({ directionIds: ids })}
         />
         <ChoiceList
           legend="Программы"
           items={withSelected(options.programs, agreement?.programs)}
           selected={programIds}
           empty="Нет программ."
-          onChange={setProgramIds}
+          onChange={(ids) => set({ programIds: ids })}
         />
         <ChoiceList
           legend="Продукты"
           items={withSelected(options.products, agreement?.products)}
           selected={productIds}
           empty="Нет продуктов."
-          onChange={setProductIds}
+          onChange={(ids) => set({ productIds: ids })}
         />
       </fieldset>
-      {error !== null && <CommandError error={error} fallback="Договор не сохранён." />}
+      {error !== null && <CommandError error={error} fallback="Договор не сохранён." onReload={onReload === undefined ? undefined : () => { setError(null); onReload() }} />}
       <div className="agreement-form__actions">
         <button type="submit" disabled={saving}>{saving ? 'Сохраняем…' : 'Сохранить договор'}</button>
-        <button type="button" className="button--secondary" onClick={onCancel} disabled={saving}>Отмена</button>
+        <button type="button" className="button--secondary" onClick={() => { draft.clear(); onCancel() }} disabled={saving}>Отмена</button>
       </div>
     </form>
   )

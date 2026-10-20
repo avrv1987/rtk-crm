@@ -3,22 +3,33 @@ import { agreementsApi, formatDate, type AgreementSupplement, type AgreementSupp
 import { supplementStatusLabels, type SupplementStatus } from './agreementModel'
 import { AgreementFiles } from './AgreementFiles'
 import { CommandError, useCommandKey } from './agreementUi'
+import { useRecordDraft } from '../interactions/formDraft'
 
 type SupplementFormProps = {
   agreementId: string
   supplement?: AgreementSupplement
   onSaved: () => void
   onCancel: () => void
+  onReload: () => void
   handleAccessError: (error: unknown) => boolean
 }
 
 const orNull = (value: string) => (value.trim() === '' ? null : value.trim())
 
-const SupplementForm = ({ agreementId, supplement, onSaved, onCancel, handleAccessError }: SupplementFormProps) => {
-  const [number, setNumber] = useState(supplement?.number ?? '')
-  const [concludedOn, setConcludedOn] = useState(supplement?.concludedOn ?? '')
-  const [subject, setSubject] = useState(supplement?.subject ?? '')
-  const [status, setStatus] = useState<SupplementStatus>(supplement?.status ?? 'DRAFT')
+const SupplementForm = ({ agreementId, supplement, onSaved, onCancel, onReload, handleAccessError }: SupplementFormProps) => {
+  const draft = useRecordDraft(
+    supplement === undefined ? `supplement:new:${agreementId}` : `supplement:${supplement.id}`,
+    supplement === undefined ? 'новое допсоглашение' : `допсоглашение № ${supplement.number}`,
+    {
+      number: supplement?.number ?? '',
+      concludedOn: supplement?.concludedOn ?? '',
+      subject: supplement?.subject ?? '',
+      status: (supplement?.status ?? 'DRAFT') as string
+    }
+  )
+  const { number, concludedOn, subject } = draft.values
+  const status = draft.values.status as SupplementStatus
+  const { set } = draft
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const commandKey = useCommandKey()
@@ -42,6 +53,7 @@ const SupplementForm = ({ agreementId, supplement, onSaved, onCancel, handleAcce
         await agreementsApi.updateSupplement(supplement.id, payload, key)
       }
       commandKey.settle()
+      draft.clear()
       onSaved()
     } catch (caught) {
       commandKey.settle(caught)
@@ -58,15 +70,15 @@ const SupplementForm = ({ agreementId, supplement, onSaved, onCancel, handleAcce
       <div className="agreement-form__grid">
         <label>
           <span>Номер<span className="required-mark" aria-hidden="true"> *</span></span>
-          <input value={number} required maxLength={100} onChange={(event) => setNumber(event.target.value)} />
+          <input value={number} required maxLength={100} onChange={(event) => set({ number: event.target.value })} />
         </label>
         <label>
           Дата подписания
-          <input type="date" value={concludedOn} onChange={(event) => setConcludedOn(event.target.value)} />
+          <input type="date" value={concludedOn} onChange={(event) => set({ concludedOn: event.target.value })} />
         </label>
         <label>
           Статус
-          <select value={status} onChange={(event) => setStatus(event.target.value as SupplementStatus)}>
+          <select value={status} onChange={(event) => set({ status: event.target.value })}>
             {(Object.keys(supplementStatusLabels) as SupplementStatus[]).map((item) => (
               <option key={item} value={item}>{supplementStatusLabels[item]}</option>
             ))}
@@ -74,13 +86,13 @@ const SupplementForm = ({ agreementId, supplement, onSaved, onCancel, handleAcce
         </label>
         <label className="agreement-form__wide">
           Предмет
-          <textarea value={subject} rows={2} maxLength={2000} onChange={(event) => setSubject(event.target.value)} />
+          <textarea value={subject} rows={2} maxLength={2000} onChange={(event) => set({ subject: event.target.value })} />
         </label>
       </div>
-      {error !== null && <CommandError error={error} fallback="Допсоглашение не сохранено." />}
+      {error !== null && <CommandError error={error} fallback="Допсоглашение не сохранено." onReload={() => { setError(null); onReload() }} />}
       <div className="agreement-form__actions">
         <button type="submit" disabled={saving}>{saving ? 'Сохраняем…' : 'Сохранить допсоглашение'}</button>
-        <button type="button" className="button--secondary" onClick={onCancel} disabled={saving}>Отмена</button>
+        <button type="button" className="button--secondary" onClick={() => { draft.clear(); onCancel() }} disabled={saving}>Отмена</button>
       </div>
     </form>
   )
@@ -110,7 +122,7 @@ export const AgreementSupplements = ({ agreementId, supplements, canEdit, onChan
         )}
       </div>
       {editing === 'new' && (
-        <SupplementForm agreementId={agreementId} onSaved={saved} onCancel={() => setEditing(null)} handleAccessError={handleAccessError} />
+        <SupplementForm agreementId={agreementId} onSaved={saved} onCancel={() => setEditing(null)} onReload={onChanged} handleAccessError={handleAccessError} />
       )}
       {supplements.length === 0 && editing !== 'new' && <p>Допсоглашений нет.</p>}
       <ul className="agreement-plan__list">
@@ -122,6 +134,7 @@ export const AgreementSupplements = ({ agreementId, supplements, canEdit, onChan
                 supplement={supplement}
                 onSaved={saved}
                 onCancel={() => setEditing(null)}
+                onReload={onChanged}
                 handleAccessError={handleAccessError}
               />
             ) : (

@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef } from 'react'
+import { useFocusReturn } from './focusReturn'
 
 type ConfirmDialogProps = {
   open: boolean
@@ -14,6 +15,7 @@ export const ConfirmDialog = ({ open, title, description, confirmLabel, onConfir
   const cancelRef = useRef<HTMLButtonElement>(null)
   const titleId = useId()
   const descriptionId = useId()
+  useFocusReturn(open)
 
   useEffect(() => {
     const dialog = dialogRef.current

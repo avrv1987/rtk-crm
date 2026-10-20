@@ -60,10 +60,10 @@ public class SubjectReportWriter {
                         section(layout, "3. Профили сотрудников в CRM", List.of("Имя", "Логин", "Состояние"),
                                 new int[]{40, 30, 30}, report.data().profiles(),
                                 profile -> List.of(profile.displayName(), text(profile.login()), profileState(profile)));
-                        section(layout, "4. Упоминания в карточках взаимодействий",
-                                List.of("Вуз", "Карточка", "Где", "Текст", "Дата"),
+                        section(layout, "4. Упоминания в карточках и других записях",
+                                List.of("Вуз", "Объект", "Где", "Текст", "Дата"),
                                 new int[]{16, 18, 14, 40, 12}, report.data().mentions(),
-                                mention -> List.of(mention.organizationName(), mention.interactionTitle(),
+                                mention -> List.of(text(mention.organizationName()), mention.interactionTitle(),
                                         mention.place().label(), mention.text(), date(mention.occurredAt())));
                         section(layout, "5. Файлы, в названии которых есть данные субъекта",
                                 List.of("Вуз", "Карточка", "Файл", "Загружен"),

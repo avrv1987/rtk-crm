@@ -351,8 +351,10 @@ class ReportJobServiceTest {
         }
         assertThatThrownBy(() -> idle.submit(MANAGER_A_PROFILE, request(ReportFormat.XLSX), "quota-extra"))
                 .isInstanceOfSatisfying(ReportException.class, exception -> {
-                    assertThat(exception.code()).isEqualTo("REPORT_CAPACITY_EXCEEDED");
-                    assertThat(exception.getMessage()).contains("У вас уже строятся 5");
+                    // Н-2 проверки 2.5.3: личная квота — 429 с понятным текстом, как общий лимит запросов.
+                    assertThat(exception.status()).isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS);
+                    assertThat(exception.code()).isEqualTo("REPORT_QUOTA_EXCEEDED");
+                    assertThat(exception.getMessage()).contains("У вас уже строятся 5").contains("через 30 сек.");
                 });
     }
 

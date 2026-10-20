@@ -18,6 +18,7 @@ import java.util.regex.Pattern;
 final class ImportCells {
     static final ZoneId ZONE = ZoneId.of("Europe/Moscow");
     private static final DateTimeFormatter RUSSIAN_DATE = DateTimeFormatter.ofPattern("d.M.uuuu").withResolverStyle(ResolverStyle.STRICT);
+    private static final Pattern DATE_SHAPE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\.\\d{1,2}\\.\\d{4}");
     private static final Pattern DATE_TIME = Pattern.compile("^(\\S+?)(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?$");
 
     private ImportCells() {
@@ -43,7 +44,7 @@ final class ImportCells {
     // Текст комментария хранится с переводами строк: схлопываются только пробелы по краям.
     static String text(PlannedRow row, String field, int maxLength) {
         String raw = row.values.get(field);
-        String value = raw == null ? "" : raw.strip();
+        String value = ru.rtk.crm.web.VisibleText.blank(raw) ? "" : raw.strip();
         if (value.length() > maxLength) {
             row.error(field, "Длиннее " + maxLength + " символов");
         }
@@ -71,7 +72,7 @@ final class ImportCells {
         }
         LocalDate date = parseDate(value);
         if (date == null) {
-            row.error(field, "Укажите дату в формате ГГГГ-ММ-ДД или ДД.ММ.ГГГГ");
+            row.error(field, dateError(value, "Укажите дату в формате ГГГГ-ММ-ДД или ДД.ММ.ГГГГ"));
         }
         return date;
     }
@@ -85,7 +86,8 @@ final class ImportCells {
         Matcher matcher = DATE_TIME.matcher(value);
         LocalDate date = matcher.matches() ? parseDate(matcher.group(1)) : null;
         if (date == null) {
-            row.error(field, "Укажите дату в формате ГГГГ-ММ-ДД или ДД.ММ.ГГГГ, время — ЧЧ:ММ");
+            row.error(field, dateError(matcher.matches() ? matcher.group(1) : value,
+                    "Укажите дату в формате ГГГГ-ММ-ДД или ДД.ММ.ГГГГ, время — ЧЧ:ММ"));
             return null;
         }
         LocalTime time = LocalTime.MIDNIGHT;
@@ -100,6 +102,11 @@ final class ImportCells {
             time = LocalTime.of(hours, minutes, seconds);
         }
         return LocalDateTime.of(date, time).atZone(ZONE).toOffsetDateTime();
+    }
+
+    // Формат верный, а даты нет (29.02.2025, 31.02.2026) — говорим именно это, а не «неверный формат».
+    private static String dateError(String value, String formatError) {
+        return DATE_SHAPE.matcher(value).matches() ? "Такой даты нет: проверьте день и месяц (" + value + ")" : formatError;
     }
 
     static LocalDate parseDate(String value) {

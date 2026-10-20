@@ -135,8 +135,11 @@ class SigningPlanServiceTest {
 
     @Test
     void administratorAndPartnerGetNoBusinessRowsAndTerminatedAndArchivedAreSkipped() {
-        assertThat(service.plan(ADMIN_PROFILE, 2026, 1).rows()).isEmpty();
-        assertThat(service.plan(PARTNER, 2026, 1).rows()).isEmpty();
+        // Б-11: администратору и координатору бизнес-отчёт недоступен — 403, а не пустой отчёт.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.plan(ADMIN_PROFILE, 2026, 1))
+                .isInstanceOf(ru.rtk.crm.access.AdminCrmProfileAccessDeniedException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.plan(PARTNER, 2026, 1))
+                .isInstanceOf(ru.rtk.crm.access.AdminCrmProfileAccessDeniedException.class);
         assertThat(service.plan(MANAGEMENT, 2026, 1).rows()).extracting(SigningPlan.Row::agreementNumber)
                 .doesNotContain("П-6", "П-10");
     }

@@ -146,6 +146,8 @@ public class InteractionIssuesApiController {
             HttpServletRequest request
     ) {
         CrmProfile profile = currentProfileService.requireActiveProfile(user);
+        // Список реестра у администратора пуст (экран общий), а выгрузка — бизнес-отчёт: 403, а не пустой файл.
+        ru.rtk.crm.access.BusinessDataAuthorization.requireReader(profile);
         int maxRows = reportProperties.maxRows();
         List<InteractionIssue> rows = issueService.registryRows(
                 profile,

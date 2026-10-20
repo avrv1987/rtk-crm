@@ -341,6 +341,7 @@ class AgreementReportingHttpTest {
         assertThat(row(report, title, "Без единицы").get(rateColumn).isNull()).isTrue();
         assertThat(report.path("totals").path("actualValuation").decimalValue()).isEqualByComparingTo("4000");
         assertThat(report.path("totals").path("withoutRate").asInt()).isEqualTo(1);
+        assertThat(report.path("notes").toString()).contains("Без ставки: 1 мероприятие —");
         assertThat(report.path("totals").path("participants").asInt()).isEqualTo(12);
         assertThat(report.path("totals").path("cost").decimalValue()).isEqualByComparingTo("2500.50");
         assertThat(report.path("byExecutor").get(0).path("name").asText()).isEqualTo("ДЗО-1");
@@ -428,6 +429,8 @@ class AgreementReportingHttpTest {
         try (PDDocument document = Loader.loadPDF(pdf)) {
             String text = new PDFTextStripper().getText(document).replace(' ', ' ');
             assertThat(text).contains("Отчёт по соглашениям", "Второе", "2 469,00");
+            // Б-7: в шрифте PDF нет знака рубля — подпись выводится «руб.», а не «?».
+            assertThat(text).contains("руб.").doesNotContain("?").doesNotContain("₽");
         }
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_events WHERE action = 'REPORT_DOWNLOADED'", Integer.class)).isEqualTo(3);
 
@@ -467,7 +470,24 @@ class AgreementReportingHttpTest {
                 Map.of("version", 1, "decision", "APPROVE")).getStatus()).isEqualTo(404);
         assertThat(call(HttpMethod.GET, "/api/partner/activity-lists", KAM_A, UserRole.USER, null).getStatus()).isEqualTo(403);
         assertThat(call(HttpMethod.PATCH, "/api/activity-lists/" + foreignList, KAM_B, UserRole.USER,
-                Map.of("version", 1, "title", "Новое")).getStatus()).isEqualTo(400);
+                Map.of("version", 1, "title", "Новое")).getStatus()).isEqualTo(409);
+    }
+
+    @Test
+    void editingAListAlreadySentToTheUniversityIsAConflictWithTheCurrentStatus() throws Exception {
+        created(KAM_A, UserRole.USER, "/api/agreements/" + agreement(WITH_COORDINATOR, "К-409") + "/activities",
+                activity(KIND_PROGRAMS, "Курс", null, null, null, 5, null, "2026-04-01", "PLANNED"));
+        String id = created(KAM_A, UserRole.USER, "/api/organizations/" + WITH_COORDINATOR + "/activity-lists", Map.of("year", 2026))
+                .path("summary").path("id").asText();
+        transition(id, KAM_A, 0, "SEND", null);
+        // Руководитель сохраняет форму, открытую ещё у проекта (версия 0).
+        MockHttpServletResponse stale = call(HttpMethod.PATCH, "/api/activity-lists/" + id, LEADER_A, UserRole.LEADER,
+                Map.of("version", 0, "title", "Новое название"));
+        assertThat(stale.getStatus()).isEqualTo(409);
+        JsonNode error = json(stale);
+        assertThat(error.path("code").asText()).isEqualTo("VERSION_CONFLICT");
+        assertThat(error.path("message").asText()).contains("«На согласовании»");
+        assertThat(error.path("currentVersion").asInt()).isEqualTo(1);
     }
 
     @Test

@@ -3805,3 +3805,31 @@ label.segmented__option input:focus-visible + span {
     display: inline-flex;
   }
 }
+
+/* Н-А8: «Перейти к содержанию» в рабочем интерфейсе — видна только при фокусе с клавиатуры. */
+.skip-link {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-height);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  transform: translateY(calc(-100% - var(--space-4)));
+}
+
+.skip-link:focus {
+  box-shadow: var(--shadow-raised);
+  transform: none;
+}
+
+.app-main:focus {
+  outline: none;
+}
+
+.route-notice {
+  margin-bottom: var(--space-4);
+}

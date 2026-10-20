@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react'
-import { ApiError, createIdempotencyKey } from '../../shared/api/client'
+import { ApiError, createIdempotencyKey, isConflict } from '../../shared/api/client'
 import { todayInMoscow } from '../../shared/format/datetime'
 import { SupportDetails } from '../../shared/ui/SupportDetails'
 import {
@@ -95,12 +95,14 @@ const fieldLabels: Record<string, string> = {
   version: 'Версия'
 }
 
-export const errorMessage = (error: unknown, fallback: string) => {
+export const errorMessage = (error: unknown, fallback: string, reloadable = false) => {
   if (!(error instanceof ApiError)) {
     return 'Не удалось связаться с сервисом. Проверьте соединение и повторите попытку.'
   }
   if (error.code === 'VERSION_CONFLICT') {
-    return `${error.message}. Обновите данные и повторите изменение.`
+    return reloadable
+      ? `${error.message}. Нажмите «Обновить карточку», чтобы увидеть текущие данные; введённое в форме не потеряется.`
+      : `${error.message}. Обновите данные и повторите изменение.`
   }
   if (error.code === 'NOT_FOUND' || error.code === 'FORBIDDEN' || error.code === 'CONFIRMATION_LIMIT' || error.code === 'PAYLOAD_TOO_LARGE') {
     return error.message
@@ -116,13 +118,15 @@ type CommandErrorProps = {
   fallback: string
   onRetry?: () => void
   retryLabel?: string
+  // Н-А1: при 409 — кнопка «Обновить карточку», как у карточки взаимодействия.
+  onReload?: () => void
 }
 
-export const CommandError = ({ error, fallback, onRetry, retryLabel = 'Повторить' }: CommandErrorProps) => {
+export const CommandError = ({ error, fallback, onRetry, retryLabel = 'Повторить', onReload }: CommandErrorProps) => {
   const fieldErrors = error instanceof ApiError ? Object.entries(error.fieldErrors ?? {}) : []
   return (
     <div className="interaction-command-error" role="alert">
-      <p>{errorMessage(error, fallback)}</p>
+      <p>{errorMessage(error, fallback, onReload !== undefined)}</p>
       {fieldErrors.length > 0 && (
         <ul>
           {/* Техническое имя поля (priority, body) пользователю ничего не говорит: без подписи показываем только текст. */}
@@ -130,6 +134,7 @@ export const CommandError = ({ error, fallback, onRetry, retryLabel = 'Повт�
         </ul>
       )}
       {error instanceof ApiError && <SupportDetails requestId={error.requestId} code={error.code} />}
+      {onReload && isConflict(error) && <button type="button" onClick={onReload}>Обновить карточку</button>}
       {onRetry && <button type="button" className="button--secondary" onClick={onRetry}>{retryLabel}</button>}
     </div>
   )

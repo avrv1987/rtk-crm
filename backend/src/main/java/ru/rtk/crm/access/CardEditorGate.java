@@ -15,7 +15,8 @@ import ru.rtk.crm.catalog.OrganizationAssignmentAccessDeniedException;
 
 // Права на правку карточки проверяются до разбора тела запроса: иначе «Руководство» на комментарий или контакт с
 // неполными данными получало 400 «Проверьте введённые данные» вместо 403 (у этих методов проверка тела — @Valid,
-// и она срабатывает раньше сервиса). То же для перехода, создания взаимодействия и назначения ответственного (2.5).
+// и она срабатывает раньше сервиса). То же для перехода, создания взаимодействия и назначения ответственного (2.5),
+// а для координатора вуза — для любой записи вне кабинета.
 @Configuration
 class CardEditorGate implements WebMvcConfigurer {
     private static final Set<String> WRITES = Set.of("POST", "PUT", "PATCH", "DELETE");
@@ -54,5 +55,31 @@ class CardEditorGate implements WebMvcConfigurer {
             }
         }).addPathPatterns("/api/interactions/*/comments", "/api/organizations/*/contacts", "/api/organizations/*/contacts/*",
                 "/api/interactions/*/transitions", "/api/interactions", "/api/organizations/*/assignment");
+        // Координатору вуза доступны только кабинет, свой профиль и свои темы писем: любая другая запись — 403 до
+        // разбора тела, как у «Руководства» выше (Б-10 проверки 2.5.3), а не 400 за неполное тело.
+        registry.addInterceptor(new HandlerInterceptor() {
+            @Override
+            public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+                Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+                if (!WRITES.contains(request.getMethod()) || authentication == null
+                        || !(authentication.getPrincipal() instanceof OidcUser user)) {
+                    return true;
+                }
+                CrmProfile profile;
+                try {
+                    profile = currentProfileService.requireSessionProfile(user);
+                } catch (RuntimeException unavailable) {
+                    return true;
+                }
+                if (profile != null && profile.role() == UserRole.PARTNER) {
+                    throw new AdminCrmProfileAccessDeniedException();
+                }
+                return true;
+            }
+        }).addPathPatterns("/api/**").excludePathPatterns(PARTNER_PATHS);
     }
+
+    // Доступ в кабинет (partner-access) — методы модуля кабинета: при выключенном модуле они отвечают 404, а не 403.
+    static final String[] PARTNER_PATHS = {"/api/me", "/api/me/**", "/api/partner/**", "/api/mail/preferences", "/api/auth/**",
+            "/api/organizations/*/partner-access", "/api/organizations/*/contacts/*/partner-access"};
 }

@@ -8,10 +8,11 @@ export const announceSession = (profileId: string | null) => {
   }
 }
 
-export const watchSessionElsewhere = (profileId: string, onChange: () => void) => {
+// signedOut: в другой вкладке нажали «Выйти» (пустое значение); иначе там вошёл другой сотрудник.
+export const watchSessionElsewhere = (profileId: string, onChange: (signedOut: boolean) => void) => {
   const listener = (event: StorageEvent) => {
     if (event.key === sessionKey && event.newValue !== null && event.newValue !== profileId) {
-      onChange()
+      onChange(event.newValue === '')
     }
   }
   window.addEventListener('storage', listener)

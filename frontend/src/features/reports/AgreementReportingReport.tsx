@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { Me, Organization } from '../../shared/api/client'
 import { formatMoscowDateTime } from '../../shared/format/datetime'
+import { pluralForm } from '../../shared/format/plural'
 import { saveFile } from '../admin/saveFile'
 import { loadOrganizations } from '../agreements/AgreementConfirmationsPanel'
 import {
@@ -255,13 +256,13 @@ const ReportBody = ({ settings, organizations, title, group, hint, onSessionExpi
       {state.kind === 'ready' && table !== null && (
         <>
           <ul className="kam-review__tiles">
-            <li><strong>{state.result.totals.organizations}</strong> вузов</li>
-            <li><strong>{state.result.totals.activities}</strong> мероприятий</li>
-            <li><strong>{state.result.totals.participants}</strong> участников (охват)</li>
+            <li><strong>{state.result.totals.organizations}</strong> {pluralForm(state.result.totals.organizations, 'вуз', 'вуза', 'вузов')}</li>
+            <li><strong>{state.result.totals.activities}</strong> {pluralForm(state.result.totals.activities, 'мероприятие', 'мероприятия', 'мероприятий')}</li>
+            <li><strong>{state.result.totals.participants}</strong> {pluralForm(state.result.totals.participants, 'участник', 'участника', 'участников')} (охват)</li>
             <li><strong>{formatMoney(state.result.totals.cost)}</strong> ₽ стоимость</li>
             <li><strong>{formatMoney(state.result.totals.plannedValuation)}</strong> ₽ оценка по плану</li>
             <li><strong>{formatMoney(state.result.totals.actualValuation)}</strong> ₽ оценка по факту</li>
-            {state.result.totals.withoutRate > 0 && <li><strong>{state.result.totals.withoutRate}</strong> мероприятий без подходящей ставки</li>}
+            {state.result.totals.withoutRate > 0 && <li><strong>{state.result.totals.withoutRate}</strong> {pluralForm(state.result.totals.withoutRate, 'мероприятие', 'мероприятия', 'мероприятий')} без подходящей ставки</li>}
           </ul>
           {table.rows.length === 0 ? <p className="report-empty">За период мероприятий нет.</p> : (
             <div className="reports__table-scroll" role="region" aria-label="Мероприятия" tabIndex={0}>

@@ -314,7 +314,8 @@ public final class PdfLayout {
             } else if (Character.isISOControl(codePoint) || Character.isWhitespace(codePoint)) {
                 result.append(' ');
             } else if (cmap.getGlyphId(codePoint) == 0) {
-                result.append('?');
+                // В LiberationSans нет знака рубля: подпись колонки «Стоимость, ₽» выводим словом, а не «?».
+                result.append(codePoint == '₽' ? "руб." : "?");
             } else {
                 result.appendCodePoint(codePoint);
             }

@@ -23,6 +23,15 @@ export const partnerRequestGroups = <T extends { status: RequestStatus }>(reques
   closed: requests.filter((request) => request.status === 'ACCEPTED' || request.status === 'CANCELLED')
 })
 
+// Н-А3: решение по перечню «На согласовании» тоже ждут от вуза — оно входит в «Требуется от вуза (N)».
+export const partnerReviewLists = <T extends { summary: { status: string } }>(lists: T[] | null) => (
+  (lists ?? []).filter((list) => list.summary.status === 'REVIEW')
+)
+
+export const partnerRequiredCount = (requiredRequests: number, lists: { summary: { status: string } }[] | null) => (
+  requiredRequests + partnerReviewLists(lists).length
+)
+
 // Для КАМ: какие действия доступны по запросу в его статусе.
 export const partnerRequestActions = (status: RequestStatus) => ({
   review: status === 'RESPONDED',

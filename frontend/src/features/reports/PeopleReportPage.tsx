@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Me } from '../../shared/api/client'
 import { formatMoscowDateTime, todayInMoscow } from '../../shared/format/datetime'
+import { pluralForm } from '../../shared/format/plural'
 import { periodDefaults } from '../agreements/agreementModel'
 import { peopleApi, type HourUnit, type PeopleReport } from '../people/peopleApi'
 import { hourUnitShort } from '../people/peopleForms'
@@ -104,7 +105,7 @@ export const PeopleReportPage = ({ role, onSessionExpired, onProfileUnavailable 
           <>
             <h3>Преподавание сотрудниками</h3>
             <ul className="kam-review__tiles">
-              <li><strong>{teaching.records}</strong> записей</li>
+              <li><strong>{teaching.records}</strong> {pluralForm(teaching.records, 'запись', 'записи', 'записей')}</li>
               <li><strong>{hours(teaching.hours, teaching.unit)}</strong> всего</li>
               <li><strong>{hours(teaching.confirmedHours, teaching.unit)}</strong> подтверждено вузами</li>
             </ul>
@@ -114,7 +115,7 @@ export const PeopleReportPage = ({ role, onSessionExpired, onProfileUnavailable 
 
             <h3>Стажировки</h3>
             <ul className="kam-review__tiles">
-              <li><strong>{internships.interns}</strong> стажёров (студентов: {internships.students}, преподавателей: {internships.teachers})</li>
+              <li><strong>{internships.interns}</strong> {pluralForm(internships.interns, 'стажёр', 'стажёра', 'стажёров')} (студентов: {internships.students}, преподавателей: {internships.teachers})</li>
               <li><strong>{internships.completed}</strong> завершили, трудоустроены: {internships.employed}</li>
               <li><strong>{hours(internships.internHours, internships.unit)}</strong> часов стажёров</li>
               <li><strong>{hours(internships.mentorHours, internships.unit)}</strong> часов наставников</li>
@@ -124,7 +125,7 @@ export const PeopleReportPage = ({ role, onSessionExpired, onProfileUnavailable 
 
             <h3>Повышение квалификации преподавателей</h3>
             <ul className="kam-review__tiles">
-              <li><strong>{qualifications.people}</strong> записей, часов: {hours(qualifications.hours, qualifications.unit)}</li>
+              <li><strong>{qualifications.people}</strong> {pluralForm(qualifications.people, 'запись', 'записи', 'записей')}, часов: {hours(qualifications.hours, qualifications.unit)}</li>
               <li><strong>{qualifications.certified}</strong> аттестованы, не аттестованы: {qualifications.notCertified}, обучаются: {qualifications.inProgress}</li>
               <li><strong>{qualifications.frdoSubmitted}</strong> переданы в ФРДО, ждут передачи: {qualifications.frdoPending}</li>
               <li>

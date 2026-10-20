@@ -15,6 +15,7 @@ import './sourcePage.css'
 
 type PendingSourceRecordsProps = {
   role: Me['role']
+  onCount?: (count: number) => void
   onSessionExpired: () => void
   onProfileUnavailable: (requestId: string) => void
 }
@@ -75,7 +76,7 @@ const rowOf = (record: PendingSourceRecord): ReviewRow => ({
   actionable: record.canResolve
 })
 
-export const PendingSourceRecords = ({ role, onSessionExpired, onProfileUnavailable }: PendingSourceRecordsProps) => {
+export const PendingSourceRecords = ({ role, onCount, onSessionExpired, onProfileUnavailable }: PendingSourceRecordsProps) => {
   const [state, setState] = useState<ListState>({ kind: 'loading' })
   const [command, setCommand] = useState<CommandState>({ kind: 'idle' })
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
@@ -94,12 +95,13 @@ export const PendingSourceRecords = ({ role, onSessionExpired, onProfileUnavaila
         role === 'LEADER' ? loadOrganizations() : Promise.resolve([])
       ])
       setState({ kind: 'ready', records, organizations })
+      onCount?.(records.length)
     } catch (error) {
       if (!handled(error)) {
         setState({ kind: 'failed', requestId: requestIdOf(error) })
       }
     }
-  }, [handled, role])
+  }, [handled, onCount, role])
 
   useEffect(() => {
     void load()

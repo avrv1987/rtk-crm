@@ -404,9 +404,10 @@ class PersonalDataServiceTest {
         assertThat(stored.path("id").asText()).isEqualTo(storedId);
         assertThat(stored.path("version").asInt()).isEqualTo(12345678);
         assertThat(stored.path("title").asText()).isEqualTo("Встреча с Контакт обезличен, тел. Контакт обезличен");
+        // Б-1, Б-4 проверки 2.5.3: ответ повтора команды о другом вузе тоже обезличивается — поиск находит ФИО везде.
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT result_json FROM command_idempotency_records WHERE id = ?", String.class, foreignCommand
-        )).contains("Встреча с Анна Сидорова");
+        )).contains("Встреча с Контакт обезличен").doesNotContain("Сидорова");
         assertThat(comment(MENTION)).isEqualTo("Созвонились с UAT Субъект Тестовый, ждём программу");
     }
 
@@ -814,13 +815,15 @@ class PersonalDataServiceTest {
         assertThat(fileName(sameUniversityAuditFile)).isEqualTo("Audit-plan.pdf");
         assertThat(fileName(foreignAuditFile)).isEqualTo("Audit-KAM2-protokol-vstrechi.pdf");
         assertThat(comment(wordsEvent)).isEqualTo("Аудит прошёл, Иванов доволен");
-        assertThat(comment(namesakeEvent)).isEqualTo("Созвонились с Иванов Аудит из Северного");
+        // Полное ФИО заменяется в любом вузе: поиск показывает это упоминание, значит, «Обезличить» его заменяет (Б-1).
+        assertThat(comment(namesakeEvent)).isEqualTo("Созвонились с Контакт обезличен из Северного");
         assertThat(comment(MENTION)).isEqualTo("Созвонились с UAT Субъект Тестовый, ждём программу");
     }
 
-    // Д-1: обезличивание одного контакта удалило 81 готовый отчёт всех пользователей.
+    // Д-1: обезличивание одного контакта удалило 81 готовый отчёт всех пользователей. Теперь кандидаты — отчёты всех
+    // команд (упоминание могло попасть в карточку другого вуза, Б-1), а удаляется только файл, где субъект есть.
     @Test
-    void anonymizationDeletesOnlyReportsOfThoseWhoSawTheSubjectAndKeepsOtherUsersReports() throws IOException {
+    void anonymizationDeletesOnlyReportsThatMentionTheSubjectInAnyTeam() throws IOException {
         UUID previousTeam = UUID.fromString("70000000-0000-0000-0000-000000000003");
         UUID managementReport = UUID.randomUUID();
         UUID previousTeamReport = UUID.randomUUID();
@@ -837,17 +840,20 @@ class PersonalDataServiceTest {
                 """, UUID.randomUUID(), UNIVERSITY, previousTeam, TEAM, ADMIN);
         report(managementReport, managementKey, NOW.minusHours(2), UUID.randomUUID(), "MANAGEMENT", null, "EVENTS");
         report(previousTeamReport, UUID.randomUUID(), NOW.minusHours(2), UUID.randomUUID(), "LEADER", previousTeam, "MANAGER_WORK");
-        report(otherTeamReport, otherTeamKey, NOW.minusHours(2), UUID.randomUUID(), "LEADER", OTHER_TEAM, "PORTFOLIO");
+        UUID mentioningTeamReport = UUID.randomUUID();
+        report(otherTeamReport, otherTeamKey, NOW.minusHours(2), UUID.randomUUID(), "LEADER", OTHER_TEAM, "PORTFOLIO", "JSON", null,
+                "[{\"contact\":\"Ирина Другая\"}]");
+        report(mentioningTeamReport, UUID.randomUUID(), NOW.minusHours(2), UUID.randomUUID(), "USER", OTHER_TEAM, "EVENTS");
         report(demandReport, demandKey, NOW.minusHours(2), LEADER, "LEADER", TEAM, "DEMAND");
-        report(adminReport, adminKey, NOW.minusHours(2), ADMIN, "ADMIN", null, "PORTFOLIO");
+        report(adminReport, adminKey, NOW.minusHours(2), ADMIN, "ADMIN", null, "PORTFOLIO", "JSON", null, "[]");
 
         AnonymizationResult result = personalDataService.anonymize(
                 administrator, request(null, List.of(SUBJECT), List.of(), List.of(), List.of()), "anonymize-reports", "rq-reports"
         );
 
-        assertThat(result.reportFilesDeleted()).isEqualTo(4);
+        assertThat(result.reportFilesDeleted()).isEqualTo(5);
         assertThat(jdbcTemplate.queryForList("SELECT id FROM report_jobs WHERE error_code = 'REPORT_RESULT_EXPIRED'", UUID.class))
-                .containsExactlyInAnyOrder(OLD_REPORT, FRESH_REPORT, managementReport, previousTeamReport);
+                .containsExactlyInAnyOrder(OLD_REPORT, FRESH_REPORT, managementReport, previousTeamReport, mentioningTeamReport);
         assertThat(jdbcTemplate.queryForList("SELECT id FROM report_jobs WHERE result_storage_key IS NOT NULL", UUID.class))
                 .containsExactlyInAnyOrder(otherTeamReport, demandReport, adminReport);
         for (UUID kept : List.of(otherTeamKey, demandKey, adminKey)) {
@@ -1248,6 +1254,7 @@ class PersonalDataServiceTest {
         )) {
             jdbcTemplate.execute(statement);
         }
+        PersonalDataPlacesTestSchema.create(jdbcTemplate);
     }
 
     @TestConfiguration(proxyBeanMethods = false)

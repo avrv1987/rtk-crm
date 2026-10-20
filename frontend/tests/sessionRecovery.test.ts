@@ -138,3 +138,16 @@ test('429 показывает срок повтора из Retry-After и не 
   await assert.rejects(new ApiClient().me(), (error: unknown) => error instanceof ApiError
     && error.message === 'Слишком много запросов, повторите чуть позже')
 })
+
+// Н-2 проверки 2.5.3: личная квота отчётов отвечает 429 со своим кодом и понятным текстом — клиент его не подменяет.
+test('429 личной квоты отчётов сохраняет код и текст сервера', async (t) => {
+  t.after(() => mock.restoreAll())
+  const message = 'У вас уже строятся 5 файлов отчётов; дождитесь готовности одного из них и повторите через 30 сек.'
+  serve([
+    () => new Response(JSON.stringify({ ...apiError('REPORT_QUOTA_EXCEEDED'), message }),
+      { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '30' } })
+  ])
+
+  await assert.rejects(new ApiClient().me(), (error: unknown) => error instanceof ApiError
+    && error.status === 429 && error.code === 'REPORT_QUOTA_EXCEEDED' && error.message === message)
+})

@@ -8,6 +8,9 @@ const errorText = (error: unknown, fallback: string) => {
   if (error.code === 'REPORT_ACCESS_CHANGED') {
     return 'Права доступа изменились после заказа, поэтому файл не выдаётся. Сформируйте отчёт заново.'
   }
+  if (error.code === 'REPORT_QUOTA_EXCEEDED') {
+    return error.message
+  }
   if (error.code === 'REPORT_CAPACITY_EXCEEDED') {
     return 'Сейчас все места для построения отчётов заняты. Повторите заказ через 30 секунд.'
   }

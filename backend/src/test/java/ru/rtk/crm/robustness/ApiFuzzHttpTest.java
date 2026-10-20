@@ -172,6 +172,31 @@ class ApiFuzzHttpTest {
                 .param("to", "+999999999-12-31").with(login(LEADER, UserRole.LEADER))).andReturn().getResponse();
         assertThat(farDate.getStatus()).isEqualTo(400);
         assertThat(farDate.getContentAsString(StandardCharsets.UTF_8)).contains("\"code\":\"VALIDATION_ERROR\"");
+        // Б-8, Б-9 проверки 2.5.3: текст из невидимых символов — пусто, символ NUL — понятная ошибка у поля.
+        MockHttpServletResponse invisibleTitle = createInteraction("​​");
+        assertThat(invisibleTitle.getStatus()).isEqualTo(400);
+        assertThat(invisibleTitle.getContentAsString(StandardCharsets.UTF_8)).contains("\"title\"");
+        MockHttpServletResponse nulTitle = createInteraction("Фаззер\\u0000");
+        assertThat(nulTitle.getStatus()).isEqualTo(400);
+        assertThat(nulTitle.getContentAsString(StandardCharsets.UTF_8)).contains("\"title\"").contains("NUL");
+        if (ids.containsKey("interaction") && ids.containsKey("stage")) {
+            MockHttpServletResponse nbspComment = mockMvc.perform(MockMvcRequestBuilders.post(
+                            "/api/interactions/" + ids.get("interaction") + "/comments")
+                    .with(login(KAM, UserRole.USER)).with(csrf()).header("Idempotency-Key", UUID.randomUUID().toString())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"version\":0,\"stageId\":\"" + ids.get("stage") + "\",\"text\":\" \"}"))
+                    .andReturn().getResponse();
+            assertThat(nbspComment.getStatus()).isEqualTo(400);
+            assertThat(nbspComment.getContentAsString(StandardCharsets.UTF_8)).contains("\"text\"");
+        }
+    }
+
+    private MockHttpServletResponse createInteraction(String title) throws Exception {
+        return mockMvc.perform(MockMvcRequestBuilders.post("/api/interactions")
+                .with(login(KAM, UserRole.USER)).with(csrf()).header("Idempotency-Key", UUID.randomUUID().toString())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"organizationId\":\"" + ids.get("organization") + "\",\"title\":\"" + title + "\",\"contactIds\":[]}"))
+                .andReturn().getResponse();
     }
 
     private void expect(String body, int status, String code) throws Exception {

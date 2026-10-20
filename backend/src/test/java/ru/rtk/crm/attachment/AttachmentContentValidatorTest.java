@@ -83,6 +83,18 @@ class AttachmentContentValidatorTest {
         assertThat(inspection.checksum()).hasSize(64);
     }
 
+    // Б-8, Б-9: длинное имя называет предел, управляющий символ — недопустимый символ, невидимое имя — пустое.
+    @Test
+    void fileNameErrorsSayWhatIsWrong() {
+        byte[] pdf = "%PDF-1.4".getBytes();
+        assertThatThrownBy(() -> validator.inspect(new MockMultipartFile("file", "a".repeat(252) + ".pdf", "application/pdf", pdf)))
+                .hasMessage("Имя файла длиннее 255 символов; переименуйте файл");
+        assertThatThrownBy(() -> validator.inspect(new MockMultipartFile("file", "a\u0000b.pdf", "application/pdf", pdf)))
+                .hasMessageStartingWith("Недопустимый символ в имени файла");
+        assertThatThrownBy(() -> validator.inspect(new MockMultipartFile("file", "\u200b\u200b", "application/pdf", pdf)))
+                .isInstanceOf(AttachmentValidationException.class);
+    }
+
     @Test
     void rejectsUnsupportedExtensionAndMismatchedContent() {
         assertThatThrownBy(() -> validator.inspect(new MockMultipartFile(

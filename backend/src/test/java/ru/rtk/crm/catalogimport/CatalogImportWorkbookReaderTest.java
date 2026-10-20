@@ -45,10 +45,18 @@ class CatalogImportWorkbookReaderTest {
         Row unevaluated = sheet.createRow(2);
         unevaluated.createCell(0).setCellValue("program:physics");
         unevaluated.createCell(1).setCellFormula("2000+28");
+        // Б-6: openpyxl и генераторы отчётов пишут формулу с пустым <v/> — это не «0», а то же «нет значения».
+        Row emptyValue = sheet.createRow(3);
+        emptyValue.createCell(0).setCellValue("program:chemistry");
+        org.apache.poi.xssf.usermodel.XSSFCell blank = (org.apache.poi.xssf.usermodel.XSSFCell) emptyValue.createCell(1);
+        blank.setCellFormula("1+1");
+        blank.getCTCell().setV("");
 
         CatalogImportWorkbookSheet parsed = reader.read(file(workbook, "catalog.xlsx"), "Catalog");
 
-        assertThat(parsed.rows()).hasSize(2);
+        assertThat(parsed.rows()).hasSize(3);
+        assertThat(parsed.rows().get(2).fieldErrors().get("year")).startsWith("Формула без сохранённого значения");
+        assertThat(parsed.rows().get(2).values().get("year")).isEmpty();
         assertThat(parsed.rows().get(0).values()).containsEntry("year", "2027");
         assertThat(parsed.rows().get(0).fieldErrors()).isEmpty();
         assertThat(parsed.rows().get(1).fieldErrors().get("year")).startsWith("Формула без сохранённого значения");

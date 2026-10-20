@@ -166,6 +166,19 @@ export const sectionTitle = (section: Section, role: Role): string => {
   return titles[section]
 }
 
+// Н-А9: ссылка на раздел другой роли не перекидывает молча — экран объясняет, почему открыт свой раздел.
+export const redirectNotice = (requested: string, target: Section, role: Role): string => {
+  const own = sectionTitle(target, role)
+  return Object.hasOwn(titles, requested)
+    ? `Раздел «${titles[requested as Section]}» доступен другой роли — открыт ваш раздел «${own}».`
+    : `Такого адреса в CRM нет — открыт ваш раздел «${own}».`
+}
+
+export const appName = 'CRM ИТ Школы РТК'
+
+// Н-А8: заголовок вкладки браузера называет экран — в истории браузера и у экранного диктора экраны различаются.
+export const documentTitle = (title: string | null) => (title === null ? appName : `${title} — ${appName}`)
+
 const roleNames: Record<Role, string> = {
   USER: 'КАМ',
   LEADER: 'Руководитель команды',

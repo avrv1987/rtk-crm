@@ -105,7 +105,8 @@ const useAdminSummary = (role: AdminNavRole, refreshKey: string, handlers: Sessi
   const counts: Partial<Record<AdminSectionSlug, number>> = role === 'LEADER'
     ? { 'pending-source-records': pendingRecords }
     : { employees: summary?.pendingProfiles, sources: problemRecordsOf(summary?.sources) }
-  return { summary, counts, reload: load }
+  // Н-А5: экран заявок сообщает свежее число после каждого разбора — счётчик на вкладке не ждёт перезагрузки.
+  return { summary, counts, reload: load, setPendingRecords }
 }
 
 export const AdminScreen = ({ profile, slug, query = '', onSessionExpired, onProfileUnavailable }: AdminScreenProps) => {
@@ -115,7 +116,7 @@ export const AdminScreen = ({ profile, slug, query = '', onSessionExpired, onPro
   const [sourcesRevision, setSourcesRevision] = useState(0)
   const [showNotice, setShowNotice] = useState(() => role === 'ADMIN' && !noticeSeen(profile.id))
   const handlers = { onSessionExpired, onProfileUnavailable }
-  const { summary, counts, reload } = useAdminSummary(role, `${section}:${sourcesRevision}`, handlers)
+  const { summary, counts, reload, setPendingRecords } = useAdminSummary(role, `${section}:${sourcesRevision}`, handlers)
 
   useEffect(() => {
     const target = canonicalAdminHash(slug, query, role)
@@ -147,7 +148,7 @@ export const AdminScreen = ({ profile, slug, query = '', onSessionExpired, onPro
           <SourceAlerts onSessionExpired={onSessionExpired} onProfileUnavailable={onProfileUnavailable} refreshSignal={sourcesRevision} />
         )}
         {section === 'overview' && <AdminOverview summary={summary} onRetry={() => void reload()} />}
-        {section === 'pending-source-records' && <PendingSourceRecords role={profile.role} {...handlers} />}
+        {section === 'pending-source-records' && <PendingSourceRecords role={profile.role} onCount={setPendingRecords} {...handlers} />}
         {section === 'employees' && (
           <AdminEmployeesScreen
             key={address.query}

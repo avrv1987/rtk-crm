@@ -385,6 +385,9 @@ public class ApiExceptionHandler {
             if (java.time.temporal.Temporal.class.isAssignableFrom(type)) {
                 return "Дата в неверном формате или такой даты нет";
             }
+            if (type == String.class) {
+                return ApiJsonConfiguration.NUL_MESSAGE;
+            }
         }
         return "Значение в неверном формате";
     }
@@ -417,6 +420,10 @@ public class ApiExceptionHandler {
         if ("23503".equals(sqlState) || "23506".equals(sqlState)) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiError.of("CONFLICT",
                     "Запись связана с другими данными или ссылается на удалённую; обновите страницу", RequestId.from(request)));
+        }
+        // 22021 и 22023: символ NUL или байты, которые база не хранит в тексте (из файла, имени, параметра адреса).
+        if ("22021".equals(sqlState) || "22023".equals(sqlState)) {
+            return validationError(request, Map.of("body", "Недопустимый символ в значении (например, NUL); удалите его"));
         }
         return validationError(request, Map.of("body", "Значение слишком длинное, вне допустимого диапазона или нарушает ограничение"));
     }

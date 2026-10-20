@@ -79,6 +79,13 @@ public class AgreementException extends RuntimeException {
         return new AgreementException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "Перечень мероприятий уже изменили", currentVersion);
     }
 
+    // Н-А4: пока форма была открыта, перечень ушёл вузу. Это не ошибка ввода, а изменённое состояние — 409 с текущим статусом.
+    public static AgreementException listNotEditable(int currentVersion, ReportingModels.ListStatus status) {
+        return new AgreementException(HttpStatus.CONFLICT, "VERSION_CONFLICT",
+                "Перечень уже не проект: сейчас он «" + status.title() + "». Менять название и состав можно у проекта или возвращённого перечня",
+                currentVersion);
+    }
+
     public static AgreementException confirmationLimit(int limit) {
         return new AgreementException(
                 HttpStatus.UNPROCESSABLE_ENTITY,

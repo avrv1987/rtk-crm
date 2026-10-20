@@ -626,6 +626,15 @@ class PartnerCabinetHttpTest {
         mockMvc.perform(post("/api/organizations/{id}/contacts/{contactId}/partner-access", ORGANIZATION_A, RECTOR)
                         .with(partnerLogin(PARTNER_A)).with(csrf()))
                 .andExpect(status().isForbidden());
+        // Б-10 проверки 2.5.3: неверное тело вне кабинета — всё равно 403, роль проверяется до разбора тела.
+        for (String path : new String[] {"/api/organizations/" + ORGANIZATION_A + "/contacts", "/api/reports/jobs",
+                "/api/interactions/" + WORK_A + "/issues", "/api/agreements"}) {
+            mockMvc.perform(post(path).with(partnerLogin(PARTNER_A)).with(csrf())
+                            .header("Idempotency-Key", "partner-empty-" + path.hashCode())
+                            .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        }
         mockMvc.perform(get("/api/partner/cabinet").with(login(KAM_A)))
                 .andExpect(status().isForbidden());
         for (String path : new String[] {"/api/issues", "/api/issues/file", "/api/interactions/" + WORK_A + "/issues"}) {

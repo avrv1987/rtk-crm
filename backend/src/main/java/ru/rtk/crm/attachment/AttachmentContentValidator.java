@@ -82,8 +82,13 @@ public class AttachmentContentValidator {
         }
         String normalizedPath = sourceName.replace('\\', '/');
         String name = normalizedPath.substring(normalizedPath.lastIndexOf('/') + 1).trim();
-        if (name.isBlank() || name.equals(".") || name.equals("..") || name.length() > 255
-                || name.chars().anyMatch(Character::isISOControl)) {
+        if (name.length() > 255) {
+            throw new AttachmentValidationException("file", "Имя файла длиннее 255 символов; переименуйте файл");
+        }
+        if (name.chars().anyMatch(Character::isISOControl)) {
+            throw new AttachmentValidationException("file", "Недопустимый символ в имени файла (управляющий символ, например NUL)");
+        }
+        if (ru.rtk.crm.web.VisibleText.blank(name) || name.equals(".") || name.equals("..")) {
             throw new AttachmentValidationException("file", "Недопустимое имя файла");
         }
         return name;

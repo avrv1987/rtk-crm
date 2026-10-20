@@ -4,6 +4,7 @@ import { CardDialog } from '../interactions/cardUi'
 import { agreementsApi, type Agreement, type AgreementTransitionInput, type AgreementTransitionOption } from './agreementsApi'
 import { agreementStatusLabels, transitionFields, type AgreementStatus } from './agreementModel'
 import { CommandError, useCommandKey } from './agreementUi'
+import { useRecordDraft } from '../interactions/formDraft'
 
 type TransitionTarget = {
   id: string
@@ -19,6 +20,8 @@ type AgreementTransitionsProps = {
   agreement: TransitionTarget
   interactionId?: string
   onDone: (agreement: Agreement) => void
+  // Н-А1: перечитать договор после конфликта версии; окно закрывается, комментарий остаётся в черновике.
+  onReload?: () => void
   handleAccessError: (error: unknown) => boolean
 }
 
@@ -30,14 +33,18 @@ const TransitionForm = ({
   interactionId,
   onDone,
   onCancel,
+  onReload,
   handleAccessError
 }: AgreementTransitionsProps & { option: AgreementTransitionOption; onCancel: () => void }) => {
   const fields = transitionFields(option.toStatus, agreement)
   const today = todayInMoscow()
-  const [comment, setComment] = useState('')
-  const [signedOn, setSignedOn] = useState(today)
-  const [validUntil, setValidUntil] = useState(agreement.validUntil ?? '')
-  const [sentOn, setSentOn] = useState(today)
+  const draft = useRecordDraft(
+    `agreement-transition:${agreement.id}:${option.toStatus}`,
+    `«${option.title}» по договору № ${agreement.number}`,
+    { comment: '', signedOn: today, validUntil: agreement.validUntil ?? '', sentOn: today }
+  )
+  const { comment, signedOn, validUntil, sentOn } = draft.values
+  const { set } = draft
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const commandKey = useCommandKey()
@@ -58,6 +65,7 @@ const TransitionForm = ({
     try {
       const result = await agreementsApi.transition(agreement.id, payload, commandKey.keyFor(payload))
       commandKey.settle()
+      draft.clear()
       onDone(result)
     } catch (caught) {
       commandKey.settle(caught)
@@ -78,32 +86,32 @@ const TransitionForm = ({
         {fields.signedOn && (
           <label>
             <span>Дата подписания<span className="required-mark" aria-hidden="true"> *</span></span>
-            <input type="date" value={signedOn} required max={today} onChange={(event) => setSignedOn(event.target.value)} />
+            <input type="date" value={signedOn} required max={today} onChange={(event) => set({ signedOn: event.target.value })} />
           </label>
         )}
         {fields.validUntil && (
           <label>
             Действует до
-            <input type="date" value={validUntil} min={signedOn || undefined} onChange={(event) => setValidUntil(event.target.value)} />
+            <input type="date" value={validUntil} min={signedOn || undefined} onChange={(event) => set({ validUntil: event.target.value })} />
           </label>
         )}
         {fields.sentOn && (
           <label>
             Дата отправки на согласование
-            <input type="date" value={sentOn} max={today} onChange={(event) => setSentOn(event.target.value)} />
+            <input type="date" value={sentOn} max={today} onChange={(event) => set({ sentOn: event.target.value })} />
           </label>
         )}
         <label className="agreement-form__wide">
           <span>Комментарий{option.commentRequired && <span className="required-mark" aria-hidden="true"> *</span>}</span>
-          <textarea value={comment} rows={3} maxLength={2000} required={option.commentRequired} onChange={(event) => setComment(event.target.value)} />
+          <textarea value={comment} rows={3} maxLength={2000} required={option.commentRequired} onChange={(event) => set({ comment: event.target.value })} />
         </label>
       </div>
-      {error !== null && <CommandError error={error} fallback="Статус договора не изменён." />}
+      {error !== null && <CommandError error={error} fallback="Статус договора не изменён." onReload={onReload} />}
       <div className="agreement-form__actions">
         <button type="submit" disabled={saving || (option.commentRequired && comment.trim() === '')}>
           {saving ? 'Сохраняем…' : option.title}
         </button>
-        <button type="button" className="button--secondary" onClick={onCancel} disabled={saving}>Отмена</button>
+        <button type="button" className="button--secondary" onClick={() => { draft.clear(); onCancel() }} disabled={saving}>Отмена</button>
       </div>
     </form>
   )
@@ -132,6 +140,7 @@ export const AgreementTransitions = (props: AgreementTransitionsProps) => {
             {...props}
             option={option}
             onCancel={() => setOption(null)}
+            onReload={props.onReload === undefined ? undefined : () => { setOption(null); props.onReload?.() }}
             onDone={(agreement) => { setOption(null); props.onDone(agreement) }}
           />
         )}

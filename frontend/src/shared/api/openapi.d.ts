@@ -585,7 +585,7 @@ export interface paths {
         };
         /**
          * Динамика обучения по вузам и ИТ-программам
-         * @description Обучающиеся и завершившие по месяцам из истории наблюдений Moodle. В месяц входят потоки занятий студентов, которые шли в нём хотя бы один день; число потока — наблюдение, действовавшее на конец последнего дня месяца (у последнего месяца — на конец дня to). Область данных та же, что у отчётов; администратор получает пустой ответ.
+         * @description Обучающиеся и завершившие по месяцам из истории наблюдений Moodle. В месяц входят потоки занятий студентов, которые шли в нём хотя бы один день; число потока — наблюдение, действовавшее на конец последнего дня месяца (у последнего месяца — на конец дня to). Область данных та же, что у отчётов; администратору и представителю вуза — 403.
          */
         get: operations["getLearningDynamics"];
         put?: never;
@@ -662,7 +662,7 @@ export interface paths {
         };
         /**
          * План подписаний и продлений соглашений на квартал или год
-         * @description Плановые даты подписания и продления соглашений вузов за квартал (по умолчанию текущий) или за год; расторгнутые соглашения и архивные вузы не учитываются. Действующее соглашение без плановой даты попадает в отчёт продлением на дату окончания срока действия (source = EXPIRY). Область данных та же, что у отчётов: КАМ — свои вузы, руководитель — вузы команды, «Руководство» — все вузы, только чтение; администратор получает пустой ответ, представитель вуза — 403.
+         * @description Плановые даты подписания и продления соглашений вузов за квартал (по умолчанию текущий) или за год; расторгнутые соглашения и архивные вузы не учитываются. Действующее соглашение без плановой даты попадает в отчёт продлением на дату окончания срока действия (source = EXPIRY). Область данных та же, что у отчётов: КАМ — свои вузы, руководитель — вузы команды, «Руководство» — все вузы, только чтение; администратору и представителю вуза — 403.
          */
         get: operations["getSigningPlan"];
         put?: never;
@@ -722,7 +722,7 @@ export interface paths {
         };
         /**
          * Выгрузить реестр проблем и рисков в XLSX
-         * @description Те же отборы и права, что у listIssues, все строки без постраничного деления. Если строк больше app.reports.max-rows, ответ 422 REPORT_ROW_LIMIT. Скачивание записывается в журнал безопасности.
+         * @description Те же отборы и права, что у listIssues (кроме администратора: ему выгрузка — 403), все строки без постраничного деления. Если строк больше app.reports.max-rows, ответ 422 REPORT_ROW_LIMIT. Скачивание записывается в журнал безопасности.
          */
         get: operations["downloadIssues"];
         put?: never;
@@ -2412,7 +2412,7 @@ export interface paths {
         put?: never;
         /**
          * Заказать отчёт или диаграмму
-         * @description Сохраняет задание отчёта со статусом PENDING и передаёт его в один из ограниченных слотов отчётов. Тот же Idempotency-Key с тем же телом возвращает тот же jobId; другое тело под тем же ключом возвращает 409 IDEMPOTENCY_CONFLICT. 503 REPORT_CAPACITY_EXCEEDED с Retry-After означает, что все слоты и ограниченная очередь заняты и задание не сохранено. При указании groupBy задание строит диаграмму POST /api/statistics для того же запроса в виде PNG или PDF (диаграмма, базовая таблица, единица измерения, период, фильтры и время формирования) вместо построчного отчёта. chartType LINE (или seriesBy) строит линейный график с группировкой MONTH, по одной линии на группу seriesBy (пять крупнейших, остальные сливаются в «Остальные»); более maxChartBars месяцев приводит к ошибке задания REPORT_CHART_LIMIT. DURATION отклоняет groupBy с 400 VALIDATION_ERROR.
+         * @description Сохраняет задание отчёта со статусом PENDING и передаёт его в один из ограниченных слотов отчётов. Тот же Idempotency-Key с тем же телом возвращает тот же jobId; другое тело под тем же ключом возвращает 409 IDEMPOTENCY_CONFLICT. 503 REPORT_CAPACITY_EXCEEDED с Retry-After означает, что все слоты и ограниченная очередь заняты и задание не сохранено; 429 REPORT_QUOTA_EXCEEDED с Retry-After — у пользователя уже строятся пять файлов отчётов. При указании groupBy задание строит диаграмму POST /api/statistics для того же запроса в виде PNG или PDF (диаграмма, базовая таблица, единица измерения, период, фильтры и время формирования) вместо построчного отчёта. chartType LINE (или seriesBy) строит линейный график с группировкой MONTH, по одной линии на группу seriesBy (пять крупнейших, остальные сливаются в «Остальные»); более maxChartBars месяцев приводит к ошибке задания REPORT_CHART_LIMIT. DURATION отклоняет groupBy с 400 VALIDATION_ERROR.
          */
         post: operations["createReportJob"];
         delete?: never;
@@ -7829,7 +7829,7 @@ export interface components {
         };
         ApiError: {
             /** @enum {string} */
-            code: "VALIDATION_ERROR" | "BAD_REQUEST" | "UNAUTHENTICATED" | "FORBIDDEN" | "CSRF_INVALID" | "CRM_PROFILE_REQUIRED" | "CRM_PROFILE_PENDING" | "PARTNER_MODULE_DISABLED" | "LAST_ACTIVE_ADMIN" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "CONFLICT" | "VERSION_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "DEPENDENCY_UNAVAILABLE" | "REPORT_NOT_READY" | "REPORT_ACCESS_CHANGED" | "REPORT_RESULT_UNAVAILABLE" | "REPORT_CAPACITY_EXCEEDED" | "REPORT_ROW_LIMIT" | "SOURCE_NOT_CONFIGURED" | "CRM_EXCHANGE_FAILED" | "SYNC_ALREADY_RUNNING" | "SYNC_CAPACITY_EXCEEDED" | "LMS_NOT_MAPPED" | "LMS_SYNC_FAILED" | "ACCOUNT_SYNC_FAILED" | "PERSONAL_DATA_ANONYMIZED" | "PROFILE_ACTIVE" | "RETENTION_RUNNING" | "CONFIRMATION_LIMIT" | "PERSONAL_DATA_RESTRICTED" | "PARTNER_ACCESS_EXISTS" | "PARTNER_ACCOUNT_CONFLICT" | "ACCOUNT_CONFLICT" | "FILE_UNAVAILABLE" | "MAX_NOT_CONFIGURED" | "MAX_UNAVAILABLE" | "MAX_REQUEST_FAILED" | "MAX_WEBHOOK_URL_INVALID" | "MAX_LINK_EXPIRED" | "MAX_ACCOUNT_TAKEN" | "MAX_NOT_LINKED" | "MAX_INIT_DATA_INVALID" | "MAX_INIT_DATA_EXPIRED" | "MAX_ROLE_NOT_ALLOWED" | "MAX_SESSION_EXPIRED" | "MAIL_INVITATION_INVALID" | "MAIL_INVITATION_USED" | "MAIL_LETTER_STATE";
+            code: "VALIDATION_ERROR" | "BAD_REQUEST" | "UNAUTHENTICATED" | "FORBIDDEN" | "CSRF_INVALID" | "CRM_PROFILE_REQUIRED" | "CRM_PROFILE_PENDING" | "PARTNER_MODULE_DISABLED" | "LAST_ACTIVE_ADMIN" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "CONFLICT" | "VERSION_CONFLICT" | "IDEMPOTENCY_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "DEPENDENCY_UNAVAILABLE" | "REPORT_NOT_READY" | "REPORT_ACCESS_CHANGED" | "REPORT_RESULT_UNAVAILABLE" | "REPORT_CAPACITY_EXCEEDED" | "REPORT_QUOTA_EXCEEDED" | "REPORT_ROW_LIMIT" | "SOURCE_NOT_CONFIGURED" | "CRM_EXCHANGE_FAILED" | "SYNC_ALREADY_RUNNING" | "SYNC_CAPACITY_EXCEEDED" | "LMS_NOT_MAPPED" | "LMS_SYNC_FAILED" | "ACCOUNT_SYNC_FAILED" | "PERSONAL_DATA_ANONYMIZED" | "PROFILE_ACTIVE" | "RETENTION_RUNNING" | "CONFIRMATION_LIMIT" | "PERSONAL_DATA_RESTRICTED" | "PARTNER_ACCESS_EXISTS" | "PARTNER_ACCOUNT_CONFLICT" | "ACCOUNT_CONFLICT" | "FILE_UNAVAILABLE" | "MAX_NOT_CONFIGURED" | "MAX_UNAVAILABLE" | "MAX_REQUEST_FAILED" | "MAX_WEBHOOK_URL_INVALID" | "MAX_LINK_EXPIRED" | "MAX_ACCOUNT_TAKEN" | "MAX_NOT_LINKED" | "MAX_INIT_DATA_INVALID" | "MAX_INIT_DATA_EXPIRED" | "MAX_ROLE_NOT_ALLOWED" | "MAX_SESSION_EXPIRED" | "MAIL_INVITATION_INVALID" | "MAIL_INVITATION_USED" | "MAIL_LETTER_STATE";
             message: string;
             /** Format: uuid */
             requestId: string;
@@ -11223,13 +11223,18 @@ export interface components {
             pendingActivation: boolean;
             anonymized: boolean;
         };
+        /** @description Упоминание субъекта в текстовом поле из реестра мест с ПДн (карточки, проблемы, договоры, мероприятия, запросы вузу, согласия, обращения, сохранённые отчёты, учёт людей). Обезличивание заменяет текст в тех же местах, кроме PERSONAL_DATA_REQUEST — имя в реестре обращений остаётся для учёта обращения. */
         SubjectMention: {
-            /** Format: uuid */
-            interactionId: string;
+            /**
+             * Format: uuid
+             * @description Карточка взаимодействия, если место к ней относится
+             */
+            interactionId: string | null;
+            /** @description Название карточки или объекта (договор, перечень, вендор); без объекта — название места */
             interactionTitle: string;
-            organizationName: string;
+            organizationName: string | null;
             /** @enum {string} */
-            place: "COMMENT" | "PLAN_HISTORY" | "NEXT_ACTION" | "TITLE" | "AGENT_PLAN";
+            place: "COMMENT" | "PLAN_HISTORY" | "NEXT_ACTION" | "TITLE" | "AGENT_PLAN" | "WORK_STATUS" | "IMPORT" | "STAGE_COMMENT" | "ISSUE" | "AGREEMENT" | "AGREEMENT_FILE" | "AGREEMENT_ACTIVITY" | "ACTIVITY_LIST" | "HANDOVER" | "PARTNER_REQUEST" | "CONSENT" | "PERSONAL_DATA_REQUEST" | "SAVED_REPORT" | "CONTACT_HISTORY" | "PEOPLE_DOCUMENT" | "VENDOR_CONTACT";
             text: string;
             /** Format: date-time */
             occurredAt: string | null;
@@ -12293,6 +12298,16 @@ export interface components {
         };
         /** @description REPORT_CAPACITY_EXCEEDED — все слоты отчётов и ограниченная очередь заняты; ничего не сохранено */
         ReportCapacityExceeded: {
+            headers: {
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description REPORT_QUOTA_EXCEEDED — у пользователя уже строятся пять файлов отчётов; задание не сохранено, повторите через Retry-After секунд */
+        ReportQuotaExceeded: {
             headers: {
                 "Retry-After"?: number;
                 [name: string]: unknown;
@@ -16965,6 +16980,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["CrmProfileRequired"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["ReportQuotaExceeded"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ReportCapacityExceeded"];
         };

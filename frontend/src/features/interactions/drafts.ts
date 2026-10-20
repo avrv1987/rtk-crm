@@ -288,7 +288,9 @@ export const saveReportSelection = (profileId: string, selection: object) => {
   }
 }
 
-const formKeyFor = (profileId: string, key: string) => `${storagePrefix}${profileId}:form:${key}`
+const formPrefixFor = (profileId: string) => `${storagePrefix}${profileId}:form:`
+
+const formKeyFor = (profileId: string, key: string) => `${formPrefixFor(profileId)}${key}`
 
 export const loadFormDraft = (profileId: string, key: string): unknown => {
   const sessionStorage = storage()
@@ -406,6 +408,43 @@ export const clearRememberedProfileDrafts = () => {
   } catch {
     return
   }
+}
+
+// Профиль, вошедший в этой вкладке: формы без сведений о профиле берут его для ключа своего черновика.
+export const activeProfileId = (): string | null => {
+  try {
+    const value = storage()?.getItem(activeProfileKey) ?? null
+    return value === null || value.length === 0 ? null : value
+  } catch {
+    return null
+  }
+}
+
+// Черновики форм с подписью (useRecordDraft): после входа или F5 они перечисляются в плашке «Есть несохранённый
+// черновик», даже если окно формы ещё не открыто.
+export const storedFormDraftLabels = (profileId: string): { key: string; label: string }[] => {
+  const sessionStorage = storage()
+  if (sessionStorage === null) {
+    return []
+  }
+  const prefix = formPrefixFor(profileId)
+  const found: { key: string; label: string }[] = []
+  try {
+    for (let index = 0; index < sessionStorage.length; index += 1) {
+      const storageKey = sessionStorage.key(index)
+      if (storageKey === null || !storageKey.startsWith(prefix)) {
+        continue
+      }
+      const value: unknown = JSON.parse(sessionStorage.getItem(storageKey) ?? 'null')
+      const label = typeof value === 'object' && value !== null ? (value as Record<string, unknown>).label : undefined
+      if (typeof label === 'string' && label.length > 0) {
+        found.push({ key: storageKey.slice(prefix.length), label })
+      }
+    }
+  } catch {
+    return found
+  }
+  return found
 }
 
 export const forgetActiveProfile = () => {

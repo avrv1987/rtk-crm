@@ -6,6 +6,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -84,32 +85,14 @@ public class SubjectSearchRepository {
                 .list();
     }
 
+    // Упоминания — все текстовые места реестра PersonalDataPlace вида «текст карточки»; замена при обезличивании
+    // проходит те же места, поэтому найденное здесь не остаётся после «Обезличить».
     private List<SubjectMention> findMentions(SubjectTerms terms) {
         List<SubjectMention> mentions = new ArrayList<>();
-        mentions.addAll(findMentions(terms, MentionPlace.COMMENT, "e.comment", "e.occurred_at", """
-                FROM interaction_events e
-                JOIN interactions i ON i.id = e.interaction_id
-                JOIN organizations o ON o.id = i.organization_id
-                """));
-        mentions.addAll(findMentions(terms, MentionPlace.PLAN_HISTORY, "e.next_action", "e.occurred_at", """
-                FROM interaction_events e
-                JOIN interactions i ON i.id = e.interaction_id
-                JOIN organizations o ON o.id = i.organization_id
-                """));
-        mentions.addAll(findMentions(terms, MentionPlace.NEXT_ACTION, "i.next_action", "i.updated_at", """
-                FROM interactions i
-                JOIN organizations o ON o.id = i.organization_id
-                """));
-        mentions.addAll(findMentions(terms, MentionPlace.TITLE, "i.title", "i.created_at", """
-                FROM interactions i
-                JOIN organizations o ON o.id = i.organization_id
-                """));
-        for (String column : List.of("ap.note_text", "ap.next_action")) {
-            mentions.addAll(findMentions(terms, MentionPlace.AGENT_PLAN, column, "ap.created_at", """
-                    FROM agent_change_plans ap
-                    JOIN interactions i ON i.id = ap.interaction_id
-                    JOIN organizations o ON o.id = i.organization_id
-                    """));
+        for (PersonalDataPlace place : PersonalDataPlace.values()) {
+            if (place.kind() == PersonalDataPlace.Kind.MENTION || place.kind() == PersonalDataPlace.Kind.RETAINED) {
+                mentions.addAll(findMentions(terms, place));
+            }
         }
         return mentions.stream()
                 .sorted(Comparator.comparing(SubjectMention::occurredAt, Comparator.nullsLast(Comparator.reverseOrder())))
@@ -117,25 +100,31 @@ public class SubjectSearchRepository {
                 .toList();
     }
 
-    private List<SubjectMention> findMentions(SubjectTerms terms, MentionPlace place, String column, String time, String from) {
-        SqlMatch match = terms.textMatch(column);
+    private List<SubjectMention> findMentions(SubjectTerms terms, PersonalDataPlace place) {
+        String column = "x." + place.column();
+        SqlMatch match = place.fileName() ? terms.attachmentMatch(column) : terms.textMatch(column);
+        PersonalDataPlace.Context context = place.context();
         return bind(jdbcClient.sql("""
-                SELECT i.id AS interaction_id, i.title, o.name AS organization_name, %1$s AS text, %2$s AS occurred_at
-                %3$s
-                WHERE %1$s IS NOT NULL AND %4$s
-                ORDER BY %2$s DESC
+                SELECT %1$s AS interaction_id, %2$s AS title, o.name AS organization_name, %3$s AS text, %4$s AS occurred_at
+                FROM %5$s x %6$s
+                WHERE %3$s IS NOT NULL AND %7$s
+                ORDER BY occurred_at DESC
                 LIMIT :limit
-                """.formatted(column, time, from, match.sql())), match)
+                """.formatted(context.interaction(), context.caption(), column, place.time(), place.table(), context.joins(),
+                match.sql())), match)
                 .param("limit", LIMIT + 1)
                 .query((resultSet, rowNumber) -> new SubjectMention(
                         resultSet.getObject("interaction_id", UUID.class),
-                        resultSet.getString("title"),
+                        Objects.requireNonNullElse(resultSet.getString("title"), place.place().label()),
                         resultSet.getString("organization_name"),
-                        place,
+                        place.place(),
                         resultSet.getString("text"),
                         resultSet.getObject("occurred_at", OffsetDateTime.class)
                 ))
-                .list();
+                .list()
+                .stream()
+                .filter(mention -> !place.fileName() || terms.matchesAttachmentName(mention.text()))
+                .toList();
     }
 
     private List<SubjectAttachment> findAttachments(SubjectTerms terms) {

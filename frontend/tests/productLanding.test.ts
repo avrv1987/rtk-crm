@@ -10,8 +10,7 @@ import {
   connectionsLine,
   productOutcomes,
   productScreens,
-  productSteps,
-  reliabilityLine
+  productSteps
 } from '../src/features/landing/productContent.ts'
 import { getLandingMode, setLandingMode } from '../src/shared/modules.ts'
 
@@ -26,7 +25,6 @@ const productText = (modules: typeof on) => [
   ...productOutcomes.flatMap((item) => [item.title, item.text]),
   ...productSteps,
   ...productScreens.flatMap((screen) => [screen.alt, screen.caption]),
-  reliabilityLine,
   connectionsLine(modules),
   ...rolesFor(modules).flatMap((role) => [role.title, role.benefit])
 ].join(' ')
@@ -102,8 +100,8 @@ test('продуктовая главная короткая: не больше 
   }
 })
 
-test('надёжность — одна строка по замеру, у каждого снимка есть alt и размеры', () => {
-  assert.ok(reliabilityLine.includes('50') && reliabilityLine.includes('секунды'))
+test('без блока надёжности, у каждого снимка есть alt и размеры', () => {
+  assert.ok(!source('ProductLanding.tsx').includes('pl-reliability'))
   assert.ok(!source('ProductLanding.tsx').includes('<dl className="landing-facts"'))
   for (const screen of productScreens) {
     assert.ok(screen.alt.length > 20 && screen.width > 0 && screen.height > 0, screen.src)

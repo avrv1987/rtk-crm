@@ -358,5 +358,12 @@ class WorkListsHttpTest {
         mockMvc.perform(get("/api/issues").with(oidcLogin()).param("kind", "OTHER"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.fieldErrors.kind").value("Такое значение не поддерживается"));
+
+        // Б-11 проверки 2.5.3: выгрузка реестра — бизнес-отчёт, администратору 403, а не пустой файл.
+        when(currentProfileService.requireActiveProfile(any()))
+                .thenReturn(new CrmProfile(UUID.randomUUID(), ru.rtk.crm.access.UserRole.ADMIN, null, 0));
+        mockMvc.perform(get("/api/issues/file").with(oidcLogin()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 }

@@ -70,6 +70,7 @@ public class LearningDynamicsService {
             List<UUID> organizationIds,
             List<UUID> programIds
     ) {
+        ru.rtk.crm.access.BusinessDataAuthorization.requireReader(profile);
         LocalDate today = LocalDate.now(ReportRequest.ZONE);
         // «Этот месяц», «Этот год» и другие готовые периоды кончаются в будущем: строим по сегодняшний день, как
         // остальные отчёты (ReportRequest.runsAsOf), а не отказываем — наблюдений Moodle в будущем не бывает.
